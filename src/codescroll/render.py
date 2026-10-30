@@ -13,6 +13,7 @@ import threading
 from collections.abc import Callable
 from contextlib import closing
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -23,6 +24,8 @@ from codescroll import db
 log = logging.getLogger("codescroll.render")
 
 MFLUX_TIMEOUT_S = 300
+STALE_RENDERING = timedelta(minutes=30)
+RENDERING_SINCE = "rendering_since"  # key in cards.resolved while status is `rendering`
 _ESCAPES = [
     ("_", "__"),
     ("-", "--"),
@@ -59,7 +62,10 @@ class Renderer(Protocol):
 
 
 def memegen_escape(text: str) -> str:
-    if text == "":
+    if text == "" or set(text) == {"."}:
+        # Empty is a blank line. A dot-only segment ("." or "..") would be resolved as a path
+        # segment and change the URL, and memegen has no dot escape, so render it as a blank
+        # line too. The validator rejects such lines; this keeps the URL safe on its own.
         return "_"
     out = []
     for ch in text:
@@ -224,46 +230,110 @@ def retry_failed(conn) -> int:
 def _store_images(conn, cfg, card_id: str, kind: str, images: list[RenderedImage]) -> None:
     folder = cfg.settings.data_dir / "assets" / card_id
     folder.mkdir(parents=True, exist_ok=True)
-    paths = []
-    for n, img in enumerate(images):
-        (folder / f"{n}.png").write_bytes(img.data)
-        paths.append((n, f"assets/{card_id}/{n}.png", img))
-    row = conn.execute("SELECT resolved FROM cards WHERE id = ?", (card_id,)).fetchone()
-    resolved = db.loads(row["resolved"]) or {}
-    resolved.pop("render_error", None)
-    resolved["visual"] = {
-        "images": [f"/{p}" for _, p, _ in paths],
-        "width": images[0].width,
-        "height": images[0].height,
-    }
-    with db.immediate(conn):
-        conn.execute("DELETE FROM assets WHERE card_id = ?", (card_id,))
-        for _, path, img in paths:
-            meta = {"width": img.width, "height": img.height, **img.meta}
+    try:
+        paths = []
+        for n, img in enumerate(images):
+            (folder / f"{n}.png").write_bytes(img.data)
+            paths.append((n, f"assets/{card_id}/{n}.png", img))
+        with db.immediate(conn):
+            row = conn.execute("SELECT resolved FROM cards WHERE id = ?", (card_id,)).fetchone()
+            resolved = db.loads(row["resolved"]) or {}
+            resolved.pop("render_error", None)
+            resolved.pop(RENDERING_SINCE, None)
+            resolved["visual"] = {
+                "images": [f"/{p}" for _, p, _ in paths],
+                "width": images[0].width,
+                "height": images[0].height,
+            }
+            conn.execute("DELETE FROM assets WHERE card_id = ?", (card_id,))
+            for _, path, img in paths:
+                meta = {"width": img.width, "height": img.height, **img.meta}
+                conn.execute(
+                    "INSERT INTO assets(card_id, kind, path, meta) VALUES (?, ?, ?, ?)",
+                    (card_id, kind, path, db.dumps(meta)),
+                )
             conn.execute(
-                "INSERT INTO assets(card_id, kind, path, meta) VALUES (?, ?, ?, ?)",
-                (card_id, kind, path, db.dumps(meta)),
+                "UPDATE cards SET status = 'ready', resolved = ? "
+                "WHERE id = ? AND status = 'rendering'",
+                (db.dumps(resolved), card_id),
             )
-        conn.execute(
-            "UPDATE cards SET status = 'ready', resolved = ? WHERE id = ?",
-            (db.dumps(resolved), card_id),
-        )
+    except BaseException:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise
 
 
 def _mark_failed(conn, card_id: str, error: str) -> None:
-    row = conn.execute("SELECT resolved FROM cards WHERE id = ?", (card_id,)).fetchone()
-    resolved = db.loads(row["resolved"]) or {}
-    resolved["render_error"] = error
     with db.immediate(conn):
+        row = conn.execute("SELECT resolved FROM cards WHERE id = ?", (card_id,)).fetchone()
+        if row is None:  # the card was deleted while it rendered
+            return
+        resolved = db.loads(row["resolved"]) or {}
+        resolved["render_error"] = error
+        resolved.pop(RENDERING_SINCE, None)
         conn.execute(
-            "UPDATE cards SET status = 'render_failed', resolved = ? WHERE id = ?",
+            "UPDATE cards SET status = 'render_failed', resolved = ? "
+            "WHERE id = ? AND status IN ('rendering', 'pending_render')",
             (db.dumps(resolved), card_id),
         )
+
+
+def _release(conn, card_id: str) -> None:
+    """Put a claimed card back to `pending_render` (renderer unavailable)."""
+    with db.immediate(conn):
+        row = conn.execute("SELECT resolved FROM cards WHERE id = ?", (card_id,)).fetchone()
+        if row is None:
+            return
+        resolved = db.loads(row["resolved"]) or {}
+        resolved.pop(RENDERING_SINCE, None)
+        conn.execute(
+            "UPDATE cards SET status = 'pending_render', resolved = ? "
+            "WHERE id = ? AND status = 'rendering'",
+            (db.dumps(resolved), card_id),
+        )
+
+
+def _claim(conn, card_id: str) -> bool:
+    """Atomically move one card from `pending_render` to `rendering`."""
+    since = datetime.now(UTC).isoformat()
+    with db.immediate(conn):
+        row = conn.execute("SELECT resolved FROM cards WHERE id = ?", (card_id,)).fetchone()
+        resolved = (db.loads(row["resolved"]) or {}) if row else {}
+        resolved[RENDERING_SINCE] = since
+        cur = conn.execute(
+            "UPDATE cards SET status = 'rendering', resolved = ? "
+            "WHERE id = ? AND status = 'pending_render'",
+            (db.dumps(resolved), card_id),
+        )
+    return cur.rowcount == 1
+
+
+def reset_stale_rendering(conn, max_age: timedelta = STALE_RENDERING) -> int:
+    """Cards left in `rendering` by a crashed pass go back to `pending_render`."""
+    cutoff = datetime.now(UTC) - max_age
+    rows = conn.execute("SELECT id, resolved FROM cards WHERE status = 'rendering'").fetchall()
+    n = 0
+    for r in rows:
+        resolved = db.loads(r["resolved"]) or {}
+        try:
+            since = datetime.fromisoformat(resolved.get(RENDERING_SINCE, ""))
+        except ValueError:
+            since = datetime.min.replace(tzinfo=UTC)  # no usable timestamp: treat as stale
+        if since < cutoff:
+            resolved.pop(RENDERING_SINCE, None)
+            with db.immediate(conn):
+                cur = conn.execute(
+                    "UPDATE cards SET status = 'pending_render', resolved = ? "
+                    "WHERE id = ? AND status = 'rendering'",
+                    (db.dumps(resolved), r["id"]),
+                )
+            n += cur.rowcount
+    return n
 
 
 def render_pending(conn, cfg, renderers: dict[str, Renderer], limit: int = 10) -> dict:
     """One pass over `pending_render` cards, oldest first. Returns counts."""
     counts = {"rendered": 0, "failed": 0, "waiting": 0}
+    reset_stale_rendering(conn)
     rows = conn.execute(
         "SELECT id, spec FROM cards WHERE status = 'pending_render' "
         "ORDER BY created_at, id LIMIT ?",
@@ -271,28 +341,35 @@ def render_pending(conn, cfg, renderers: dict[str, Renderer], limit: int = 10) -
     ).fetchall()
     up: dict[str, bool] = {}
     for row in rows:
-        spec = db.loads(row["spec"])
-        visual = spec["visual"]
-        kind = visual["kind"]
-        key = RENDERER_KEY.get(kind)
-        renderer = renderers.get(key) if key else None
-        if renderer is None:
-            counts["waiting"] += 1
-            continue
-        if key not in up:
-            up[key] = renderer.available()
-        if not up[key]:
-            counts["waiting"] += 1
-            continue
+        card_id = row["id"]
+        claimed = False
         try:
+            spec = db.loads(row["spec"])
+            visual = spec["visual"]
+            kind = visual["kind"]
+            key = RENDERER_KEY[kind]
+            renderer = renderers.get(key)
+            if renderer is None:
+                counts["waiting"] += 1
+                continue
+            if key not in up:
+                up[key] = renderer.available()
+            if not up[key]:
+                counts["waiting"] += 1
+                continue
+            if not _claim(conn, card_id):  # another pass took it
+                continue
+            claimed = True
             images = renderer.render(visual, cfg, spec)
-            _store_images(conn, cfg, row["id"], kind, images)
+            _store_images(conn, cfg, card_id, kind, images)
         except RendererUnavailable:
             up[key] = False
             counts["waiting"] += 1
+            if claimed:
+                _release(conn, card_id)
         except Exception as e:  # noqa: BLE001 - any failure fails this card, not the pass
-            log.warning("render failed for %s: %s", row["id"], e)
-            _mark_failed(conn, row["id"], str(e) or type(e).__name__)
+            log.warning("render failed for %s: %s", card_id, e)
+            _mark_failed(conn, card_id, str(e) or type(e).__name__)
             counts["failed"] += 1
         else:
             counts["rendered"] += 1

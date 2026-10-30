@@ -54,6 +54,7 @@ CATEGORY_FORMATS: dict[str, tuple[str, ...]] = {
 }
 
 # Illustrations each format costs against settings.render.max_illustrations_per_run.
+# A comic has 2 or 3 panels (one illustration each); the brief reserves the worst case, 3.
 ILLUSTRATION_COST = {"mascot_scene": 1, "comic": 3}
 
 # Formats a haiku can write when the story type is concrete. Everything else needs sonnet.

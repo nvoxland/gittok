@@ -484,3 +484,29 @@ def test_null_resolved_visuals(fixture_repo, repos):
     ):
         accepted, rejected = check2([card], repos)
         assert rejected == [] and accepted[0].resolved["visual"] is None
+
+
+def test_meme_dot_only_lines_rejected(fixture_repo, repos):
+    for line in (".", "..", "..."):
+        card = C.meme_card(
+            fixture_repo, visual={"kind": "meme", "template": "drake", "lines": ["ok", line]}
+        )
+        _, rejected = check2([card], repos)
+        assert reasons(rejected) == ["meme_lines"]
+        assert "only dots" in rejected[0].detail
+    ok = C.meme_card(
+        fixture_repo, visual={"kind": "meme", "template": "drake", "lines": ["a.b", "v1.2"]}
+    )
+    assert check2([ok], repos)[1] == []
+
+
+def test_breaking_news_without_ticker_normalizes_to_empty(fixture_repo, repos):
+    card = C.template_card(fixture_repo, "breaking_news", {"headline": "Rounding fixed"})
+    accepted, rejected = check2([card], repos)
+    assert rejected == []
+    assert accepted[0].card["visual"]["data"]["ticker"] == []
+
+
+def test_comic_over_three_panels_rejected(fixture_repo, repos):
+    _, rejected = check2([C.comic_card(fixture_repo, panels=4)], repos)
+    assert reasons(rejected) == ["schema"]

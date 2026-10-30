@@ -27,7 +27,7 @@
 {mascots}
 
 ### Format: `comic`
-`visual`: `{"kind": "comic", "panels": [{"prompt": "...", "caption": "..."}, {"prompt": "...", "caption": "..."}], "mascots": ["otter"]}`. 2 to 4 panels; each panel is like an illustration: describe the scene only (no text in the image), caption at most 140 characters. Panels use the illustration budget, so prefer 2 or 3. Good: setup, escalation, punchline. Mascots:
+`visual`: `{"kind": "comic", "panels": [{"prompt": "...", "caption": "..."}, {"prompt": "...", "caption": "..."}], "mascots": ["otter"]}`. 2 or 3 panels (each panel costs one illustration); each panel is like an illustration: describe the scene only (no text in the image), caption at most 140 characters. Good: setup, escalation, punchline. Mascots:
 
 {mascots}
 

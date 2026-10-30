@@ -107,7 +107,7 @@
       "type": "object", "additionalProperties": false, "required": ["kind", "panels"],
       "properties": {
         "kind": {"const": "comic"},
-        "panels": {"type": "array", "minItems": 2, "maxItems": 4, "items": {"$ref": "#/$defs/scene"}},
+        "panels": {"type": "array", "minItems": 2, "maxItems": 3, "items": {"$ref": "#/$defs/scene"}},
         "mascots": {"$ref": "#/$defs/mascot_names"}
       }
     },

@@ -1,7 +1,9 @@
 <script lang="ts">
 	import type { BreakingNewsData } from '#lib/types.ts';
 	let { data }: { data: BreakingNewsData } = $props();
-	const text = $derived(data.ticker.join('   •   '));
+	// ticker is optional in the card schema
+	const ticker = $derived(data.ticker ?? []);
+	const text = $derived(ticker.join('   •   '));
 </script>
 
 <div class="news">
@@ -10,7 +12,7 @@
 		<h3>{data.headline}</h3>
 		{#if data.subhead}<p>{data.subhead}</p>{/if}
 	</div>
-	{#if data.ticker.length}
+	{#if ticker.length}
 		<div class="ticker" aria-label="Ticker">
 			<span class="track">{text}   •   {text}</span>
 		</div>

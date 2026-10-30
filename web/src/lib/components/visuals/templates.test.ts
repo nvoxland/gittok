@@ -86,3 +86,55 @@ describe('TemplateVisual', () => {
 		expect(screen.getByText(/unsupported template/i)).toBeInTheDocument();
 	});
 });
+
+describe('TemplateVisual with only required fields', () => {
+	const minimal: Record<string, unknown> = {
+		iceberg: {
+			title: 't',
+			layers: [
+				{ label: 'a', items: ['x'] },
+				{ label: 'b', items: ['y'] },
+				{ label: 'c', items: ['z'] }
+			]
+		},
+		tier_list: {
+			title: 't',
+			rows: [
+				{ tier: 'S', items: [{ name: 'n', why: 'w' }] },
+				{ tier: 'F', items: [{ name: 'm', why: 'v' }] }
+			]
+		},
+		group_chat: {
+			title: 't',
+			messages: [
+				{ from: 'greybeard', text: 'hi' },
+				{ from: 'greybeard', text: 'yo' }
+			]
+		},
+		flags: { subject: 's', red: ['r'], green: [] },
+		dating_profile: { name: 'greybeard', age: '3', bio: 'b', likes: ['l'], dealbreakers: ['d'] },
+		glow_up: { subject: 's', before: { label: 'b', text: 't' }, after: { label: 'a', text: 't' } },
+		breaking_news: { headline: 'Big news' },
+		horoscope: { subject: 'greybeard', sign: 'Leo', forecast: 'f' },
+		thread: { posts: ['a', 'b'] },
+		day_in_life: {
+			subject: 'greybeard',
+			steps: [
+				{ time: '1', text: 'a' },
+				{ time: '2', text: 'b' },
+				{ time: '3', text: 'c' }
+			]
+		},
+		hot_take: { take: 'spicy' }
+	};
+	for (const [name, data] of Object.entries(minimal)) {
+		it(`${name} renders`, () => {
+			const { container } = render(TemplateVisual, {
+				visual: { kind: 'template', template: name, data },
+				resolved: null
+			} as never);
+			expect(container.textContent?.length).toBeGreaterThan(0);
+			expect(container.querySelector('.unsupported')).toBeNull();
+		});
+	}
+});

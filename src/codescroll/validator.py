@@ -300,6 +300,8 @@ def _check_meme(card: dict, ctx: _Ctx) -> None:
         raise _Reject(
             "meme_lines", f"template {tpl.id!r} takes {tpl.lines} line(s); got {len(v['lines'])}"
         )
+    if any(line and set(line) == {"."} for line in v["lines"]):
+        raise _Reject("meme_lines", "a line cannot be only dots")
 
 
 def _code_account(acct: str, card: dict, gc: _GitCache) -> tuple[str, str, str]:
@@ -436,6 +438,9 @@ def _validate_one(card: dict, gc: _GitCache, ctx: _Ctx) -> tuple[dict, dict, str
         raise _Reject("schema", "; ".join(errs[:3]))
     card = copy.deepcopy(card)
     _check_format(card)
+    visual = card["visual"]
+    if visual["kind"] == "template" and visual["template"] == "breaking_news":
+        visual["data"].setdefault("ticker", [])  # optional in the schema; clients expect a list
     if card["visual"]["kind"] == "meme":
         _check_meme(card, ctx)
     if card["visual"]["kind"] in ("illustration", "comic"):

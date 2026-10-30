@@ -46,7 +46,7 @@ A format/kind mismatch is rejected with reason `format_kind_mismatch`.
 ```json
 {"kind": "comic", "panels": [{"prompt": "...", "caption": "..."}, {"prompt": "...", "caption": "..."}], "mascots": ["otter"]}
 ```
-- 2 to 4 panels, each like an illustration (prompt plus caption). Panels count against the illustration budget.
+- 2 to 3 panels, each like an illustration (prompt plus caption). Each panel costs one illustration in the budget, so a comic costs 2 or 3.
 
 ### chart (data comes from the server, never from the agent)
 ```json
@@ -92,13 +92,13 @@ A card may set `"account": "repo:path"`. The card is then shown as posted by tha
 
 ## Illustration budget
 
-`settings.render.max_illustrations_per_run` (default 4). An illustration costs 1, a comic costs one per panel. Cards past the budget are rejected with `illustration_budget`.
+`settings.render.max_illustrations_per_run` (default 4). An illustration costs 1, a comic costs one per panel (2 or 3). Cards past the budget are rejected with `illustration_budget`.
 
 ## Status and rendering
 
 - Cards whose visual is `meme`, `illustration`, or `comic` are stored with status `pending_render`. All others are `ready`.
-- The render worker (in `codescroll serve`, plus `codescroll render`) renders pending cards and sets `ready`, or `render_failed` with an error in `assets.meta`.
-- The feed returns only `ready` cards.
+- The render worker (in `codescroll serve`, plus `codescroll render`) claims a pending card by setting the transient status `rendering`, so two passes never render the same card. It then sets `ready`, or `render_failed` with the error text in `cards.resolved.render_error`. If the renderer is unavailable, the card goes back to `pending_render`. A card stuck in `rendering` for more than 30 minutes is reset to `pending_render` at the start of the next pass.
+- The feed and `/api/repos/{name}` return only `ready` cards.
 
 ## `resolved.visual` shapes (what the client renders)
 
