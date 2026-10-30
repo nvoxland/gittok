@@ -335,3 +335,17 @@ def test_config_edit_commands(ycfg, fixture_repo, monkeypatch, capsys):
     assert new.personas["greybeard"].voice == "Weary."
     assert cli.main(["persona", "edit", "greybeard"]) == 1
     assert "Nothing to change" in capsys.readouterr().err
+
+
+def test_brief_matches_get_brief_inputs_rules_and_unavailable_formats(cfg, capsys, monkeypatch):
+    """The dry-run brief must be the brief the agent would get: same rules, same skips."""
+    from codescroll import db, mcp_server, steering
+
+    monkeypatch.setattr(mcp_server, "unavailable_formats", lambda c: frozenset({"meme"}))
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+        steering.add_rule(conn, cfg, type="ban", feature="format", value="horoscope", reason="no")
+    assert cli.main(["brief", "--count", "10"]) == 0
+    out = capsys.readouterr().out
+    assert "Skipping meme" in out
+    assert "Rules:" in out
+    assert "horoscope" not in out.split("Rules:")[0]
