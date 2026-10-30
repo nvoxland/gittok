@@ -464,3 +464,17 @@ def test_mark_failed_tolerates_deleted_card(fixture_repo, tmp_path):
     cfg = render_cfg(fixture_repo, tmp_path)
     with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
         render._mark_failed(conn, "c_gone", "boom")
+
+
+def test_mflux_command_matches_model_family(monkeypatch):
+    from codescroll import render
+
+    found = {
+        "mflux-generate-z-image": "/bin/zi",
+        "mflux-generate": "/bin/gen",
+        "mflux-generate-flux2": "/bin/f2",
+    }
+    monkeypatch.setattr(render.shutil, "which", lambda name: found.get(name))
+    assert render._mflux_command("z-image-turbo") == ["/bin/zi"]
+    assert render._mflux_command("flux2-klein-4b") == ["/bin/f2"]
+    assert render._mflux_command("schnell") == ["/bin/gen"]

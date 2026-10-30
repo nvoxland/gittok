@@ -121,11 +121,23 @@ def _default_runner(cmd: list[str], timeout: float) -> None:
     subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=timeout)
 
 
-def _mflux_command() -> list[str] | None:
-    exe = shutil.which("mflux-generate")
+# mflux ships one CLI per model family; the generic one cannot load every model.
+_MFLUX_FAMILIES = (
+    ("z-image", "mflux-generate-z-image"),
+    ("flux2", "mflux-generate-flux2"),
+    ("flux3", "mflux-generate-flux3"),
+    ("qwen", "mflux-generate-qwen"),
+)
+
+
+def _mflux_command(model: str = "") -> list[str] | None:
+    name = next(
+        (cli for prefix, cli in _MFLUX_FAMILIES if model.startswith(prefix)), "mflux-generate"
+    )
+    exe = shutil.which(name)
     if exe:
         return [exe]
-    if importlib.util.find_spec("mflux") is not None:
+    if name == "mflux-generate" and importlib.util.find_spec("mflux") is not None:
         return [sys.executable, "-m", "mflux.generate"]
     return None
 
@@ -149,12 +161,14 @@ class IllustrationRenderer:
         self,
         runner: Callable[[list[str], float], None] = _default_runner,
         command: list[str] | None = None,
+        model: str = "",
     ):
         self._runner = runner
         self._command = command
+        self._model = model
 
     def _cmd(self) -> list[str] | None:
-        return self._command or _mflux_command()
+        return self._command or _mflux_command(self._model)
 
     def available(self) -> bool:
         return self._cmd() is not None
@@ -210,7 +224,7 @@ RENDERER_KEY = {"meme": "meme", "illustration": "illustration", "comic": "illust
 def default_renderers(cfg) -> dict[str, Renderer]:
     return {
         "meme": MemeRenderer(cfg.settings.render.memegen_url),
-        "illustration": IllustrationRenderer(),
+        "illustration": IllustrationRenderer(model=cfg.settings.render.mflux_model),
     }
 
 

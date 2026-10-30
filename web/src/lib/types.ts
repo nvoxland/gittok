@@ -60,7 +60,7 @@ export type GlowUpData = {
 	before: { label: string; text: string };
 	after: { label: string; text: string };
 };
-export type BreakingNewsData = { headline: string; subhead?: string; ticker: string[] };
+export type BreakingNewsData = { headline: string; subhead?: string; ticker?: string[] };
 export type HoroscopeData = { subject: string; sign: string; forecast: string; lucky?: string };
 export type ThreadData = { posts: string[] };
 export type DayInLifeData = { subject: string; steps: { time: string; text: string }[] };

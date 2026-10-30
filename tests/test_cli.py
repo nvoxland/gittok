@@ -140,7 +140,7 @@ def test_avatars_command_generates_and_skips(cfg, monkeypatch, capsys):
 
     runner = FakeRunner()
     real = render.IllustrationRenderer
-    monkeypatch.setattr(render, "IllustrationRenderer", lambda: real(runner=runner, command=["x"]))
+    monkeypatch.setattr(render, "IllustrationRenderer", lambda **kw: real(runner=runner, command=["x"]))
     assert cli.main(["avatars"]) == 0
     n = len(cfg.personas)
     assert f"generated={n} skipped=0" in capsys.readouterr().out

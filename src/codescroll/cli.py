@@ -100,7 +100,11 @@ def _render(args) -> int:
 def _avatars(args) -> int:
     cfg = load_config()
     try:
-        res = avatars.generate_avatars(cfg, render.IllustrationRenderer(), force=args.force)
+        res = avatars.generate_avatars(
+            cfg,
+            render.IllustrationRenderer(model=cfg.settings.render.mflux_model),
+            force=args.force,
+        )
     except render.RenderError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
