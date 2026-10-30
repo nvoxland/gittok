@@ -26,45 +26,42 @@ bd close <id>         # Complete work
 
 ## Session Completion
 
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+This repo has no git remote. When ending a work session:
 
-**MANDATORY WORKFLOW:**
-
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
-   ```bash
-   git pull --rebase
-   git push
-   git status  # MUST show "up to date with origin"
-   ```
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
-
-**CRITICAL RULES:**
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds
+1. **File issues for remaining work** with `bd create`.
+2. **Run quality gates** if code changed: `uv run pytest`, `uv run ruff check`, `npm --prefix web test`.
+3. **Update issue status**: close finished work, update in-progress items.
+4. **Commit** all changes with a clear message. Do not try to push.
+5. **Hand off**: summarize what was done and what is next.
 <!-- END BEADS INTEGRATION -->
 
 
 ## Build & Test
 
-_Add your build and test commands here_
-
 ```bash
-# Example:
-# npm install
-# npm test
+uv sync                          # install Python deps (Python 3.13)
+uv run pytest                    # unit tests (live tests skipped unless CODESCROLL_LIVE=1)
+uv run ruff check                # lint
+npm --prefix web install
+npm --prefix web test            # vitest component tests
+npm --prefix web run build       # static build into web/build
+uv run codescroll serve          # feed at http://127.0.0.1:8008
+uv run codescroll mcp            # MCP server over stdio (Claude Code starts it from .mcp.json)
 ```
+
+Red/green TDD is required: write the failing test first.
 
 ## Architecture Overview
 
-_Add a brief overview of your project architecture_
+CodeScroll (working name; see `SPEC.md`) is a personal TikTok-style feed of cards about your own codebases.
+
+- `src/codescroll/` is a Python package. It analyzes git history into signals, builds a brief, validates card specs against git, stores cards in SQLite, and serves the feed API.
+- Card generation does **not** shell out to `claude -p`. A Claude Code session runs the `codescroll-generate` skill. The skill calls the CodeScroll MCP server for a brief, researches repos through read-only MCP tools, and submits card specs back for validation. Cheap subagents (haiku/sonnet) write the cards; the driver only orchestrates.
+- `web/` is a SvelteKit static app: vertical snap-scroll feed, horizontal depth panels.
+- Config lives in `config/*.yaml`; the card contract is `schema/card.schema.json`; runtime data goes in `data/` (gitignored).
 
 ## Conventions & Patterns
 
-_Add your project-specific conventions here_
+- `gitq.py` is the only module that spawns git. Analysis is read-only and never writes to user repos.
+- Time windows are relative to the analyzed ref's last commit date, not wall-clock.
+- Tests build their own fixture git repo; unit tests never need network or a Claude session.
