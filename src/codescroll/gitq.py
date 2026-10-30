@@ -198,12 +198,19 @@ def blame_range(repo: Path | str, rev: str, path: str, start: int, end: int) -> 
     rows: list[dict] = []
     for line in out.split("\n"):
         if m := _BLAME_HEAD.match(line):
-            rows.append({"sha": m.group(1), "author": "", "author_time": 0})
+            rows.append({"sha": m.group(1), "author": "", "author_time": 0, "author_tz": "+0000"})
         elif rows and line.startswith("author "):
             rows[-1]["author"] = line[len("author ") :]
         elif rows and line.startswith("author-time "):
             rows[-1]["author_time"] = int(line[len("author-time ") :])
+        elif rows and line.startswith("author-tz "):
+            rows[-1]["author_tz"] = line[len("author-tz ") :].strip()
     return rows
+
+
+def path_removed_by(repo: Path | str, commit: str, path: str) -> bool:
+    """True when `path` is not a file at `commit`: a delete or the old side of a rename."""
+    return object_type(repo, commit, path) != "blob"
 
 
 def first_parent(repo: Path | str, rev: str) -> str | None:

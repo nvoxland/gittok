@@ -41,6 +41,17 @@ class InvalidCursor(ValueError):
     pass
 
 
+# Card ids are "c_" + 12 hex ms + 8 hex random. The last 12 chars (4 ms + 8 random hex) are
+# enough to tell cards apart, and keep the cursor small. Only the most recent MAX_SERVED are
+# kept; the slotter's repeat_days exclusion covers older ones.
+TOKEN_LEN = 12
+MAX_SERVED = 500
+
+
+def token(card_id: str) -> str:
+    return card_id[-TOKEN_LEN:]
+
+
 def encode_cursor(served: list[str], seed: int) -> str:
     raw = json.dumps({"served": served, "seed": seed}).encode()
     return base64.urlsafe_b64encode(raw).decode()
@@ -74,11 +85,21 @@ def page(
     served: list[str] = []
     if cursor:
         served, seed = decode_cursor(cursor)
-    ids = slotter.build_batch(conn, cfg, limit, set(served), seed, now)
+    seen = {token(t) for t in served}
+    served_ids = (
+        {r[0] for r in conn.execute("SELECT id FROM cards") if token(r[0]) in seen}
+        if seen
+        else set()
+    )
+    ids = slotter.build_batch(conn, cfg, limit, served_ids, seed, now)
     rows = {
         r["id"]: r
         for r in conn.execute(f"SELECT * FROM cards WHERE id IN ({','.join('?' * len(ids))})", ids)
     }
     cards = [public_card(rows[i]) for i in ids]
-    next_cursor = encode_cursor(served + ids, seed) if len(ids) >= limit else None
+    next_cursor = (
+        encode_cursor(([token(t) for t in served] + [token(i) for i in ids])[-MAX_SERVED:], seed)
+        if len(ids) >= limit
+        else None
+    )
     return cards, next_cursor

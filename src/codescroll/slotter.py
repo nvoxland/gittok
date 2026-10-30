@@ -47,15 +47,49 @@ def _rhythm(order: list[str], format_of: dict[str, str], knobs: dict) -> list[st
     return out
 
 
+def _srs_gap(limit: int) -> int:
+    return max(3, limit // 2)
+
+
+def _placeable(n_normal: int, n_due: int, limit: int) -> int:
+    """How many of `n_due` due cards fit when `n_normal` normal cards are available.
+
+    Due card n goes to position 3 + n * gap and needs that many cards in front of it.
+    """
+    gap = _srs_gap(limit)
+    placed = 0
+    for n in range(n_due):
+        if SRS_MIN_POSITION + n * gap <= min(n_normal, limit - n_due) + placed:
+            placed += 1
+        else:
+            break
+    return placed
+
+
+def _reserve_srs(n_normal: int, due: list[str], limit: int) -> list[str]:
+    """Due cards that will really be placed; the other slots go to normal cards."""
+    for k in range(len(due), 0, -1):
+        if _placeable(n_normal, k, limit) == k:
+            return due[:k]
+    return []
+
+
 def _insert_srs(ordered: list[str], due: list[str], limit: int) -> list[str]:
     """Place due cards at positions 3, 3 + gap, ...; a card that would land past the end waits."""
-    gap = max(3, limit // 2)
+    gap = _srs_gap(limit)
     out = list(ordered)
     for n, card_id in enumerate(due):
         pos = SRS_MIN_POSITION + n * gap
-        if pos <= len(out):
+        if pos <= len(out) and len(out) < limit:
             out.insert(pos, card_id)
     return out
+
+
+def _prob_round(x: float, rng: random.Random) -> int:
+    """floor(x), plus 1 with probability equal to the fraction, so small batches still explore."""
+    whole = int(x)
+    frac = x - whole
+    return whole + (1 if frac > 1e-9 and rng.random() < frac else 0)
 
 
 def _dir_coverage(conn) -> dict[str, int]:
@@ -104,7 +138,7 @@ def build_batch(conn, cfg, limit: int, served: set[str], seed: int, now: datetim
         if r["type"] == "ban":
             ids = [i for i in ids if (r["feature"], r["value"]) not in feats[i]]
             due = [i for i in due if (r["feature"], r["value"]) not in feats[i]]
-    due = due[: min(knobs["max_srs_per_batch"], max(0, limit - SRS_MIN_POSITION))]
+    due = _reserve_srs(len(ids), due[: knobs["max_srs_per_batch"]], limit)
     slots = limit - len(due)
     scores = learning.score_cards(conn, cfg, ids, rng, now=now)
     for r in rules:
@@ -117,9 +151,12 @@ def build_batch(conn, cfg, limit: int, served: set[str], seed: int, now: datetim
     ids.sort(key=lambda i: (-scores.get(i, 0.0), i))
 
     caps = [
-        ((r["feature"], r["value"]), int((r["max_share"] or 0.0) * limit))
+        (
+            (r["feature"], r["value"]),
+            0 if r["max_share"] == 0 else max(1, round(r["max_share"] * limit)),
+        )
         for r in rules
-        if r["type"] == "limit"
+        if r["type"] == "limit" and r["max_share"] is not None
     ]
     picked: list[str] = []
 
@@ -145,7 +182,7 @@ def build_batch(conn, cfg, limit: int, served: set[str], seed: int, now: datetim
     share = float(cfg.defaults.get("exploration_share", 0.18))
     lower = ids[(len(ids) + 1) // 2 :]
     rng.shuffle(lower)
-    wanted = round(share * limit)
+    wanted = _prob_round(share * limit, rng)
     done = 0
     for i in lower:
         if done >= wanted:
@@ -159,7 +196,7 @@ def build_batch(conn, cfg, limit: int, served: set[str], seed: int, now: datetim
         dirs = [v for f, v in feats[i] if f == "dir"]
         return min((coverage.get(d, 0) for d in dirs), default=float("inf"))
 
-    wanted = round(_knobs(rc)["learning_boost_share"] * limit)
+    wanted = _prob_round(knobs["learning_boost_share"] * limit, rng)
     done = 0
     for i in sorted(ids, key=lambda i: (seen(i), -scores.get(i, 0.0), i)):
         if done >= wanted:

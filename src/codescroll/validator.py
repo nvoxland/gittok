@@ -53,7 +53,7 @@ def _short(err) -> str:
 
 import hashlib  # noqa: E402
 from dataclasses import dataclass, field  # noqa: E402
-from datetime import UTC, datetime  # noqa: E402
+from datetime import UTC, datetime, timedelta, timezone  # noqa: E402
 from pathlib import PurePosixPath  # noqa: E402
 
 from codescroll import gitq  # noqa: E402
@@ -306,6 +306,9 @@ def _check_interaction_shape(card: dict) -> None:
             )
         return
     inter, story = card["interaction"], card["story_type"]
+    norm = [_norm_choice(c) for c in inter["choices"]]
+    if len(set(norm)) != len(norm):
+        raise _Reject("duplicate_choices", "two choices say the same thing")
     idx = inter.get("answer_index")
     if story == "this_or_that":
         if idx is not None:
@@ -331,6 +334,16 @@ def _norm_choice(text: str) -> str:
     return " ".join(text.split()).casefold()
 
 
+def _tz(offset: str) -> timezone:
+    """A git `author-tz` value like "+1030" or "-0500"."""
+    try:
+        sign = -1 if offset.startswith("-") else 1
+        digits = offset.lstrip("+-")
+        return timezone(sign * timedelta(hours=int(digits[:2]), minutes=int(digits[2:4])))
+    except ValueError:
+        return UTC
+
+
 def _check_interactive_truth(card: dict, gc: _GitCache) -> None:
     """Checks that need git. Runs after sources and depth are resolved to full SHAs."""
     story = card["story_type"]
@@ -348,6 +361,8 @@ def _check_interactive_truth(card: dict, gc: _GitCache) -> None:
                 continue
             if gitq.first_parent(repo, src["commit"]) != v["commit"]:
                 continue
+            if gitq.path_removed_by(repo, src["commit"], v["path"]):
+                continue  # the "fix" deletes or renames the file; there is no bug to spot
             if _ranges_touch(gitq.changed_old_ranges(repo, src["commit"], v["path"]), v["lines"]):
                 fixes.append(src["commit"])
         if not fixes:
@@ -374,15 +389,22 @@ def _check_interactive_truth(card: dict, gc: _GitCache) -> None:
             counts[r["author"]] = counts.get(r["author"], 0) + 1
         top = max(counts.values())
         winners = [a for a, n in counts.items() if n == top]
-        if _norm_choice(choice) not in {_norm_choice(a) for a in winners}:
+        names = {_norm_choice(a) for a in winners}
+        if _norm_choice(choice) not in names:
             raise _Reject(
                 "wrong_answer", f"git blame says {' or '.join(winners)} wrote those lines"
             )
+        for n, other in enumerate(inter["choices"]):
+            if n != inter["answer_index"] and any(a in _norm_choice(other) for a in names):
+                raise _Reject("ambiguous_answer", f"choice {other!r} also names the author")
     else:
-        times = sorted(r["author_time"] for r in rows)
-        year = datetime.fromtimestamp(times[(len(times) - 1) // 2], UTC).year
+        mid = sorted(rows, key=lambda r: r["author_time"])[(len(rows) - 1) // 2]
+        year = datetime.fromtimestamp(mid["author_time"], _tz(mid["author_tz"])).year
         if str(year) not in choice:
             raise _Reject("wrong_answer", f"the median blame year of those lines is {year}")
+        for n, other in enumerate(inter["choices"]):
+            if n != inter["answer_index"] and str(year) in other:
+                raise _Reject("ambiguous_answer", f"choice {other!r} also contains {year}")
 
 
 @dataclass

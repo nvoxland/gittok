@@ -234,3 +234,43 @@ def test_srs_cards_wait_when_the_batch_is_too_short_for_position_three(conn, cfg
     plain = [add_card(conn, cfg, format="f0") for _ in range(2)]
     due_quiz(conn, cfg, 1)
     assert sorted(batch(conn, cfg, limit=8)) == sorted(plain)
+
+
+def test_srs_past_batch_end_does_not_shorten_batch(conn, cfg):
+    for _ in range(30):
+        add_card(conn, cfg)
+    due_quiz(conn, cfg, 3)
+    out = batch(conn, cfg, limit=5)
+    assert len(out) == 5
+    assert len(set(out)) == 5
+
+
+def test_limit_rule_with_small_limit_caps_at_least_one(conn, cfg, monkeypatch):
+    charts = [add_card(conn, cfg, format="chart") for _ in range(3)]
+    others = [add_card(conn, cfg, format="meme") for _ in range(6)]
+    fix_scores(monkeypatch, {**{c: 0.9 for c in charts}, **{o: 0.1 for o in others}})
+    add_rule(conn, "limit", "format", "chart", max_share=0.1)
+    out = batch(conn, cfg, limit=4)
+    assert len(set(out) & set(charts)) == 1
+    assert len(out) == 4
+
+
+def test_limit_rule_zero_share_bans_and_null_share_is_no_cap(conn, cfg, monkeypatch):
+    charts = [add_card(conn, cfg, format="chart") for _ in range(3)]
+    others = [add_card(conn, cfg, format="meme") for _ in range(6)]
+    fix_scores(monkeypatch, {**{c: 0.9 for c in charts}, **{o: 0.1 for o in others}})
+    add_rule(conn, "limit", "format", "chart", max_share=0.0)
+    assert not set(batch(conn, cfg, limit=4)) & set(charts)
+    conn.execute("DELETE FROM rules")
+    add_rule(conn, "limit", "format", "chart")
+    assert len(set(batch(conn, cfg, limit=3)) & set(charts)) == 3
+
+
+def test_exploration_uses_probabilistic_rounding_for_small_limits(conn, cfg, monkeypatch):
+    ids = [add_card(conn, cfg) for _ in range(20)]
+    fix_scores(monkeypatch, {c: 1 - n / 100 for n, c in enumerate(ids)})
+    cfg.defaults["exploration_share"] = 0.15  # 0.15 * 4 = 0.6 explored cards per batch
+    top = set(ids[:10])
+    seeds = range(300)
+    explored = sum(len(set(batch(conn, cfg, limit=4, seed=s)) - top) for s in seeds)
+    assert 0.45 * len(seeds) < explored < 0.75 * len(seeds)

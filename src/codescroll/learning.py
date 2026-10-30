@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import threading
 from collections.abc import Callable
 from contextlib import closing
@@ -142,21 +143,45 @@ def _iso(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+MAX_DWELL_MS = 24 * 60 * 60 * 1000
+
+
+def _ms(value) -> int:
+    """A client-sent duration as clean ms: junk or negative is 0, capped at 24 hours."""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return 0
+    try:
+        ms = float(value)
+    except ValueError:
+        return 0
+    if not math.isfinite(ms) or ms < 0:
+        return 0
+    return int(min(ms, MAX_DWELL_MS))
+
+
+def _toggled_on(events: list[tuple[str, dict]], name: str) -> bool:
+    toggles = [d.get("on", True) for t, d in events if t == name]
+    return bool(toggles and toggles[-1])
+
+
 def _reward(rc: RewardConfig, spec: dict, events: list[tuple[str, dict]]) -> float:
-    if any(t == "skip" for t, _ in events):
-        return 0.0
     w = rc.weights
-    dwell_ms = sum(int(d.get("ms", 0)) for t, d in events if t == "dwell")
-    r = w["dwell"] * min(1.0, dwell_ms / expected_ms(rc, spec))
+    dwell_events = [d for t, d in events if t == "dwell"]
+    dwell_ms = sum(_ms(d.get("ms", 0)) for d in dwell_events)
     types = {t for t, _ in events}
+    skipped = "skip" in types or (
+        bool(dwell_events) and dwell_ms < rc.skip_ms and not types - {"dwell", "skip"}
+    )
+    if skipped and not (_toggled_on(events, "like") or _toggled_on(events, "save")):
+        return 0.0
+    r = w["dwell"] * min(1.0, dwell_ms / expected_ms(rc, spec))
     for name in ("depth_open", "explain_more", "source_tap", "scroll_back"):
         if name in types:
             r += w[name]
     if "answer" in types:
         r += w["answer"]
     for name in ("like", "save"):
-        toggles = [d.get("on", True) for t, d in events if t == name]
-        if toggles and toggles[-1]:
+        if _toggled_on(events, name):
             r += w[name]
     return max(0.0, min(1.0, r))
 
@@ -200,14 +225,18 @@ def process_events(conn, cfg, now: datetime | None = None) -> dict:
                 continue
             spec = json.loads(row["spec"])
             events = [
-                (e["type"], db.loads(e["data"]) or {})
+                (e["type"], d if isinstance(d := db.loads(e["data"]), dict) else {})
                 for e in conn.execute(
                     "SELECT type, data FROM events WHERE card_id = ? AND type != 'impression' "
                     "AND (ts > ? OR (ts = ? AND id > ?)) AND ts <= ? ORDER BY ts, id",
                     (imp["card_id"], imp["ts"], imp["ts"], imp["id"], end),
                 )
             ]
-            r = _reward(rc, spec, events)
+            try:
+                r = _reward(rc, spec, events)
+            except Exception:  # one odd event must not stop learning for the rest
+                log.exception("could not score impression %s", imp["id"])
+                continue
             conn.execute(
                 "INSERT INTO rewards(card_id, impression_event_id, reward, computed_at) "
                 "VALUES (?, ?, ?, ?)",
@@ -415,10 +444,18 @@ def category_shares(conn, cfg, now: datetime | None = None) -> dict[str, float]:
             factor = (strength + n_c * (lm / ref)) / (strength + n_c)
         raw[c] = share * factor
     total = sum(raw.values())
+    if total <= 0:
+        return {c: 0.0 for c in mix}
     shares = {c: v / total for c, v in raw.items()}
+    # Categories with a default share of 0 stay 0; the floor only applies to the others.
+    zero = {c for c, v in raw.items() if v <= 0}
     fixed: set[str] = set()
     while True:
-        low = {c for c, v in shares.items() if v < SHARE_FLOOR - 1e-12 and c not in fixed}
+        low = {
+            c
+            for c, v in shares.items()
+            if v < SHARE_FLOOR - 1e-12 and c not in fixed and c not in zero
+        }
         if not low:
             return shares
         fixed |= low

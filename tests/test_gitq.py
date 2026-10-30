@@ -144,3 +144,38 @@ def test_changed_old_ranges_lists_hunks_on_the_parent_side(fixture_repo):
     s = fixture_repo.shas
     ranges = gitq.changed_old_ranges(fixture_repo.path, s["fix1"], "billing/invoice.py")
     assert ranges == [(5, 5)]
+
+
+def test_path_removed_by_detects_delete_and_rename(tmp_path):
+    from tests.fixture_repo import _Builder
+
+    path = tmp_path / "r"
+    path.mkdir()
+    b = _Builder(path)
+    b.git("init", "-q", "-b", "main")
+    b.write("a.py", "x = 1\ny = 2\n")
+    b.write("keep.py", "k = 1\n")
+    first = b.commit("first", date="2026-01-05T10:00:00+00:00")
+    b.git("mv", "a.py", "b.py")
+    renamed = b.commit("rename", date="2026-01-06T10:00:00+00:00")
+    b.write("keep.py", "k = 2\n")
+    edited = b.commit("edit", date="2026-01-07T10:00:00+00:00")
+    b.git("rm", "-q", "b.py")
+    deleted = b.commit("delete", date="2026-01-08T10:00:00+00:00")
+    assert not gitq.path_removed_by(path, first, "a.py")
+    assert gitq.path_removed_by(path, renamed, "a.py")
+    assert not gitq.path_removed_by(path, edited, "keep.py")
+    assert gitq.path_removed_by(path, deleted, "b.py")
+
+
+def test_blame_range_reports_author_timezone(tmp_path):
+    from tests.fixture_repo import _Builder
+
+    path = tmp_path / "r"
+    path.mkdir()
+    b = _Builder(path)
+    b.git("init", "-q", "-b", "main")
+    b.write("a.py", "x = 1\n")
+    sha = b.commit("tz", date="2026-01-01T03:00:00+10:30")
+    [row] = gitq.blame_range(path, sha, "a.py", 1, 1)
+    assert row["author_tz"] == "+1030"

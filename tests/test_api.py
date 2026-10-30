@@ -53,7 +53,7 @@ def test_feed_cursor_is_base64_json_with_served_and_seed(cfg, client, fixture_re
     (cid,) = seed(cfg, fixture_repo, [text_card(fixture_repo)])
     cursor = client.get("/api/feed", params={"limit": 1}).json()["next_cursor"]
     data = json.loads(base64.urlsafe_b64decode(cursor))
-    assert data["served"] == [cid] and isinstance(data["seed"], int)
+    assert data["served"] == [cid[-12:]] and isinstance(data["seed"], int)
 
 
 def test_feed_and_card_endpoints_hide_quiz_answers(cfg, client, fixture_repo):

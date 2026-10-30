@@ -97,5 +97,25 @@ def test_page_serves_batches_and_tracks_served_in_the_cursor(conn, cfg):
     assert len(feed.decode_cursor(cursor2)[0]) == 4
 
 
+def test_cursor_stores_compact_tokens(conn, cfg):
+    for _ in range(3):
+        add(conn, cfg, text_card(FX))
+    cards, cursor = feed.page(conn, cfg, 2, None, 7, NOW)
+    tokens, _ = feed.decode_cursor(cursor)
+    assert tokens == [c["id"][-12:] for c in cards]
+    assert all(len(t) == 12 for t in tokens)
+
+
+def test_cursor_served_list_is_capped_at_500(conn, cfg):
+    for _ in range(3):
+        add(conn, cfg, text_card(FX))
+    old = [f"{n:012x}" for n in range(600)]
+    cursor = feed.encode_cursor(old, 7)
+    cards, cursor2 = feed.page(conn, cfg, 2, cursor, 7, NOW)
+    tokens, _ = feed.decode_cursor(cursor2)
+    assert len(tokens) == 500
+    assert tokens[-2:] == [c["id"][-12:] for c in cards]
+
+
 def test_page_with_nothing_left_is_empty_with_no_cursor(conn, cfg):
     assert feed.page(conn, cfg, 5, None, 1, NOW) == ([], None)

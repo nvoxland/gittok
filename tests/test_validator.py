@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from codescroll import validator
@@ -644,6 +646,24 @@ def test_spot_the_bug_fix_must_touch_the_visual_path(fixture_repo, repos):
     assert _one(card, repos) == ["not_a_bug_fix"]
 
 
+def test_spot_the_bug_rejects_a_fix_that_deletes_the_file(fixture_repo, repos):
+    s = fixture_repo.shas
+    card = _cards.spot_the_bug_card(fixture_repo)
+    # delete_legacy removes src/legacy.py; its parent is `revert`
+    card["visual"].update(path="src/legacy.py", commit=s["revert"], lines=[1, 2])
+    card["sources"] = [
+        {"repo": "fixture", "commit": s["delete_legacy"]},
+        {"repo": "fixture", "path": "src/util.py", "lines": [1, 2]},
+    ]
+    card["depth"][1] = {
+        "kind": "code_diff",
+        "repo": "fixture",
+        "commit": s["delete_legacy"],
+        "path": "src/legacy.py",
+    }
+    assert _one(card, repos) == ["not_a_bug_fix"]
+
+
 @pytest.mark.parametrize(
     ("ranges", "lines", "touches"),
     [
@@ -706,5 +726,54 @@ def test_guess_when_uses_median_year(fixture_repo, repos):
     card = _cards.guess_when_card(fixture_repo)
     card["interaction"]["choices"] = ["2025", "Sometime in 2026", "2027"]
     card["interaction"]["answer_index"] = 1
+    accepted, rejected = check([card], repos)
+    assert rejected == [] and len(accepted) == 1
+
+
+def test_guess_when_other_choice_with_the_year_is_ambiguous(fixture_repo, repos):
+    card = _cards.guess_when_card(fixture_repo)
+    card["interaction"]["choices"] = ["Early 2026", "2024", "January 2026"]
+    card["interaction"]["answer_index"] = 2
+    assert _one(card, repos) == ["ambiguous_answer"]
+
+
+def test_guess_who_same_author_in_two_choices_is_ambiguous(fixture_repo, repos):
+    card = _cards.guess_who_card(fixture_repo)
+    card["interaction"]["choices"] = [
+        "Alice Archer",
+        "Alice Archer <alice@example.com>",
+        "Bob Builder",
+    ]
+    assert _one(card, repos) == ["ambiguous_answer"]
+
+
+def test_duplicate_choices_rejected(fixture_repo, repos):
+    card = _cards.guess_who_card(fixture_repo)
+    card["interaction"]["choices"] = ["Alice Archer", "Bob Builder", "bob  builder"]
+    assert _one(card, repos) == ["duplicate_choices"]
+    card = _cards.quiz_card(fixture_repo)
+    card["interaction"]["choices"] = ["src/app.py", "src/app.py"]
+    assert _one(card, repos) == ["duplicate_choices"]
+
+
+def test_guess_when_year_uses_the_author_timezone(tmp_path):
+    from codescroll.config import Repo
+    from tests.fixture_repo import _Builder
+
+    path = tmp_path / "r"
+    path.mkdir()
+    b = _Builder(path)
+    b.git("init", "-q", "-b", "main")
+    b.write("src/a.py", "x = 1\ny = 2\n")
+    # 2026-01-01 03:00 at +10:00 is 2025-12-31 17:00 UTC
+    sha = b.commit("tz", date="2026-01-01T03:00:00+10:00")
+    fr = SimpleNamespace(path=path, shas={"head": sha, "invoice_add": sha})
+    card = _cards.guess_when_card(fr)
+    card["visual"].update(path="src/a.py", commit=sha, lines=[1, 2])
+    card["dirs"] = ["src"]
+    card["sources"] = [{"repo": "fixture", "path": "src/a.py", "lines": [1, 2]}]
+    card["interaction"]["choices"] = ["2024", "2025", "2026"]
+    card["interaction"]["answer_index"] = 2
+    repos = {"fixture": Repo(name="fixture", path=path, ref="main")}
     accepted, rejected = check([card], repos)
     assert rejected == [] and len(accepted) == 1

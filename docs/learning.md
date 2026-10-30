@@ -53,7 +53,9 @@ New story types and their server-side truth checks:
 An impression window is the events for a card from one `impression` until the next `impression` of any card in the same client session, capped at 30 minutes. (The client sends a `session` string in every event's `data`; events without one are grouped by card and 30-minute gaps.)
 
 ```
-if skip: reward = 0
+skipped = a `skip` event, or dwell_ms < skip_ms (reward.yaml, default 1000) with dwell events
+          and no other engagement (client did not send `skip`)
+if skipped and not (like on or save on): reward = 0      # explicit positive feedback wins
 else:
   dwell_ratio = min(1, dwell_ms / expected_ms(card))
   reward = w.dwell * dwell_ratio
@@ -64,6 +66,8 @@ expected_ms(card) = format_base_ms[format] + ms_per_word * words(hook + visual t
                     capped at expected_ms_max
 ```
 Defaults: `w.dwell 0.45, depth_open 0.15, explain_more 0.15, like 0.25, save 0.30, source_tap 0.10, scroll_back 0.35, answer 0.20`; `ms_per_word 250`, `expected_ms_max 45000`; `format_base_ms`: memes 1500, charts 3000, code 4000, threads/comics 6000, others 2500 (per-format table in reward.yaml).
+
+`ms` values from the client are cleaned before use: non-numeric, null or negative becomes 0, and the value is capped at 24 hours. Events whose `data` is not an object are treated as having no data. One bad event never stops the processing of the others.
 
 Rewards are written to `rewards` (one row per impression, idempotent on `impression_event_id`).
 

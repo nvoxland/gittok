@@ -3,6 +3,7 @@
 	import Feed from '#lib/components/Feed.svelte';
 	import { fetchFeed, postEvents } from '#lib/api.ts';
 	import { createBatcher } from '#lib/batcher.ts';
+	import { clearAnswers } from '#lib/cardState.ts';
 	import type { Card } from '#lib/types.ts';
 
 	let cards = $state<Card[]>([]);
@@ -26,7 +27,10 @@
 
 	async function load() {
 		try {
-			cards = (await fetchFeed()).cards;
+			const fresh = (await fetchFeed()).cards;
+			// Cards the server serves again are new or due for review: let them be answered again.
+			clearAnswers(fresh.map((c) => c.id));
+			cards = fresh;
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {

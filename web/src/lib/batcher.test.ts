@@ -32,4 +32,55 @@ describe('createBatcher', () => {
 		await b.flush();
 		expect(post).toHaveBeenLastCalledWith([ev(1), ev(2)]);
 	});
+
+	describe('leaving the page', () => {
+		afterEach(() => vi.unstubAllGlobals());
+
+		it('stop() sends pending events with sendBeacon as a JSON blob', async () => {
+			const beacon = vi.fn().mockReturnValue(true);
+			vi.stubGlobal('navigator', { sendBeacon: beacon });
+			const b = createBatcher(vi.fn().mockResolvedValue(undefined), 5000);
+			b.start();
+			b.push(ev(1));
+			b.stop();
+			expect(beacon).toHaveBeenCalledTimes(1);
+			const [url, blob] = beacon.mock.calls[0] as [string, Blob];
+			expect(url).toBe('/api/events');
+			expect(blob.type).toBe('application/json');
+			expect(JSON.parse(await blob.text())).toEqual({ events: [ev(1)] });
+			b.stop();
+			expect(beacon).toHaveBeenCalledTimes(1);
+		});
+
+		it('stop() falls back to fetch with keepalive when sendBeacon is missing', () => {
+			vi.stubGlobal('navigator', {});
+			const f = vi.fn().mockResolvedValue({ ok: true });
+			vi.stubGlobal('fetch', f);
+			const b = createBatcher(vi.fn(), 5000);
+			b.push(ev(1));
+			b.stop();
+			expect(f).toHaveBeenCalledTimes(1);
+			const init = f.mock.calls[0][1] as RequestInit;
+			expect(init.keepalive).toBe(true);
+			expect(JSON.parse(init.body as string)).toEqual({ events: [ev(1)] });
+		});
+
+		it('stop() with nothing queued sends nothing', () => {
+			const beacon = vi.fn().mockReturnValue(true);
+			vi.stubGlobal('navigator', { sendBeacon: beacon });
+			createBatcher(vi.fn(), 5000).stop();
+			expect(beacon).not.toHaveBeenCalled();
+		});
+
+		it('flushes on pagehide', () => {
+			const beacon = vi.fn().mockReturnValue(true);
+			vi.stubGlobal('navigator', { sendBeacon: beacon });
+			const b = createBatcher(vi.fn(), 5000);
+			b.start();
+			b.push(ev(1));
+			window.dispatchEvent(new Event('pagehide'));
+			expect(beacon).toHaveBeenCalledTimes(1);
+			b.stop();
+		});
+	});
 });

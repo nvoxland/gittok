@@ -6,11 +6,18 @@ const ANSWER_KEY = 'codescroll.answers';
 export type CardFlags = { liked?: boolean; saved?: boolean };
 
 let flagsCache: Record<string, CardFlags> | undefined;
-let answersCache: Record<string, unknown> | undefined;
+let answersCache: Record<string, StoredAnswer> | undefined;
+
+// Answers are kept per tab so a quiz you answered stays answered. A card that the server shows
+// again is due for spaced repetition, so it must be answerable again. Rule: a stored answer
+// expires after 12 hours, and the page calls clearAnswers() for every card in a freshly
+// fetched feed batch (a card in a new batch has not been seen in this batch, so it is new or due).
+const ANSWER_TTL_MS = 12 * 3600_000;
+type StoredAnswer = { value: unknown; at: number };
 
 const flagsMap = () => (flagsCache ??= load<Record<string, CardFlags>>(() => localStorage, KEY));
 const answersMap = () =>
-	(answersCache ??= load<Record<string, unknown>>(() => sessionStorage, ANSWER_KEY));
+	(answersCache ??= load<Record<string, StoredAnswer>>(() => sessionStorage, ANSWER_KEY));
 
 function load<T>(store: () => Storage, key: string): T {
 	try {
@@ -38,13 +45,30 @@ export function setFlag(id: string, flag: keyof CardFlags, on: boolean): void {
 }
 
 export function getAnswer<T>(id: string): T | undefined {
-	return answersMap()[id] as T | undefined;
+	const stored = answersMap()[id];
+	// Entries from older versions have no timestamp: treat them as expired.
+	if (!stored || typeof stored.at !== 'number' || Date.now() - stored.at > ANSWER_TTL_MS) {
+		return undefined;
+	}
+	return stored.value as T;
 }
 
 export function setAnswer(id: string, value: unknown): void {
 	const answers = answersMap();
-	answers[id] = value;
+	answers[id] = { value, at: Date.now() };
 	save(() => sessionStorage, ANSWER_KEY, answers);
+}
+
+export function clearAnswers(ids: string[]): void {
+	const answers = answersMap();
+	let changed = false;
+	for (const id of ids) {
+		if (id in answers) {
+			delete answers[id];
+			changed = true;
+		}
+	}
+	if (changed) save(() => sessionStorage, ANSWER_KEY, answers);
 }
 
 export function resetCardStateForTest(): void {

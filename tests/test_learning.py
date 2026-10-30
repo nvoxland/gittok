@@ -74,10 +74,63 @@ def test_skip_is_zero_even_with_other_signals(conn, cfg):
     a, b = add_card(conn, cfg), add_card(conn, cfg)
     ev(conn, a, "impression", T0)
     ev(conn, a, "skip", T0 + 300, {"ms": 300})
-    ev(conn, a, "like", T0 + 400, {"on": True})
+    ev(conn, a, "depth_open", T0 + 400, {"panel": 1})
     ev(conn, b, "impression", T0 + 1000)
     learning.process_events(conn, cfg, now=at(5))
     assert rewards(conn)[a] == 0.0
+
+
+@pytest.mark.parametrize("positive", ["like", "save"])
+def test_explicit_like_or_save_beats_skip(conn, cfg, positive):
+    a, b = add_card(conn, cfg), add_card(conn, cfg)
+    ev(conn, a, "impression", T0)
+    ev(conn, a, "skip", T0 + 300, {"ms": 300})
+    ev(conn, a, positive, T0 + 400, {"on": True})
+    ev(conn, b, "impression", T0 + 1000)
+    learning.process_events(conn, cfg, now=at(5))
+    assert rewards(conn)[a] == pytest.approx(learning.RewardConfig().weights[positive])
+
+
+def test_short_dwell_without_engagement_counts_as_skip(conn, cfg):
+    a, b, c = add_card(conn, cfg), add_card(conn, cfg), add_card(conn, cfg)
+    ev(conn, a, "impression", T0)
+    ev(conn, a, "dwell", T0 + 500, {"ms": 500})  # no skip event from the client
+    ev(conn, b, "impression", T0 + 1000)
+    ev(conn, b, "dwell", T0 + 1500, {"ms": 500})
+    ev(conn, b, "depth_open", T0 + 1600, {"panel": 1})
+    ev(conn, c, "impression", T0 + 2000)
+    learning.process_events(conn, cfg, now=at(5))
+    assert rewards(conn)[a] == 0.0
+    assert rewards(conn)[b] > 0.15
+
+
+@pytest.mark.parametrize("bad", ["abc", None, -5, 1e12, [1], {"x": 1}, float("inf")])
+def test_malformed_ms_does_not_stop_learning(conn, cfg, bad):
+    a, b, c = add_card(conn, cfg), add_card(conn, cfg), add_card(conn, cfg)
+    ev(conn, a, "impression", T0)
+    ev(conn, a, "dwell", T0 + 500, {"ms": bad})
+    ev(conn, b, "impression", T0 + 1000)
+    ev(conn, b, "dwell", T0 + 1500, {"ms": 10**6})
+    ev(conn, c, "impression", T0 + 2000)
+    res = learning.process_events(conn, cfg, now=at(5))
+    assert res["rewards"] == 2
+    r = rewards(conn)
+    assert 0.0 <= r[a] <= 1.0
+    assert r[b] == pytest.approx(0.45)
+
+
+def test_non_dict_event_data_is_ignored(conn, cfg):
+    a, b = add_card(conn, cfg), add_card(conn, cfg)
+    ev(conn, a, "impression", T0)
+    conn.execute(
+        "INSERT INTO events(card_id, type, ts, data, received_at) "
+        "VALUES (?, 'dwell', ?, '[1]', 'x')",
+        (a, T0 + 100),
+    )
+    ev(conn, a, "like", T0 + 200, {"on": True})
+    ev(conn, b, "impression", T0 + 1000)
+    assert learning.process_events(conn, cfg, now=at(5))["rewards"] == 1
+    assert rewards(conn)[a] == pytest.approx(0.25)
 
 
 def test_engagement_sums_and_clips_to_one(conn, cfg):
@@ -370,5 +423,21 @@ def test_category_shares_never_drop_below_floor(conn, cfg):
         put_weight(conn, cfg, "format", f, 5000, 0)
     shares = learning.category_shares(conn, cfg, now=NOW)
     assert min(shares.values()) >= 0.05 - 1e-9
+    assert shares["code"] == pytest.approx(0.05)
+    assert sum(shares.values()) == pytest.approx(1.0)
+
+
+def test_category_with_default_share_zero_stays_zero(conn, cfg):
+    cfg.defaults["categories"] = {**cfg.defaults["categories"], "interactive": 0.0}
+    shares = learning.category_shares(conn, cfg, now=NOW)
+    assert shares["interactive"] == 0.0
+    assert sum(shares.values()) == pytest.approx(1.0)
+    from codescroll import brief
+
+    code_evidence(conn, cfg, good=0, bad=5000)
+    for f in brief.CATEGORY_FORMATS["memes"]:
+        put_weight(conn, cfg, "format", f, 5000, 0)
+    shares = learning.category_shares(conn, cfg, now=NOW)
+    assert shares["interactive"] == 0.0
     assert shares["code"] == pytest.approx(0.05)
     assert sum(shares.values()) == pytest.approx(1.0)
