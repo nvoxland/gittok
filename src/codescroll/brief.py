@@ -247,13 +247,25 @@ def _interleave(quotas: dict[str, int]) -> list[str]:
     return out
 
 
+DEFAULT_PERSONAS = (
+    "greybeard",
+    "penny_learns",
+    "archivist",
+    "meme_compiler",
+    "paranoid_sec",
+    "shipit_sam",
+)
+
+
 def build_brief(*, repo_signals, defaults, personas, count, packet_size, recent) -> Brief:
+    if not repo_signals:
+        raise ValueError("no repos to build a brief from")
     cats = {k: w for k, w in defaults.get("categories", {}).items() if k in CATEGORY_STORIES}
     quotas = largest_remainder(cats, count)
     tone_quotas = largest_remainder(defaults.get("tones", {}), count)
     tone_pool = _interleave(tone_quotas)
     repo_names = sorted(repo_signals)
-    persona_cycle = list(personas)
+    persona_cycle = list(personas) or list(DEFAULT_PERSONAS)
 
     # 1. Allocate every card slot to (repo, category, story_type).
     slots: list[tuple[str, str, str]] = []

@@ -9,6 +9,7 @@ You get one work packet: a repo, a number of cards, story types, one tone and on
 ## Research budget
 
 - Use only the CodeScroll MCP tools: `git_log`, `git_show`, `git_blame`, `git_grep`, `read_file`, `list_dir`.
+- Pass the `run_id` you were given to every one of those calls, so the calls are counted on the right run.
 - At most **6 MCP calls per card**. Start from the leads; they are usually enough.
 - Prefer `read_file` or `git_blame` with a `lines` range. Do not read whole files over 300 lines.
 - Do not call `get_brief` or `submit_cards`; the driver does that.

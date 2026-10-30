@@ -38,7 +38,13 @@ def _resolve(cfg, repo: str, ref: str | None):
 
 
 def _check_span(lines, limit: int) -> tuple[int, int]:
-    start, end = lines
+    try:
+        start, end = lines
+        ok = isinstance(start, int) and isinstance(end, int)
+    except (TypeError, ValueError):
+        ok = False
+    if not ok:
+        raise ResearchError(f"lines must be [start, end] with two integers; got {lines!r}")
     if start < 1 or end < start:
         raise ResearchError(f"invalid lines {list(lines)}: need 1 <= a <= b")
     return start, min(end, start + limit - 1)
@@ -54,12 +60,13 @@ def _git(cfg, root, *args: str) -> str:
 def read_file(cfg, repo: str, path: str, ref=None, lines=None) -> str:
     path = _clean_path(path)
     root, ref = _resolve(cfg, repo, ref)
-    if path and gitq.object_type(root, ref, path) == "tree":
-        raise ResearchError(f"{path} is a directory; use list_dir")
+    if gitq.object_type(root, ref, path) == "tree":
+        raise ResearchError(f"{path or '.'} is a directory; use list_dir")
     try:
         _, data = gitq.run_bytes(
             root,
-            "show",
+            "cat-file",
+            "blob",
             f"{ref}:{path}",
             max_bytes=cfg.settings.research.max_output_bytes,
         )
@@ -68,7 +75,7 @@ def read_file(cfg, repo: str, path: str, ref=None, lines=None) -> str:
     if b"\0" in data[:8192]:
         raise ResearchError(f"binary file: {path}")
     text = data.decode(errors="replace")
-    all_lines = text.splitlines()
+    all_lines = gitq.split_lines(text)
     limit = cfg.settings.research.max_read_lines
     if lines is None:
         shown = all_lines[:limit]
@@ -93,7 +100,7 @@ def list_dir(cfg, repo: str, path: str = "", ref=None) -> str:
             raise ResearchError(f"{path} is a file; use read_file")
     out = _git(cfg, root, "ls-tree", "--format=%(objecttype) %(path)", f"{ref}:{path}")
     dirs, files = [], []
-    for row in out.splitlines():
+    for row in gitq.split_lines(out):
         kind, _, name = row.partition(" ")
         name = name.rsplit("/", 1)[-1]
         (dirs if kind == "tree" else files).append(name + "/" if kind == "tree" else name)
@@ -109,13 +116,21 @@ def git_grep(
     max_hits: int = 100,
     fixed: bool = False,
 ) -> str:
+    """Search file contents. `pathspec` keeps git glob behavior (e.g. `src/*.py`);
+    every other tool treats paths literally."""
+    if max_hits < 1:
+        raise ResearchError("max_hits must be >= 1")
     root, ref = _resolve(cfg, repo, ref)
     args = ["grep", "-n", "-I", "-F" if fixed else "-E", "-e", pattern, ref, "--"]
-    if pathspec:
-        args.append(_clean_path(pathspec))
+    if pathspec and (spec := _clean_path(pathspec)):
+        args.append(spec)
     try:
         _, data = gitq.run_bytes(
-            root, *args, ok_codes=(0, 1), max_bytes=cfg.settings.research.max_output_bytes
+            root,
+            *args,
+            ok_codes=(0, 1),
+            max_bytes=cfg.settings.research.max_output_bytes,
+            literal_pathspecs=False,
         )
     except gitq.GitError as e:
         detail = str(e).rsplit(": ", 1)[-1]
@@ -123,7 +138,7 @@ def git_grep(
     prefix = f"{ref}:"
     hits = [
         h[len(prefix) :] if h.startswith(prefix) else h
-        for h in data.decode(errors="replace").splitlines()
+        for h in gitq.split_lines(data.decode(errors="replace"))
     ]
     if not hits:
         return "no matches"
@@ -153,8 +168,8 @@ def git_log(
     if grep:
         args += ["--regexp-ignore-case", f"--grep={grep}"]
     args += [ref, "--"]
-    if path:
-        args.append(_clean_path(path))
+    if path and (spec := _clean_path(path)):
+        args.append(spec)
     return _git(cfg, root, *args).rstrip("\n") or "no commits"
 
 
@@ -168,9 +183,13 @@ def git_show(cfg, repo: str, commit: str, path: str | None = None, stat: bool = 
     if stat:
         args.append("--stat")
     args += [sha, "--"]
-    if path:
-        args.append(_clean_path(path))
+    if path and (spec := _clean_path(path)):
+        args.append(spec)
     return _git(cfg, root, *args)
+
+
+def limit_default(lines, limit: int):
+    return (1, limit) if lines is None else lines
 
 
 def git_blame(cfg, repo: str, path: str, lines=None, ref=None) -> str:
@@ -178,7 +197,15 @@ def git_blame(cfg, repo: str, path: str, lines=None, ref=None) -> str:
     root, ref = _resolve(cfg, repo, ref)
     limit = cfg.settings.research.max_read_lines
     args = ["blame", "--date=short"]
-    start, end = _check_span(lines or (1, limit), limit)
+    start, end = _check_span(limit_default(lines, limit), limit)
+    kind = gitq.object_type(root, ref, path) if path else "tree"
+    if kind is None:
+        raise ResearchError(f"path not found at {ref}: {path}")
+    if kind != "blob":
+        raise ResearchError(f"{path or '.'} is a directory; use list_dir")
+    total = len(gitq.split_lines(gitq.show_file(root, ref, path).decode(errors="replace")))
+    if start > total:
+        raise ResearchError(f"line range past end of file: {path} has {total} lines")
     args += ["-L", f"{start},{end}", ref, "--", path]
     try:
         out = gitq.run(root, *args, max_bytes=cfg.settings.research.max_output_bytes)

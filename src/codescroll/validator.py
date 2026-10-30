@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from functools import cache
 from importlib.resources import files
 
@@ -137,9 +138,13 @@ class _GitCache:
         if key not in self.shas:
             repo = self.repo(repo_name)
             try:
-                full = gitq.rev_parse(repo.path, sha)
+                if re.fullmatch(gitq.HEX_ID_PATTERN, sha):
+                    full = gitq.resolve_commit_id(repo.path, sha)
+                else:
+                    full = gitq.rev_parse(repo.path, sha)
             except gitq.GitError as e:
-                raise _Reject("unknown_commit", f"{sha} not found in {repo_name}") from e
+                what = "is ambiguous" if "ambiguous" in str(e) else "not found"
+                raise _Reject("unknown_commit", f"{sha} {what} in {repo_name}") from e
             if not gitq.is_ancestor(repo.path, full, repo.ref):
                 raise _Reject("commit_not_in_ref", f"{sha} is not on {repo.ref} in {repo_name}")
             self.shas[key] = full
@@ -152,23 +157,38 @@ class _GitCache:
             try:
                 data = gitq.show_file(repo.path, rev, path)
             except gitq.GitError as e:
+                if gitq.object_type(repo.path, rev, path) == "tree":
+                    raise _Reject(
+                        "path_not_at_commit", f"{path} is a directory at {rev[:10]}, not a file"
+                    ) from e
                 raise _Reject("path_not_at_commit", f"{path} does not exist at {rev[:10]}") from e
             if b"\0" in data[:8192]:
                 raise _Reject("binary_path", f"{path} is binary")
-            self.files[key] = data.decode(errors="replace").splitlines()
+            self.files[key] = gitq.split_lines(data.decode(errors="replace"))
         return self.files[key]
 
     def diff(self, repo_name: str, full: str, path: str) -> str:
         key = (repo_name, full, path)
         if key not in self.diffs:
             repo = self.repo(repo_name)
+            kinds = [gitq.object_type(repo.path, full, path)]
+            if "blob" not in kinds:
+                kinds.append(gitq.object_type(repo.path, f"{full}^1", path))
+            if "blob" not in kinds:
+                raise _Reject(
+                    "path_not_at_commit", f"{path} is not a file at or before {full[:10]}"
+                )
+            parents = gitq.run(repo.path, "rev-list", "--parents", "-n", "1", full).split()[1:]
+            if len(parents) > 1:  # merge: `git show` would print an empty combined diff
+                head = ["diff", f"{full}^1", full]
+            else:
+                head = ["show", "--format=", full]
             self.diffs[key] = gitq.run(
                 repo.path,
-                "show",
-                "--format=",
+                head[0],
                 "--no-color",
                 "--no-ext-diff",
-                full,
+                *head[1:],
                 "--",
                 path,
                 max_bytes=200_000,
@@ -177,7 +197,7 @@ class _GitCache:
 
 
 def _norm_lines(text: str) -> list[str]:
-    lines = [ln.expandtabs(4).rstrip() for ln in text.splitlines()]
+    lines = [ln.expandtabs(4).rstrip() for ln in gitq.split_lines(text)]
     while lines and not lines[0]:
         lines.pop(0)
     while lines and not lines[-1]:
@@ -209,6 +229,24 @@ def _resolve_code(gc: _GitCache, ref: dict, *, excerpt: str | None = None) -> di
     return {"code": "\n".join(code), "language": language_for(ref["path"]), "start_line": a}
 
 
+def _strip_dot(path: str) -> str:
+    while path.startswith("./"):
+        path = path[2:]
+    return path
+
+
+def _repo_refs(card: dict) -> list[dict]:
+    refs = [card["visual"]] if card["visual"]["kind"] == "code" else []
+    refs += [p for p in card["depth"] if p["kind"] in ("code", "code_diff")]
+    return refs + list(card["sources"])
+
+
+def _normalize_paths(card: dict) -> None:
+    for ref in _repo_refs(card):
+        if "path" in ref:
+            ref["path"] = _strip_dot(ref["path"])
+
+
 def _validate_one(card: dict, gc: _GitCache, personas) -> tuple[dict, dict, str]:
     errs = schema_errors(card, personas)
     if errs:
@@ -216,6 +254,13 @@ def _validate_one(card: dict, gc: _GitCache, personas) -> tuple[dict, dict, str]
     card = copy.deepcopy(card)
     for name in card["repos"]:
         gc.repo(name)
+    _normalize_paths(card)
+    for ref in _repo_refs(card):
+        if ref["repo"] not in card["repos"]:
+            raise _Reject(
+                "repo_not_in_card",
+                f"{ref['repo']!r} is cited but not listed in repos {card['repos']}",
+            )
 
     resolved: dict = {"visual": None, "depth": []}
     visual = card["visual"]
@@ -254,9 +299,14 @@ def _validate_one(card: dict, gc: _GitCache, personas) -> tuple[dict, dict, str]
             span = "-".join(map(str, src.get("lines", [])))
             keys.append(f"{src['repo']}:{src['path']}:{span}")
 
+    dirs: list[str] = []
     for d in card["dirs"]:
-        if not any(_is_dir(gc, name, d) for name in card["repos"]):
+        rel = next((r for name in card["repos"] if (r := _dir_rel(gc, name, d)) is not None), None)
+        if rel is None:
             raise _Reject("unknown_dir", f"{d} is not a directory at the repo ref")
+        if rel and rel not in dirs:
+            dirs.append(rel)
+    card["dirs"] = dirs
 
     story_key = hashlib.sha1(
         (card["story_type"] + "|" + "|".join(sorted(keys))).encode()
@@ -264,15 +314,23 @@ def _validate_one(card: dict, gc: _GitCache, personas) -> tuple[dict, dict, str]
     return card, resolved, story_key
 
 
-def _is_dir(gc: _GitCache, repo_name: str, d: str) -> bool:
-    """`d` is repo-relative, optionally prefixed with the repo name (SPEC §10.5 example)."""
+def _dir_rel(gc: _GitCache, repo_name: str, d: str) -> str | None:
+    """Repo-relative form of `d` if it is a directory in the repo, else None.
+
+    `d` may carry a repo-name prefix (SPEC §10.5 example). A bare repo name means the
+    repo root and normalizes to "" (the caller drops it).
+    """
     repo = gc.repo(repo_name)
-    rel = d.strip("/")
+    rel = _strip_dot(d).strip("/")
+    if rel and gitq.object_type(repo.path, repo.ref, rel) == "tree":
+        return rel
     if rel == repo_name:
-        return True
+        return ""
     if rel.startswith(repo_name + "/"):
         rel = rel[len(repo_name) + 1 :]
-    return gitq.object_type(repo.path, repo.ref, rel) == "tree"
+        if rel and gitq.object_type(repo.path, repo.ref, rel) == "tree":
+            return rel
+    return None
 
 
 def validate_cards(cards: list, repos: dict, personas) -> tuple[list[Accepted], list[Rejection]]:

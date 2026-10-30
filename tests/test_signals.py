@@ -294,3 +294,165 @@ def test_commits_since_after_unchanged_head_is_empty(conn, fixture_repo):
     cs = again["signals"]["commits_since"]
     assert cs["base"] == again["head_sha"]
     assert cs["count"] == 0
+
+
+def test_analyze_holds_no_write_lock_during_git_work(conn, fixture_repo, monkeypatch, tmp_path):
+    seen = {}
+    real = signals.todo_ages
+
+    def probe(*a, **k):
+        other = db.connect(tmp_path / "t.db")
+        other.execute("PRAGMA busy_timeout=0")
+        try:
+            other.execute(
+                "INSERT INTO events(type, ts, data, received_at) VALUES ('x', 1, '{}', 't')"
+            )
+            other.commit()
+            seen["wrote"] = True
+        except Exception as e:  # noqa: BLE001
+            seen["wrote"] = repr(e)
+        finally:
+            other.close()
+        return real(*a, **k)
+
+    monkeypatch.setattr(signals, "todo_ages", probe)
+    signals.analyze(conn, _repo(fixture_repo), AnalysisSettings())
+    assert seen["wrote"] is True
+
+
+def test_analyze_git_error_midway_leaves_db_unchanged(conn, fixture_repo, monkeypatch, tmp_path):
+    def boom(*a, **k):
+        raise gitq.GitError("boom")
+
+    monkeypatch.setattr(signals, "todo_ages", boom)
+    with pytest.raises(gitq.GitError):
+        signals.analyze(conn, _repo(fixture_repo), AnalysisSettings())
+    other = db.connect(tmp_path / "t.db")
+    assert other.execute("SELECT COUNT(*) FROM repos").fetchone()[0] == 0
+    assert other.execute("SELECT COUNT(*) FROM git_signals").fetchone()[0] == 0
+    other.close()
+
+
+def _git_env():
+    import os
+
+    return {
+        **os.environ,
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_AUTHOR_NAME": "T",
+        "GIT_AUTHOR_EMAIL": "t@example.com",
+        "GIT_COMMITTER_NAME": "T",
+        "GIT_COMMITTER_EMAIL": "t@example.com",
+    }
+
+
+class TinyRepo:
+    """A throwaway repo driven with plain git; `day` counts days after 2026-01-01."""
+
+    def __init__(self, path):
+        import subprocess
+
+        self.path = path
+        path.mkdir(parents=True)
+        self._run = lambda *a, env=None: subprocess.run(
+            ["git", "-C", str(path), *a], check=True, capture_output=True, env=env or _git_env()
+        )
+        self._run("init", "-q", "-b", "main")
+
+    def write(self, name, text):
+        p = self.path / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text)
+
+    def commit(self, msg, day):
+        stamp = f"2026-01-{day:02d}T12:00:00+00:00"
+        env = {**_git_env(), "GIT_AUTHOR_DATE": stamp, "GIT_COMMITTER_DATE": stamp}
+        self._run("add", "-A")
+        self._run("commit", "-q", "-m", msg, env=env)
+        return self._run("rev-parse", "HEAD").stdout.decode().strip()
+
+    def git(self, *a):
+        self._run(*a)
+
+
+@pytest.fixture
+def tiny(tmp_path):
+    return TinyRepo(tmp_path / "tiny")
+
+
+BODY = "".join(f"line {i} of a reasonably long file\n" for i in range(20))
+
+
+def test_rename_is_neither_new_nor_deleted(tiny):
+    tiny.write("a.py", BODY)
+    tiny.write("b.py", BODY + "different\n" * 5)
+    tiny.commit("add a and b", 1)
+    (tiny.path / "moved").mkdir()
+    tiny.git("mv", "a.py", "moved/a.py")
+    tiny.commit("move a", 2)
+    tiny.git("rm", "-q", "b.py")
+    tiny.commit("remove b", 3)
+    assert [r["path"] for r in signals.deleted_paths(tiny.path, "main")] == ["b.py"]
+    paths = [r["path"] for r in signals.new_files(tiny.path, "main", None)]
+    assert sorted(paths) == ["a.py", "b.py"]  # moved/a.py is not new
+
+
+def test_readded_path_lifetime_uses_latest_add_before_death(tiny):
+    tiny.write("x.py", BODY)
+    tiny.commit("add x", 1)
+    tiny.git("rm", "-q", "x.py")
+    tiny.commit("rm x", 2)
+    tiny.write("x.py", BODY)
+    readd = tiny.commit("re-add x", 10)
+    tiny.git("rm", "-q", "x.py")
+    tiny.commit("rm x again", 15)
+    rows = signals.deleted_paths(tiny.path, "main")
+    by_day = sorted(rows, key=lambda r: r["died_ts"])
+    assert [r["lived_days"] for r in by_day] == [1, 5]
+    assert by_day[1]["born_sha"] == readd
+
+
+def test_oldest_lines_finds_old_file_outside_history_window(tiny):
+    tiny.write("old.py", "ANCIENT = 1\n")
+    tiny.commit("add old", 1)
+    for i in range(8):
+        tiny.write(f"new{i}.py", f"v = {i}\n")
+        tiny.commit(f"add new{i}", 10 + i)
+        tiny.write(f"new{i}.py", f"v = {i}\nw = 2\n")
+        tiny.commit(f"edit new{i}", 20 + i % 5)
+    day10 = int(
+        __import__("datetime").datetime(2026, 1, 9, tzinfo=__import__("datetime").UTC).timestamp()
+    )
+    commits = signals.parse_log(tiny.path, "main", day10)
+    assert "old.py" not in {f.path for c in commits for f in c.files}
+    rows = signals.oldest_lines(tiny.path, "main", commits, max_files=4)
+    assert rows[0]["path"] == "old.py"
+    assert rows[0]["text"] == "ANCIENT = 1"
+
+
+def test_todo_ages_handles_colons_in_paths(tiny):
+    tiny.write("we:ird/a:b.py", "x = 1\n# TODO fix this\n")
+    tiny.write("plain.py", "# FIXME later\n")
+    tiny.commit("add", 1)
+    rows = signals.todo_ages(tiny.path, "main")
+    assert {(r["path"], r["line"], r["tag"]) for r in rows} == {
+        ("we:ird/a:b.py", 2, "TODO"),
+        ("plain.py", 1, "FIXME"),
+    }
+
+
+def test_todo_ages_skips_file_whose_blame_fails(tiny, monkeypatch):
+    tiny.write("good.py", "# TODO ok\n")
+    tiny.write("bad.py", "# TODO nope\n")
+    tiny.commit("add", 1)
+    real = gitq.run_bytes
+
+    def flaky(repo, *args, **kw):
+        if args[0] == "blame" and args[-1] == "bad.py":
+            raise gitq.GitError("blame exploded")
+        return real(repo, *args, **kw)
+
+    monkeypatch.setattr(gitq, "run_bytes", flaky)
+    rows = signals.todo_ages(tiny.path, "main")
+    assert [r["path"] for r in rows] == ["good.py"]

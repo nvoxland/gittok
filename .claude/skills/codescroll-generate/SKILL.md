@@ -16,7 +16,7 @@ Requires the `codescroll` MCP server (tools named `mcp__codescroll__*`). If thos
 2. **Launch one subagent per packet**, up to 4 at a time in parallel, with the Agent tool:
    - `subagent_type`: `general-purpose`
    - `model`: the packet's `suggested_model` (`haiku` or `sonnet`). **Never use opus** unless the user asked for it in this request.
-   - `prompt`: the packet's section from `brief_markdown` (its id, repo, count, story types, tones, personas, leads), then the full `guidance_markdown`, then: "Return only a JSON array of exactly N card objects. Use only the mcp__codescroll__ research tools, at most 6 calls per card."
+   - `prompt`: the packet's section from `brief_markdown` (its id, repo, count, story types, tones, personas, leads), then the full `guidance_markdown`, then: "run_id: <run_id>. Pass it to every mcp__codescroll__ research tool call. Return only a JSON array of exactly N card objects. Use only the mcp__codescroll__ research tools, at most 6 calls per card."
 
 3. **Submit each packet's cards** as soon as its subagent returns: `submit_cards(run_id, cards)`. If the reply is not a JSON array, extract the array; if there is none, count the packet as empty.
 

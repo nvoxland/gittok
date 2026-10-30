@@ -155,5 +155,30 @@ def build_fixture_repo(path: Path) -> FixtureRepo:
     b.write("billing/experiment.py", "X = 1\n")
     shas["unmerged"] = b.commit("Experiment, never merged", date="2026-02-05T10:00:00+00:00")
     b.git("checkout", "-q", "main")
+    # Refresh the index's stat cache now, so later read-only checks see a stable index.
+    b.git("update-index", "-q", "--refresh")
 
     return FixtureRepo(path=path, shas=shas)
+
+
+def build_small_repo(path: Path, files: dict[str, bytes]) -> FixtureRepo:
+    """One-commit repo (branch main) holding `files`; for tests needing odd content."""
+    path.mkdir(parents=True)
+    b = _Builder(path)
+    b.git("init", "-q", "-b", "main")
+    for rel, data in files.items():
+        p = path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(data)
+    sha = b.commit("small", date="2026-01-05T10:00:00+00:00")
+    return FixtureRepo(path=path, shas={"head": sha})
+
+
+def build_shadowed_sha_repo(path: Path) -> FixtureRepo:
+    """Repo where branch `<first 7 hex of first commit>` points at the second commit."""
+    fr = build_small_repo(path, {"a.py": b"a = 1\n"})
+    b = _Builder(path)
+    (path / "a.py").write_bytes(b"a = 2\n")
+    fr.shas["second"] = b.commit("second", date="2026-01-06T10:00:00+00:00")
+    b.git("branch", fr.shas["head"][:7], fr.shas["second"])
+    return fr

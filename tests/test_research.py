@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 
 import pytest
@@ -82,7 +83,7 @@ def test_read_file_binary_refused(cfg, monkeypatch):
     real = research.gitq.run_bytes
 
     def fake(repo, *args, **kw):
-        if args and args[0] == "show":
+        if args and args[0] == "cat-file":
             return 0, b"abc\x00def\n"
         return real(repo, *args, **kw)
 
@@ -286,6 +287,8 @@ def test_tools_never_write(cfg, fixture_repo):
             capture_output=True,
             text=True,
             check=True,
+            # Without this, the check itself may refresh the index ("racy git").
+            env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
         ).stdout
 
     before_status, before_mtime = status(), index.stat().st_mtime_ns
@@ -299,3 +302,56 @@ def test_tools_never_write(cfg, fixture_repo):
     research.list_dir(cfg, "fix", "src")
     assert status() == before_status
     assert index.stat().st_mtime_ns == before_mtime
+
+
+def test_read_file_empty_or_dir_path_points_to_list_dir(cfg):
+    for p in ("", ".", "src", "src/"):
+        with pytest.raises(ResearchError, match="list_dir"):
+            research.read_file(cfg, "fix", p)
+
+
+def test_git_log_and_show_treat_path_literally(cfg, fixture_repo):
+    assert research.git_log(cfg, "fix", path="src/*.py") == "no commits"
+    assert research.git_log(cfg, "fix", path=":(glob)**/*.py") == "no commits"
+    out = research.git_show(cfg, "fix", fixture_repo.shas["cochange1"], path="src/*.py")
+    assert "diff --git" not in out
+
+
+def test_git_grep_pathspec_allows_glob(cfg):
+    out = research.git_grep(cfg, "fix", "def helper", pathspec="src/*.py")
+    assert "src/app.py" in out
+
+
+def test_read_file_numbers_lines_by_newline_only(tmp_path):
+    from tests.fixture_repo import build_small_repo
+
+    fr = build_small_repo(tmp_path / "r", {"a.txt": b"one\x0ctwo\nthree\r\nfour\n"})
+    out = research.read_file(make_cfg(fr.path), "fix", "a.txt")
+    assert out.split("\n") == ["1\tone\x0ctwo", "2\tthree", "3\tfour"]
+
+
+def test_bad_lines_argument_is_research_error(cfg):
+    for bad in ([5], [1, 2, 3], [], "ab"):
+        with pytest.raises(ResearchError, match="lines"):
+            research.read_file(cfg, "fix", "src/app.py", lines=bad)
+        with pytest.raises(ResearchError, match="lines"):
+            research.git_blame(cfg, "fix", "src/app.py", lines=bad)
+
+
+def test_blame_range_past_end_is_not_path_not_found(cfg):
+    with pytest.raises(ResearchError, match="past end|has 5 lines") as e:
+        research.git_blame(cfg, "fix", "src/app.py", lines=[50, 60])
+    assert "not found" not in str(e.value)
+
+
+def test_dot_pathspec_means_whole_repo(cfg):
+    for dot in (".", "./"):
+        assert "src/app.py" in research.git_grep(cfg, "fix", "def helper", pathspec=dot)
+        assert research.git_log(cfg, "fix", path=dot) != "no commits"
+        assert "diff --git" in research.git_show(cfg, "fix", "main", path=dot)
+
+
+def test_git_grep_max_hits_must_be_positive(cfg):
+    for n in (0, -1):
+        with pytest.raises(ResearchError, match="max_hits"):
+            research.git_grep(cfg, "fix", "def", max_hits=n)

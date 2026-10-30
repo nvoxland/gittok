@@ -375,3 +375,27 @@ def test_packets_are_few_and_full():
         groups.setdefault((p.repo, p.suggested_model), []).append(p.count)
     for counts in groups.values():
         assert all(c == 4 for c in counts[:-1])
+
+
+def test_build_brief_without_repos_raises_clear_error():
+    with pytest.raises(ValueError, match="no repos"):
+        brief.build_brief(
+            repo_signals={},
+            defaults=DEFAULTS,
+            personas=PERSONAS,
+            count=3,
+            packet_size=4,
+            recent=[],
+        )
+
+
+def test_build_brief_without_personas_uses_default_list():
+    b = brief.build_brief(
+        repo_signals={"fixture": {"t0": T0, "head_sha": "9" * 40, "signals": signals()}},
+        defaults=DEFAULTS,
+        personas=[],
+        count=4,
+        packet_size=4,
+        recent=[],
+    )
+    assert all(p.personas for p in b.packets)

@@ -7,6 +7,7 @@ server. There is no headless `claude -p` anywhere in CodeScroll.
 from __future__ import annotations
 
 import functools
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -15,7 +16,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from codescroll import brief as brief_mod
-from codescroll import db, research, runs, signals, validator
+from codescroll import db, gitq, research, runs, signals, validator
 from codescroll.config import Config, ConfigError, load_config
 
 INSTRUCTIONS = """\
@@ -25,7 +26,8 @@ codescroll-generate skill: call get_brief, hand each work packet to a cheap suba
 git_grep / read_file / list_dir and returns card JSON, then submit_cards and finish_run.
 All repo tools are read-only and take a configured repo name, never a path."""
 
-_ERRORS = (research.ResearchError, runs.RunError, ConfigError)
+_ERRORS = (research.ResearchError, runs.RunError, ConfigError, gitq.GitError)
+log = logging.getLogger(__name__)
 
 
 def _db(cfg: Config):
@@ -43,10 +45,13 @@ def recent_cards(conn, days: int = 30, limit: int = 30) -> list[dict]:
 
 def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
     server = MCPServer("codescroll", instructions=INSTRUCTIONS)
-    state: dict[str, Any] = {"run_id": None}
 
     def tool(fn):
-        """Register `fn`, translate our errors to ToolError, and count calls per run."""
+        """Register `fn`, translate our errors to ToolError, and count calls per run.
+
+        Only calls that name their run count: those passing run_id, plus get_brief on the
+        run it opens. Counting never fails a tool call.
+        """
 
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
@@ -55,10 +60,20 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
                 result = fn(cfg, *args, **kwargs)
             except _ERRORS as e:
                 raise ToolError(str(e)) from e
-            run_id = kwargs.get("run_id") or state["run_id"]
+            run_id = kwargs.get("run_id")
+            if not run_id and fn.__name__ == "get_brief" and isinstance(result, dict):
+                run_id = result.get("run_id")
             if run_id:
-                with _db(cfg) as conn:
-                    runs.bump_call(conn, run_id, fn.__name__)
+                try:
+                    conn = _db(cfg)
+                    try:
+                        runs.bump_call(conn, run_id, fn.__name__)
+                    finally:
+                        conn.close()
+                except Exception:
+                    log.warning(
+                        "could not count %s call for %s", fn.__name__, run_id, exc_info=True
+                    )
             return result
 
         # Hide the cfg parameter from the tool schema.
@@ -87,9 +102,16 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
         count = count or cfg.settings.agent.default_count
         names = [cfg.repo(repo).name] if repo else sorted(cfg.repos)
         with _db(cfg) as conn:
-            repo_signals = {
-                n: signals.analyze(conn, cfg.repos[n], cfg.settings.analysis) for n in names
-            }
+            repo_signals: dict[str, dict] = {}
+            skipped: list[dict] = []
+            for n in names:
+                try:
+                    repo_signals[n] = signals.analyze(conn, cfg.repos[n], cfg.settings.analysis)
+                except gitq.GitError as e:
+                    skipped.append({"repo": n, "error": str(e)})
+            if not repo_signals:
+                why = "; ".join(f"{s['repo']}: {s['error']}" for s in skipped)
+                raise ToolError(f"no repo could be analyzed: {why}")
             b = brief_mod.build_brief(
                 repo_signals=repo_signals,
                 defaults=cfg.defaults,
@@ -100,12 +122,12 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
             )
             md = b.to_markdown()
             run_id = runs.open_run(conn, cfg, repo=repo, brief=md, requested=count)
-        state["run_id"] = run_id
         return {
             "run_id": run_id,
             "brief_markdown": md,
             "guidance_markdown": brief_mod.guidance_markdown(cfg.personas),
             "packets": b.to_dict()["packets"],
+            "skipped": skipped,
         }
 
     @tool
@@ -122,20 +144,31 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
         max: int = 50,
         grep: str | None = None,
         ref: str | None = None,
+        run_id: str | None = None,
     ) -> str:
         """Commits as "<sha> <date> <author> <subject>". since is YYYY-MM-DD; max <= 200."""
         return research.git_log(cfg, repo, path=path, since=since, max=max, grep=grep, ref=ref)
 
     @tool
     def git_show(
-        cfg: Config, repo: str, commit: str, path: str | None = None, stat: bool = False
+        cfg: Config,
+        repo: str,
+        commit: str,
+        path: str | None = None,
+        stat: bool = False,
+        run_id: str | None = None,
     ) -> str:
         """A commit's header and patch, optionally limited to one path or just --stat."""
         return research.git_show(cfg, repo, commit, path=path, stat=stat)
 
     @tool
     def git_blame(
-        cfg: Config, repo: str, path: str, lines: list[int] | None = None, ref: str | None = None
+        cfg: Config,
+        repo: str,
+        path: str,
+        lines: list[int] | None = None,
+        ref: str | None = None,
+        run_id: str | None = None,
     ) -> str:
         """Blame for a file, optionally for lines [a, b] (span is capped)."""
         return research.git_blame(cfg, repo, path, lines=tuple(lines) if lines else None, ref=ref)
@@ -149,6 +182,7 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
         ref: str | None = None,
         max_hits: int = 100,
         fixed: bool = False,
+        run_id: str | None = None,
     ) -> str:
         """Search tracked files at a ref. Extended regex unless fixed=true."""
         return research.git_grep(
@@ -157,13 +191,24 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
 
     @tool
     def read_file(
-        cfg: Config, repo: str, path: str, ref: str | None = None, lines: list[int] | None = None
+        cfg: Config,
+        repo: str,
+        path: str,
+        ref: str | None = None,
+        lines: list[int] | None = None,
+        run_id: str | None = None,
     ) -> str:
         """A file at a ref with line numbers. Pass lines=[a, b] for files over 300 lines."""
         return research.read_file(cfg, repo, path, ref=ref, lines=tuple(lines) if lines else None)
 
     @tool
-    def list_dir(cfg: Config, repo: str, path: str = "", ref: str | None = None) -> str:
+    def list_dir(
+        cfg: Config,
+        repo: str,
+        path: str = "",
+        ref: str | None = None,
+        run_id: str | None = None,
+    ) -> str:
         """Entries of a directory at a ref; directories end with "/"."""
         return research.list_dir(cfg, repo, path=path, ref=ref)
 
@@ -182,8 +227,6 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
         """Close the run. Put the models used per packet in notes, e.g. {"models": {...}}."""
         with _db(cfg) as conn:
             summary = runs.finish_run(conn, run_id, notes)
-        if state["run_id"] == run_id:
-            state["run_id"] = None
         return summary
 
     return server

@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -208,3 +209,123 @@ def test_bump_call_counts_per_tool(conn, cfg):
         "get_brief": 1,
         "submit_cards": 2,
     }
+
+
+def _variants(fixture_repo, n):
+    """n cards with different story_keys (story_type is part of the key)."""
+    types = ["rip", "archaeology", "hot_spot", "ancient_todo", "secret_couples", "whose_code"]
+    return [text_card(fixture_repo, story_type=types[i]) for i in range(n)]
+
+
+def _threaded_submit(cfg, run_id, payloads):
+    import threading
+
+    path = cfg.settings.data_dir / "codescroll.db"
+    barrier = threading.Barrier(len(payloads))
+    results, errors = [], []
+
+    def work(payload):
+        c = db.open_db(path)
+        try:
+            barrier.wait()
+            results.append(runs.submit(c, cfg, run_id, payload))
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+        finally:
+            c.close()
+
+    ts = [threading.Thread(target=work, args=(p,)) for p in payloads]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    return results, errors
+
+
+def test_parallel_submits_keep_counters_and_files(cfg, fixture_repo):
+    c = db.open_db(cfg.settings.data_dir / "codescroll.db")
+    run_id = runs.open_run(c, cfg, repo=None, brief="b", requested=10, now=NOW)
+    cards = _variants(fixture_repo, 4)
+    results, errors = _threaded_submit(cfg, run_id, [[x] for x in cards])
+    assert errors == []
+    assert sorted(r["submission"] for r in results) == [1, 2, 3, 4]
+    run = runs.get_run(c, run_id)
+    assert (run["accepted"], run["submissions"]) == (4, 4)
+    files = sorted(p.name for p in (cfg.settings.data_dir / "runs" / run_id).iterdir())
+    assert files == [f"submission-{i}.json" for i in range(1, 5)]
+
+
+def test_parallel_duplicate_story_stored_once(cfg, fixture_repo):
+    c = db.open_db(cfg.settings.data_dir / "codescroll.db")
+    run_id = runs.open_run(c, cfg, repo=None, brief="b", requested=10, now=NOW)
+    same = [text_card(fixture_repo)]
+    results, errors = _threaded_submit(cfg, run_id, [same, same, same])
+    assert errors == []
+    assert c.execute("SELECT COUNT(*) FROM cards").fetchone()[0] == 1
+    assert runs.get_run(c, run_id)["accepted"] == 1
+    assert sum(len(r["accepted"]) for r in results) == 1
+
+
+def test_story_key_unique_index_exists(conn):
+    conn.execute("INSERT INTO repos(name, path) VALUES ('r', 'p')")
+    conn.execute("INSERT INTO runs(id, status, started_at) VALUES ('r1', 'open', 't')")
+    sql = (
+        "INSERT INTO cards(id, run_id, repo_id, story_type, format, persona, tone, spec, "
+        "status, story_key, created_at) VALUES (?, 'r1', 1, 'a', 'b', 'c', 'd', '{}', "
+        "'ready', 'same', 't')"
+    )
+    conn.execute(sql, ("c1",))
+    with pytest.raises(sqlite3.IntegrityError, match="UNIQUE"):
+        conn.execute(sql, ("c2",))
+
+
+def test_submit_rejects_more_than_40_cards_per_call(conn, cfg, fixture_repo):
+    run_id = runs.open_run(conn, cfg, repo=None, brief="b", requested=20, now=NOW)
+    with pytest.raises(runs.RunError, match="40"):
+        runs.submit(conn, cfg, run_id, [{"junk": i} for i in range(41)])
+    assert runs.get_run(conn, run_id)["submissions"] == 0
+
+
+def test_submit_over_quota_cards_rejected_keeping_first(conn, cfg, fixture_repo):
+    run_id = runs.open_run(conn, cfg, repo=None, brief="b", requested=2, now=NOW)
+    cards = _variants(fixture_repo, 4)
+    res = runs.submit(conn, cfg, run_id, cards)
+    assert [a["index"] for a in res["accepted"]] == [0, 1]
+    assert [(r["index"], r["reason"]) for r in res["rejected"]] == [
+        (2, "over_quota"),
+        (3, "over_quota"),
+    ]
+    assert res["totals"] == {"accepted": 2, "rejected": 2, "requested": 2, "remaining": 0}
+    again = runs.submit(conn, cfg, run_id, [text_card(fixture_repo, story_type="whose_code")])
+    assert [r["reason"] for r in again["rejected"]] == ["over_quota"]
+    assert runs.get_run(conn, run_id)["accepted"] == 2
+
+
+def test_bump_call_ignores_non_open_runs(conn, cfg):
+    run_id = runs.open_run(conn, cfg, repo=None, brief="b", requested=1, now=NOW)
+    runs.finish_run(conn, run_id, now=NOW)
+    runs.bump_call(conn, run_id, "git_log")
+    assert runs.get_run(conn, run_id)["meta"]["mcp_calls"] == {}
+
+
+def test_bump_call_is_atomic_across_connections(cfg):
+    import threading
+
+    path = cfg.settings.data_dir / "codescroll.db"
+    c = db.open_db(path)
+    run_id = runs.open_run(c, cfg, repo=None, brief="b", requested=1, now=NOW)
+    barrier = threading.Barrier(6)
+
+    def work():
+        cc = db.open_db(path)
+        barrier.wait()
+        for _ in range(10):
+            runs.bump_call(cc, run_id, "git_log")
+        cc.close()
+
+    ts = [threading.Thread(target=work) for _ in range(6)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    assert runs.get_run(c, run_id)["meta"]["mcp_calls"] == {"git_log": 60}

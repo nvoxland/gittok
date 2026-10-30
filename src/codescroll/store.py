@@ -37,32 +37,37 @@ def _features(card: dict) -> set[tuple[str, str]]:
 
 
 def store_card(conn, cfg, run_id: str, acc, now: str | None = None) -> str:
+    with conn:
+        return insert_card(conn, cfg, run_id, acc, now)
+
+
+def insert_card(conn, cfg, run_id: str, acc, now: str | None = None) -> str:
+    """Insert a card and its features without committing (caller owns the transaction)."""
     card = acc.card
     card_id = new_card_id()
-    with conn:
-        repo_id = ensure_repo(conn, cfg.repos[card["repos"][0]])
-        conn.execute(
-            "INSERT INTO cards(id, run_id, repo_id, story_type, format, persona, tone, "
-            "spec, resolved, status, story_key, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?)",
-            (
-                card_id,
-                run_id,
-                repo_id,
-                card["story_type"],
-                card["format"],
-                card["persona"],
-                card["tone"],
-                db.dumps(card),
-                db.dumps(acc.resolved),
-                acc.story_key,
-                now or db.now_iso(),
-            ),
-        )
-        conn.executemany(
-            "INSERT INTO card_features(card_id, feature, value) VALUES (?, ?, ?)",
-            [(card_id, f, v) for f, v in sorted(_features(card))],
-        )
+    repo_id = ensure_repo(conn, cfg.repos[card["repos"][0]])
+    conn.execute(
+        "INSERT INTO cards(id, run_id, repo_id, story_type, format, persona, tone, "
+        "spec, resolved, status, story_key, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?)",
+        (
+            card_id,
+            run_id,
+            repo_id,
+            card["story_type"],
+            card["format"],
+            card["persona"],
+            card["tone"],
+            db.dumps(card),
+            db.dumps(acc.resolved),
+            acc.story_key,
+            now or db.now_iso(),
+        ),
+    )
+    conn.executemany(
+        "INSERT INTO card_features(card_id, feature, value) VALUES (?, ?, ?)",
+        [(card_id, f, v) for f, v in sorted(_features(card))],
+    )
     return card_id
 
 

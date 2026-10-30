@@ -58,3 +58,57 @@ def test_run_does_not_touch_worktree(fixture_repo):
     before = (fixture_repo.path / ".git" / "index").stat().st_mtime_ns
     gitq.run(fixture_repo.path, "status", "--porcelain")
     assert (fixture_repo.path / ".git" / "index").stat().st_mtime_ns == before
+
+
+def test_show_file_rejects_directory(fixture_repo):
+    with pytest.raises(gitq.GitError):
+        gitq.show_file(fixture_repo.path, fixture_repo.shas["head"], "src")
+
+
+def test_split_lines_only_on_newline():
+    assert gitq.split_lines("a\fb\x85c d\re\nlast\r\n") == ["a\fb\x85c d\re", "last"]
+    assert gitq.split_lines("") == []
+    assert gitq.split_lines("x\n\n") == ["x", ""]
+    assert gitq.split_lines("x") == ["x"]
+
+
+def test_run_closes_stdin(fixture_repo):
+    empty_blob = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+    assert gitq.run(fixture_repo.path, "hash-object", "--stdin").strip() == empty_blob
+
+
+def test_run_kills_git_once_max_bytes_exceeded(tmp_path, monkeypatch):
+    import subprocess
+
+    from tests.fixture_repo import build_small_repo
+
+    fr = build_small_repo(tmp_path / "r", {"big.txt": b"x" * 3_000_000})
+    procs = []
+    real = subprocess.Popen
+
+    def spy(*a, **kw):
+        p = real(*a, **kw)
+        procs.append(p)
+        return p
+
+    monkeypatch.setattr(gitq.subprocess, "Popen", spy)
+    out = gitq.run(fr.path, "cat-file", "blob", "HEAD:big.txt", max_bytes=100)
+    assert out == "x" * 100 + gitq.TRUNCATED_MARKER
+    assert procs and procs[0].returncode != 0  # killed, not drained to the end
+
+
+def test_resolve_commit_id_ignores_branch_named_like_sha(tmp_path):
+    from tests.fixture_repo import build_shadowed_sha_repo
+
+    fr = build_shadowed_sha_repo(tmp_path / "r")
+    prefix = fr.shas["head"][:7]
+    assert gitq.rev_parse(fr.path, prefix) == fr.shas["second"]  # the ref wins here
+    assert gitq.resolve_commit_id(fr.path, prefix) == fr.shas["head"]
+    assert gitq.resolve_commit_id(fr.path, fr.shas["head"]) == fr.shas["head"]
+
+
+def test_resolve_commit_id_unknown_or_non_commit(fixture_repo):
+    with pytest.raises(gitq.GitError):
+        gitq.resolve_commit_id(fixture_repo.path, "deadbee")
+    with pytest.raises(gitq.GitError):
+        gitq.resolve_commit_id(fixture_repo.path, "not-hex")

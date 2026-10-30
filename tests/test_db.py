@@ -25,7 +25,7 @@ def test_migrate_creates_all_spec_tables(tmp_path):
 def test_migrate_twice_applies_nothing_second_time(tmp_path):
     conn = db.connect(tmp_path / "x.db")
     first = db.migrate(conn)
-    assert first == ["0001_init.sql"]
+    assert first == ["0001_init.sql", "0002_story_key_unique.sql"]
     assert db.migrate(conn) == []
     assert conn.execute("SELECT name FROM schema_migrations").fetchall()[0]["name"] == first[0]
 

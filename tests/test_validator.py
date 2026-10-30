@@ -122,3 +122,88 @@ def test_input_card_not_mutated(fixture_repo, repos):
     short = card["visual"]["commit"]
     check([card], repos)
     assert card["visual"]["commit"] == short
+
+
+def test_rejects_directory_as_path(fixture_repo, repos):
+    card = example_card(fixture_repo)
+    card["visual"]["path"] = "billing"
+    _, rejected = check([card], repos)
+    assert reasons(rejected) == ["path_not_at_commit"]
+    assert "directory" in rejected[0].detail
+
+
+def test_code_diff_path_is_literal_and_must_exist(fixture_repo, repos):
+    for bad in ("billing/*.py", ":(glob)**/*.py", "billing"):
+        card = example_card(fixture_repo)
+        card["depth"][1]["path"] = bad
+        _, rejected = check([card], repos)
+        assert reasons(rejected) == ["path_not_at_commit"], bad
+
+
+def test_code_diff_allows_deleted_file(fixture_repo, repos):
+    card = example_card(fixture_repo)
+    card["depth"][1].update(commit=fixture_repo.shas["delete_legacy"], path="src/legacy.py")
+    accepted, rejected = check([card], repos)
+    assert rejected == []
+
+
+def test_line_numbers_follow_newlines_only(tmp_path):
+    from tests.fixture_repo import build_small_repo
+
+    fr = build_small_repo(
+        tmp_path / "r", {"a.txt": b"one\x0ctwo\nthree\r\nfour\n", "z.py": b"x\n"}
+    )
+    repos = {"fixture": Repo(name="fixture", path=fr.path, ref="main")}
+    gc = validator._GitCache(repos=repos)
+    assert gc.file_lines("fixture", fr.shas["head"], "a.txt") == ["one\x0ctwo", "three", "four"]
+
+
+def test_code_diff_on_merge_commit_uses_first_parent(fixture_repo, repos):
+    card = example_card(fixture_repo)
+    card["depth"][1].update(commit=fixture_repo.shas["merge"], path="src/new_feature.py")
+    accepted, rejected = check([card], repos)
+    assert rejected == []
+    assert "+def shiny():" in accepted[0].resolved["depth"][1]["diff"]
+
+
+def test_hex_sha_resolves_as_object_not_branch(tmp_path):
+    from tests.fixture_repo import build_shadowed_sha_repo
+
+    fr = build_shadowed_sha_repo(tmp_path / "r")
+    repos = {"fixture": Repo(name="fixture", path=fr.path, ref="main")}
+    gc = validator._GitCache(repos=repos)
+    assert gc.commit("fixture", fr.shas["head"][:7]) == fr.shas["head"]
+
+
+def test_rejects_repo_not_in_card_repos(fixture_repo, repos):
+    other = {**repos, "other": Repo(name="other", path=fixture_repo.path, ref="main")}
+    for mutate in (
+        lambda c: c["visual"].update(repo="other"),
+        lambda c: c["depth"][1].update(repo="other"),
+        lambda c: c["sources"][0].update(repo="other"),
+    ):
+        card = example_card(fixture_repo)
+        mutate(card)
+        _, rejected = check([card], other)
+        assert reasons(rejected) == ["repo_not_in_card"]
+
+
+def test_leading_dot_slash_is_normalized_and_dedups(fixture_repo, repos):
+    card = example_card(fixture_repo)
+    card["visual"]["path"] = "./billing/invoice.py"
+    card["depth"][1]["path"] = "././billing/invoice.py"
+    card["sources"][1]["path"] = "./billing/invoice.py"
+    plain = example_card(fixture_repo)
+    accepted, rejected = check([card, plain], repos)
+    assert [r.reason for r in rejected] == ["duplicate_story"]
+    [a] = accepted
+    assert a.card["visual"]["path"] == "billing/invoice.py"
+    assert a.card["depth"][1]["path"] == "billing/invoice.py"
+    assert a.card["sources"][1]["path"] == "billing/invoice.py"
+
+
+def test_dirs_are_normalized_in_returned_card(fixture_repo, repos):
+    card = example_card(fixture_repo, dirs=["fixture/billing", "./src/", "billing/"])
+    accepted, rejected = check([card], repos)
+    assert rejected == []
+    assert accepted[0].card["dirs"] == ["billing", "src"]

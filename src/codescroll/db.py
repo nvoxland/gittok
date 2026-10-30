@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from importlib import resources
 from pathlib import Path
@@ -27,8 +28,7 @@ def _migration_files():
 
 def migrate(conn: sqlite3.Connection) -> list[str]:
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS schema_migrations "
-        "(name TEXT PRIMARY KEY, applied_at TEXT)"
+        "CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT)"
     )
     done = {r[0] for r in conn.execute("SELECT name FROM schema_migrations")}
     applied = []
@@ -49,6 +49,21 @@ def open_db(path: Path | str) -> sqlite3.Connection:
     conn = connect(path)
     migrate(conn)
     return conn
+
+
+@contextmanager
+def immediate(conn: sqlite3.Connection):
+    """Run the block in one BEGIN IMMEDIATE transaction: commit on success, else roll back."""
+    if conn.in_transaction:
+        conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield conn
+    except BaseException:
+        conn.rollback()
+        raise
+    else:
+        conn.commit()
 
 
 def dumps(obj) -> str:

@@ -68,51 +68,71 @@ def get_run(conn, run_id) -> dict | None:
     return out
 
 
+MAX_CARDS_PER_CALL = 40
+
+
 def submit(conn, cfg, run_id: str, cards: list | dict) -> dict:
     raw = cards
     if isinstance(cards, dict):
         cards = cards.get("cards")
     if not isinstance(cards, list):
         raise RunError('submit {"cards": [...]} or a list of card objects')
-    run = get_run(conn, run_id)
-    if run is None:
-        raise RunError(f"unknown run {run_id}; call get_brief for a new run")
-    if run["status"] != "open":
-        raise RunError(f"run {run_id} is {run['status']}; call get_brief for a new run")
+    if len(cards) > MAX_CARDS_PER_CALL:
+        raise RunError(f"at most {MAX_CARDS_PER_CALL} cards per call; got {len(cards)}")
+    _check_open(get_run(conn, run_id), run_id)
+    # Git validation is slow: do it before taking the write lock.
     accepted, rejected = validator.validate_cards(cards, cfg.repos, list(cfg.personas))
-    n = run["submissions"] + 1
     out_dir = cfg.settings.data_dir / "runs" / run_id
-    out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / f"submission-{n}.json").write_text(json.dumps(raw, indent=2, ensure_ascii=False))
-    fresh = []
-    for a in accepted:
-        if store.story_key_exists(conn, a.story_key):
-            rejected.append(validator.Rejection(a.index, "duplicate_story", "already in the feed"))
-        else:
-            fresh.append(a)
-    rejected.sort(key=lambda r: r.index)
-    stored = [{"index": a.index, "card_id": store.store_card(conn, cfg, run_id, a)} for a in fresh]
-    rej = [r.as_dict() for r in rejected]
-    reasons = run["reject_reasons"] + [{**r, "submission": n} for r in rej]
-    total_acc = run["accepted"] + len(stored)
-    with conn:
+    stored: list[dict] = []
+    with db.immediate(conn):
+        run = get_run(conn, run_id)
+        _check_open(run, run_id)
+        n = run["submissions"] + 1
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / f"submission-{n}.json").write_text(json.dumps(raw, indent=2, ensure_ascii=False))
+        quota = run["requested"] - run["accepted"] if run["requested"] is not None else None
+        seen: set[str] = set()
+        for a in accepted:
+            if a.story_key in seen or store.story_key_exists(conn, a.story_key, since_days=36500):
+                rejected.append(
+                    validator.Rejection(a.index, "duplicate_story", "already in the feed")
+                )
+            elif quota is not None and len(stored) >= quota:
+                rejected.append(
+                    validator.Rejection(a.index, "over_quota", "run quota is already filled")
+                )
+            else:
+                seen.add(a.story_key)
+                card_id = store.insert_card(conn, cfg, run_id, a)
+                stored.append({"index": a.index, "card_id": card_id})
+        rejected.sort(key=lambda r: r.index)
+        rej = [r.as_dict() for r in rejected]
+        reasons = run["reject_reasons"] + [{**r, "submission": n} for r in rej]
         conn.execute(
-            "UPDATE runs SET accepted = ?, rejected = ?, submissions = ?, reject_reasons = ? "
-            "WHERE id = ?",
-            (total_acc, run["rejected"] + len(rej), n, db.dumps(reasons), run_id),
+            "UPDATE runs SET accepted = accepted + ?, rejected = rejected + ?, "
+            "submissions = ?, reject_reasons = ? WHERE id = ?",
+            (len(stored), len(rej), n, db.dumps(reasons), run_id),
         )
+        run = get_run(conn, run_id)
     return {
         "run_id": run_id,
         "submission": n,
         "accepted": stored,
         "rejected": rej,
         "totals": {
-            "accepted": total_acc,
-            "rejected": run["rejected"] + len(rej),
+            "accepted": run["accepted"],
+            "rejected": run["rejected"],
             "requested": run["requested"],
-            "remaining": max(0, run["requested"] - total_acc),
+            "remaining": max(0, run["requested"] - run["accepted"]),
         },
     }
+
+
+def _check_open(run: dict | None, run_id: str) -> None:
+    if run is None:
+        raise RunError(f"unknown run {run_id}; call get_brief for a new run")
+    if run["status"] != "open":
+        raise RunError(f"run {run_id} is {run['status']}; call get_brief for a new run")
 
 
 def _summary(run: dict) -> dict:
@@ -159,10 +179,13 @@ def expire_stale(conn, hours: int = 24, now: datetime | None = None) -> int:
 
 
 def bump_call(conn, run_id: str, tool: str) -> None:
+    """Count one tool call on an open run, in a single atomic UPDATE."""
+    key = f'"{tool}"'
     with conn:
-        run = get_run(conn, run_id)
-        if run is None:
-            return
-        calls = run["meta"].setdefault("mcp_calls", {})
-        calls[tool] = calls.get(tool, 0) + 1
-        conn.execute("UPDATE runs SET meta = ? WHERE id = ?", (db.dumps(run["meta"]), run_id))
+        conn.execute(
+            "UPDATE runs SET meta = json_set(meta, '$.mcp_calls', json_set("
+            "COALESCE(json_extract(meta, '$.mcp_calls'), json('{}')), '$.' || ?, "
+            "COALESCE(json_extract(meta, '$.mcp_calls.' || ?), 0) + 1)) "
+            "WHERE id = ? AND status = 'open'",
+            (key, key, run_id),
+        )

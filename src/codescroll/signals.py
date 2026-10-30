@@ -210,7 +210,7 @@ def huge_diffs(commits: list[Commit], threshold=1000, top=10) -> list[dict]:
 
 def new_files(repo: Path | str, ref: str, since_ts: int | None) -> list[dict]:
     args = [
-        "log", ref, "--diff-filter=A", "--no-renames", "--name-only",
+        "log", ref, "--diff-filter=A", "-M", "--name-only",
         "--format=%x1e%H%x1f%at%x1f%aN%x1f%s",
     ]  # fmt: skip
     if since_ts is not None:
@@ -301,22 +301,31 @@ def _flush_chain(out: list[dict], path: str, run: list[Commit], min_len: int) ->
         )
 
 
-def added_map(repo: Path | str, ref: str) -> dict[str, dict]:
-    """path -> first add ({sha, ts, author}) over the full history."""
-    out: dict[str, dict] = {}
-    for r in new_files(repo, ref, None):  # newest first, so later rows are older
-        out[r["path"]] = {"sha": r["sha"], "ts": r["ts"], "author": r["author"]}
+def added_map(repo: Path | str, ref: str) -> dict[str, list[dict]]:
+    """path -> every add ({sha, ts, author}) over the full history, newest first."""
+    out: dict[str, list[dict]] = {}
+    for r in new_files(repo, ref, None):  # newest first
+        out.setdefault(r["path"], []).append(
+            {"sha": r["sha"], "ts": r["ts"], "author": r["author"]}
+        )
     return out
+
+
+def _birth_before(adds, died_ts: int) -> dict | None:
+    """The latest add at or before `died_ts` (adds is a dict, or a list newest first)."""
+    if isinstance(adds, dict):
+        return adds
+    return next((a for a in adds or [] if a["ts"] <= died_ts), None)
 
 
 def deleted_paths(
     repo: Path | str,
     ref: str,
     since_ts: int | None = None,
-    added: dict[str, dict] | None = None,
+    added: dict[str, list[dict] | dict] | None = None,
 ) -> list[dict]:
     args = [
-        "log", ref, "--diff-filter=D", "--no-renames", "--name-only",
+        "log", ref, "--diff-filter=D", "-M", "--name-only",
         "--format=%x1e%H%x1f%at%x1f%aN%x1f%s",
     ]  # fmt: skip
     if since_ts is not None:
@@ -333,7 +342,7 @@ def deleted_paths(
         for path in body.splitlines():
             if not path:
                 continue
-            born = added.get(path)
+            born = _birth_before(added.get(path), int(ts))
             rows.append(
                 {
                     "path": path,
@@ -400,16 +409,17 @@ def _parse_blame(out: str) -> list[dict]:
 
 def todo_ages(repo: Path | str, ref: str, max_hits=150) -> list[dict]:
     out = gitq.run_bytes(
-        repo, "grep", "-n", "-I", "-E", _TODO_GREP, ref, "--", ok_codes=(0, 1)
+        repo, "grep", "-n", "-z", "-I", "-E", _TODO_GREP, ref, "--", ok_codes=(0, 1)
     )[1].decode(errors="replace")
     prefix = f"{ref}:"
     hits: dict[str, list[tuple[int, str]]] = {}
     n = 0
-    for ln in out.splitlines():
+    for ln in out.split("\n"):
         if ln.startswith(prefix):
             ln = ln[len(prefix) :]
-        path, _, rest = ln.partition(":")
-        num, _, text = rest.partition(":")
+        # -z: "path\0line\0text"; the path may contain ":".
+        path, _, rest = ln.partition("\0")
+        num, _, text = rest.partition("\0")
         if not num.isdigit():
             continue
         if n >= max_hits:
@@ -421,7 +431,10 @@ def todo_ages(repo: Path | str, ref: str, max_hits=150) -> list[dict]:
         args = ["blame", "--line-porcelain"]
         for num, _ in items:
             args += ["-L", f"{num},{num}"]
-        raw = gitq.run_bytes(repo, *args, ref, "--", path)[1].decode(errors="replace")
+        try:
+            raw = gitq.run_bytes(repo, *args, ref, "--", path)[1].decode(errors="replace")
+        except gitq.GitError:
+            continue  # skip this file; one bad blame must not abort the analysis
         blamed = {b["line"]: b for b in _parse_blame(raw)}
         for num, text in items:
             b = blamed.get(num)
@@ -472,15 +485,25 @@ def oldest_lines(
     max_files=50,
     max_bytes=2_000_000,
     top=20,
+    added: dict[str, list[dict]] | None = None,
 ) -> list[dict]:
-    """Oldest surviving line (by blame author-time) of a bounded set of files."""
+    """Oldest surviving line (by blame author-time) of a bounded set of files.
+
+    The oldest half of the files is chosen by true birth (earliest add in the full
+    history); the rest by churn inside the history window.
+    """
     candidates = _source_files(repo, ref, max_bytes)
+    if added is None:
+        added = added_map(repo, ref)
     born: dict[str, int] = {}
     touches: dict[str, int] = {}
     for c in commits:
         for f in c.files:
             born[f.path] = min(born.get(f.path, c.ts), c.ts)
             touches[f.path] = touches.get(f.path, 0) + 1
+    for path, adds in added.items():
+        if adds:  # true birth beats first appearance inside the window
+            born[path] = min(a["ts"] for a in adds)
     order = {p: i for i, p in enumerate(candidates)}
     by_age = sorted(candidates, key=lambda p: (born.get(p, float("inf")), order[p]))
     chosen = by_age[: max_files // 2]
@@ -541,22 +564,16 @@ def _cached(conn, repo_id: int, head: str) -> dict | None:
 def analyze(conn, repo: Repo, settings: AnalysisSettings, force: bool = False) -> dict:
     head = gitq.rev_parse(repo.path, repo.ref)
     t0 = gitq.commit_time(repo.path, head)
-    conn.execute(
-        "INSERT INTO repos(name, path, ref, mascot) VALUES (?, ?, ?, ?) "
-        "ON CONFLICT(name) DO UPDATE SET path=excluded.path, ref=excluded.ref, "
-        "mascot=excluded.mascot",
-        (repo.name, str(repo.path), repo.ref, repo.mascot),
-    )
-    conn.commit()
     row = conn.execute(
         "SELECT id, last_analyzed_sha FROM repos WHERE name = ?", (repo.name,)
     ).fetchone()
-    repo_id, previous = row["id"], row["last_analyzed_sha"]
-    if not force and previous == head:
-        cached = _cached(conn, repo_id, head)
+    previous = row["last_analyzed_sha"] if row else None
+    if row and not force and previous == head:
+        cached = _cached(conn, row["id"], head)
         if cached is not None:
             return {"head_sha": head, "t0": t0, "cached": True, "signals": cached}
 
+    # All git work happens first, with no write transaction open.
     path, ref = repo.path, head
     since = t0 - settings.history_window_days * 86400
     commits = parse_log(path, ref, since)
@@ -573,26 +590,43 @@ def analyze(conn, repo: Repo, settings: AnalysisSettings, force: bool = False) -
         "deleted_paths": lambda: deleted_paths(path, ref, since, added=added),
         "commits_since": lambda: commits_since(path, ref, previous),
         "oldest_lines": lambda: oldest_lines(
-            path, ref, commits, settings.blame_max_files, settings.blame_max_bytes
+            path,
+            ref,
+            commits,
+            settings.blame_max_files,
+            settings.blame_max_bytes,
+            added=added,
         ),
         "todo_ages": lambda: todo_ages(path, ref, settings.todo_max_hits),
     }
-    result: dict[str, object] = {}
+    computed: list[tuple[str, str, int]] = []
     for kind in SIGNAL_KINDS:
         started = time.monotonic()
         text = db.dumps(steps[kind]())
-        ms = int((time.monotonic() - started) * 1000)
+        computed.append((kind, text, int((time.monotonic() - started) * 1000)))
+
+    # Then one short transaction writes everything.
+    with db.immediate(conn):
         conn.execute(
-            "INSERT OR REPLACE INTO git_signals"
-            "(repo_id, head_sha, kind, payload, computed_at, duration_ms) VALUES (?,?,?,?,?,?)",
-            (repo_id, head, kind, text, db.now_iso(), ms),
+            "INSERT INTO repos(name, path, ref, mascot) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(name) DO UPDATE SET path=excluded.path, ref=excluded.ref, "
+            "mascot=excluded.mascot",
+            (repo.name, str(repo.path), repo.ref, repo.mascot),
         )
-        result[kind] = db.loads(text)
-    conn.execute(
-        "UPDATE repos SET last_analyzed_sha = ?, last_analyzed_at = ? WHERE id = ?",
-        (head, db.now_iso(), repo_id),
-    )
-    conn.commit()
+        repo_id = conn.execute("SELECT id FROM repos WHERE name = ?", (repo.name,)).fetchone()[0]
+        now = db.now_iso()
+        for kind, text, ms in computed:
+            conn.execute(
+                "INSERT OR REPLACE INTO git_signals"
+                "(repo_id, head_sha, kind, payload, computed_at, duration_ms) "
+                "VALUES (?,?,?,?,?,?)",
+                (repo_id, head, kind, text, now, ms),
+            )
+        conn.execute(
+            "UPDATE repos SET last_analyzed_sha = ?, last_analyzed_at = ? WHERE id = ?",
+            (head, now, repo_id),
+        )
+    result = {kind: db.loads(text) for kind, text, _ in computed}
     return {"head_sha": head, "t0": t0, "cached": False, "signals": result}
 
 
