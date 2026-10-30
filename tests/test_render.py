@@ -478,3 +478,16 @@ def test_mflux_command_matches_model_family(monkeypatch):
     assert render._mflux_command("z-image-turbo") == ["/bin/zi"]
     assert render._mflux_command("flux2-klein-4b") == ["/bin/f2"]
     assert render._mflux_command("schnell") == ["/bin/gen"]
+
+
+def test_meme_availability_probes_one_template_not_the_full_list():
+    # /templates/ lists every template and takes ~1 s; a 1 s probe flapped.
+    seen = []
+
+    def handler(request):
+        seen.append(request.url.path)
+        return httpx.Response(200)
+
+    r = render.MemeRenderer("http://memegen.test", transport=httpx.MockTransport(handler))
+    assert r.available() is True
+    assert seen == ["/templates/drake"]

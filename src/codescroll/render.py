@@ -98,8 +98,9 @@ class MemeRenderer:
 
     def available(self) -> bool:
         try:
-            with self._client(1.0) as c:
-                return c.get(f"{self.base_url}/templates/").status_code < 500
+            # One template, not /templates/: the full list takes about a second to build.
+            with self._client(2.0) as c:
+                return c.get(f"{self.base_url}/templates/drake").status_code < 500
         except httpx.HTTPError:
             return False
 
