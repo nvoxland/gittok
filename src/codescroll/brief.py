@@ -120,6 +120,14 @@ def _old(ts, t0) -> bool:
     return t0 is None or (ts or t0) <= t0 - ANCIENT_DAYS * 86400
 
 
+def _fix_hunks(sig: dict) -> dict[tuple[str, str], dict]:
+    return {(h["sha"], h["path"]): h for h in sig.get("fix_hunks") or []}
+
+
+def _ranges(ranges: list) -> str:
+    return ", ".join(str(a) if a == b else f"{a}-{b}" for a, b in ranges[:4])
+
+
 def leads_for(
     story_type: str, sig: dict, t0: int | None = None, limit: int = MAX_LEADS_PER_TYPE
 ) -> list[str]:
@@ -204,21 +212,31 @@ def leads_for(
             if _useful(n["path"])
         ]
     elif story_type == "spot_the_bug":
+        hunks = _fix_hunks(sig)
         for c in (c for c in sig.get("fix_chains", []) if _useful(c["path"])):
             for x in c["commits"]:
-                out.append(
-                    f'fix {_sha(x["sha"])} on {c["path"]}: "{x["subject"]}" '
-                    "(the visual is the file at that fix's first parent)"
+                h = hunks.get((x["sha"], c["path"]))
+                where = (
+                    f"visual commit (first parent) {_sha(h['parent'])}, "
+                    f"changed lines {_ranges(h['ranges'])}"
+                    if h
+                    else "the visual is the file at that fix's first parent"
                 )
+                out.append(f'fix {_sha(x["sha"])} on {c["path"]}: "{x["subject"]}" ({where})')
     elif story_type == "before_after":
         recent = sig.get("commits_since", {}).get("commits", [])
         out += [
             f'recent commit {_sha(c["sha"])} ({_date(c["ts"])}, {c["author"]}): "{c["subject"]}"'
             for c in recent
         ]
+        hunks = _fix_hunks(sig)
         for c in (c for c in sig.get("fix_chains", []) if _useful(c["path"])):
             x = c["commits"][-1]
-            out.append(f'fix {_sha(x["sha"])} on {c["path"]}: "{x["subject"]}"')
+            h = hunks.get((x["sha"], c["path"]))
+            before = (
+                f" (before: {_sha(h['parent'])}, changed lines {_ranges(h['ranges'])})" if h else ""
+            )
+            out.append(f'fix {_sha(x["sha"])} on {c["path"]}: "{x["subject"]}"{before}')
     else:  # explanatory types: point at central, much-edited files
         out += [f"{f['path']} ({f['commits']} commits in the last year)" for f in wide]
     return out[:limit]
@@ -513,7 +531,8 @@ class Brief:
             "recent": self.recent,
         }
 
-    def to_markdown(self) -> str:
+    def summary_markdown(self) -> str:
+        """Mix, rules, and skipped formats: what the driver needs, without packets."""
         cats = ", ".join(f"{k} {v}" for k, v in self.quotas.items() if v)
         tones = ", ".join(f"{k} {v}" for k, v in self.tone_quotas.items() if v)
         if self.mix_evidence is None:
@@ -537,28 +556,51 @@ class Brief:
         if self.rules:
             out += ["", "Rules:"]
             out += [_rule_line(r) for r in self.rules]
+        out += self._focus_lines()
+        return "\n".join(out) + "\n"
+
+    def _focus_lines(self) -> list[str]:
+        out = []
         for repo, d, slots in self.focus:
             where = f"{d}/" if d else f"repo {repo}"
-            out += [f"Focus: {where} ({slots} slots): lead with it; its leads come first."]
-        if self.recent:
-            out += ["", "## Recently posted (do not repeat these stories)", ""]
-            out += [f"- [{r['story_type']}] {r['hook']}" for r in self.recent]
+            out.append(f"Focus: {where} ({slots} slots): lead with it; its leads come first.")
+        return out
+
+    def _recent_lines(self) -> list[str]:
+        if not self.recent:
+            return []
+        out = ["", "## Recently posted (do not repeat these stories)", ""]
+        return out + [f"- [{r['story_type']}] {r['hook']}" for r in self.recent]
+
+    def _packet_section(self, pk) -> list[str]:
+        names = pk.repos if len(pk.repos) > 1 else [pk.repo]
+        where = f"repo{'s' * (len(names) > 1)} " + ", ".join(f"`{r}`" for r in names)
+        out = [
+            f"## Packet {pk.id}: {pk.count} card(s) from {where}",
+            "",
+            f"- suggested model: {pk.suggested_model}",
+            f"- categories: {', '.join(pk.categories)}",
+            f"- story types: {', '.join(pk.story_types)}",
+            f"- formats, one per card: {', '.join(pk.formats)}",
+            f"- tones, one per card: {', '.join(pk.tones)}",
+            f"- personas, one per card: {', '.join(pk.personas)}",
+            "- leads:",
+        ]
+        return out + [f"  - {line}" for line in pk.leads]
+
+    def packet_markdown(self, packet_id: str) -> str:
+        """One packet for its writer: the packet, focus lines, and stories not to repeat."""
+        pk = next((p for p in self.packets if p.id == packet_id), None)
+        if pk is None:
+            raise KeyError(packet_id)
+        focus = self._focus_lines()
+        out = self._packet_section(pk) + ([""] + focus if focus else []) + self._recent_lines()
+        return "\n".join(out) + "\n"
+
+    def to_markdown(self) -> str:
+        out = [self.summary_markdown().rstrip("\n")] + self._recent_lines()
         for pk in self.packets:
-            names = pk.repos if len(pk.repos) > 1 else [pk.repo]
-            where = f"repo{'s' * (len(names) > 1)} " + ", ".join(f"`{r}`" for r in names)
-            out += [
-                "",
-                f"## Packet {pk.id}: {pk.count} card(s) from {where}",
-                "",
-                f"- suggested model: {pk.suggested_model}",
-                f"- categories: {', '.join(pk.categories)}",
-                f"- story types: {', '.join(pk.story_types)}",
-                f"- formats, one per card: {', '.join(pk.formats)}",
-                f"- tones, one per card: {', '.join(pk.tones)}",
-                f"- personas, one per card: {', '.join(pk.personas)}",
-                "- leads:",
-            ]
-            out += [f"  - {line}" for line in pk.leads]
+            out += [""] + self._packet_section(pk)
         return "\n".join(out) + "\n"
 
 

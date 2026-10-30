@@ -133,8 +133,8 @@ async def test_get_brief_lists_active_rules_and_honors_bans(server):
             {"type": "ban", "feature": "format", "value": "code_card", "reason": "less code"},
         )
         brief = data(await client.call_tool("get_brief", {"count": 10}))
-    assert "Rules:" in brief["brief_markdown"]
-    assert "less code" in brief["brief_markdown"]
+    assert "Rules:" in brief["summary_markdown"]
+    assert "less code" in brief["summary_markdown"]
     assert all("code_card" not in pk["formats"] for pk in brief["packets"])
 
 
@@ -152,7 +152,7 @@ async def test_expired_rules_are_not_in_the_brief(fixture_repo, tmp_path):
             conn.execute("UPDATE rules SET expires_at = '2020-01-01T00:00:00Z'")
             conn.commit()
         brief = data(await client.call_tool("get_brief", {"count": 3}))
-        assert "Rules:" not in brief["brief_markdown"]
+        assert "Rules:" not in brief["summary_markdown"]
         listed = data(await client.call_tool("list_rules", {"include_expired": True}))
         assert len(listed) == 1
 
@@ -178,7 +178,8 @@ async def test_brief_skips_formats_whose_renderer_is_unavailable(
     async with Client(server) as client:
         brief = data(await client.call_tool("get_brief", {"count": 20}))
         assert (
-            "Skipping meme, mascot_scene, comic: renderer not available" in brief["brief_markdown"]
+            "Skipping meme, mascot_scene, comic: renderer not available"
+            in brief["summary_markdown"]
         )
         used = {f for pk in brief["packets"] for f in pk["formats"]}
         assert not used & {"meme", "mascot_scene", "comic"}
@@ -187,5 +188,5 @@ async def test_brief_skips_formats_whose_renderer_is_unavailable(
             render, "default_renderers", lambda cfg: {"meme": Up(), "illustration": Down()}
         )
         brief = data(await client.call_tool("get_brief", {"count": 20}))
-        assert "Skipping mascot_scene, comic" in brief["brief_markdown"]
+        assert "Skipping mascot_scene, comic" in brief["summary_markdown"]
         assert "meme" in {f for pk in brief["packets"] for f in pk["formats"]}

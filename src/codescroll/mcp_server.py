@@ -21,9 +21,10 @@ from codescroll.config import Config, ConfigError, load_config
 
 INSTRUCTIONS = """\
 CodeScroll turns git history into feed cards. To generate cards, follow the
-codescroll-generate skill: call get_brief, hand each work packet to a cheap subagent
-(the packet's suggested model) that researches with git_log / git_show / git_blame /
-git_grep / read_file / list_dir and returns card JSON, then submit_cards and finish_run.
+codescroll-generate skill: the driver calls get_brief and gives each packet id to a cheap
+subagent (the packet's suggested model). The subagent calls get_packet, researches with
+git_log / git_show / git_blame / git_grep / read_file / list_dir, runs check_cards, and
+submits with submit_cards(packet_id). The driver then calls finish_run.
 All repo tools are read-only and take a configured repo name, never a path."""
 
 _ERRORS = (
@@ -124,12 +125,11 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
 
     @tool
     def get_brief(cfg: Config, repo: str | None = None, count: int | None = None) -> dict:
-        """Analyze the repos (cached by HEAD), open a generation run, and return the brief.
+        """Analyze the repos (cached by HEAD), open a generation run, and list its packets.
 
-        The brief is split into work packets. Give each packet to one subagent on its
-        suggested model, together with that packet's own guidance_markdown (base rules plus
-        its format sections). The top-level guidance_markdown is the base rules only.
-        Returns run_id for submit_cards.
+        Returns run_id, a short summary, and packets (id, repo, count, suggested_model).
+        Give each packet id to one subagent on its suggested model; the subagent calls
+        get_packet for its leads and guidance and submits its own cards.
         """
         count = count or cfg.settings.agent.default_count
         names = [cfg.repo(repo).name] if repo else sorted(cfg.repos)
@@ -156,22 +156,40 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
                 max_illustrations=cfg.settings.render.max_illustrations_per_run,
                 **mix_inputs(conn, cfg),
             )
-            md = b.to_markdown()
-            run_id = runs.open_run(conn, cfg, repo=repo, brief=md, requested=count)
+            packets = [
+                {**pk, "packet_markdown": b.packet_markdown(pk["id"])}
+                for pk in b.to_dict()["packets"]
+            ]
+            run_id = runs.open_run(
+                conn, cfg, repo=repo, brief=b.to_markdown(), requested=count, packets=packets
+            )
         return {
             "run_id": run_id,
-            "brief_markdown": md,
-            "guidance_markdown": brief_mod.guidance_markdown(cfg.personas, formats=[]),
+            "summary_markdown": b.summary_markdown(),
             "packets": [
                 {
-                    **pk,
-                    "guidance_markdown": brief_mod.guidance_markdown(
-                        cfg.personas, pk["formats"], cfg.meme_templates, cfg.mascots
-                    ),
+                    k: pk[k]
+                    for k in ("id", "repo", "count", "suggested_model", "categories", "formats")
                 }
-                for pk in b.to_dict()["packets"]
+                for pk in packets
             ],
             "skipped": skipped,
+        }
+
+    @tool
+    def get_packet(cfg: Config, run_id: str, packet_id: str) -> dict:
+        """One work packet: its leads (packet_markdown) and card-writing guidance.
+
+        guidance_markdown has the base rules plus the sections for this packet's formats.
+        Write exactly `count` cards, one per entry in `formats`.
+        """
+        with _db(cfg) as conn:
+            pk = runs.get_packet(conn, run_id, packet_id)
+        return {
+            **pk,
+            "guidance_markdown": brief_mod.guidance_markdown(
+                cfg.personas, pk["formats"], cfg.meme_templates, cfg.mascots
+            ),
         }
 
     @tool
@@ -257,14 +275,27 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
         return research.list_dir(cfg, repo, path=path, ref=ref)
 
     @tool
-    def submit_cards(cfg: Config, run_id: str, cards: list[dict[str, Any]]) -> dict:
-        """Validate cards against git and store the good ones.
+    def check_cards(cfg: Config, run_id: str, cards: list[dict[str, Any]]) -> dict:
+        """Dry run: validate cards against git and stored stories, but store nothing.
 
-        Returns accepted card ids and, for each rejected card, its index, a reason code,
-        and a detail message. Fix rejected cards once and resubmit only those.
+        Returns ok (indexes that pass) and rejected (index, reason, detail). Fix the
+        rejected cards, then submit_cards. Quota and illustration budget are not checked.
         """
         with _db(cfg) as conn:
-            return runs.submit(conn, cfg, run_id, cards)
+            return runs.check(conn, cfg, run_id, cards)
+
+    @tool
+    def submit_cards(
+        cfg: Config, run_id: str, cards: list[dict[str, Any]], packet_id: str | None = None
+    ) -> dict:
+        """Validate cards against git and store the good ones.
+
+        Pass packet_id when a packet's writer submits its own cards. Returns accepted card
+        ids and, for each rejected card, its index, a reason code, and a detail message.
+        Fix rejected cards once and resubmit only those.
+        """
+        with _db(cfg) as conn:
+            return runs.submit(conn, cfg, run_id, cards, packet_id=packet_id)
 
     @tool
     def finish_run(cfg: Config, run_id: str, notes: dict[str, Any] | None = None) -> dict:

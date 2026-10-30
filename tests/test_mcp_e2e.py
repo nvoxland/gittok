@@ -26,29 +26,46 @@ async def test_scripted_run_stores_valid_cards_and_reports_rejects(fixture_repo,
     async with Client(server) as client:
         brief = data(await client.call_tool("get_brief", {"count": 3}))
         run_id = brief["run_id"]
-        assert "## Packet p1" in brief["brief_markdown"]
-        assert "Real people" in brief["guidance_markdown"]
-        assert brief["packets"][0]["suggested_model"] in ("haiku", "sonnet")
-        # Top-level guidance is the base only; each packet carries its own with its formats.
-        assert "Format sections" not in brief["guidance_markdown"]
-        for pk in brief["packets"]:
-            assert len(pk["formats"]) == pk["count"]
-            assert "Real people" in pk["guidance_markdown"]
-            for fmt in pk["formats"]:
-                assert f"### Format: `{fmt}`" in pk["guidance_markdown"]
+        # The driver gets a compact brief: no guidance, no leads, no card-writing text.
+        assert "Mix:" in brief["summary_markdown"]
+        assert "## Packet" not in brief["summary_markdown"]
+        assert "guidance_markdown" not in brief and "brief_markdown" not in brief
+        pk0 = brief["packets"][0]
+        assert pk0["suggested_model"] in ("haiku", "sonnet")
+        assert set(pk0) == {"id", "repo", "count", "suggested_model", "categories", "formats"}
 
-        # A subagent researches with the read-only tools...
+        # Each subagent fetches its own packet: leads, recent stories, guidance with formats.
+        for pk in brief["packets"]:
+            got = data(
+                await client.call_tool("get_packet", {"run_id": run_id, "packet_id": pk["id"]})
+            )
+            assert got["count"] == pk["count"] and len(got["formats"]) == pk["count"]
+            assert f"## Packet {pk['id']}" in got["packet_markdown"]
+            assert "Real people" in got["guidance_markdown"]
+            for fmt in got["formats"]:
+                assert f"### Format: `{fmt}`" in got["guidance_markdown"]
+
+        # It researches with the read-only tools...
         shown = await client.call_tool(
             "git_show",
             {"repo": "fixture", "commit": fixture_repo.shas["fix1"], "run_id": run_id},
         )
         assert "fix rounding in invoice" in shown.content[0].text
 
-        # ...and the driver submits what it wrote.
+        # ...checks its cards without storing them...
         bad = example_card(fixture_repo)
         bad["visual"]["lines"] = [1, 99]
         cards = [example_card(fixture_repo), text_card(fixture_repo), bad]
-        res = data(await client.call_tool("submit_cards", {"run_id": run_id, "cards": cards}))
+        chk = data(await client.call_tool("check_cards", {"run_id": run_id, "cards": cards}))
+        assert chk["ok"] == [0, 1]
+        assert [r["reason"] for r in chk["rejected"]] == ["lines_out_of_range"]
+
+        # ...and submits them itself, naming its packet.
+        res = data(
+            await client.call_tool(
+                "submit_cards", {"run_id": run_id, "cards": cards, "packet_id": pk0["id"]}
+            )
+        )
         assert len(res["accepted"]) == 2
         assert [r["reason"] for r in res["rejected"]] == ["lines_out_of_range"]
         assert res["rejected"][0]["index"] == 2
@@ -61,6 +78,9 @@ async def test_scripted_run_stores_valid_cards_and_reports_rejects(fixture_repo,
         assert summary["accepted"] == 2
         assert summary["mcp_calls"]["git_show"] == 1
         assert summary["mcp_calls"]["submit_cards"] == 1
+        assert summary["mcp_calls"]["check_cards"] == 1
+        assert summary["mcp_calls"]["get_packet"] == len(brief["packets"])
+        assert summary["packets"][pk0["id"]] == {"accepted": 2, "rejected": 1, "submissions": 1}
 
 
 def _calls(cfg, run_id):
@@ -143,7 +163,7 @@ async def test_get_brief_uses_learned_mix_when_rewards_exist(fixture_repo, tmp_p
     server = mcp_server.build_server(lambda: cfg)
     async with Client(server) as client:
         plain = data(await client.call_tool("get_brief", {"count": 12}))
-    assert "Mix: default" in plain["brief_markdown"]
+    assert "Mix: default" in plain["summary_markdown"]
 
     from codescroll import brief
 
@@ -163,4 +183,4 @@ async def test_get_brief_uses_learned_mix_when_rewards_exist(fixture_repo, tmp_p
         conn.commit()
     async with Client(server) as client:
         learned = data(await client.call_tool("get_brief", {"count": 12}))
-    assert "Mix: learned from 7 rewards" in learned["brief_markdown"]
+    assert "Mix: learned from 7 rewards" in learned["summary_markdown"]

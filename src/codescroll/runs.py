@@ -27,7 +27,14 @@ def _new_run_id(now: datetime) -> str:
 
 
 def open_run(
-    conn, cfg, *, repo: str | None, brief: str, requested: int, now: datetime | None = None
+    conn,
+    cfg,
+    *,
+    repo: str | None,
+    brief: str,
+    requested: int,
+    packets: list[dict] | None = None,
+    now: datetime | None = None,
 ) -> str:
     now = now or datetime.now(UTC)
     max_count = cfg.settings.agent.max_count
@@ -53,7 +60,14 @@ def open_run(
         conn.execute(
             "INSERT INTO runs(id, repo_id, status, brief, requested, meta, started_at) "
             "VALUES (?, ?, 'open', ?, ?, ?, ?)",
-            (run_id, repo_id, brief, requested, db.dumps({"mcp_calls": {}}), _iso(now)),
+            (
+                run_id,
+                repo_id,
+                brief,
+                requested,
+                db.dumps({"mcp_calls": {}, "packets": packets or []}),
+                _iso(now),
+            ),
         )
     return run_id
 
@@ -71,27 +85,70 @@ def get_run(conn, run_id) -> dict | None:
 MAX_CARDS_PER_CALL = 40
 
 
-def submit(conn, cfg, run_id: str, cards: list | dict) -> dict:
-    raw = cards
+def get_packet(conn, run_id: str, packet_id: str) -> dict:
+    run = get_run(conn, run_id)
+    if run is None:
+        raise RunError(f"unknown run {run_id}; call get_brief for a new run")
+    for pk in run["meta"].get("packets") or []:
+        if pk["id"] == packet_id:
+            return pk
+    raise RunError(f"unknown packet {packet_id} in run {run_id}")
+
+
+def _card_list(cards: list | dict) -> list:
     if isinstance(cards, dict):
         cards = cards.get("cards")
     if not isinstance(cards, list):
         raise RunError('submit {"cards": [...]} or a list of card objects')
     if len(cards) > MAX_CARDS_PER_CALL:
         raise RunError(f"at most {MAX_CARDS_PER_CALL} cards per call; got {len(cards)}")
-    run0 = get_run(conn, run_id)
-    _check_open(run0, run_id)
+    return cards
+
+
+def _validate(conn, cfg, run: dict, cards: list):
     max_images = cfg.settings.render.max_illustrations_per_run
-    # Git validation is slow: do it before taking the write lock.
-    accepted, rejected = validator.validate_cards(
+    return validator.validate_cards(
         cards,
         cfg.repos,
         list(cfg.personas),
         meme_templates=cfg.meme_templates,
         mascots=cfg.mascots,
         signals_for=lambda name: signals.load_signals(conn, name),
-        illustration_budget=max(0, max_images - run0["meta"].get("illustrations", 0)),
+        illustration_budget=max(0, max_images - run["meta"].get("illustrations", 0)),
     )
+
+
+def check(conn, cfg, run_id: str, cards: list | dict) -> dict:
+    """Validate without storing: the same git checks as submit, plus duplicate stories.
+
+    Run quota and illustration budget are not checked here; submit decides those.
+    """
+    cards = _card_list(cards)
+    run = get_run(conn, run_id)
+    _check_open(run, run_id)
+    accepted, rejected = _validate(conn, cfg, run, cards)
+    ok: list[int] = []
+    seen: set[str] = set()
+    for a in accepted:
+        if a.story_key in seen or store.story_key_exists(conn, a.story_key, since_days=36500):
+            rejected.append(validator.Rejection(a.index, "duplicate_story", "already in the feed"))
+        else:
+            seen.add(a.story_key)
+            ok.append(a.index)
+    rejected.sort(key=lambda r: r.index)
+    return {"ok": ok, "rejected": [r.as_dict() for r in rejected]}
+
+
+def submit(conn, cfg, run_id: str, cards: list | dict, packet_id: str | None = None) -> dict:
+    raw = cards
+    cards = _card_list(cards)
+    if packet_id is not None:
+        get_packet(conn, run_id, packet_id)
+    run0 = get_run(conn, run_id)
+    _check_open(run0, run_id)
+    max_images = cfg.settings.render.max_illustrations_per_run
+    # Git validation is slow: do it before taking the write lock.
+    accepted, rejected = _validate(conn, cfg, run0, cards)
     out_dir = cfg.settings.data_dir / "runs" / run_id
     stored: list[dict] = []
     with db.immediate(conn):
@@ -126,7 +183,19 @@ def submit(conn, cfg, run_id: str, cards: list | dict) -> dict:
                 stored.append({"index": a.index, "card_id": card_id})
         rejected.sort(key=lambda r: r.index)
         rej = [r.as_dict() for r in rejected]
-        reasons = run["reject_reasons"] + [{**r, "submission": n} for r in rej]
+        reasons = run["reject_reasons"] + [
+            {**r, "submission": n, **({"packet": packet_id} if packet_id else {})} for r in rej
+        ]
+        meta = {**run["meta"], "illustrations": used}
+        if packet_id is not None:
+            results = dict(meta.get("packet_results") or {})
+            prev = results.get(packet_id) or {"accepted": 0, "rejected": 0, "submissions": 0}
+            results[packet_id] = {
+                "accepted": prev["accepted"] + len(stored),
+                "rejected": prev["rejected"] + len(rej),
+                "submissions": prev["submissions"] + 1,
+            }
+            meta["packet_results"] = results
         conn.execute(
             "UPDATE runs SET accepted = accepted + ?, rejected = rejected + ?, "
             "submissions = ?, reject_reasons = ?, meta = ? WHERE id = ?",
@@ -135,7 +204,7 @@ def submit(conn, cfg, run_id: str, cards: list | dict) -> dict:
                 len(rej),
                 n,
                 db.dumps(reasons),
-                db.dumps({**run["meta"], "illustrations": used}),
+                db.dumps(meta),
                 run_id,
             ),
         )
@@ -172,6 +241,7 @@ def _summary(run: dict) -> dict:
         "duration_ms": run["duration_ms"],
         "top_reject_reasons": [[k, v] for k, v in counts.most_common(5)],
         "mcp_calls": run["meta"].get("mcp_calls", {}),
+        "packets": run["meta"].get("packet_results", {}),
     }
 
 

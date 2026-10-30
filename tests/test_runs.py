@@ -119,6 +119,7 @@ def test_finish_run_summary_and_idempotence(conn, cfg, fixture_repo):
         "duration_ms": 90_000,
         "top_reject_reasons": [["unknown_dir", 2], ["schema", 1]],
         "mcp_calls": {},
+        "packets": {},
     }
     run = runs.get_run(conn, run_id)
     assert run["finished_at"] == "2026-03-01T12:01:30Z"
@@ -379,3 +380,49 @@ def test_submit_uses_config_templates_and_signals(conn, cfg, fixture_repo):
     assert [a["index"] for a in res["accepted"]] == [0]
     assert [r["reason"] for r in res["rejected"]] == ["chart_no_data"]
     assert signals.load_signals(conn, "fixture") is None
+
+
+PACKETS = [
+    {"id": "p1", "repo": "fixture", "count": 2, "formats": ["text_post", "code_card"]},
+    {"id": "p2", "repo": "fixture", "count": 1, "formats": ["text_post"]},
+]
+
+
+def test_open_run_stores_packets_and_get_packet_returns_one(conn, cfg):
+    run_id = runs.open_run(
+        conn, cfg, repo="fixture", brief="b", requested=3, packets=PACKETS, now=NOW
+    )
+    assert runs.get_packet(conn, run_id, "p2") == PACKETS[1]
+    with pytest.raises(runs.RunError, match="unknown packet p9"):
+        runs.get_packet(conn, run_id, "p9")
+    with pytest.raises(runs.RunError, match="unknown run"):
+        runs.get_packet(conn, "r_nope", "p1")
+
+
+def test_submit_with_packet_id_counts_per_packet(conn, cfg, fixture_repo):
+    run_id = runs.open_run(
+        conn, cfg, repo="fixture", brief="b", requested=3, packets=PACKETS, now=NOW
+    )
+    bad = example_card(fixture_repo, dirs=["nope"])
+    runs.submit(conn, cfg, run_id, [example_card(fixture_repo), bad], packet_id="p1")
+    runs.submit(conn, cfg, run_id, [text_card(fixture_repo)], packet_id="p1")
+    meta = runs.get_run(conn, run_id)["meta"]
+    assert meta["packet_results"] == {"p1": {"accepted": 2, "rejected": 1, "submissions": 2}}
+    with pytest.raises(runs.RunError, match="unknown packet p9"):
+        runs.submit(conn, cfg, run_id, [text_card(fixture_repo)], packet_id="p9")
+
+
+def test_check_reports_rejects_and_stores_nothing(conn, cfg, fixture_repo):
+    run_id = runs.open_run(conn, cfg, repo="fixture", brief="b", requested=3, now=NOW)
+    bad = example_card(fixture_repo, dirs=["nope"])
+    good = example_card(fixture_repo)
+    out = runs.check(conn, cfg, run_id, [good, bad])
+    assert out["ok"] == [0]
+    assert [(r["index"], r["reason"]) for r in out["rejected"]] == [(1, "unknown_dir")]
+    run = runs.get_run(conn, run_id)
+    assert (run["accepted"], run["rejected"], run["submissions"]) == (0, 0, 0)
+    assert conn.execute("SELECT COUNT(*) FROM cards").fetchone()[0] == 0
+    # A card already in the feed is flagged as a duplicate by check too.
+    runs.submit(conn, cfg, run_id, [good])
+    again = runs.check(conn, cfg, run_id, [good])
+    assert [r["reason"] for r in again["rejected"]] == ["duplicate_story"]

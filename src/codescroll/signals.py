@@ -550,6 +550,34 @@ def recent_commits(commits: list[Commit], t0: int, days=30, limit=200, max_files
     ]
 
 
+def fix_hunks(path: Path | str, chains: list[dict], limit: int = 30) -> list[dict]:
+    """First parent and old-side changed lines of each fix commit in `chains`.
+
+    Lets spot_the_bug and before_after leads name the buggy version directly, so the
+    agent does not have to look it up. At most `limit` commits; git errors skip one.
+    """
+    out: list[dict] = []
+    for chain in chains:
+        for c in chain["commits"]:
+            if len(out) >= limit:
+                return out
+            try:
+                parent = gitq.first_parent(path, c["sha"])
+                ranges = gitq.changed_old_ranges(path, c["sha"], chain["path"])
+            except gitq.GitError:
+                continue
+            if parent and ranges:
+                out.append(
+                    {
+                        "sha": c["sha"],
+                        "path": chain["path"],
+                        "parent": parent,
+                        "ranges": [list(r) for r in ranges],
+                    }
+                )
+    return out
+
+
 SIGNAL_KINDS = (
     "churn",
     "co_change",
@@ -559,6 +587,7 @@ SIGNAL_KINDS = (
     "new_files",
     "reverts",
     "fix_chains",
+    "fix_hunks",
     "deleted_paths",
     "commits_since",
     "oldest_lines",
@@ -596,6 +625,7 @@ def analyze(conn, repo: Repo, settings: AnalysisSettings, force: bool = False) -
     since = t0 - settings.history_window_days * 86400
     commits = parse_log(path, ref, since)
     added = added_map(path, ref)
+    chains = fix_chains(commits)
     steps = {
         "churn": lambda: churn(commits, t0, windows=settings.churn_windows_days),
         "co_change": lambda: co_change(commits),
@@ -604,7 +634,8 @@ def analyze(conn, repo: Repo, settings: AnalysisSettings, force: bool = False) -
         "huge_diffs": lambda: huge_diffs(commits),
         "new_files": lambda: new_files(path, ref, since),
         "reverts": lambda: reverts(path, ref, since),
-        "fix_chains": lambda: fix_chains(commits),
+        "fix_chains": lambda: chains,
+        "fix_hunks": lambda: fix_hunks(path, chains),
         "deleted_paths": lambda: deleted_paths(path, ref, since, added=added),
         "commits_since": lambda: commits_since(path, ref, previous),
         "oldest_lines": lambda: oldest_lines(

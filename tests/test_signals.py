@@ -506,3 +506,27 @@ def test_analyze_reports_group_path_and_ref_for_cross_repo_leads(conn, fixture_r
         assert res["cached"] is cached
         assert res["group"] == "dev"
         assert res["path"] == str(fixture_repo.path)
+
+
+def test_fix_hunks_name_first_parent_and_old_side_ranges(fixture_repo):
+    commits = signals.parse_log(fixture_repo.path, "main")
+    hunks = signals.fix_hunks(fixture_repo.path, signals.fix_chains(commits))
+    fix2 = fixture_repo.shas["fix2"]
+    entry = next(h for h in hunks if h["sha"] == fix2 and h["path"] == "billing/invoice.py")
+    assert entry["parent"] == gitq.first_parent(fixture_repo.path, fix2)
+    assert entry["ranges"] == [
+        list(r) for r in gitq.changed_old_ranges(fixture_repo.path, fix2, "billing/invoice.py")
+    ]
+    assert entry["ranges"]
+
+
+def test_fix_hunks_respects_limit(fixture_repo):
+    commits = signals.parse_log(fixture_repo.path, "main")
+    assert signals.fix_hunks(fixture_repo.path, signals.fix_chains(commits), limit=1) == [
+        signals.fix_hunks(fixture_repo.path, signals.fix_chains(commits))[0]
+    ]
+
+
+def test_analyze_stores_fix_hunks(conn, fixture_repo):
+    out = signals.analyze(conn, _repo(fixture_repo), AnalysisSettings())
+    assert any(h["sha"] == fixture_repo.shas["fix1"] for h in out["signals"]["fix_hunks"])

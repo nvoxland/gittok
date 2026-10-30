@@ -1198,3 +1198,36 @@ def test_drift_since_uses_the_full_changed_file_list(tmp_path):
     members["web"]["head_sha"] = web.shas["1"]
     leads = brief.cross_leads(members).get("drift_alert", [])
     assert not any("possible drift: SYNC_BATCH_SIZE" in x for x in leads), leads
+
+
+def test_fix_leads_name_parent_and_changed_lines_when_known():
+    sig = signals()
+    sig["fix_hunks"] = [
+        {"sha": "f" * 40, "path": "billing/invoice.py", "parent": "3" * 40, "ranges": [[10, 12]]},
+        {
+            "sha": "1" * 40,
+            "path": "billing/invoice.py",
+            "parent": "4" * 40,
+            "ranges": [[7, 7], [20, 21]],
+        },
+    ]
+    bug = brief.leads_for("spot_the_bug", sig, T0)
+    assert "visual commit (first parent) 3333333333, changed lines 10-12" in bug[0]
+    assert "visual commit (first parent) 4444444444, changed lines 7, 20-21" in bug[1]
+    after = brief.leads_for("before_after", sig, T0)
+    assert any("before: 4444444444, changed lines 7, 20-21" in x for x in after)
+
+
+def test_summary_and_packet_markdown_split_the_brief():
+    recent = [{"story_type": "rip", "hook": "RIP legacy.py"}]
+    b = build(count=10, recent=recent)
+    summary = b.summary_markdown()
+    assert "Make 10 cards" in summary and "Mix:" in summary
+    assert "## Packet" not in summary and "RIP legacy.py" not in summary
+    p2 = b.packet_markdown("p2")
+    assert p2.startswith("## Packet p2")
+    assert "## Packet p1" not in p2
+    assert "RIP legacy.py" in p2  # each writer sees what not to repeat
+    assert b.to_markdown().count("## Packet") == len(b.packets)
+    with pytest.raises(KeyError):
+        b.packet_markdown("p99")
