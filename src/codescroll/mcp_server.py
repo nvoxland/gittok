@@ -32,7 +32,7 @@ def _db(cfg: Config):
     return db.open_db(cfg.settings.data_dir / "codescroll.db")
 
 
-def _recent(conn, days: int = 30, limit: int = 30) -> list[dict]:
+def recent_cards(conn, days: int = 30, limit: int = 30) -> list[dict]:
     since = (datetime.now(UTC) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
     rows = conn.execute(
         "SELECT story_type, spec FROM cards WHERE created_at >= ? ORDER BY created_at DESC LIMIT ?",
@@ -96,7 +96,7 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
                 personas=list(cfg.personas),
                 count=count,
                 packet_size=cfg.settings.agent.packet_size,
-                recent=_recent(conn),
+                recent=recent_cards(conn),
             )
             md = b.to_markdown()
             run_id = runs.open_run(conn, cfg, repo=repo, brief=md, requested=count)

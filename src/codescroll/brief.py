@@ -6,6 +6,7 @@ cards without any other context.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 # Story types that can be rendered in M1, by default-mix category.
@@ -56,11 +57,40 @@ def _sha(s) -> str:
     return (s or "?")[:10]
 
 
-def leads_for(story_type: str, sig: dict) -> list[str]:
-    """Human-readable leads for one story type, drawn from precomputed signals."""
+_NOISE = re.compile(
+    r"(^|/)(\.beads|node_modules|dist|build|vendor|\.svelte-kit)/"
+    r"|(^|/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|uv\.lock|poetry\.lock|Cargo\.lock"
+    r"|Gemfile\.lock|go\.sum|deps\.lock\.json)$"
+    r"|\.(min\.js|min\.css|map|lock|jsonl|svg|png|jpg|gif|ico|pdf)$"
+)
+_TEST = re.compile(
+    r"(^|/)(tests?|spec|__tests__)/|(_test|_spec|\.test|\.spec)\.[a-z]+$|(^|/)test_[^/]+$"
+)
+_COMMENT_TODO = re.compile(r"(#|//|;|--|/\*|\*|<!--)\s*(TODO|FIXME|HACK|XXX)\b")
+ANCIENT_DAYS = 90
+
+
+def _useful(path: str) -> bool:
+    return not _NOISE.search(path)
+
+
+def _old(ts, t0) -> bool:
+    return t0 is None or (ts or t0) <= t0 - ANCIENT_DAYS * 86400
+
+
+def leads_for(story_type: str, sig: dict, t0: int | None = None) -> list[str]:
+    """Human-readable leads for one story type, drawn from precomputed signals.
+
+    Generated files and lockfiles are never leads. "Ancient" stories need material
+    older than ANCIENT_DAYS before the repo's last commit (t0).
+    """
     churn_files = sig.get("churn", {}).get("files", {})
-    hot = churn_files.get("90") or churn_files.get("365") or []
-    wide = churn_files.get("365") or hot
+    hot = [f for f in churn_files.get("90") or churn_files.get("365") or [] if _useful(f["path"])]
+    wide = [
+        f
+        for f in churn_files.get("365") or churn_files.get("90") or []
+        if _useful(f["path"]) and not _TEST.search(f["path"])
+    ]
     out: list[str] = []
     if story_type == "hot_spot":
         out += [
@@ -92,6 +122,7 @@ def leads_for(story_type: str, sig: dict) -> list[str]:
             f"{o['path']}:{o['line']} from {_date(o['ts'])} ({o['author']}, {_sha(o['sha'])}): "
             f"{o['text'].strip()[:80]}"
             for o in sig.get("oldest_lines", [])
+            if _old(o["ts"], t0) and _useful(o["path"])
         ]
     elif story_type == "rip":
         out += [
@@ -99,15 +130,20 @@ def leads_for(story_type: str, sig: dict) -> list[str]:
             f"{_date(d['died_ts'])} ({_sha(d['died_sha'])}, {d['died_author']}): "
             f'"{d["cause"]}", lived {d.get("lived_days", "?")} days'
             for d in sig.get("deleted_paths", [])
+            if _useful(d["path"])
         ]
     elif story_type == "ancient_todo":
         out += [
             f"{t['path']}:{t['line']} {t['tag']} from {_date(t['ts'])} ({t['author']}, "
             f"{_sha(t['sha'])}): {t['text'].strip()[:80]}"
             for t in sig.get("todo_ages", [])
+            if _old(t["ts"], t0) and _COMMENT_TODO.search(t["text"]) and _useful(t["path"])
         ]
     elif story_type == "secret_couples":
-        pairs = sorted(sig.get("co_change", []), key=lambda c: c.get("same_dir", False))
+        pairs = sorted(
+            (c for c in sig.get("co_change", []) if _useful(c["a"]) and _useful(c["b"])),
+            key=lambda c: c.get("same_dir", False),
+        )
         out += [
             f"{c['a']} + {c['b']}: changed together {c['count']} times (jaccard {c['jaccard']})"
             for c in pairs
@@ -121,6 +157,7 @@ def leads_for(story_type: str, sig: dict) -> list[str]:
             f"{n['path']} added {_date(n['ts'])} in {_sha(n['sha'])} by {n['author']}: "
             f'"{n["subject"]}"'
             for n in sig.get("new_files", [])
+            if _useful(n["path"])
         ]
     elif story_type == "before_after":
         recent = sig.get("commits_since", {}).get("commits", [])
@@ -139,7 +176,7 @@ def leads_for(story_type: str, sig: dict) -> list[str]:
 @dataclass
 class Packet:
     id: str
-    category: str
+    categories: list[str]
     repo: str
     count: int
     story_types: list[str]
@@ -185,9 +222,10 @@ class Brief:
         for pk in self.packets:
             out += [
                 "",
-                f"## Packet {pk.id}: {pk.count} {pk.category} card(s) from repo `{pk.repo}`",
+                f"## Packet {pk.id}: {pk.count} card(s) from repo `{pk.repo}`",
                 "",
                 f"- suggested model: {pk.suggested_model}",
+                f"- categories: {', '.join(pk.categories)}",
                 f"- story types: {', '.join(pk.story_types)}",
                 f"- tones, one per card: {', '.join(pk.tones)}",
                 f"- personas, one per card: {', '.join(pk.personas)}",
@@ -217,31 +255,41 @@ def build_brief(*, repo_signals, defaults, personas, count, packet_size, recent)
     repo_names = sorted(repo_signals)
     persona_cycle = list(personas)
 
-    packets: list[Packet] = []
-    slot_no = 0
+    # 1. Allocate every card slot to (repo, category, story_type).
+    slots: list[tuple[str, str, str]] = []
+    leads_by: dict[tuple[str, str], list[str]] = {}
     for ci, (category, n) in enumerate(sorted(quotas.items(), key=lambda kv: (-kv[1], kv[0]))):
         if not n:
             continue
-        repo = repo_names[ci % len(repo_names)]
-        sig = repo_signals[repo]["signals"]
-        leads = {t: leads_for(t, sig) for t in CATEGORY_STORIES[category]}
-        usable = [t for t in CATEGORY_STORIES[category] if leads[t]] or list(
-            CATEGORY_STORIES[category]
-        )
-        slots = [usable[i % len(usable)] for i in range(n)]
-        # Group cheap and expensive story types into separate packets.
+        # Split the category across repos; rotate the start so small quotas spread out.
+        order = repo_names[ci % len(repo_names) :] + repo_names[: ci % len(repo_names)]
+        per_repo = largest_remainder({r: 1.0 for r in order}, n)
+        for repo in order:
+            sig = repo_signals[repo]["signals"]
+            t0 = repo_signals[repo].get("t0")
+            for t in CATEGORY_STORIES[category]:
+                leads_by.setdefault((repo, t), leads_for(t, sig, t0))
+            usable = [t for t in CATEGORY_STORIES[category] if leads_by[(repo, t)]] or list(
+                CATEGORY_STORIES[category]
+            )
+            slots += [(repo, category, usable[i % len(usable)]) for i in range(per_repo[repo])]
+
+    # 2. Pack slots into as few packets as possible per (repo, model tier).
+    packets: list[Packet] = []
+    slot_no = 0
+    for repo in repo_names:
         for concrete in (True, False):
-            group = [t for t in slots if (t in CONCRETE_TYPES) == concrete]
+            group = [s for s in slots if s[0] == repo and (s[2] in CONCRETE_TYPES) == concrete]
             for start in range(0, len(group), packet_size):
                 chunk = group[start : start + packet_size]
-                types = list(dict.fromkeys(chunk))
-                plead = [f"[{t}] {line}" for t in types for line in leads[t]] or [
+                types = list(dict.fromkeys(t for _, _, t in chunk))
+                plead = [f"[{t}] {line}" for t in types for line in leads_by[(repo, t)]] or [
                     "No precomputed leads: explore with list_dir and git_log."
                 ]
                 packets.append(
                     Packet(
                         id=f"p{len(packets) + 1}",
-                        category=category,
+                        categories=list(dict.fromkeys(c for _, c, _ in chunk)),
                         repo=repo,
                         count=len(chunk),
                         story_types=types,

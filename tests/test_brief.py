@@ -169,7 +169,8 @@ def test_packets_cover_count_and_carry_leads(count, size):
         assert p.story_types, p
         assert p.leads, p
         assert len(p.tones) == p.count
-        assert set(p.story_types) <= set(brief.CATEGORY_STORIES[p.category])
+        allowed = {t for c in p.categories for t in brief.CATEGORY_STORIES[c]}
+        assert set(p.story_types) <= allowed
     assert len({p.id for p in b.packets}) == len(b.packets)
 
 
@@ -236,3 +237,141 @@ def test_guidance_has_rules_personas_and_budget():
     assert "dry-deadpan" in md
     assert "explain" in md and "excerpt" in md
     assert "MCP calls per card" in md
+
+
+def test_noise_paths_are_not_leads():
+    sig = signals()
+    sig["churn"]["files"]["90"] = [
+        {"path": "web/package-lock.json", "commits": 9, "lines": 9000},
+        {"path": ".beads/issues.jsonl", "commits": 9, "lines": 900},
+        {"path": "uv.lock", "commits": 9, "lines": 900},
+        {"path": "dist/app.min.js", "commits": 9, "lines": 900},
+        {"path": "src/app.py", "commits": 2, "lines": 10},
+    ]
+    leads = brief.leads_for("hot_spot", sig, T0)
+    assert leads[0].startswith("src/app.py")
+    assert not any("lock" in x or ".beads" in x or ".min." in x for x in leads)
+
+
+def test_explainers_skip_test_files():
+    sig = signals()
+    sig["churn"]["files"]["365"] = [
+        {"path": "test/foo/api_test.clj", "commits": 9, "lines": 9},
+        {"path": "tests/test_x.py", "commits": 9, "lines": 9},
+        {"path": "src/foo/api.clj", "commits": 3, "lines": 9},
+    ]
+    assert brief.leads_for("what_it_does", sig, T0) == [
+        "src/foo/api.clj (3 commits in the last year)"
+    ]
+
+
+def test_ancient_stories_need_old_material():
+    sig = signals()
+    young = T0 - 5 * 86400
+    old = T0 - 400 * 86400
+    sig["todo_ages"] = [
+        {
+            "path": "a.py",
+            "line": 1,
+            "text": "# TODO new",
+            "tag": "TODO",
+            "author": "A",
+            "ts": young,
+            "sha": "1" * 40,
+        },
+        {
+            "path": "b.py",
+            "line": 2,
+            "text": "# TODO old",
+            "tag": "TODO",
+            "author": "A",
+            "ts": old,
+            "sha": "2" * 40,
+        },
+    ]
+    sig["oldest_lines"] = [dict(sig["todo_ages"][0])]
+    assert [x.split(":")[0] for x in brief.leads_for("ancient_todo", sig, T0)] == ["b.py"]
+    assert brief.leads_for("archaeology", sig, T0) == []
+
+
+def test_todo_leads_must_be_comments_not_prose():
+    sig = signals()
+    old = T0 - 400 * 86400
+    sig["todo_ages"] = [
+        {
+            "path": "SPEC.md",
+            "line": 1,
+            "text": "| **Ancient TODO** | Oldest open TODO |",
+            "tag": "TODO",
+            "author": "A",
+            "ts": old,
+            "sha": "1" * 40,
+        },
+        {
+            "path": "x.py",
+            "line": 1,
+            "text": "x = 1  # FIXME: overflow",
+            "tag": "FIXME",
+            "author": "A",
+            "ts": old,
+            "sha": "2" * 40,
+        },
+        {
+            "path": "y.clj",
+            "line": 1,
+            "text": ";; TODO handle nil",
+            "tag": "TODO",
+            "author": "A",
+            "ts": old,
+            "sha": "3" * 40,
+        },
+    ]
+    paths = [x.split(":")[0] for x in brief.leads_for("ancient_todo", sig, T0)]
+    assert paths == ["x.py", "y.clj"]
+
+
+def test_rip_and_new_arrival_skip_noise():
+    sig = signals()
+    sig["deleted_paths"][0]["path"] = "web/package-lock.json"
+    sig["new_files"][0]["path"] = ".beads/issues.jsonl"
+    assert brief.leads_for("rip", sig, T0) == []
+    assert brief.leads_for("new_arrival", sig, T0) == []
+
+
+def test_each_category_is_split_across_repos():
+    sig = signals()
+    b = brief.build_brief(
+        repo_signals={
+            "a": {"t0": T0, "head_sha": "9" * 40, "signals": sig},
+            "b": {"t0": T0, "head_sha": "8" * 40, "signals": sig},
+        },
+        defaults=DEFAULTS,
+        personas=PERSONAS,
+        count=10,
+        packet_size=4,
+        recent=[],
+    )
+    drama = {p.repo for p in b.packets if "git_drama" in p.categories}
+    assert drama == {"a", "b"}
+
+
+def test_packets_are_few_and_full():
+    sig = signals()
+    b = brief.build_brief(
+        repo_signals={
+            "a": {"t0": T0, "head_sha": "9" * 40, "signals": sig},
+            "b": {"t0": T0, "head_sha": "8" * 40, "signals": sig},
+        },
+        defaults=DEFAULTS,
+        personas=PERSONAS,
+        count=10,
+        packet_size=4,
+        recent=[],
+    )
+    # At most one partly-filled packet per (repo, model tier).
+    assert len(b.packets) <= 6
+    groups = {}
+    for p in b.packets:
+        groups.setdefault((p.repo, p.suggested_model), []).append(p.count)
+    for counts in groups.values():
+        assert all(c == 4 for c in counts[:-1])

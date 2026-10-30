@@ -297,7 +297,7 @@ Tones: lean dry-deadpan and roast; at least 4 other tones for exploration.
 
 `claude -p` is not allowed on a subscription, so generation runs inside an interactive agent session:
 
-- The user (or a `/loop` later) runs the `codescroll-generate` skill in Claude Code. The CodeScroll MCP server is configured in the project's `.mcp.json`.
+- The user (or a `/loop` later) runs the `codescroll-generate` skill in Claude Code. The MCP server is part of the same process as the feed: `codescroll serve` exposes the feed API, the PWA, and MCP (streamable HTTP) at `/mcp`. The project's `.mcp.json` points at that URL.
 - The skill calls `get_brief`, which runs analysis, builds the brief, opens a `runs` row, and returns the brief split into **work packets** (3–5 cards each, with leads and a suggested model).
 - **Cost control:** the session model only orchestrates. Each packet goes to a cheap subagent (haiku for concrete-lead stories, sonnet for explanatory ones). Subagents research with read-only MCP tools (`git_log`, `git_show`, `git_blame`, `git_grep`, `read_file`, `list_dir`), scoped to configured repos, and return card JSON.
 - The driver calls `submit_cards`; the server validates (§10.6), stores accepted cards, and returns reject reasons. One fix round by the same subagent, then rejected cards are dropped.

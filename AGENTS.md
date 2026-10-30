@@ -83,8 +83,8 @@ uv run ruff check                # lint
 npm --prefix web install
 npm --prefix web test            # vitest component tests
 npm --prefix web run build       # static build into web/build
-uv run codescroll serve          # feed at http://127.0.0.1:8008
-uv run codescroll mcp            # MCP server over stdio (Claude Code starts it from .mcp.json)
+uv run codescroll serve          # feed at http://127.0.0.1:8008 and MCP at /mcp
+uv run codescroll mcp            # stdio MCP fallback; normally MCP is served by `serve` at /mcp
 ```
 
 Red/green TDD is required: write the failing test first.
@@ -94,9 +94,10 @@ Red/green TDD is required: write the failing test first.
 CodeScroll (working name; see `SPEC.md`) is a personal TikTok-style feed of cards about your own codebases.
 
 - `src/codescroll/` is a Python package. It analyzes git history into signals, builds a brief, validates card specs against git, stores cards in SQLite, and serves the feed API.
-- Card generation does **not** shell out to `claude -p`. A Claude Code session runs the `codescroll-generate` skill. The skill calls the CodeScroll MCP server for a brief, researches repos through read-only MCP tools, and submits card specs back for validation. Cheap subagents (haiku/sonnet) write the cards; the driver only orchestrates.
+- **One server process.** `codescroll serve` runs a FastAPI app that serves the feed API, the web build, and the MCP endpoint at `/mcp`. The project `.mcp.json` points Claude Code at `http://127.0.0.1:8008/mcp`, so the server must be running before a generation session. `codescroll mcp` (stdio) is a fallback.
+- Card generation does **not** shell out to `claude -p`. A Claude Code session runs the `codescroll-generate` skill (`.claude/skills/`). The skill calls `get_brief`, gives each work packet to a haiku or sonnet subagent that researches through the read-only MCP tools, and submits card specs back for validation. The driver only orchestrates.
 - `web/` is a SvelteKit static app: vertical snap-scroll feed, horizontal depth panels.
-- Config lives in `config/*.yaml`; the card contract is `schema/card.schema.json`; runtime data goes in `data/` (gitignored).
+- Config lives in `config/*.yaml`; the card contract is `src/codescroll/schema/card.schema.json`; agent guidance is `src/codescroll/prompts/generate.md`; runtime data goes in `data/` (gitignored).
 
 ## Conventions & Patterns
 
