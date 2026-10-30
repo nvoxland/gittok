@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from codescroll import gitq
+from codescroll import db, gitq
+from codescroll.config import AnalysisSettings, Repo
 
 
 @dataclass(frozen=True)
@@ -225,3 +228,382 @@ def new_files(repo: Path | str, ref: str, since_ts: int | None) -> list[dict]:
                     {"path": path, "sha": sha, "ts": int(ts), "author": author, "subject": subject}
                 )
     return rows
+
+
+_REVERT_RE = re.compile(r"This reverts commit ([0-9a-f]{7,40})")
+
+
+def reverts(repo: Path | str, ref: str, since_ts: int | None = None) -> list[dict]:
+    args = ["log", ref, '--grep=^Revert "', "--format=%x1e%H%x1f%at%x1f%aN%x1f%s%x1f%b"]
+    if since_ts is not None:
+        args.append(f"--since=@{since_ts}")
+    args.append("--")
+    rows: list[dict] = []
+    for rec in gitq.run(repo, *args).split("\x1e"):
+        if not rec.strip():
+            continue
+        sha, ts, author, subject, body = rec.strip("\n").split("\x1f", 4)
+        m = _REVERT_RE.search(body)
+        if not m:
+            continue
+        try:
+            reverted = gitq.run(repo, "log", "-1", "--format=%s", m.group(1)).strip()
+        except gitq.GitError:
+            continue
+        rows.append(
+            {
+                "sha": sha,
+                "ts": int(ts),
+                "author": author,
+                "subject": subject,
+                "reverted_sha": m.group(1),
+                "reverted_subject": reverted,
+            }
+        )
+    return rows
+
+
+_FIX_RE = re.compile(r"^(fix|hotfix|oops|typo)\b|\bfix(es|ed)?\b|\bagain\b", re.IGNORECASE)
+
+
+def fix_chains(commits: list[Commit], window_days=7, min_len=2) -> list[dict]:
+    """Runs of fix-ish commits on one path, each within `window_days` of the previous."""
+    per_path: dict[str, list[Commit]] = {}
+    for c in sorted(commits, key=lambda c: c.ts):
+        if not _FIX_RE.search(c.subject):
+            continue
+        for p in {f.path for f in c.files}:
+            per_path.setdefault(p, []).append(c)
+    gap = window_days * 86400
+    chains: list[dict] = []
+    for path, cs in per_path.items():
+        run: list[Commit] = []
+        for c in cs:
+            if run and c.ts - run[-1].ts > gap:
+                _flush_chain(chains, path, run, min_len)
+                run = []
+            run.append(c)
+        _flush_chain(chains, path, run, min_len)
+    chains.sort(key=lambda ch: (-len(ch["commits"]), ch["path"]))
+    return chains
+
+
+def _flush_chain(out: list[dict], path: str, run: list[Commit], min_len: int) -> None:
+    if len(run) >= min_len:
+        out.append(
+            {
+                "path": path,
+                "commits": [
+                    {"sha": c.sha, "ts": c.ts, "subject": c.subject, "author": c.author}
+                    for c in run
+                ],
+            }
+        )
+
+
+def added_map(repo: Path | str, ref: str) -> dict[str, dict]:
+    """path -> first add ({sha, ts, author}) over the full history."""
+    out: dict[str, dict] = {}
+    for r in new_files(repo, ref, None):  # newest first, so later rows are older
+        out[r["path"]] = {"sha": r["sha"], "ts": r["ts"], "author": r["author"]}
+    return out
+
+
+def deleted_paths(
+    repo: Path | str,
+    ref: str,
+    since_ts: int | None = None,
+    added: dict[str, dict] | None = None,
+) -> list[dict]:
+    args = [
+        "log", ref, "--diff-filter=D", "--no-renames", "--name-only",
+        "--format=%x1e%H%x1f%at%x1f%aN%x1f%s",
+    ]  # fmt: skip
+    if since_ts is not None:
+        args.append(f"--since=@{since_ts}")
+    args.append("--")
+    if added is None:
+        added = added_map(repo, ref)
+    rows: list[dict] = []
+    for rec in gitq.run(repo, *args).split("\x1e"):
+        if not rec.strip():
+            continue
+        head, _, body = rec.partition("\n")
+        sha, ts, author, subject = head.split("\x1f", 3)
+        for path in body.splitlines():
+            if not path:
+                continue
+            born = added.get(path)
+            rows.append(
+                {
+                    "path": path,
+                    "died_sha": sha,
+                    "died_ts": int(ts),
+                    "died_author": author,
+                    "cause": subject,
+                    "born_sha": born["sha"] if born else None,
+                    "born_ts": born["ts"] if born else None,
+                    "born_author": born["author"] if born else None,
+                    "lived_days": (int(ts) - born["ts"]) // 86400 if born else None,
+                }
+            )
+    return rows
+
+
+def commits_since(repo: Path | str, ref: str, last_sha: str | None) -> dict:
+    none = {"base": None, "count": None, "commits": []}
+    if not last_sha:
+        return none
+    try:
+        base = gitq.rev_parse(repo, last_sha)
+        if not gitq.is_ancestor(repo, base, ref):
+            return none
+    except gitq.GitError:
+        return none
+    out = gitq.run(
+        repo, "log", f"{base}..{ref}", "--no-merges", "--format=%x1e%H%x1f%at%x1f%aN%x1f%s"
+    )
+    rows = []
+    for rec in out.split("\x1e"):
+        if not rec.strip():
+            continue
+        sha, ts, author, subject = rec.strip("\n").split("\x1f", 3)
+        rows.append({"sha": sha, "ts": int(ts), "author": author, "subject": subject})
+    return {"base": last_sha, "count": len(rows), "commits": rows[:50]}
+
+
+_TODO_RE = re.compile(r"\b(TODO|FIXME|HACK|XXX)\b")
+# \b is not portable in POSIX ERE (macOS libc); spell out the word boundaries for git grep.
+_TODO_GREP = "(^|[^[:alnum:]_])(TODO|FIXME|HACK|XXX)([^[:alnum:]_]|$)"
+
+
+def _parse_blame(out: str) -> list[dict]:
+    """Parse `git blame --line-porcelain` into one dict per line."""
+    rows: list[dict] = []
+    cur: dict | None = None
+    for ln in out.split("\n"):
+        if cur is None:
+            parts = ln.split(" ")
+            if len(parts) >= 3 and len(parts[0]) == 40:
+                cur = {"sha": parts[0], "line": int(parts[2])}
+            continue
+        if ln.startswith("\t"):
+            cur["text"] = ln[1:]
+            rows.append(cur)
+            cur = None
+        elif ln.startswith("author "):
+            cur["author"] = ln[7:]
+        elif ln.startswith("author-time "):
+            cur["ts"] = int(ln[12:])
+    return rows
+
+
+def todo_ages(repo: Path | str, ref: str, max_hits=150) -> list[dict]:
+    out = gitq.run_bytes(
+        repo, "grep", "-n", "-I", "-E", _TODO_GREP, ref, "--", ok_codes=(0, 1)
+    )[1].decode(errors="replace")
+    prefix = f"{ref}:"
+    hits: dict[str, list[tuple[int, str]]] = {}
+    n = 0
+    for ln in out.splitlines():
+        if ln.startswith(prefix):
+            ln = ln[len(prefix) :]
+        path, _, rest = ln.partition(":")
+        num, _, text = rest.partition(":")
+        if not num.isdigit():
+            continue
+        if n >= max_hits:
+            break
+        hits.setdefault(path, []).append((int(num), text))
+        n += 1
+    rows: list[dict] = []
+    for path, items in hits.items():
+        args = ["blame", "--line-porcelain"]
+        for num, _ in items:
+            args += ["-L", f"{num},{num}"]
+        raw = gitq.run_bytes(repo, *args, ref, "--", path)[1].decode(errors="replace")
+        blamed = {b["line"]: b for b in _parse_blame(raw)}
+        for num, text in items:
+            b = blamed.get(num)
+            m = _TODO_RE.search(text)
+            if not b or not m:
+                continue
+            rows.append(
+                {
+                    "path": path,
+                    "line": num,
+                    "text": text.strip(),
+                    "tag": m.group(1),
+                    "author": b["author"],
+                    "ts": b["ts"],
+                    "sha": b["sha"],
+                }
+            )
+    rows.sort(key=lambda r: (r["ts"], r["path"], r["line"]))
+    return rows
+
+
+_SOURCE_EXTS = frozenset(
+    ".py .clj .cljs .cljc .js .ts .tsx .jsx .go .rs .java .kt .rb .sh .sql"
+    " .svelte .c .h .cpp".split()
+)
+
+
+def _source_files(repo: Path | str, ref: str, max_bytes: int) -> list[str]:
+    """Source-like files at `ref` no bigger than `max_bytes`, in ls-tree order."""
+    out = gitq.run(repo, "ls-tree", "-r", "-l", ref)
+    paths = []
+    for ln in out.splitlines():
+        meta, _, path = ln.partition("\t")
+        parts = meta.split()
+        if len(parts) < 4 or parts[1] != "blob" or not parts[3].isdigit():
+            continue
+        if int(parts[3]) > max_bytes:
+            continue
+        if Path(path).suffix in _SOURCE_EXTS:
+            paths.append(path)
+    return paths
+
+
+def oldest_lines(
+    repo: Path | str,
+    ref: str,
+    commits: list[Commit],
+    max_files=50,
+    max_bytes=2_000_000,
+    top=20,
+) -> list[dict]:
+    """Oldest surviving line (by blame author-time) of a bounded set of files."""
+    candidates = _source_files(repo, ref, max_bytes)
+    born: dict[str, int] = {}
+    touches: dict[str, int] = {}
+    for c in commits:
+        for f in c.files:
+            born[f.path] = min(born.get(f.path, c.ts), c.ts)
+            touches[f.path] = touches.get(f.path, 0) + 1
+    order = {p: i for i, p in enumerate(candidates)}
+    by_age = sorted(candidates, key=lambda p: (born.get(p, float("inf")), order[p]))
+    chosen = by_age[: max_files // 2]
+    by_churn = sorted(candidates, key=lambda p: (-touches.get(p, 0), order[p]))
+    for p in by_churn:
+        if len(chosen) >= max_files:
+            break
+        if p not in chosen:
+            chosen.append(p)
+    rows: list[dict] = []
+    for path in chosen:
+        out = gitq.run_bytes(repo, "blame", "--line-porcelain", ref, "--", path)[1]
+        lines = [b for b in _parse_blame(out.decode(errors="replace")) if "ts" in b]
+        if not lines:
+            continue
+        b = min(lines, key=lambda b: (b["ts"], b["line"]))
+        rows.append(
+            {
+                "path": path,
+                "line": b["line"],
+                "text": b["text"],
+                "author": b["author"],
+                "ts": b["ts"],
+                "sha": b["sha"],
+            }
+        )
+    rows.sort(key=lambda r: (r["ts"], r["path"]))
+    return rows[:top]
+
+
+SIGNAL_KINDS = (
+    "churn",
+    "co_change",
+    "author_shares",
+    "commit_times",
+    "huge_diffs",
+    "new_files",
+    "reverts",
+    "fix_chains",
+    "deleted_paths",
+    "commits_since",
+    "oldest_lines",
+    "todo_ages",
+)
+
+
+def _cached(conn, repo_id: int, head: str) -> dict | None:
+    rows = conn.execute(
+        "SELECT kind, payload FROM git_signals WHERE repo_id = ? AND head_sha = ?",
+        (repo_id, head),
+    ).fetchall()
+    found = {r["kind"]: db.loads(r["payload"]) for r in rows}
+    if not all(k in found for k in SIGNAL_KINDS):
+        return None
+    return {k: found[k] for k in SIGNAL_KINDS}
+
+
+def analyze(conn, repo: Repo, settings: AnalysisSettings, force: bool = False) -> dict:
+    head = gitq.rev_parse(repo.path, repo.ref)
+    t0 = gitq.commit_time(repo.path, head)
+    conn.execute(
+        "INSERT INTO repos(name, path, ref, mascot) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(name) DO UPDATE SET path=excluded.path, ref=excluded.ref, "
+        "mascot=excluded.mascot",
+        (repo.name, str(repo.path), repo.ref, repo.mascot),
+    )
+    conn.commit()
+    row = conn.execute(
+        "SELECT id, last_analyzed_sha FROM repos WHERE name = ?", (repo.name,)
+    ).fetchone()
+    repo_id, previous = row["id"], row["last_analyzed_sha"]
+    if not force and previous == head:
+        cached = _cached(conn, repo_id, head)
+        if cached is not None:
+            return {"head_sha": head, "t0": t0, "cached": True, "signals": cached}
+
+    path, ref = repo.path, head
+    since = t0 - settings.history_window_days * 86400
+    commits = parse_log(path, ref, since)
+    added = added_map(path, ref)
+    steps = {
+        "churn": lambda: churn(commits, t0, windows=settings.churn_windows_days),
+        "co_change": lambda: co_change(commits),
+        "author_shares": lambda: author_shares(commits),
+        "commit_times": lambda: commit_times(commits),
+        "huge_diffs": lambda: huge_diffs(commits),
+        "new_files": lambda: new_files(path, ref, since),
+        "reverts": lambda: reverts(path, ref, since),
+        "fix_chains": lambda: fix_chains(commits),
+        "deleted_paths": lambda: deleted_paths(path, ref, since, added=added),
+        "commits_since": lambda: commits_since(path, ref, previous),
+        "oldest_lines": lambda: oldest_lines(
+            path, ref, commits, settings.blame_max_files, settings.blame_max_bytes
+        ),
+        "todo_ages": lambda: todo_ages(path, ref, settings.todo_max_hits),
+    }
+    result: dict[str, object] = {}
+    for kind in SIGNAL_KINDS:
+        started = time.monotonic()
+        text = db.dumps(steps[kind]())
+        ms = int((time.monotonic() - started) * 1000)
+        conn.execute(
+            "INSERT OR REPLACE INTO git_signals"
+            "(repo_id, head_sha, kind, payload, computed_at, duration_ms) VALUES (?,?,?,?,?,?)",
+            (repo_id, head, kind, text, db.now_iso(), ms),
+        )
+        result[kind] = db.loads(text)
+    conn.execute(
+        "UPDATE repos SET last_analyzed_sha = ?, last_analyzed_at = ? WHERE id = ?",
+        (head, db.now_iso(), repo_id),
+    )
+    conn.commit()
+    return {"head_sha": head, "t0": t0, "cached": False, "signals": result}
+
+
+def load_signals(conn, repo_name: str) -> dict | None:
+    row = conn.execute(
+        "SELECT id, last_analyzed_sha FROM repos WHERE name = ?", (repo_name,)
+    ).fetchone()
+    if row is None or row["last_analyzed_sha"] is None:
+        return None
+    rows = conn.execute(
+        "SELECT kind, payload FROM git_signals WHERE repo_id = ? AND head_sha = ?",
+        (row["id"], row["last_analyzed_sha"]),
+    ).fetchall()
+    return {r["kind"]: db.loads(r["payload"]) for r in rows} or None
