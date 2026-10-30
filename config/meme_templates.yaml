@@ -1,0 +1,20 @@
+# memegen template ids the agent may use (SPEC §10.7). Each entry: lines = how many text
+# lines the template takes, and a hint for the agent. The renderer checks ids against the
+# running memegen instance's /templates list and logs any that do not exist.
+templates:
+  drake:      {lines: 2, hint: "top = rejected option, bottom = preferred option"}
+  db:         {lines: 3, hint: "distracted boyfriend: new shiny thing, the one looking, the ignored one"}
+  ds:         {lines: 3, hint: "two buttons: left choice, right choice, the sweating person"}
+  fine:       {lines: 2, hint: "this is fine: setup, 'this is fine'"}
+  gru:        {lines: 4, hint: "Gru's plan: three steps, the last one goes wrong, repeated"}
+  buzz:       {lines: 2, hint: "X, X everywhere"}
+  cmm:        {lines: 1, hint: "change my mind: a hot take"}
+  pigeon:     {lines: 3, hint: "is this a pigeon: person, butterfly, question"}
+  spongebob:  {lines: 2, hint: "mocking SpongeBob: setup, mocked repeat"}
+  stonks:     {lines: 2, hint: "a dubious win"}
+  astronaut:  {lines: 4, hint: "always has been: realization, 'always has been'"}
+  rollsafe:   {lines: 2, hint: "can't X if you Y"}
+  woman-cat:  {lines: 2, hint: "woman yelling at cat: accusation, smug reply"}
+  harold:     {lines: 2, hint: "hide the pain: smiling through it"}
+  both:       {lines: 2, hint: "why not both"}
+  afraid:     {lines: 2, hint: "afraid to ask: I don't know X, and at this point I'm afraid to ask"}

@@ -1,0 +1,7 @@
+# One mascot per repo (SPEC §8). The style is prepended to every illustration prompt and the
+# seed is reused, so a mascot looks the same across cards.
+mascots:
+  crow:
+    repo: gittok
+    style: "a small round black crow with a bright orange scarf, flat vector illustration, soft pastel palette, thick clean outlines, simple background"
+    seed: 1717
