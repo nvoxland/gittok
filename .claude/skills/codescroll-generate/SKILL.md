@@ -1,6 +1,7 @@
 ---
 name: codescroll-generate
 description: Generate new CodeScroll feed cards from the configured repos. Use when the user asks to generate, make, or refresh CodeScroll cards or the feed. Optional args - repo name and card count, e.g. "storefront 10".
+model: sonnet
 ---
 
 # Generate CodeScroll cards
@@ -32,4 +33,4 @@ Requires the `codescroll` MCP server (tools named `mcp__codescroll__*`). If thos
 
 - You never research repos yourself. If a packet comes back empty, do not redo it; mention it in the report.
 - Never invent or edit commits, paths, or line numbers in subagent output. The server checks them against git.
-- Any model can drive this skill. Sonnet is enough as the driver because it only orchestrates.
+- This skill runs on Sonnet (`model: sonnet` in the frontmatter), whatever the session model is. The session model comes back after this turn. Only change that line if the user asks for a different driver.
