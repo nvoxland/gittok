@@ -1,5 +1,6 @@
 """SQLite access: connection setup, migrations, and JSON/time helpers."""
 
+import fcntl
 import json
 import sqlite3
 from contextlib import contextmanager
@@ -26,10 +27,31 @@ def _migration_files():
     return sorted((f for f in root.iterdir() if f.name.endswith(".sql")), key=lambda f: f.name)
 
 
+@contextmanager
+def _migration_lock(conn: sqlite3.Connection):
+    """Serialize migrations across threads and processes (executescript is not atomic)."""
+    db_file = next((r[2] for r in conn.execute("PRAGMA database_list") if r[1] == "main"), "")
+    if not db_file:  # in-memory database: nothing to share
+        yield
+        return
+    with open(f"{db_file}.migrate.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
 def migrate(conn: sqlite3.Connection) -> list[str]:
+    with _migration_lock(conn):
+        return _migrate(conn)
+
+
+def _migrate(conn: sqlite3.Connection) -> list[str]:
     conn.execute(
         "CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT)"
     )
+    conn.commit()
     done = {r[0] for r in conn.execute("SELECT name FROM schema_migrations")}
     applied = []
     for f in _migration_files():

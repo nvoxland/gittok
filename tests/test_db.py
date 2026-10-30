@@ -119,3 +119,28 @@ def test_social_tables_and_notification_dedup_key_is_unique(tmp_path):
         conn.execute(ins, ("a",))
     conn.execute(ins, (None,))
     conn.execute(ins, (None,))
+
+
+def test_concurrent_open_db_migrates_once_without_errors(tmp_path):
+    import threading
+
+    path = tmp_path / "race.db"
+    errors = []
+    barrier = threading.Barrier(8)
+
+    def worker():
+        try:
+            barrier.wait()
+            db.open_db(path).close()
+        except Exception as e:  # noqa: BLE001 - collect anything
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    conn = db.connect(path)
+    names = [r[0] for r in conn.execute("SELECT name FROM schema_migrations")]
+    assert len(names) == len(set(names)) == len(db._migration_files())
