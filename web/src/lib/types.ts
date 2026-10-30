@@ -171,7 +171,7 @@ export type Card = {
 	resolved: Resolved;
 };
 
-export type FeedResponse = { cards: Card[]; next_cursor: string | null };
+export type FeedResponse = { cards: Card[]; next_cursor: string | null; fromCache?: boolean };
 
 export type FeedEventType =
 	| 'impression'
@@ -207,3 +207,29 @@ export type RepoProfile = {
 	stats: RepoStats;
 	cards: Card[];
 };
+
+export type StoryCommit = {
+	sha: string;
+	short: string;
+	ts: number;
+	author: string;
+	subject: string;
+	files: number;
+};
+export type Story = {
+	repo: string;
+	mascot: string | null;
+	mascot_image: string | null;
+	commits: StoryCommit[];
+	seen: boolean;
+};
+
+export type AppNotification = {
+	id: number;
+	kind: string;
+	text: string;
+	card_id: string | null;
+	created_at: number | string;
+	read: boolean;
+};
+export type NotificationsResponse = { notifications: AppNotification[]; unread: number };

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchCard, fetchFeed, fetchRepo, fetchSaved, postAnswer, postEvents } from './api';
+import { fetchCard, fetchFeed, fetchStories, fetchNotifications, markNotificationsRead, markStoriesSeen, fetchRepo, fetchSaved, postAnswer, postEvents } from './api';
 
 const fetchMock = vi.fn();
 
@@ -20,6 +20,14 @@ describe('fetchFeed', () => {
 		fetchMock.mockResolvedValue({ ok: true, json: async () => ({ cards: [], next_cursor: null }) });
 		await fetchFeed('abc');
 		expect(fetchMock.mock.calls[0][0]).toBe('/api/feed?limit=20&cursor=abc');
+	});
+	it('flags responses the service worker served from cache', async () => {
+		fetchMock.mockResolvedValue({
+			ok: true,
+			headers: new Headers({ 'X-From-Cache': '1' }),
+			json: async () => ({ cards: [], next_cursor: null })
+		});
+		expect((await fetchFeed()).fromCache).toBe(true);
 	});
 	it('throws on non-ok', async () => {
 		fetchMock.mockResolvedValue({ ok: false, status: 500 });
@@ -81,5 +89,58 @@ describe('fetchSaved', () => {
 		fetchMock.mockResolvedValue({ ok: true, json: async () => ({ cards: [{ id: 'c_1' }] }) });
 		expect(await fetchSaved()).toEqual([{ id: 'c_1' }]);
 		expect(fetchMock.mock.calls[0][0]).toBe('/api/saved');
+	});
+});
+
+describe('fetchStories', () => {
+	it('returns the stories array', async () => {
+		fetchMock.mockResolvedValue({ ok: true, json: async () => ({ stories: [{ repo: 'a' }] }) });
+		const res = await fetchStories();
+		expect(fetchMock.mock.calls[0][0]).toBe('/api/stories');
+		expect(res).toEqual([{ repo: 'a' }]);
+	});
+	it('returns [] when the body has no stories', async () => {
+		fetchMock.mockResolvedValue({ ok: true, json: async () => ({}) });
+		expect(await fetchStories()).toEqual([]);
+	});
+});
+
+describe('markStoriesSeen', () => {
+	it('POSTs repo and shas', async () => {
+		fetchMock.mockResolvedValue({ ok: true, json: async () => ({}) });
+		await markStoriesSeen('storefront', ['a', 'b']);
+		const [url, init] = fetchMock.mock.calls[0];
+		expect(url).toBe('/api/stories/seen');
+		expect(init.method).toBe('POST');
+		expect(JSON.parse(init.body)).toEqual({ repo: 'storefront', shas: ['a', 'b'] });
+	});
+});
+
+describe('fetchNotifications', () => {
+	it('asks for unread only when requested', async () => {
+		fetchMock.mockResolvedValue({ ok: true, json: async () => ({ notifications: [], unread: 2 }) });
+		const res = await fetchNotifications(true);
+		expect(fetchMock.mock.calls[0][0]).toBe('/api/notifications?unread=1');
+		expect(res.unread).toBe(2);
+	});
+	it('lists all by default', async () => {
+		fetchMock.mockResolvedValue({ ok: true, json: async () => ({ notifications: [], unread: 0 }) });
+		await fetchNotifications();
+		expect(fetchMock.mock.calls[0][0]).toBe('/api/notifications');
+	});
+});
+
+describe('markNotificationsRead', () => {
+	it('sends ids', async () => {
+		fetchMock.mockResolvedValue({ ok: true, json: async () => ({}) });
+		await markNotificationsRead([1, 2]);
+		const [url, init] = fetchMock.mock.calls[0];
+		expect(url).toBe('/api/notifications/read');
+		expect(JSON.parse(init.body)).toEqual({ ids: [1, 2] });
+	});
+	it('sends all', async () => {
+		fetchMock.mockResolvedValue({ ok: true, json: async () => ({}) });
+		await markNotificationsRead('all');
+		expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ all: true });
 	});
 });

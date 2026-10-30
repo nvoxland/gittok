@@ -1,0 +1,15 @@
+{
+	"name": "CodeScroll",
+	"short_name": "CodeScroll",
+	"description": "A personal feed of cards about your own codebases",
+	"start_url": "/",
+	"scope": "/",
+	"display": "standalone",
+	"theme_color": "#f6f6f4",
+	"background_color": "#f6f6f4",
+	"icons": [
+		{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+		{ "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+		{ "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+	]
+}
