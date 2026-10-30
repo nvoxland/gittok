@@ -14,6 +14,7 @@ def card_json(row) -> dict:
     spec = db.loads(row["spec"])
     return {
         **spec,
+        "comments": spec.get("comments") or [],  # optional in the schema, a list for the client
         "id": row["id"],
         "created_at": row["created_at"],
         "repo": spec["repos"][0],

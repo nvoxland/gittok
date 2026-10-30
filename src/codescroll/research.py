@@ -164,7 +164,7 @@ def git_log(
     if since:
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", since):
             raise ResearchError(f"since must be YYYY-MM-DD: {since}")
-        args.append(f"--since={since}")
+        args.append(f"--since={since} 00:00:00 +0000")  # UTC start of day, not "now" on that date
     if grep:
         args += ["--regexp-ignore-case", f"--grep={grep}"]
     args += [ref, "--"]

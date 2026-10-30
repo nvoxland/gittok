@@ -81,7 +81,7 @@
 				/>
 			{/if}
 			<h2>{card.hook}</h2>
-			{#if card.comments.length && answered}
+			{#if card.comments?.length && answered}
 				<ul class="comments">
 					{#each card.comments as c, i (i)}
 						<li><Avatar handle={c.persona} size={20} /><span class="handle">@{c.persona}</span>: {c.text}</li>

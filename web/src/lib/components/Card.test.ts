@@ -6,6 +6,13 @@ import type { Card as CardT } from '#lib/types.ts';
 import { fakeCard } from './fixtures.ts';
 
 describe('Card', () => {
+	it('renders a card that has no comments field', () => {
+		const card = fakeCard({}) as Partial<CardT>;
+		delete card.comments;
+		render(Card, { card: card as CardT });
+		expect(screen.getByText(card.hook!)).toBeInTheDocument();
+	});
+
 	it('renders hook and one panel per depth entry', () => {
 		const card = fakeCard({
 			depth: [

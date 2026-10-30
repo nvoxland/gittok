@@ -119,3 +119,11 @@ def test_cursor_served_list_is_capped_at_500(conn, cfg):
 
 def test_page_with_nothing_left_is_empty_with_no_cursor(conn, cfg):
     assert feed.page(conn, cfg, 5, None, 1, NOW) == ([], None)
+
+
+def test_card_json_always_has_a_comments_list(conn, cfg):
+    spec = text_card(FX)
+    spec.pop("comments", None)
+    cid = add(conn, cfg, spec)
+    row = conn.execute("SELECT * FROM cards WHERE id = ?", (cid,)).fetchone()
+    assert feed.public_card(row)["comments"] == []
