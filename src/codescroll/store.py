@@ -33,7 +33,12 @@ def _features(card: dict) -> set[tuple[str, str]]:
         feats.add(("difficulty", str(card["difficulty"])))
     feats.add(("has_comments", "1" if card.get("comments") else "0"))
     feats.add(("visual_kind", card["visual"]["kind"]))
+    if card["visual"]["kind"] == "template":
+        feats.add(("template", card["visual"]["template"]))
     return feats
+
+
+RENDERED_KINDS = frozenset({"meme", "illustration", "comic"})
 
 
 def store_card(conn, cfg, run_id: str, acc, now: str | None = None) -> str:
@@ -45,11 +50,12 @@ def insert_card(conn, cfg, run_id: str, acc, now: str | None = None) -> str:
     """Insert a card and its features without committing (caller owns the transaction)."""
     card = acc.card
     card_id = new_card_id()
+    status = "pending_render" if card["visual"]["kind"] in RENDERED_KINDS else "ready"
     repo_id = ensure_repo(conn, cfg.repos[card["repos"][0]])
     conn.execute(
         "INSERT INTO cards(id, run_id, repo_id, story_type, format, persona, tone, "
         "spec, resolved, status, story_key, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?)",
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             card_id,
             run_id,
@@ -60,6 +66,7 @@ def insert_card(conn, cfg, run_id: str, acc, now: str | None = None) -> str:
             card["tone"],
             db.dumps(card),
             db.dumps(acc.resolved),
+            status,
             acc.story_key,
             now or db.now_iso(),
         ),

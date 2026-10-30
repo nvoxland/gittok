@@ -115,3 +115,57 @@ def test_card_ids_sort_by_time():
     assert ids == sorted(ids)
     assert all(i.startswith("c_") and len(i) == 2 + 12 + 8 for i in ids)
     assert store.new_card_id(5) != store.new_card_id(5)
+
+
+def _store_kind(conn, cfg, card):
+    from codescroll.config import Mascot, MemeTemplate
+
+    accepted, rejected = validator.validate_cards(
+        [card],
+        cfg.repos,
+        PERSONAS,
+        meme_templates={"drake": MemeTemplate("drake", 2)},
+        mascots={"otter": Mascot("otter", "fixture", "s", 1)},
+    )
+    assert rejected == []
+    _insert_run(conn)
+    cid = store.store_card(conn, cfg, "r_1", accepted[0])
+    status = conn.execute("SELECT status FROM cards WHERE id = ?", (cid,)).fetchone()[0]
+    feats = {
+        (r["feature"], r["value"])
+        for r in conn.execute("SELECT * FROM card_features WHERE card_id = ?", (cid,))
+    }
+    return status, feats
+
+
+def test_render_kinds_are_pending_render(conn, cfg, fixture_repo):
+    from tests import cards as C
+
+    status, feats = _store_kind(conn, cfg, C.meme_card(fixture_repo))
+    assert status == "pending_render"
+    assert ("visual_kind", "meme") in feats
+
+
+@pytest.mark.parametrize("make", ["illustration_card", "comic_card"])
+def test_image_kinds_are_pending_render(conn, cfg, fixture_repo, make):
+    from tests import cards as C
+
+    assert _store_kind(conn, cfg, getattr(C, make)(fixture_repo))[0] == "pending_render"
+
+
+@pytest.mark.parametrize("make", ["text_meme_card", "diagram_card"])
+def test_client_rendered_kinds_are_ready(conn, cfg, fixture_repo, make):
+    from tests import cards as C
+
+    status, feats = _store_kind(conn, cfg, getattr(C, make)(fixture_repo))
+    assert status == "ready"
+    assert not any(f == "template" for f, _ in feats)
+
+
+def test_template_feature_row(conn, cfg, fixture_repo):
+    from tests import cards as C
+
+    status, feats = _store_kind(conn, cfg, C.template_card(fixture_repo, "hot_take"))
+    assert status == "ready"
+    assert ("visual_kind", "template") in feats
+    assert ("template", "hot_take") in feats

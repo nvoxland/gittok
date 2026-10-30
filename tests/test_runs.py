@@ -329,3 +329,53 @@ def test_bump_call_is_atomic_across_connections(cfg):
     for t in ts:
         t.join()
     assert runs.get_run(c, run_id)["meta"]["mcp_calls"] == {"git_log": 60}
+
+
+def _m2_cfg(cfg, budget=4):
+    import dataclasses
+
+    from codescroll.config import Mascot, MemeTemplate, RenderSettings
+
+    return dataclasses.replace(
+        cfg,
+        settings=dataclasses.replace(
+            cfg.settings, render=RenderSettings(max_illustrations_per_run=budget)
+        ),
+        mascots={"otter": Mascot("otter", "fixture", "s", 1)},
+        meme_templates={"drake": MemeTemplate("drake", 2)},
+    )
+
+
+def test_submit_tracks_illustration_budget_per_run(conn, cfg, fixture_repo):
+    from tests import cards as C
+
+    cfg = _m2_cfg(cfg, budget=3)
+    run_id = runs.open_run(conn, cfg, repo="fixture", brief="b", requested=5, now=NOW)
+    comic = C.comic_card(fixture_repo, panels=2)
+    comic["sources"] = [{"repo": "fixture", "path": "README.md"}]
+    first = runs.submit(conn, cfg, run_id, [comic])
+    assert [a["index"] for a in first["accepted"]] == [0]
+    assert runs.get_run(conn, run_id)["meta"]["illustrations"] == 2
+    assert conn.execute("SELECT status FROM cards").fetchone()[0] == "pending_render"
+
+    comic2 = C.comic_card(fixture_repo, panels=2)  # needs 2, only 1 left
+    second = runs.submit(conn, cfg, run_id, [comic2])
+    assert [r["reason"] for r in second["rejected"]] == ["illustration_budget"]
+    assert runs.get_run(conn, run_id)["meta"]["illustrations"] == 2
+
+    one = C.illustration_card(fixture_repo)
+    third = runs.submit(conn, cfg, run_id, [one])
+    assert third["rejected"] == []
+    assert runs.get_run(conn, run_id)["meta"]["illustrations"] == 3
+
+
+def test_submit_uses_config_templates_and_signals(conn, cfg, fixture_repo):
+    from codescroll import signals
+    from tests import cards as C
+
+    cfg = _m2_cfg(cfg)
+    run_id = runs.open_run(conn, cfg, repo="fixture", brief="b", requested=5, now=NOW)
+    res = runs.submit(conn, cfg, run_id, [C.meme_card(fixture_repo), C.chart_card(fixture_repo)])
+    assert [a["index"] for a in res["accepted"]] == [0]
+    assert [r["reason"] for r in res["rejected"]] == ["chart_no_data"]
+    assert signals.load_signals(conn, "fixture") is None

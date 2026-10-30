@@ -7,7 +7,7 @@ import secrets
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 
-from codescroll import db, store, validator
+from codescroll import db, signals, store, validator
 
 
 class RunError(Exception):
@@ -79,9 +79,19 @@ def submit(conn, cfg, run_id: str, cards: list | dict) -> dict:
         raise RunError('submit {"cards": [...]} or a list of card objects')
     if len(cards) > MAX_CARDS_PER_CALL:
         raise RunError(f"at most {MAX_CARDS_PER_CALL} cards per call; got {len(cards)}")
-    _check_open(get_run(conn, run_id), run_id)
+    run0 = get_run(conn, run_id)
+    _check_open(run0, run_id)
+    max_images = cfg.settings.render.max_illustrations_per_run
     # Git validation is slow: do it before taking the write lock.
-    accepted, rejected = validator.validate_cards(cards, cfg.repos, list(cfg.personas))
+    accepted, rejected = validator.validate_cards(
+        cards,
+        cfg.repos,
+        list(cfg.personas),
+        meme_templates=cfg.meme_templates,
+        mascots=cfg.mascots,
+        signals_for=lambda name: signals.load_signals(conn, name),
+        illustration_budget=max(0, max_images - run0["meta"].get("illustrations", 0)),
+    )
     out_dir = cfg.settings.data_dir / "runs" / run_id
     stored: list[dict] = []
     with db.immediate(conn):
@@ -92,10 +102,18 @@ def submit(conn, cfg, run_id: str, cards: list | dict) -> dict:
         (out_dir / f"submission-{n}.json").write_text(json.dumps(raw, indent=2, ensure_ascii=False))
         quota = run["requested"] - run["accepted"] if run["requested"] is not None else None
         seen: set[str] = set()
+        used = run["meta"].get("illustrations", 0)  # re-read under the lock
         for a in accepted:
+            cost = validator.illustration_cost(a.card)
             if a.story_key in seen or store.story_key_exists(conn, a.story_key, since_days=36500):
                 rejected.append(
                     validator.Rejection(a.index, "duplicate_story", "already in the feed")
+                )
+            elif used + cost > max_images:
+                rejected.append(
+                    validator.Rejection(
+                        a.index, "illustration_budget", "run illustration budget is used up"
+                    )
                 )
             elif quota is not None and len(stored) >= quota:
                 rejected.append(
@@ -103,6 +121,7 @@ def submit(conn, cfg, run_id: str, cards: list | dict) -> dict:
                 )
             else:
                 seen.add(a.story_key)
+                used += cost
                 card_id = store.insert_card(conn, cfg, run_id, a)
                 stored.append({"index": a.index, "card_id": card_id})
         rejected.sort(key=lambda r: r.index)
@@ -110,8 +129,15 @@ def submit(conn, cfg, run_id: str, cards: list | dict) -> dict:
         reasons = run["reject_reasons"] + [{**r, "submission": n} for r in rej]
         conn.execute(
             "UPDATE runs SET accepted = accepted + ?, rejected = rejected + ?, "
-            "submissions = ?, reject_reasons = ? WHERE id = ?",
-            (len(stored), len(rej), n, db.dumps(reasons), run_id),
+            "submissions = ?, reject_reasons = ?, meta = ? WHERE id = ?",
+            (
+                len(stored),
+                len(rej),
+                n,
+                db.dumps(reasons),
+                db.dumps({**run["meta"], "illustrations": used}),
+                run_id,
+            ),
         )
         run = get_run(conn, run_id)
     return {

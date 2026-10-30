@@ -247,11 +247,199 @@ def _normalize_paths(card: dict) -> None:
             ref["path"] = _strip_dot(ref["path"])
 
 
-def _validate_one(card: dict, gc: _GitCache, personas) -> tuple[dict, dict, str]:
+TEXT_FORMATS = {"text_post", "fun_fact", "listicle", "eli5"}
+TEMPLATE_FORMATS = {
+    "iceberg", "tier_list", "group_chat", "flags", "dating_profile", "glow_up",
+    "breaking_news", "horoscope", "thread", "day_in_life", "hot_take",
+}  # fmt: skip
+FORMAT_KIND = {
+    "code_card": "code",
+    **dict.fromkeys(TEXT_FORMATS, "text"),
+    "meme": "meme",
+    "text_meme": "text_meme",
+    "mascot_scene": "illustration",
+    "comic": "comic",
+    "chart": "chart",
+    "diagram": "diagram",
+    **dict.fromkeys(TEMPLATE_FORMATS, "template"),
+}
+
+
+def _check_format(card: dict) -> None:
+    fmt, visual = card["format"], card["visual"]
+    want = FORMAT_KIND[fmt]
+    if visual["kind"] != want or (want == "template" and visual["template"] != fmt):
+        got = visual["kind"] + (f"/{visual['template']}" if visual["kind"] == "template" else "")
+        raise _Reject(
+            "format_kind_mismatch",
+            f"format {fmt!r} needs visual kind {want!r}"
+            + (f" with template {fmt!r}" if want == "template" else "")
+            + f"; got {got!r}",
+        )
+
+
+@dataclass
+class _Ctx:
+    personas: list
+    meme_templates: dict = field(default_factory=dict)
+    mascots: dict = field(default_factory=dict)
+    signals_for: object = None
+    budget: int | None = None  # remaining illustrations; None = unlimited
+    card_repos: tuple = ()
+
+
+def _check_meme(card: dict, ctx: _Ctx) -> None:
+    v = card["visual"]
+    tpl = ctx.meme_templates.get(v["template"])
+    if tpl is None:
+        raise _Reject(
+            "unknown_meme_template",
+            f"{v['template']!r} is not a meme template; known: {sorted(ctx.meme_templates)}",
+        )
+    if len(v["lines"]) > tpl.lines:
+        raise _Reject(
+            "meme_lines", f"template {tpl.id!r} takes {tpl.lines} line(s); got {len(v['lines'])}"
+        )
+
+
+def _code_account(acct: str, card: dict, gc: _GitCache) -> tuple[str, str, str]:
+    """Check a `repo:path` account. Returns (repo, normalized path, "file" | "dir")."""
+    repo_name, _, path = acct.partition(":")
+    path = _strip_dot(path).strip("/")
+    if repo_name not in card["repos"]:
+        raise _Reject(
+            "unknown_account", f"{acct!r}: repo {repo_name!r} is not in card repos {card['repos']}"
+        )
+    repo = gc.repo(repo_name)
+    kind = (
+        gitq.object_type(repo.path, repo.ref, path)
+        if path and ".." not in path.split("/")
+        else None
+    )
+    if kind not in ("blob", "tree"):
+        raise _Reject(
+            "unknown_account", f"{acct!r}: {path!r} does not exist at {repo_name} {repo.ref}"
+        )
+    return repo_name, path, "file" if kind == "blob" else "dir"
+
+
+def _resolve_account(acct: str, card: dict, gc: _GitCache, ctx: _Ctx) -> str:
+    """Normalize a persona handle or code account; reject anything else."""
+    if ":" not in acct:
+        if acct not in ctx.personas:
+            raise _Reject("unknown_account", f"{acct!r} is not a persona handle or repo:path")
+        return acct
+    repo_name, path, _ = _code_account(acct, card, gc)
+    return f"{repo_name}:{path}"
+
+
+def _check_accounts(card: dict, gc: _GitCache, ctx: _Ctx) -> dict | None:
+    v = card["visual"]
+    if v["kind"] == "template":
+        d, t = v["data"], v["template"]
+        if t == "group_chat":
+            for m in d["messages"]:
+                m["from"] = _resolve_account(m["from"], card, gc, ctx)
+        elif t == "dating_profile":
+            d["name"] = _resolve_account(d["name"], card, gc, ctx)
+        elif t in ("horoscope", "day_in_life"):
+            d["subject"] = _resolve_account(d["subject"], card, gc, ctx)
+    if "account" not in card:
+        return None
+    repo_name, path, kind = _code_account(card["account"], card, gc)
+    card["account"] = f"{repo_name}:{path}"
+    return {
+        "handle": "@" + path.rsplit("/", 1)[-1],
+        "repo": repo_name,
+        "path": path,
+        "kind": kind,
+    }
+
+
+def _top(rows: list[dict], key: str, label, n: int = 10) -> list[dict]:
+    ranked = sorted(rows, key=lambda r: (-r[key], label(r)))[:n]
+    return [{"label": label(r), "value": r[key]} for r in ranked]
+
+
+def _build_chart(v: dict, ctx: _Ctx) -> dict:
+    name, kind = v["repo"], v["chart"]
+    if name not in ctx.card_repos:
+        raise _Reject("repo_not_in_card", f"chart repo {name!r} is not listed in repos")
+    sig = ctx.signals_for(name) if ctx.signals_for else None
+    if not sig:
+        raise _Reject("chart_no_data", f"no cached signals for {name!r}; run analysis first")
+    window = v.get("window", "90")
+    x_label, y_label = "file", "commits"
+    if kind in ("top_churn_files", "top_churn_dirs"):
+        group = "files" if kind == "top_churn_files" else "dirs"
+        x_label = "file" if group == "files" else "dir"
+        rows = (sig.get("churn") or {}).get(group, {}).get(window) or []
+        bars = _top(rows, "commits", lambda r: r["path"])
+        default = f"Most-edited {group} (last {window} days)"
+    elif kind == "commit_hours":
+        hist = (sig.get("commit_times") or {}).get("hour_histogram") or []
+        bars = [{"label": f"{h:02d}", "value": n} for h, n in enumerate(hist)] if hist else []
+        x_label, default = "hour", "When commits happen"
+    elif kind == "author_shares":
+        rows = ((sig.get("author_shares") or {}).get("by_dir") or {}).get(v["dir"]) or []
+        bars = [{"label": r["author"], "value": round(r["share"] * 100)} for r in rows]
+        x_label, y_label, default = "author", "share of changes (%)", f"Who owns {v['dir']}"
+    else:  # co_change
+        rows = sig.get("co_change") or []
+        bars = _top(rows, "count", lambda r: f"{r['a']} + {r['b']}")
+        x_label, y_label, default = "file pair", "co-changes", "Files that change together"
+    if not bars:
+        raise _Reject("chart_no_data", f"{kind} has no data for {name!r} ({window}d)")
+    return {
+        "type": "bar",
+        "title": v.get("title") or default,
+        "x_label": x_label,
+        "y_label": y_label,
+        "bars": bars,
+    }
+
+
+def illustration_cost(card: dict) -> int:
+    v = card["visual"]
+    if v["kind"] == "illustration":
+        return 1
+    return len(v["panels"]) if v["kind"] == "comic" else 0
+
+
+def _check_mascots(card: dict, ctx: _Ctx, gc: _GitCache) -> None:
+    v = card["visual"]
+    names = v.get("mascots")
+    if not names:
+        first = card["repos"][0]
+        names = [m.name for m in ctx.mascots.values() if m.repo == first][:1]
+        if not names:
+            fallback = gc.repo(first).mascot
+            names = [fallback] if fallback else []
+        if not names:
+            raise _Reject("unknown_mascot", f"no default mascot for repo {first!r}; set mascots")
+    for n in names:
+        if n not in ctx.mascots:
+            raise _Reject("unknown_mascot", f"{n!r} is not a mascot; known: {sorted(ctx.mascots)}")
+    v["mascots"] = names
+    cost = illustration_cost(card)
+    if ctx.budget is not None and cost > ctx.budget:
+        raise _Reject(
+            "illustration_budget", f"card needs {cost} image(s); {ctx.budget} left in the budget"
+        )
+
+
+def _validate_one(card: dict, gc: _GitCache, ctx: _Ctx) -> tuple[dict, dict, str]:
+    personas = ctx.personas
+    ctx.card_repos = tuple(card.get("repos", ())) if isinstance(card, dict) else ()
     errs = schema_errors(card, personas)
     if errs:
         raise _Reject("schema", "; ".join(errs[:3]))
     card = copy.deepcopy(card)
+    _check_format(card)
+    if card["visual"]["kind"] == "meme":
+        _check_meme(card, ctx)
+    if card["visual"]["kind"] in ("illustration", "comic"):
+        _check_mascots(card, ctx, gc)
     for name in card["repos"]:
         gc.repo(name)
     _normalize_paths(card)
@@ -263,7 +451,12 @@ def _validate_one(card: dict, gc: _GitCache, personas) -> tuple[dict, dict, str]
             )
 
     resolved: dict = {"visual": None, "depth": []}
+    account = _check_accounts(card, gc, ctx)
+    if account:
+        resolved["account"] = account
     visual = card["visual"]
+    if visual["kind"] == "chart":
+        resolved["visual"] = _build_chart(visual, ctx)
     if visual["kind"] == "code":
         resolved["visual"] = _resolve_code(gc, visual, excerpt=visual.get("excerpt"))
         a, b = visual["lines"]
@@ -333,18 +526,36 @@ def _dir_rel(gc: _GitCache, repo_name: str, d: str) -> str | None:
     return None
 
 
-def validate_cards(cards: list, repos: dict, personas) -> tuple[list[Accepted], list[Rejection]]:
+def validate_cards(
+    cards: list,
+    repos: dict,
+    personas,
+    *,
+    meme_templates: dict | None = None,
+    mascots: dict | None = None,
+    signals_for=None,
+    illustration_budget: int | None = None,
+) -> tuple[list[Accepted], list[Rejection]]:
     """Validate agent cards against the schema and git. Never raises for bad cards."""
     gc = _GitCache(repos=repos)
+    ctx = _Ctx(
+        personas=personas,
+        meme_templates=meme_templates or {},
+        mascots=mascots or {},
+        signals_for=signals_for,
+        budget=illustration_budget,
+    )
     accepted: list[Accepted] = []
     rejected: list[Rejection] = []
     seen: set[str] = set()
     for i, card in enumerate(cards):
         try:
-            normalized, resolved, key = _validate_one(card, gc, personas)
+            normalized, resolved, key = _validate_one(card, gc, ctx)
             if key in seen:
                 raise _Reject("duplicate_story", "same story_type and sources as an earlier card")
             seen.add(key)
+            if ctx.budget is not None:
+                ctx.budget -= illustration_cost(normalized)
             accepted.append(Accepted(i, normalized, resolved, key))
         except _Reject as r:
             rejected.append(Rejection(i, r.reason, r.detail))

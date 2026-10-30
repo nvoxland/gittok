@@ -150,9 +150,7 @@ def test_code_diff_allows_deleted_file(fixture_repo, repos):
 def test_line_numbers_follow_newlines_only(tmp_path):
     from tests.fixture_repo import build_small_repo
 
-    fr = build_small_repo(
-        tmp_path / "r", {"a.txt": b"one\x0ctwo\nthree\r\nfour\n", "z.py": b"x\n"}
-    )
+    fr = build_small_repo(tmp_path / "r", {"a.txt": b"one\x0ctwo\nthree\r\nfour\n", "z.py": b"x\n"})
     repos = {"fixture": Repo(name="fixture", path=fr.path, ref="main")}
     gc = validator._GitCache(repos=repos)
     assert gc.file_lines("fixture", fr.shas["head"], "a.txt") == ["one\x0ctwo", "three", "four"]
@@ -207,3 +205,282 @@ def test_dirs_are_normalized_in_returned_card(fixture_repo, repos):
     accepted, rejected = check([card], repos)
     assert rejected == []
     assert accepted[0].card["dirs"] == ["billing", "src"]
+
+
+# ---------------------------------------------------------------------------
+# M2 formats
+# ---------------------------------------------------------------------------
+from codescroll.config import Mascot, MemeTemplate  # noqa: E402
+from tests import cards as C  # noqa: E402
+
+MEME_TEMPLATES = {"drake": MemeTemplate("drake", 2), "success": MemeTemplate("success", 1)}
+MASCOTS = {
+    "otter": Mascot("otter", "fixture", "otter style", 1),
+    "crow": Mascot("crow", None, "crow style", 2),
+}
+
+
+def check2(cards, repos, **kw):
+    kw.setdefault("meme_templates", MEME_TEMPLATES)
+    kw.setdefault("mascots", MASCOTS)
+    return validator.validate_cards(cards, repos, PERSONAS, **kw)
+
+
+def test_format_kind_mismatch(fixture_repo, repos):
+    card = C.meme_card(fixture_repo, format="text_meme")
+    accepted, rejected = check2([card], repos)
+    assert reasons(rejected) == ["format_kind_mismatch"]
+    card = C.template_card(fixture_repo, "thread", format="hot_take")
+    assert reasons(check2([card], repos)[1]) == ["format_kind_mismatch"]
+    card = C.template_card(fixture_repo, "hot_take")
+    assert reasons(check2([card], repos)[1]) == []
+    assert reasons(check2([text_card(fixture_repo, format="meme")], repos)[1]) == [
+        "format_kind_mismatch"
+    ]
+
+
+def test_meme_valid_and_unknown_template(fixture_repo, repos):
+    accepted, rejected = check2([C.meme_card(fixture_repo)], repos)
+    assert rejected == []
+    assert accepted[0].resolved["visual"] is None
+    bad = C.meme_card(
+        fixture_repo, visual={"kind": "meme", "template": "nope", "lines": ["a", "b"]}
+    )
+    assert reasons(check2([bad], repos)[1]) == ["unknown_meme_template"]
+
+
+def test_meme_too_many_lines_for_template(fixture_repo, repos):
+    card = C.meme_card(
+        fixture_repo, visual={"kind": "meme", "template": "success", "lines": ["a", "b"]}
+    )
+    assert reasons(check2([card], repos)[1]) == ["meme_lines"]
+    one = C.meme_card(
+        fixture_repo, visual={"kind": "meme", "template": "drake", "lines": ["only one"]}
+    )
+    assert check2([one], repos)[1] == []
+
+
+def test_illustration_default_mascot_from_repo(fixture_repo, repos):
+    accepted, rejected = check2([C.illustration_card(fixture_repo)], repos)
+    assert rejected == []
+    assert accepted[0].card["visual"]["mascots"] == ["otter"]
+    assert accepted[0].resolved["visual"] is None
+
+
+def test_illustration_default_mascot_falls_back_to_repo_field(fixture_repo):
+    repos = {"fixture": Repo(name="fixture", path=fixture_repo.path, ref="main", mascot="crow")}
+    mascots = {"crow": MASCOTS["crow"]}
+    accepted, rejected = check2([C.illustration_card(fixture_repo)], repos, mascots=mascots)
+    assert rejected == []
+    assert accepted[0].card["visual"]["mascots"] == ["crow"]
+
+
+def test_illustration_without_any_default_mascot_rejected(fixture_repo, repos):
+    mascots = {"crow": MASCOTS["crow"]}
+    assert reasons(check2([C.illustration_card(fixture_repo)], repos, mascots=mascots)[1]) == [
+        "unknown_mascot"
+    ]
+
+
+def test_unknown_mascot_rejected(fixture_repo, repos):
+    v = {"kind": "illustration", "prompt": "p", "caption": "c", "mascots": ["otter", "walrus"]}
+    assert reasons(check2([C.illustration_card(fixture_repo, visual=v)], repos)[1]) == [
+        "unknown_mascot"
+    ]
+    v = {
+        "kind": "comic",
+        "panels": C.comic_card(fixture_repo)["visual"]["panels"],
+        "mascots": ["x"],
+    }
+    assert reasons(check2([C.comic_card(fixture_repo, visual=v)], repos)[1]) == ["unknown_mascot"]
+
+
+def test_comic_default_mascots_and_explicit_kept(fixture_repo, repos):
+    accepted, _ = check2([C.comic_card(fixture_repo)], repos)
+    assert accepted[0].card["visual"]["mascots"] == ["otter"]
+    v = {**C.comic_card(fixture_repo)["visual"], "mascots": ["crow", "otter"]}
+    accepted, _ = check2([C.comic_card(fixture_repo, visual=v)], repos)
+    assert accepted[0].card["visual"]["mascots"] == ["crow", "otter"]
+
+
+def test_illustration_budget_counts_panels_in_order(fixture_repo, repos):
+    cards = [
+        C.illustration_card(fixture_repo),  # 1
+        C.comic_card(fixture_repo, panels=3, hook="comic hook"),  # 3 -> total 4
+        C.illustration_card(fixture_repo, hook="over"),  # 5th: over
+    ]
+    cards[1]["sources"] = [{"repo": "fixture", "path": "README.md"}]
+    cards[2]["sources"] = [{"repo": "fixture", "path": "src/util.py"}]
+    accepted, rejected = check2(cards, repos, illustration_budget=4)
+    assert [a.index for a in accepted] == [0, 1]
+    assert [(r.index, r.reason) for r in rejected] == [(2, "illustration_budget")]
+
+
+def test_illustration_budget_zero_and_none(fixture_repo, repos):
+    assert reasons(
+        check2([C.illustration_card(fixture_repo)], repos, illustration_budget=0)[1]
+    ) == ["illustration_budget"]
+    assert check2([C.illustration_card(fixture_repo)], repos)[1] == []
+
+
+def test_card_account_file_and_dir_resolved(fixture_repo, repos):
+    accepted, rejected = check2(
+        [C.text_meme_card(fixture_repo, account="fixture:./src/app.py")], repos
+    )
+    assert rejected == []
+    assert accepted[0].card["account"] == "fixture:src/app.py"
+    assert accepted[0].resolved["account"] == {
+        "handle": "@app.py",
+        "repo": "fixture",
+        "path": "src/app.py",
+        "kind": "file",
+    }
+    accepted, _ = check2([C.text_meme_card(fixture_repo, account="fixture:billing/")], repos)
+    assert accepted[0].resolved["account"]["kind"] == "dir"
+    assert accepted[0].resolved["account"]["handle"] == "@billing"
+    assert accepted[0].card["account"] == "fixture:billing"
+
+
+def test_no_account_means_no_resolved_account(fixture_repo, repos):
+    accepted, _ = check2([C.text_meme_card(fixture_repo)], repos)
+    assert "account" not in accepted[0].resolved
+
+
+def test_unknown_account_rejected(fixture_repo, repos):
+    for acct in ("fixture:src/missing.py", "other:src/app.py", "fixture:../x"):
+        card = C.text_meme_card(fixture_repo, account=acct)
+        assert reasons(check2([card], repos)[1]) in (["unknown_account"], ["schema"]), acct
+    card = C.text_meme_card(fixture_repo, account="fixture:src/missing.py")
+    assert reasons(check2([card], repos)[1]) == ["unknown_account"]
+
+
+def test_account_repo_must_be_in_card_repos(fixture_repo, repos):
+    both = {**repos, "other": Repo(name="other", path=fixture_repo.path, ref="main")}
+    card = C.text_meme_card(fixture_repo, account="other:src/app.py")
+    assert reasons(check2([card], both)[1]) == ["unknown_account"]
+
+
+def test_template_account_fields(fixture_repo, repos):
+    assert check2([C.template_card(fixture_repo, "group_chat")], repos)[1] == []
+    assert check2([C.template_card(fixture_repo, "dating_profile")], repos)[1] == []
+    assert check2([C.template_card(fixture_repo, "horoscope")], repos)[1] == []
+    assert check2([C.template_card(fixture_repo, "day_in_life")], repos)[1] == []
+    bad = C.TEMPLATE_DATA["group_chat"] | {
+        "messages": [{"from": "linus", "text": "hi"}, {"from": "greybeard", "text": "yo"}]
+    }
+    assert reasons(check2([C.template_card(fixture_repo, "group_chat", bad)], repos)[1]) == [
+        "unknown_account"
+    ]
+    bad = C.TEMPLATE_DATA["horoscope"] | {"subject": "fixture:nope.py"}
+    assert reasons(check2([C.template_card(fixture_repo, "horoscope", bad)], repos)[1]) == [
+        "unknown_account"
+    ]
+
+
+def test_template_account_path_normalized(fixture_repo, repos):
+    data = C.TEMPLATE_DATA["dating_profile"] | {"name": "fixture:./src/app.py"}
+    accepted, rejected = check2([C.template_card(fixture_repo, "dating_profile", data)], repos)
+    assert rejected == []
+    assert accepted[0].card["visual"]["data"]["name"] == "fixture:src/app.py"
+
+
+FAKE_SIGNALS = {
+    "churn": {
+        "files": {
+            "30": [{"path": "a.py", "commits": 2, "lines": 5}],
+            "90": [{"path": f"f{i}.py", "commits": i, "lines": 1} for i in range(1, 13)],
+        },
+        "dirs": {"90": [{"path": "src", "commits": 7, "lines": 9}]},
+    },
+    "commit_times": {"hour_histogram": list(range(24))},
+    "author_shares": {
+        "by_dir": {
+            "src": [
+                {"author": "Alice", "commits": 3, "lines": 9, "share": 0.756},
+                {"author": "Bob", "commits": 1, "lines": 3, "share": 0.244},
+            ]
+        }
+    },
+    "co_change": [
+        {"a": f"a{i}.py", "b": f"b{i}.py", "count": i, "jaccard": 0.5, "same_dir": True}
+        for i in range(1, 13)
+    ],
+}
+
+
+def fake_signals(repo_name):
+    return FAKE_SIGNALS if repo_name == "fixture" else None
+
+
+def chart_visual(chart, **kw):
+    return {"kind": "chart", "chart": chart, "repo": "fixture", "title": "T", **kw}
+
+
+def chart_resolved(fixture_repo, repos, chart, **kw):
+    card = C.chart_card(fixture_repo, chart, visual=chart_visual(chart, **kw))
+    accepted, rejected = check2([card], repos, signals_for=fake_signals)
+    assert rejected == [], rejected
+    return accepted[0].resolved["visual"]
+
+
+def test_chart_top_churn_files(fixture_repo, repos):
+    v = chart_resolved(fixture_repo, repos, "top_churn_files")  # default window 90
+    assert v["type"] == "bar" and v["title"] == "T"
+    assert len(v["bars"]) == 10
+    assert v["bars"][0] == {"label": "f12.py", "value": 12}
+    assert v["bars"][-1]["value"] == 3
+    v = chart_resolved(fixture_repo, repos, "top_churn_files", window="30")
+    assert v["bars"] == [{"label": "a.py", "value": 2}]
+
+
+def test_chart_top_churn_dirs(fixture_repo, repos):
+    v = chart_resolved(fixture_repo, repos, "top_churn_dirs")
+    assert v["bars"] == [{"label": "src", "value": 7}]
+
+
+def test_chart_commit_hours(fixture_repo, repos):
+    v = chart_resolved(fixture_repo, repos, "commit_hours")
+    assert [b["label"] for b in v["bars"]] == [f"{h:02d}" for h in range(24)]
+    assert v["bars"][5]["value"] == 5
+
+
+def test_chart_author_shares(fixture_repo, repos):
+    v = chart_resolved(fixture_repo, repos, "author_shares", dir="src")
+    assert v["bars"] == [{"label": "Alice", "value": 76}, {"label": "Bob", "value": 24}]
+
+
+def test_chart_co_change(fixture_repo, repos):
+    v = chart_resolved(fixture_repo, repos, "co_change")
+    assert len(v["bars"]) == 10
+    assert v["bars"][0] == {"label": "a12.py + b12.py", "value": 12}
+
+
+def test_chart_no_data(fixture_repo, repos):
+    card = C.chart_card(fixture_repo)
+    assert reasons(check2([card], repos)[1]) == ["chart_no_data"]  # no signals_for
+    assert reasons(check2([card], repos, signals_for=lambda n: None)[1]) == ["chart_no_data"]
+    for kind, kw in [
+        ("top_churn_files", {"window": "365"}),
+        ("author_shares", {"dir": "nope"}),
+    ]:
+        card = C.chart_card(fixture_repo, kind, visual=chart_visual(kind, **kw))
+        assert reasons(check2([card], repos, signals_for=fake_signals)[1]) == ["chart_no_data"]
+
+
+def test_chart_repo_must_be_in_card_repos(fixture_repo, repos):
+    both = {**repos, "other": Repo(name="other", path=fixture_repo.path, ref="main")}
+    v = chart_visual("commit_hours") | {"repo": "other"}
+    card = C.chart_card(fixture_repo, visual=v, format="chart")
+    assert reasons(check2([card], both, signals_for=lambda n: FAKE_SIGNALS)[1]) == [
+        "repo_not_in_card"
+    ]
+
+
+def test_null_resolved_visuals(fixture_repo, repos):
+    for card in (
+        C.text_meme_card(fixture_repo),
+        C.diagram_card(fixture_repo),
+        C.template_card(fixture_repo, "thread"),
+    ):
+        accepted, rejected = check2([card], repos)
+        assert rejected == [] and accepted[0].resolved["visual"] is None

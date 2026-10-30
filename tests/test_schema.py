@@ -74,3 +74,48 @@ def test_schema_document_wraps_cards(fixture_repo):
     doc = validator.card_schema(PERSONAS)
     assert doc["type"] == "object"
     assert doc["properties"]["cards"]["items"] == {"$ref": "#/$defs/card"}
+
+
+def test_new_kinds_pass_schema(fixture_repo):
+    from tests import cards as c
+
+    for card in [
+        c.meme_card(fixture_repo),
+        c.text_meme_card(fixture_repo),
+        c.illustration_card(fixture_repo),
+        c.comic_card(fixture_repo),
+        c.chart_card(fixture_repo),
+        c.diagram_card(fixture_repo),
+        *[c.template_card(fixture_repo, t) for t in c.TEMPLATE_DATA],
+    ]:
+        assert errors(card) == [], card["format"]
+
+
+def test_new_kind_schema_limits(fixture_repo):
+    from tests import cards as c
+
+    bad = [
+        c.template_card(fixture_repo, "thread", {"posts": ["only one"]}),
+        c.template_card(fixture_repo, "flags", {"subject": "x", "red": [], "green": []}),
+        c.template_card(fixture_repo, "hot_take", {"take": "x", "extra": 1}),
+        c.template_card(
+            fixture_repo, "tier_list", {"title": "t", "rows": [{"tier": "Z", "items": []}] * 2}
+        ),
+        c.comic_card(fixture_repo, panels=1),
+        c.meme_card(fixture_repo, visual={"kind": "meme", "template": "d", "lines": ["x"] * 5}),
+        c.text_meme_card(
+            fixture_repo, visual={"kind": "text_meme", "style": "nope", "lines": ["x"]}
+        ),
+        c.chart_card(
+            fixture_repo,
+            "author_shares",
+            visual={"kind": "chart", "chart": "author_shares", "repo": "fixture"},
+        ),
+        c.illustration_card(fixture_repo, account="no-colon"),
+        c.illustration_card(
+            fixture_repo, visual={"kind": "illustration", "prompt": "x" * 401, "caption": "c"}
+        ),
+    ]
+    for card in bad:
+        assert errors(card), card["visual"]
+    assert errors(c.illustration_card(fixture_repo, account="fixture:src/app.py")) == []
