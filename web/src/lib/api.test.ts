@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchFeed, postEvents } from './api';
+import { fetchCard, fetchFeed, fetchRepo, postEvents } from './api';
 
 const fetchMock = vi.fn();
 
@@ -37,5 +37,23 @@ describe('postEvents', () => {
 		expect(init.method).toBe('POST');
 		expect(init.headers['Content-Type']).toBe('application/json');
 		expect(JSON.parse(init.body)).toEqual({ events });
+	});
+});
+
+describe('fetchRepo / fetchCard', () => {
+	it('fetches an encoded repo profile', async () => {
+		fetchMock.mockResolvedValue({ ok: true, json: async () => ({ name: 'a b' }) });
+		const res = await fetchRepo('a b');
+		expect(fetchMock.mock.calls[0][0]).toBe('/api/repos/a%20b');
+		expect(res).toEqual({ name: 'a b' });
+	});
+	it('throws on 404', async () => {
+		fetchMock.mockResolvedValue({ ok: false, status: 404 });
+		await expect(fetchRepo('x')).rejects.toThrow('404');
+	});
+	it('fetches a card', async () => {
+		fetchMock.mockResolvedValue({ ok: true, json: async () => ({ id: 'c_1' }) });
+		await fetchCard('c_1');
+		expect(fetchMock.mock.calls[0][0]).toBe('/api/cards/c_1');
 	});
 });

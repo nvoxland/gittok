@@ -2,6 +2,8 @@
 	import CodePanel from './panels/CodePanel.svelte';
 	import DiffPanel from './panels/DiffPanel.svelte';
 	import ExplainPanel from './panels/ExplainPanel.svelte';
+	import Avatar from './Avatar.svelte';
+	import Poster from './Poster.svelte';
 	import { visuals } from './visuals/index.ts';
 	import type { Card, ResolvedCode, ResolvedDiff } from '#lib/types.ts';
 
@@ -23,14 +25,20 @@
 
 <article data-card-id={card.id}>
 	<header>
-		<span class="repo">{card.repo}</span>
-		<span class="persona">@{card.persona}</span>
+		<a class="repo" href="/repo/{encodeURIComponent(card.repo)}">{card.repo}</a>
+		<span class="persona">
+			{#if card.account}
+				<Poster account={card.account} kind={card.resolved.account?.kind} />
+			{:else}
+				<Poster account={card.persona} />
+			{/if}
+		</span>
 		<span class="tone">{card.tone}</span>
 	</header>
 	<div class="panels" onscroll={onScroll}>
 		<section data-panel="0">
 			{#if Visual}
-				<Visual visual={card.visual} resolved={card.resolved.visual} />
+				<Visual visual={card.visual} resolved={card.resolved.visual} persona={card.persona} />
 			{:else}
 				<p class="unsupported">Unsupported card type: {card.visual.kind}</p>
 			{/if}
@@ -38,7 +46,7 @@
 			{#if card.comments.length}
 				<ul class="comments">
 					{#each card.comments as c, i (i)}
-						<li><span class="handle">@{c.persona}</span>: {c.text}</li>
+						<li><Avatar handle={c.persona} size={20} /><span class="handle">@{c.persona}</span>: {c.text}</li>
 					{/each}
 				</ul>
 			{/if}
@@ -88,6 +96,15 @@
 	}
 	.persona {
 		color: var(--muted);
+		min-width: 0;
+	}
+	.repo {
+		color: inherit;
+		font-weight: 600;
+		text-decoration: none;
+	}
+	.repo:hover {
+		text-decoration: underline;
 	}
 	.tone {
 		margin-left: auto;
@@ -128,6 +145,13 @@
 	}
 	.comments li {
 		margin-bottom: 0.4rem;
+		display: flex;
+		align-items: flex-start;
+		gap: 0.4rem;
+		overflow-wrap: anywhere;
+	}
+	.comments li :global(.avatar) {
+		margin-top: 0.1rem;
 	}
 	.handle {
 		color: var(--muted);

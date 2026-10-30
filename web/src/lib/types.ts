@@ -16,7 +16,84 @@ export type TextVisual = {
 	bullets?: string[];
 };
 
-export type Visual = CodeVisual | TextVisual;
+export type MemeVisual = { kind: 'meme'; template: string; lines: string[] };
+export type TextMemeStyle = 'pov' | 'nobody_me' | 'starter_pack' | 'expectation_reality';
+export type TextMemeVisual = { kind: 'text_meme'; style: TextMemeStyle; lines: string[] };
+export type IllustrationVisual = {
+	kind: 'illustration';
+	prompt: string;
+	caption: string;
+	mascots?: string[];
+};
+export type ComicPanelSpec = { prompt: string; caption: string };
+export type ComicVisual = { kind: 'comic'; panels: ComicPanelSpec[]; mascots?: string[] };
+export type ChartName =
+	| 'top_churn_files'
+	| 'top_churn_dirs'
+	| 'commit_hours'
+	| 'author_shares'
+	| 'co_change';
+export type ChartVisual = {
+	kind: 'chart';
+	chart: ChartName;
+	repo: string;
+	window?: string;
+	dir?: string;
+	title?: string;
+};
+export type DiagramVisual = { kind: 'diagram'; title?: string; mermaid: string };
+
+export type IcebergData = { title: string; layers: { label: string; items: string[] }[] };
+export type TierRow = { tier: 'S' | 'A' | 'B' | 'C' | 'D' | 'F'; items: { name: string; why: string }[] };
+export type TierListData = { title: string; rows: TierRow[] };
+export type GroupChatData = { title: string; messages: { from: string; text: string }[] };
+export type FlagsData = { subject: string; red: string[]; green: string[] };
+export type DatingProfileData = {
+	name: string;
+	age: string | number;
+	bio: string;
+	likes: string[];
+	dealbreakers: string[];
+};
+export type GlowUpData = {
+	subject: string;
+	before: { label: string; text: string };
+	after: { label: string; text: string };
+};
+export type BreakingNewsData = { headline: string; subhead?: string; ticker: string[] };
+export type HoroscopeData = { subject: string; sign: string; forecast: string; lucky?: string };
+export type ThreadData = { posts: string[] };
+export type DayInLifeData = { subject: string; steps: { time: string; text: string }[] };
+export type HotTakeData = { take: string };
+
+export type TemplateDataMap = {
+	iceberg: IcebergData;
+	tier_list: TierListData;
+	group_chat: GroupChatData;
+	flags: FlagsData;
+	dating_profile: DatingProfileData;
+	glow_up: GlowUpData;
+	breaking_news: BreakingNewsData;
+	horoscope: HoroscopeData;
+	thread: ThreadData;
+	day_in_life: DayInLifeData;
+	hot_take: HotTakeData;
+};
+export type TemplateName = keyof TemplateDataMap;
+export type TemplateVisual = {
+	[K in TemplateName]: { kind: 'template'; template: K; data: TemplateDataMap[K] };
+}[TemplateName];
+
+export type Visual =
+	| CodeVisual
+	| TextVisual
+	| MemeVisual
+	| TextMemeVisual
+	| IllustrationVisual
+	| ComicVisual
+	| ChartVisual
+	| DiagramVisual
+	| TemplateVisual;
 
 export type ExplainPanel = { kind: 'explain'; text: string };
 export type CodePanel = {
@@ -39,8 +116,24 @@ export type DepthPanel = ExplainPanel | CodePanel | CodeDiffPanel;
 export type ResolvedCode = { code: string; language: string; start_line: number };
 export type ResolvedDiff = { diff: string };
 
+export type ResolvedImages = { images: string[]; width: number; height: number };
+export type ResolvedChart = {
+	type: 'bar';
+	title: string;
+	x_label: string;
+	y_label: string;
+	bars: { label: string; value: number }[];
+};
+export type ResolvedAccount = {
+	handle: string;
+	repo: string;
+	path: string;
+	kind: 'file' | 'dir';
+};
+
 export type Resolved = {
-	visual: ResolvedCode | null;
+	visual: ResolvedCode | ResolvedImages | ResolvedChart | null;
+	account?: ResolvedAccount;
 	depth: (ResolvedCode | ResolvedDiff | null)[];
 };
 
@@ -57,6 +150,7 @@ export type Card = {
 	tone: string;
 	hook: string;
 	visual: Visual;
+	account?: string;
 	depth: DepthPanel[];
 	comments: Comment[];
 	sources: Source[];
@@ -82,4 +176,20 @@ export type FeedEvent = {
 	type: FeedEventType;
 	ts: number;
 	data?: Record<string, unknown>;
+};
+
+export type RepoStats = {
+	commits_365: number;
+	authors_365: number;
+	last_commit_ts: number | null;
+	top_files: { path: string; commits: number }[];
+	top_dirs: { path: string; commits: number }[];
+};
+export type RepoProfile = {
+	name: string;
+	mascot: string | null;
+	mascot_image: string | null;
+	group: string | null;
+	stats: RepoStats;
+	cards: Card[];
 };

@@ -5,6 +5,12 @@
 	--muted: #6a6a70;
 	--border: #dcdcd8;
 	--accent: #3b6ef5;
+	--chart-bar: #3b6ef5;
+	--good: #1a7f4b;
+	--good-bg: #e3f4ea;
+	--bad: #c62d3a;
+	--bad-bg: #fbe7e9;
+	--news: #c8102e;
 	color-scheme: light dark;
 }
 
@@ -16,6 +22,12 @@
 		--muted: #9a9aa2;
 		--border: #2c2c31;
 		--accent: #7a9cff;
+		--chart-bar: #7a9cff;
+		--good: #4fd18b;
+		--good-bg: #12301f;
+		--bad: #ff6b78;
+		--bad-bg: #3a1519;
+		--news: #e0243f;
 	}
 }
 

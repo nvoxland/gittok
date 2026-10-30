@@ -1,0 +1,51 @@
+<script lang="ts">
+	import type { IllustrationVisual, ResolvedImages } from '#lib/types.ts';
+	let { visual, resolved }: { visual: IllustrationVisual; resolved: ResolvedImages | null } =
+		$props();
+</script>
+
+{#if resolved?.images?.length}
+	<figure>
+		<img
+			src={resolved.images[0]}
+			width={resolved.width}
+			height={resolved.height}
+			loading="lazy"
+			alt={visual.caption}
+		/>
+		<figcaption class="caption">{visual.caption}</figcaption>
+	</figure>
+{:else}
+	<p class="missing">Image unavailable</p>
+{/if}
+
+<style>
+	figure {
+		position: relative;
+		margin: 0;
+	}
+	img {
+		display: block;
+		width: 100%;
+		height: auto;
+		max-height: 60dvh;
+		object-fit: cover;
+		border-radius: 8px;
+	}
+	.caption {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		padding: 1.5rem 0.75rem 0.6rem;
+		border-radius: 0 0 8px 8px;
+		color: #fff;
+		font-weight: 700;
+		text-align: center;
+		text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+		background: linear-gradient(to top, rgba(0, 0, 0, 0.7), transparent);
+	}
+	.missing {
+		color: var(--muted);
+	}
+</style>

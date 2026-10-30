@@ -1,0 +1,64 @@
+import { render, screen } from '@testing-library/svelte';
+import { describe, expect, it } from 'vitest';
+import RepoProfile from './RepoProfile.svelte';
+import { fakeCard, memeVisual, images } from './fixtures.ts';
+import type { RepoProfile as Profile } from '#lib/types.ts';
+
+const profile = (over: Partial<Profile> = {}): Profile => ({
+	name: 'storefront',
+	mascot: 'otter',
+	mascot_image: '/assets/mascots/otter.png',
+	group: 'work',
+	stats: {
+		commits_365: 321,
+		authors_365: 4,
+		last_commit_ts: 1761826800,
+		top_files: [{ path: 'src/a.clj', commits: 40 }],
+		top_dirs: [{ path: 'src', commits: 90 }]
+	},
+	cards: [
+		fakeCard({ id: 'c_1', hook: 'First hook' }),
+		fakeCard({
+			id: 'c_2',
+			hook: 'Second hook',
+			format: 'meme',
+			visual: memeVisual(),
+			resolved: { visual: images(), depth: [] }
+		})
+	],
+	...over
+});
+
+describe('RepoProfile', () => {
+	it('renders name, group, mascot and stats', () => {
+		const { container } = render(RepoProfile, { profile: profile() });
+		expect(screen.getByRole('heading', { name: 'storefront' })).toBeInTheDocument();
+		expect(screen.getByText('work')).toBeInTheDocument();
+		expect(container.querySelector('img.mascot')!.getAttribute('src')).toBe(
+			'/assets/mascots/otter.png'
+		);
+		expect(screen.getByText('321')).toBeInTheDocument();
+		expect(screen.getByText('4')).toBeInTheDocument();
+		expect(screen.getByText('2025-10-30')).toBeInTheDocument();
+		expect(screen.getByText('src/a.clj')).toBeInTheDocument();
+		expect(screen.getByText('src')).toBeInTheDocument();
+	});
+	it('shows a placeholder without a mascot image', () => {
+		const { container } = render(RepoProfile, {
+			profile: profile({ mascot_image: null, mascot: null })
+		});
+		expect(container.querySelector('img.mascot')).toBeNull();
+		expect(container.querySelector('.mascot.placeholder')).not.toBeNull();
+	});
+	it('lists cards linking to /card/{id}', () => {
+		render(RepoProfile, { profile: profile() });
+		expect(screen.getByRole('link', { name: /First hook/ })).toHaveAttribute('href', '/card/c_1');
+		expect(screen.getByRole('link', { name: /Second hook/ })).toHaveAttribute('href', '/card/c_2');
+	});
+	it('handles no cards and no last commit', () => {
+		render(RepoProfile, {
+			profile: profile({ cards: [], stats: { ...profile().stats, last_commit_ts: null } })
+		});
+		expect(screen.getByText(/no cards yet/i)).toBeInTheDocument();
+	});
+});
