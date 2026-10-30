@@ -441,3 +441,27 @@ def test_saved_lists_cards_whose_latest_save_is_on(cfg, client, fixture_repo):
     assert [card["id"] for card in body["cards"]] == [q, a]  # most recent save first
     assert "answer_index" not in body["cards"][0]["interaction"]
     assert c not in {card["id"] for card in body["cards"]}
+
+
+def test_lifespan_runs_profile_worker_and_stops_it(cfg):
+    import threading
+    import time
+
+    app = api.create_app(lambda: cfg, profile_worker=True, profile_interval_s=0.01)
+    path = cfg.settings.data_dir / "profile.md"
+    with TestClient(app):
+        for _ in range(200):
+            if path.is_file():
+                break
+            time.sleep(0.02)
+        assert path.is_file()
+        assert [t for t in threading.enumerate() if t.name == "profile-worker"]
+    assert not [t for t in threading.enumerate() if t.name == "profile-worker"]
+
+
+def test_no_profile_worker_by_default(cfg):
+    import threading
+
+    with TestClient(api.create_app(lambda: cfg)):
+        assert not [t for t in threading.enumerate() if t.name == "profile-worker"]
+        assert not (cfg.settings.data_dir / "profile.md").exists()

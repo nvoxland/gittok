@@ -172,14 +172,19 @@ def test_avatars_command_explains_missing_mflux(cfg, monkeypatch, capsys):
     assert "uv sync --group images" in capsys.readouterr().err
 
 
-def test_serve_starts_the_render_and_learning_workers(cfg, monkeypatch):
+def test_serve_starts_the_render_learning_and_profile_workers(cfg, monkeypatch):
     import uvicorn
 
     seen = {}
     monkeypatch.setattr(cli, "create_app", lambda get, **kw: seen.update(kw) or "app")
     monkeypatch.setattr(uvicorn, "run", lambda app, **kw: seen.update(app=app))
     assert cli.main(["serve"]) == 0
-    assert seen == {"render_worker": True, "learning_worker": True, "app": "app"}
+    assert seen == {
+        "render_worker": True,
+        "learning_worker": True,
+        "profile_worker": True,
+        "app": "app",
+    }
 
 
 def _seed_learning(cfg, fixture_repo):
@@ -223,3 +228,110 @@ def test_reset_weights_all_and_by_feature(cfg, fixture_repo, capsys):
     assert capsys.readouterr().out.strip() == f"deleted {persona} weights"
     assert cli.main(["reset-weights"]) == 0
     assert capsys.readouterr().out.strip() == f"deleted {total - persona} weights"
+
+
+# ---------------------------------------------------------------- steering commands
+
+
+def _conn(cfg):
+    from codescroll import db
+
+    return db.open_db(cfg.settings.data_dir / "codescroll.db")
+
+
+def test_rules_add_list_remove_round_trip(cfg, capsys):
+    code = cli.main(
+        ["rules", "add", "--type", "boost", "--feature", "format", "--value", "meme",
+         "--factor", "3", "--expires", "7d", "--reason", "more memes"]
+    )  # fmt: skip
+    assert code == 0
+    assert "added rule 1" in capsys.readouterr().out
+    assert cli.main(["rules"]) == 0  # list is the default
+    out = capsys.readouterr().out
+    assert "boost" in out and "format=meme" in out and "x3" in out and "more memes" in out
+    assert cli.main(["rules", "list", "--json"]) == 0
+    rules = json.loads(capsys.readouterr().out)
+    assert [(r["id"], r["factor"]) for r in rules] == [(1, 3.0)]
+    assert cli.main(["rules", "remove", "1"]) == 0
+    assert "removed rule 1" in capsys.readouterr().out
+    assert cli.main(["rules", "list"]) == 0
+    assert "no rules" in capsys.readouterr().out.lower()
+
+
+def test_rules_errors_print_message_and_exit_1(cfg, capsys):
+    code = cli.main(["rules", "add", "--type", "ban", "--feature", "format", "--value", "memee"])
+    assert code == 1
+    assert "Did you mean 'meme'" in capsys.readouterr().err
+    assert cli.main(["rules", "remove", "99"]) == 1
+    assert "No rule with id 99" in capsys.readouterr().err
+
+
+def test_weights_profile_coverage_cards_card_commands(cfg, fixture_repo, capsys):
+    _seed_learning(cfg, fixture_repo)
+    assert cli.main(["learn"]) == 0
+    capsys.readouterr()
+
+    assert cli.main(["weights", "--feature", "format", "--json"]) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert rows and {r["feature"] for r in rows} == {"format"}
+    assert cli.main(["weights", "--feature", "format"]) == 0
+    assert "code_card" in capsys.readouterr().out
+
+    assert cli.main(["profile"]) == 0
+    assert "Not enough data yet" in capsys.readouterr().out
+    assert cli.main(["profile", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["evidence"] == 2
+    assert cli.main(["profile", "--write"]) == 0
+    path = cfg.settings.data_dir / "profile.md"
+    assert str(path) in capsys.readouterr().out and path.is_file()
+
+    assert cli.main(["coverage", "--repo", "fixture"]) == 0
+    assert "billing" in capsys.readouterr().out
+    assert cli.main(["coverage", "--json"]) == 0
+    assert {r["dir"] for r in json.loads(capsys.readouterr().out)} >= {"billing", "src"}
+
+    assert cli.main(["cards", "--limit", "1", "--json"]) == 0
+    cards = json.loads(capsys.readouterr().out)
+    assert len(cards) == 1
+    assert cli.main(["cards"]) == 0
+    assert "Rounding was fixed twice" in capsys.readouterr().out
+    assert cli.main(["card", cards[0]["id"], "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["card_id"] == cards[0]["id"]
+    assert cli.main(["card", cards[0]["id"]]) == 0
+    assert "impression" in capsys.readouterr().out
+    assert cli.main(["card", "nope"]) == 1
+    assert "No card" in capsys.readouterr().err
+
+
+from tests.test_steering import make_ycfg  # noqa: E402
+
+
+@pytest.fixture
+def ycfg(fixture_repo, tmp_path):
+    return make_ycfg(fixture_repo, tmp_path)
+
+
+def test_config_edit_commands(ycfg, fixture_repo, monkeypatch, capsys):
+    from codescroll import config as config_mod
+
+    monkeypatch.setattr(cli, "load_config", lambda: config_mod.load_config(ycfg.root))
+    assert cli.main(["repos", "add", "gamma", str(fixture_repo.path), "--group", "ops"]) == 0
+    assert "added repo gamma" in capsys.readouterr().out
+    assert cli.main(["repos"]) == 0
+    assert "gamma" in capsys.readouterr().out
+    assert cli.main(["repos", "group", "gamma", "dev"]) == 0
+    assert "gamma group: dev" in capsys.readouterr().out
+    assert cli.main(["repos", "group", "gamma", "--clear"]) == 0
+    assert "gamma group: -" in capsys.readouterr().out
+    assert cli.main(["repos", "group", "gamma"]) == 1
+    assert "--clear" in capsys.readouterr().err
+
+    assert cli.main(["mascot", "set", "crow", "--style", "a tidy crow", "--seed", "5"]) == 0
+    assert "mascot crow" in capsys.readouterr().out
+    assert cli.main(["persona", "edit", "greybeard", "--voice", "Weary."]) == 0
+    assert "persona greybeard" in capsys.readouterr().out
+    new = config_mod.load_config(ycfg.root)
+    assert new.mascots["crow"].style == "a tidy crow" and new.mascots["crow"].seed == 5
+    assert new.personas["greybeard"].voice == "Weary."
+    assert cli.main(["persona", "edit", "greybeard"]) == 1
+    assert "Nothing to change" in capsys.readouterr().err

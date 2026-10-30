@@ -15,10 +15,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from codescroll import avatars, db, gitq, learning, mcp_server, render, signals, srs
+from codescroll import avatars, db, gitq, learning, mcp_server, profile, render, signals, srs
 from codescroll import feed as feedmod
 from codescroll.config import Config, load_config
-from codescroll.feed import InvalidCursor, card_json, public_card
+from codescroll.feed import InvalidCursor, public_card
 
 EventType = Literal[
     "impression",
@@ -133,7 +133,7 @@ def repo_profile(conn, cfg: Config, name: str) -> dict:
         "mascot_image": image,
         "group": repo.group,
         "stats": stats,
-        "cards": [card_json(r) for r in rows],
+        "cards": [public_card(r) for r in rows],
     }
 
 
@@ -155,6 +155,8 @@ def create_app(
     renderers: dict | None = None,
     learning_worker: bool = False,
     learning_interval_s: float = 30.0,
+    profile_worker: bool = False,
+    profile_interval_s: float = profile.CHECK_INTERVAL_S,
 ):
     mcp = mcp_server.build_server(get_config)
     mcp_app = mcp.streamable_http_app(
@@ -167,14 +169,15 @@ def create_app(
         learner = None
         if learning_worker:
             learner = learning.LearningWorker(get_config, learning_interval_s)
-        for w in (worker, learner):
+        profiler = profile.ProfileWorker(get_config, profile_interval_s) if profile_worker else None
+        for w in (worker, learner, profiler):
             if w:
                 w.start()
         try:
             async with mcp.session_manager.run():
                 yield
         finally:
-            for w in (worker, learner):
+            for w in (worker, learner, profiler):
                 if w:
                     w.stop()
 
