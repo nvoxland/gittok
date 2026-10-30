@@ -184,3 +184,20 @@ async def test_get_brief_uses_learned_mix_when_rewards_exist(fixture_repo, tmp_p
     async with Client(server) as client:
         learned = data(await client.call_tool("get_brief", {"count": 12}))
     assert "Mix: learned from 7 rewards" in learned["summary_markdown"]
+
+
+def test_recent_stories_carry_format(fixture_repo, tmp_path):
+    from types import SimpleNamespace
+
+    from codescroll import db, store
+
+    cfg = make_config(fixture_repo, tmp_path)
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+        conn.execute("INSERT INTO runs(id, status, started_at) VALUES ('r1', 'finished', 'x')")
+        spec = text_card(fixture_repo)
+        store.insert_card(conn, cfg, "r1", SimpleNamespace(card=spec, resolved={}, story_key="k1"))
+        conn.commit()
+        got = mcp_server.recent_stories(conn)
+    assert got == [
+        {"story_type": spec["story_type"], "hook": spec["hook"], "format": spec["format"]}
+    ]

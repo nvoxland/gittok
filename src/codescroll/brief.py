@@ -7,6 +7,7 @@ cards without any other context.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 
 _DRAMA = (
@@ -730,11 +731,14 @@ def _pick_format(
     budget: int,
     boost: dict[str, float] | None = None,
     caps: dict[str, int] | None = None,
+    recent: dict[str, int] | None = None,
 ) -> str:
     """Least-used format of the category that still fits the illustration budget.
 
     A boost factor divides a format's use count, so boosted formats come up more often.
+    Ties go to the format used least in recent cards, so runs rotate through the list.
     """
+    recent = recent or {}
     boost = boost or {}
     caps = caps or {}
     options = [f for f in options if used.get(f, 0) < caps.get(f, 1 << 30)] or list(options)
@@ -743,7 +747,14 @@ def _pick_format(
         or [f for f in options if f not in ILLUSTRATION_COST]
         or list(options)
     )
-    return min(fits, key=lambda f: ((used.get(f, 0) + 1) / boost.get(f, 1.0), options.index(f)))
+    return min(
+        fits,
+        key=lambda f: (
+            (used.get(f, 0) + 1) / boost.get(f, 1.0),
+            recent.get(f, 0),
+            options.index(f),
+        ),
+    )
 
 
 def build_brief(
@@ -764,6 +775,9 @@ def build_brief(
     if not repo_signals:
         raise ValueError("no repos to build a brief from")
     rules = list(rules or [])
+    # Recent cards break ties, so successive runs rotate through formats and story types.
+    recent_fmt = Counter(r.get("format") for r in recent if r.get("format"))
+    recent_story = Counter(r.get("story_type") for r in recent if r.get("story_type"))
     # Cross-repo groups: >= 2 repos of one group in this brief. `groups` (name -> repos)
     # overrides the group each analysis carries.
     if groups is None:
@@ -907,7 +921,13 @@ def build_brief(
                     )
                     combos.remove((g, t))
                     fmt = _pick_format(
-                        cross_fmts, used, spent, max_illustrations, fmt_boost, fmt_caps
+                        cross_fmts,
+                        used,
+                        spent,
+                        max_illustrations,
+                        fmt_boost,
+                        fmt_caps,
+                        recent_fmt,
                     )
                     used[fmt] = used.get(fmt, 0) + 1
                     spent += ILLUSTRATION_COST.get(fmt, 0)
@@ -940,7 +960,13 @@ def build_brief(
             )
             for _ in range(per_repo[repo]):
                 fmt = _pick_format(
-                    formats_in[category], used, spent, max_illustrations, fmt_boost, fmt_caps
+                    formats_in[category],
+                    used,
+                    spent,
+                    max_illustrations,
+                    fmt_boost,
+                    fmt_caps,
+                    recent_fmt,
                 )
                 used[fmt] = used.get(fmt, 0) + 1
                 spent += ILLUSTRATION_COST.get(fmt, 0)
@@ -951,6 +977,7 @@ def build_brief(
                     open_t,
                     key=lambda t: (
                         (story_used.get(t, 0) + 1) / story_boost.get(t, 1.0),
+                        recent_story.get(t, 0),
                         usable.index(t),
                     ),
                 )

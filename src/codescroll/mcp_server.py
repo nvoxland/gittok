@@ -50,13 +50,18 @@ def mix_inputs(conn, cfg) -> dict:
 
 
 def recent_stories(conn, days: int = 30, limit: int = 30) -> list[dict]:
-    """Story type and hook of recent cards, for the brief's do-not-repeat list."""
+    """Story type, hook, and format of recent cards: the brief's do-not-repeat list and
+    the history it rotates formats and story types against."""
     since = (datetime.now(UTC) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
     rows = conn.execute(
         "SELECT story_type, spec FROM cards WHERE created_at >= ? ORDER BY created_at DESC LIMIT ?",
         (since, limit),
     ).fetchall()
-    return [{"story_type": r["story_type"], "hook": db.loads(r["spec"])["hook"]} for r in rows]
+    out = []
+    for r in rows:
+        spec = db.loads(r["spec"])
+        out.append({"story_type": r["story_type"], "hook": spec["hook"], "format": spec["format"]})
+    return out
 
 
 # Kept for callers that import the old name.

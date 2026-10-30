@@ -1231,3 +1231,28 @@ def test_summary_and_packet_markdown_split_the_brief():
     assert b.to_markdown().count("## Packet") == len(b.packets)
     with pytest.raises(KeyError):
         b.packet_markdown("p99")
+
+
+def _all_formats(b):
+    return [f for p in b.packets for f in p.formats]
+
+
+def test_formats_rotate_away_from_recently_used_ones():
+    plain = _all_formats(build(count=10))
+    assert "text_post" in plain  # with no history, list order wins
+    used = ["text_post", "code_card", "breaking_news", "eli5", "mascot_scene", "comic"]
+    recent = [
+        {"story_type": "commit_drama", "hook": f"h{i}", "format": f} for i, f in enumerate(used * 3)
+    ]
+    rotated = _all_formats(build(count=10, recent=recent))
+    assert {"iceberg", "chart"} & set(rotated)
+    assert "diagram" in rotated or "day_in_life" in rotated
+
+
+def test_story_types_rotate_away_from_recently_used_ones():
+    def drama(b):
+        return [t for p in b.packets if "git_drama" in p.categories for t in p.story_types]
+
+    first = drama(build(count=10))[0]
+    recent = [{"story_type": first, "hook": f"h{i}", "format": "text_post"} for i in range(5)]
+    assert drama(build(count=10, recent=recent))[0] != first
