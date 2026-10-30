@@ -14,14 +14,14 @@ Requires the `codescroll` MCP server (tools named `mcp__codescroll__*`). If thos
 
 1. **Get the brief.** Call `get_brief` with `repo` and `count` if the user gave them (default count comes from settings; never ask for more than 20 unless the user explicitly asks). Keep `run_id`, `guidance_markdown`, and `packets`. Do not call `get_brief` again in this run.
 
-2. **Launch one subagent per packet**, up to 4 at a time in parallel, with the Agent tool:
+2. **Launch one subagent per packet**, up to 4 at a time, as parallel Agent calls **in one message, in the foreground** (do not set `run_in_background`). Foreground calls return in this same turn, so the whole run stays on this skill's model. Background hand-backs start new turns on the session model, which can be Opus.
    - `subagent_type`: `general-purpose`
    - `model`: the packet's `suggested_model` (`haiku` or `sonnet`). **Never use opus** unless the user asked for it in this request.
    - `prompt`: the packet's section from `brief_markdown` (its id, repo, count, story types, tones, personas, leads), then the full `guidance_markdown`, then: "run_id: <run_id>. Pass it to every mcp__codescroll__ research tool call. Return only a JSON array of exactly N card objects. Use only the mcp__codescroll__ research tools, at most 6 calls per card."
 
 3. **Submit each packet's cards** as soon as its subagent returns: `submit_cards(run_id, cards)`. If the reply is not a JSON array, extract the array; if there is none, count the packet as empty.
 
-4. **One fix round.** If `submit_cards` rejected cards, send the rejected cards with their `reason` and `detail` back to the **same subagent** (SendMessage to it) and ask for corrected cards only. Submit the corrections once. Drop anything still rejected. Do not do a second round.
+4. **One fix round.** If `submit_cards` rejected cards, send the rejected cards with their `reason` and `detail` back to the **same subagent** and ask for corrected cards only. Use SendMessage and wait for its reply in this turn. Submit the corrections once. Drop anything still rejected. Do not do a second round.
 
 5. **Stop early** when `totals.remaining` reaches 0. Do not launch more packets.
 

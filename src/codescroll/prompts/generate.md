@@ -33,6 +33,7 @@ The server checks every citation against git and rejects the card if anything is
 
 - Commits must be real SHAs (7 to 40 hex characters) on the repo's main ref. Copy them from tool output; never invent one.
 - Paths must exist at the cited commit. Line ranges must be inside the file.
+- **Every** line range spans at most 40 lines: in `visual`, in `depth` panels, and in `sources`. To cite a whole file, leave `lines` out of the source.
 - Do **not** include an `excerpt` unless you copy the lines exactly. The server reads the real code from git and shows that, so you only need coordinates.
 - `dirs` must be real directories.
 
