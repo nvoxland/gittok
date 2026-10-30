@@ -1,14 +1,30 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import Feed from '#lib/components/Feed.svelte';
-	import { fetchFeed } from '#lib/api.ts';
+	import { fetchFeed, postEvents } from '#lib/api.ts';
+	import { createBatcher } from '#lib/batcher.ts';
 	import type { Card } from '#lib/types.ts';
 
 	let cards = $state<Card[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
-	onMount(async () => {
+	const batcher = createBatcher(postEvents, 5000);
+
+	onMount(() => {
+		batcher.start();
+		const onVis = () => {
+			if (document.visibilityState === 'hidden') void batcher.flush();
+		};
+		document.addEventListener('visibilitychange', onVis);
+		void load();
+		return () => {
+			document.removeEventListener('visibilitychange', onVis);
+			batcher.stop();
+		};
+	});
+
+	async function load() {
 		try {
 			cards = (await fetchFeed()).cards;
 		} catch (e) {
@@ -16,7 +32,7 @@
 		} finally {
 			loading = false;
 		}
-	});
+	}
 </script>
 
 {#if error}
@@ -26,7 +42,7 @@
 {:else if cards.length === 0}
 	<p class="status">No cards yet</p>
 {:else}
-	<Feed {cards} />
+	<Feed {cards} onEvent={(e) => batcher.push(e)} />
 {/if}
 
 <style>
