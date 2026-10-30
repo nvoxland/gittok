@@ -183,6 +183,7 @@ def test_serve_starts_the_render_learning_and_profile_workers(cfg, monkeypatch):
         "render_worker": True,
         "learning_worker": True,
         "profile_worker": True,
+        "notify_worker": True,
         "app": "app",
     }
 
@@ -349,3 +350,41 @@ def test_brief_matches_get_brief_inputs_rules_and_unavailable_formats(cfg, capsy
     assert "Skipping meme" in out
     assert "Rules:" in out
     assert "horoscope" not in out.split("Rules:")[0]
+
+
+def test_serve_lan_binds_all_interfaces_and_warns(cfg, monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(cli.uvicorn, "run", lambda app, **kw: calls.append(kw))
+    monkeypatch.setattr(cli.social, "lan_addresses", lambda: ["192.168.1.5", "10.0.0.2"])
+    assert cli.main(["serve", "--lan", "--port", "9123"]) == 0
+    assert calls == [{"host": "0.0.0.0", "port": 9123}]
+    out = capsys.readouterr().out
+    assert "http://127.0.0.1:9123" in out
+    assert "http://192.168.1.5:9123" in out and "http://10.0.0.2:9123" in out
+    assert "no authentication" in out
+    assert "HTTPS" in out
+
+
+def test_serve_without_lan_prints_no_warning(cfg, monkeypatch, capsys):
+    monkeypatch.setattr(cli.uvicorn, "run", lambda app, **kw: None)
+    cli.main(["serve"])
+    assert "authentication" not in capsys.readouterr().out
+
+
+def test_notify_runs_one_pass_and_prints_counts(cfg, monkeypatch, capsys):
+    from datetime import UTC, datetime
+
+    from codescroll import db, runs
+
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+        rid = runs.open_run(conn, cfg, repo="fixture", brief="b", requested=3)
+        conn.execute(
+            "UPDATE runs SET status='finished', accepted=4, finished_at='x' WHERE id=?", (rid,)
+        )
+        conn.commit()
+    monkeypatch.setattr(cli.social, "recent_commits", lambda *a: [])
+    monkeypatch.setattr(cli, "_now", lambda: datetime(2026, 10, 30, tzinfo=UTC))
+    assert cli.main(["notify"]) == 0
+    assert capsys.readouterr().out.strip() == "new_cards=1 srs_due=0 hot_file=0 new_kind=0"
+    cli.main(["notify"])
+    assert capsys.readouterr().out.strip() == "new_cards=0 srs_due=0 hot_file=0 new_kind=0"

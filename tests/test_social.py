@@ -1,0 +1,261 @@
+import os
+import subprocess
+from datetime import UTC, datetime, timedelta
+
+import pytest
+
+from codescroll import db, gitq, runs, social, srs
+from tests.conftest import make_config
+from tests.fixture_repo import FixtureRepo
+
+NOW = datetime(2026, 10, 30, 12, 0, 0, tzinfo=UTC)
+
+
+def make_repo(path, commits):
+    """commits: list of (hours_ago, author, subject, [files]). Oldest first in git order."""
+    env = {
+        **os.environ,
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_SYSTEM": os.devnull,
+    }
+
+    def git(*args, extra=None):
+        subprocess.run(
+            ["git", "-c", "commit.gpgsign=false", *args],
+            cwd=path, env={**env, **(extra or {})}, check=True, capture_output=True,
+        )  # fmt: skip
+
+    path.mkdir(parents=True)
+    git("init", "-q", "-b", "main")
+    for i, (hours_ago, author, subject, files) in enumerate(commits):
+        for f in files:
+            p = path / f
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(f"{i}\n{p.read_text() if p.exists() else ''}")
+        git("add", "-A")
+        date = f"{int((NOW - timedelta(hours=hours_ago)).timestamp())} +0000"
+        git(
+            "commit", "-q", "-m", subject,
+            extra={
+                "GIT_AUTHOR_NAME": author, "GIT_AUTHOR_EMAIL": "a@x",
+                "GIT_COMMITTER_NAME": author, "GIT_COMMITTER_EMAIL": "a@x",
+                "GIT_AUTHOR_DATE": date, "GIT_COMMITTER_DATE": date,
+            },
+        )  # fmt: skip
+
+
+@pytest.fixture
+def recent(tmp_path):
+    repo = tmp_path / "recent"
+    make_repo(
+        repo,
+        [
+            (100, "Old Timer", "ancient", ["old.py"]),
+            (5, "Ann", "first today", ["auth.py", "a.py"]),
+            (3, "Bob", "second today", ["auth.py"]),
+            (1, "Ann", "third today", ["auth.py", "b/c.py"]),
+        ],
+    )
+    return repo
+
+
+@pytest.fixture
+def cfg(recent, tmp_path):
+    return make_config(FixtureRepo(path=recent), tmp_path)
+
+
+@pytest.fixture
+def conn(cfg):
+    c = db.open_db(cfg.settings.data_dir / "codescroll.db")
+    yield c
+    c.close()
+
+
+@pytest.fixture(autouse=True)
+def clear_cache():
+    social.clear_cache()
+
+
+def test_recent_commits_helper_lists_last_24h_with_files(recent):
+    since = int((NOW - timedelta(hours=24)).timestamp())
+    commits = gitq.recent_commits(recent, "main", since)
+    assert [c["subject"] for c in commits] == ["third today", "second today", "first today"]
+    assert commits[0]["author"] == "Ann"
+    assert commits[0]["files"] == ["auth.py", "b/c.py"]
+    assert commits[0]["ts"] == int((NOW - timedelta(hours=1)).timestamp())
+    assert len(commits[0]["sha"]) == 40
+
+
+def test_stories_one_per_repo_with_recent_commits(cfg, conn):
+    stories = social.stories(conn, cfg, NOW)
+    assert len(stories) == 1
+    s = stories[0]
+    assert s["repo"] == "fixture"
+    assert s["mascot"] is None and s["mascot_image"] is None
+    assert [c["subject"] for c in s["commits"]] == ["third today", "second today", "first today"]
+    assert s["commits"][0]["files"] == 2
+    assert s["commits"][0]["short"] == s["commits"][0]["sha"][:7]
+    assert s["seen"] is False
+
+
+def test_stories_skip_repos_without_recent_commits(fixture_repo, tmp_path, conn):
+    cfg = make_config(fixture_repo, tmp_path / "other")
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as c:
+        assert social.stories(c, cfg, NOW) == []
+
+
+def test_stories_cap_at_ten_commits(tmp_path):
+    repo = tmp_path / "busy"
+    make_repo(repo, [(12 - i * 0.5, "A", f"c{i}", [f"f{i}.py"]) for i in range(12)])
+    cfg = make_config(FixtureRepo(path=repo), tmp_path)
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as c:
+        s = social.stories(c, cfg, NOW)[0]
+    assert len(s["commits"]) == 10
+    assert s["commits"][0]["subject"] == "c11"
+
+
+def test_stories_seen_after_marking_every_sha(cfg, conn):
+    shas = [c["sha"] for c in social.stories(conn, cfg, NOW)[0]["commits"]]
+    social.mark_seen(conn, "fixture", shas[:2], NOW)
+    assert social.stories(conn, cfg, NOW)[0]["seen"] is False
+    social.mark_seen(conn, "fixture", shas, NOW)
+    social.mark_seen(conn, "fixture", shas, NOW)  # idempotent
+    assert social.stories(conn, cfg, NOW)[0]["seen"] is True
+
+
+def test_stories_cached_per_head_sha(cfg, conn, monkeypatch):
+    social.stories(conn, cfg, NOW)
+    monkeypatch.setattr(gitq, "recent_commits", lambda *a, **k: pytest.fail("git ran"))
+    assert len(social.stories(conn, cfg, NOW)) == 1
+
+
+def test_stories_sorted_newest_first(tmp_path):
+    a, b = tmp_path / "a", tmp_path / "b"
+    make_repo(a, [(10, "A", "older", ["x.py"])])
+    make_repo(b, [(2, "B", "newer", ["y.py"])])
+    cfg = make_config(FixtureRepo(path=a), tmp_path)
+    from dataclasses import replace
+
+    from codescroll.config import Repo
+
+    cfg = replace(cfg, repos={"a": Repo(name="a", path=a, ref="main"),
+                              "b": Repo(name="b", path=b, ref="main")})  # fmt: skip
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as c:
+        assert [s["repo"] for s in social.stories(c, cfg, NOW)] == ["b", "a"]
+
+
+def test_mascot_image_when_file_exists(cfg, conn):
+    from dataclasses import replace
+
+    from codescroll.config import Repo
+
+    cfg = replace(cfg, repos={"fixture": Repo(name="fixture", path=cfg.repos["fixture"].path,
+                                              ref="main", mascot="otter")})  # fmt: skip
+    img = cfg.settings.data_dir / "assets" / "mascots"
+    img.mkdir(parents=True)
+    (img / "otter.png").write_bytes(b"x")
+    s = social.stories(conn, cfg, NOW)[0]
+    assert s["mascot"] == "otter"
+    assert s["mascot_image"] == "/assets/mascots/otter.png"
+
+
+def finished_run(conn, cfg, accepted, repo="fixture"):
+    run_id = runs.open_run(conn, cfg, repo=repo, brief="b", requested=3)
+    conn.execute(
+        "UPDATE runs SET status='finished', accepted=?, finished_at=? WHERE id=?",
+        (accepted, "2026-10-30T11:00:00Z", run_id),
+    )
+    conn.commit()
+    return run_id
+
+
+def texts(conn, kind):
+    return [r["text"] for r in conn.execute(
+        "SELECT text FROM notifications WHERE kind=? ORDER BY id", (kind,))]  # fmt: skip
+
+
+def test_new_cards_notification_once_per_finished_run(cfg, conn):
+    finished_run(conn, cfg, 12)
+    finished_run(conn, cfg, 0)
+    assert social.generate_notifications(conn, cfg, NOW)["new_cards"] == 1
+    assert texts(conn, "new_cards") == ["12 new cards from fixture"]
+    assert social.generate_notifications(conn, cfg, NOW)["new_cards"] == 0
+    assert len(texts(conn, "new_cards")) == 1
+
+
+def test_new_cards_singular(cfg, conn):
+    finished_run(conn, cfg, 1)
+    social.generate_notifications(conn, cfg, NOW)
+    assert texts(conn, "new_cards") == ["1 new card from fixture"]
+
+
+def insert_card(conn, cfg, card_id, story_type, spec=None):
+    run_id = runs.open_run(conn, cfg, repo="fixture", brief="b", requested=1)
+    repo_id = conn.execute("SELECT id FROM repos WHERE name='fixture'").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO cards(id, run_id, repo_id, story_type, format, persona, tone, spec,"
+        " story_key, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (card_id, run_id, repo_id, story_type, "quiz", "p", "t", db.dumps(spec or {}),
+         card_id, "2026-10-30T10:00:00Z"),
+    )  # fmt: skip
+    conn.commit()
+    return card_id
+
+
+def test_srs_due_notification_once_while_unread(cfg, conn):
+    cid = insert_card(conn, cfg, "q1", "commit_drama")
+    assert social.generate_notifications(conn, cfg, NOW)["srs_due"] == 0
+    srs._upsert(conn, cid, 1, NOW - timedelta(hours=1), 0, 0)
+    conn.commit()
+    assert social.generate_notifications(conn, cfg, NOW)["srs_due"] == 1
+    assert texts(conn, "srs_due") == ["1 quiz card is back for another try"]
+    assert social.generate_notifications(conn, cfg, NOW)["srs_due"] == 0
+    conn.execute("UPDATE notifications SET read_at='x'")
+    conn.commit()
+    later = NOW + timedelta(hours=1)
+    assert social.generate_notifications(conn, cfg, later)["srs_due"] == 1
+
+
+def test_hot_file_for_files_in_three_commits_once_per_day(cfg, conn):
+    assert social.generate_notifications(conn, cfg, NOW)["hot_file"] == 1
+    assert texts(conn, "hot_file") == ["auth.py was in 3 commits today"]
+    assert social.generate_notifications(conn, cfg, NOW)["hot_file"] == 0
+    next_day = NOW + timedelta(hours=2)  # new UTC day: dedup key differs, still in the window
+    assert next_day.date() == NOW.date()
+    assert social.generate_notifications(conn, cfg, next_day)["hot_file"] == 0
+
+
+def test_new_kind_for_spot_the_bug_card(cfg, conn):
+    insert_card(conn, cfg, "s1", "spot_the_bug", {"dirs": ["billing"]})
+    insert_card(conn, cfg, "o1", "commit_drama", {"dirs": ["billing"]})
+    assert social.generate_notifications(conn, cfg, NOW)["new_kind"] == 1
+    row = conn.execute("SELECT * FROM notifications WHERE kind='new_kind'").fetchone()
+    assert row["text"] == "A new Spot the Bug from billing/"
+    assert row["card_id"] == "s1"
+    assert social.generate_notifications(conn, cfg, NOW)["new_kind"] == 0
+
+
+def test_list_and_mark_read(cfg, conn):
+    finished_run(conn, cfg, 3)
+    social.generate_notifications(conn, cfg, NOW)
+    out = social.list_notifications(conn, unread_only=True)
+    assert out["unread"] == 2  # new_cards + hot_file
+    first = out["notifications"][0]
+    assert set(first) == {"id", "kind", "text", "card_id", "created_at", "read"}
+    social.mark_read(conn, ids=[first["id"]], now=NOW)
+    assert social.list_notifications(conn, unread_only=True)["unread"] == 1
+    assert len(social.list_notifications(conn)["notifications"]) == 2
+    social.mark_read(conn, all=True, now=NOW)
+    out = social.list_notifications(conn, unread_only=True)
+    assert out == {"notifications": [], "unread": 0}
+
+
+def test_lan_urls_use_given_addresses():
+    assert social.lan_urls(8008, ["192.168.1.5", "10.0.0.2"]) == [
+        "http://192.168.1.5:8008", "http://10.0.0.2:8008"]  # fmt: skip
+
+
+def test_lan_addresses_are_non_loopback_ipv4():
+    addrs = social.lan_addresses()
+    assert all(a.count(".") == 3 and not a.startswith("127.") for a in addrs)
+    assert len(addrs) == len(set(addrs))

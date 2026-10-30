@@ -5,7 +5,7 @@ from __future__ import annotations
 import random
 import re
 from collections.abc import Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -15,7 +15,18 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from codescroll import avatars, db, gitq, learning, mcp_server, profile, render, signals, srs
+from codescroll import (
+    avatars,
+    db,
+    gitq,
+    learning,
+    mcp_server,
+    profile,
+    render,
+    signals,
+    social,
+    srs,
+)
 from codescroll import feed as feedmod
 from codescroll.config import Config, load_config
 from codescroll.feed import InvalidCursor, public_card
@@ -45,6 +56,16 @@ class Answer(BaseModel):
     card_id: str
     choice: int
     session: str | None = None
+
+
+class StorySeen(BaseModel):
+    repo: str
+    shas: list[str]
+
+
+class NotificationsRead(BaseModel):
+    ids: list[int] | None = None
+    all: bool = False
 
 
 class EventBatch(BaseModel):
@@ -118,10 +139,7 @@ def repo_profile(conn, cfg: Config, name: str) -> dict:
             pass
         stats["top_files"] = _top(sig.get("churn"), "files")
         stats["top_dirs"] = _top(sig.get("churn"), "dirs")
-    mascot = repo.mascot or next((m.name for m in cfg.mascots.values() if m.repo == name), None)
-    image = None
-    if mascot and (cfg.settings.data_dir / "assets" / "mascots" / f"{mascot}.png").is_file():
-        image = f"/assets/mascots/{mascot}.png"
+    mascot, image = social.mascot_info(cfg, name)
     rows = conn.execute(
         "SELECT c.* FROM cards c JOIN repos r ON r.id = c.repo_id "
         "WHERE r.name = ? AND c.status = 'ready' ORDER BY c.created_at DESC, c.id DESC LIMIT 20",
@@ -157,6 +175,9 @@ def create_app(
     learning_interval_s: float = 30.0,
     profile_worker: bool = False,
     profile_interval_s: float = profile.CHECK_INTERVAL_S,
+    notify_worker: bool = False,
+    notify_interval_s: float = 60.0,
+    clock: Callable[[], datetime] = lambda: datetime.now(UTC),
 ):
     mcp = mcp_server.build_server(get_config)
     mcp_app = mcp.streamable_http_app(
@@ -170,14 +191,18 @@ def create_app(
         if learning_worker:
             learner = learning.LearningWorker(get_config, learning_interval_s)
         profiler = profile.ProfileWorker(get_config, profile_interval_s) if profile_worker else None
-        for w in (worker, learner, profiler):
+        notifier = (
+            social.NotifyWorker(get_config, notify_interval_s, clock) if notify_worker else None
+        )
+        workers = (worker, learner, profiler, notifier)
+        for w in workers:
             if w:
                 w.start()
         try:
             async with mcp.session_manager.run():
                 yield
         finally:
-            for w in (worker, learner, profiler):
+            for w in workers:
                 if w:
                     w.stop()
 
@@ -245,6 +270,31 @@ def create_app(
                 )
             }
         return {"cards": [public_card(rows[i]) for i in ids if i in rows]}
+
+    @app.get("/api/stories")
+    def stories():
+        with closing(conn()) as c:
+            return {"stories": social.stories(c, get_config(), clock())}
+
+    @app.post("/api/stories/seen")
+    def stories_seen(body: StorySeen):
+        if body.repo not in get_config().repos:
+            raise HTTPException(404, f"unknown repo {body.repo}")
+        with closing(conn()) as c:
+            return {"recorded": social.mark_seen(c, body.repo, body.shas, clock())}
+
+    @app.get("/api/notifications")
+    def notifications(unread: int = 0):
+        with closing(conn()) as c:
+            return social.list_notifications(c, unread_only=bool(unread))
+
+    @app.post("/api/notifications/read")
+    def notifications_read(body: NotificationsRead):
+        if not body.all and not body.ids:
+            raise HTTPException(400, "send ids or all")
+        with closing(conn()) as c:
+            social.mark_read(c, clock(), ids=body.ids, all=body.all)
+            return {"unread": social.list_notifications(c)["unread"]}
 
     @app.get("/api/repos")
     def repos():

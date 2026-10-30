@@ -7,6 +7,7 @@ import json
 import sys
 import time
 from contextlib import closing
+from datetime import UTC, datetime
 from pathlib import Path
 
 import uvicorn
@@ -19,6 +20,7 @@ from codescroll import (
     profile,
     render,
     signals,
+    social,
     steering,
     validator,
 )
@@ -95,13 +97,39 @@ def _brief(args) -> int:
     return 0
 
 
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
 def _serve(args) -> int:
     server = load_config().settings.server
-    host, port = args.host or server.host, args.port or server.port
-    print(f"feed: http://{host}:{port}")
-    print(f"mcp:  http://{host}:{port}/mcp")
-    app = create_app(load_config, render_worker=True, learning_worker=True, profile_worker=True)
+    port = args.port or server.port
+    host = "0.0.0.0" if args.lan else (args.host or server.host)
+    shown = "127.0.0.1" if args.lan else host
+    print(f"feed: http://{shown}:{port}")
+    print(f"mcp:  http://{shown}:{port}/mcp")
+    if args.lan:
+        for url in social.lan_urls(port):
+            print(f"lan:  {url}")
+        print("WARNING: the feed has no authentication. Anyone on this network can open it.")
+        print("Installing the app as a PWA on a phone needs HTTPS.")
+        print("It works in the browser over HTTP. Tailscale is the planned HTTPS path (M6).")
+    app = create_app(
+        load_config,
+        render_worker=True,
+        learning_worker=True,
+        profile_worker=True,
+        notify_worker=True,
+    )
     uvicorn.run(app, host=host, port=port)
+    return 0
+
+
+def _notify(args) -> int:
+    cfg = load_config()
+    with closing(db.open_db(_db_path(cfg))) as conn:
+        made = social.generate_notifications(conn, cfg, _now())
+    print(" ".join(f"{k}={v}" for k, v in made.items()))
     return 0
 
 
@@ -342,7 +370,10 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("serve", help="serve the feed, web app, and MCP endpoint")
     p.add_argument("--host")
     p.add_argument("--port", type=int)
+    p.add_argument("--lan", action="store_true", help="bind 0.0.0.0 and print LAN URLs")
     p.set_defaults(fn=_serve)
+    p = sub.add_parser("notify", help="generate notifications once")
+    p.set_defaults(fn=_notify)
     p = sub.add_parser("learn", help="turn new impressions into rewards and update weights once")
     p.set_defaults(fn=_learn)
     p = sub.add_parser("reset-weights", help="delete learned weights (all, or one feature)")

@@ -465,3 +465,109 @@ def test_no_profile_worker_by_default(cfg):
     with TestClient(api.create_app(lambda: cfg)):
         assert not [t for t in threading.enumerate() if t.name == "profile-worker"]
         assert not (cfg.settings.data_dir / "profile.md").exists()
+
+
+# --- stories and notifications (docs/social.md) ---
+
+
+@pytest.fixture
+def social_cfg(tmp_path):
+    from datetime import UTC, datetime
+
+    from tests.fixture_repo import FixtureRepo
+    from tests.test_social import NOW, make_repo
+
+    repo = tmp_path / "recent"
+    make_repo(
+        repo,
+        [
+            (5, "Ann", "first", ["auth.py"]),
+            (3, "Bob", "second", ["auth.py"]),
+            (1, "Ann", "third", ["auth.py"]),
+        ],
+    )
+    assert isinstance(NOW, datetime) and NOW.tzinfo is UTC
+    return make_config(FixtureRepo(path=repo), tmp_path)
+
+
+@pytest.fixture
+def social_client(social_cfg):
+    from tests.test_social import NOW
+
+    return TestClient(api.create_app(lambda: social_cfg, clock=lambda: NOW))
+
+
+def test_stories_endpoint_and_seen_roundtrip(social_client):
+    body = social_client.get("/api/stories").json()
+    story = body["stories"][0]
+    assert story["repo"] == "fixture" and story["seen"] is False
+    assert [c["subject"] for c in story["commits"]] == ["third", "second", "first"]
+    shas = [c["sha"] for c in story["commits"]]
+    r = social_client.post("/api/stories/seen", json={"repo": "fixture", "shas": shas})
+    assert r.status_code == 200
+    assert social_client.get("/api/stories").json()["stories"][0]["seen"] is True
+
+
+def test_stories_seen_unknown_repo_is_404(social_client):
+    r = social_client.post("/api/stories/seen", json={"repo": "nope", "shas": ["a"]})
+    assert r.status_code == 404
+
+
+def test_notifications_endpoints(social_client, social_cfg):
+    from codescroll import social
+    from tests.test_social import NOW
+
+    with db.open_db(social_cfg.settings.data_dir / "codescroll.db") as conn:
+        social.generate_notifications(conn, social_cfg, NOW)
+    body = social_client.get("/api/notifications?unread=1").json()
+    assert body["unread"] == 1
+    n = body["notifications"][0]
+    assert n["kind"] == "hot_file" and n["read"] is False
+    assert social_client.post("/api/notifications/read", json={"ids": [n["id"]]}).status_code == 200
+    assert social_client.get("/api/notifications?unread=1").json() == {
+        "notifications": [],
+        "unread": 0,
+    }
+    assert len(social_client.get("/api/notifications").json()["notifications"]) == 1
+
+
+def test_notifications_read_all(social_client, social_cfg):
+    from codescroll import social
+    from tests.test_social import NOW
+
+    with db.open_db(social_cfg.settings.data_dir / "codescroll.db") as conn:
+        social.generate_notifications(conn, social_cfg, NOW)
+    r = social_client.post("/api/notifications/read", json={"all": True})
+    assert r.json()["unread"] == 0
+
+
+def test_notifications_read_needs_ids_or_all(social_client):
+    assert social_client.post("/api/notifications/read", json={}).status_code == 400
+
+
+def test_lifespan_runs_notify_worker_and_stops_it(social_cfg):
+    import threading
+    import time
+
+    from tests.test_social import NOW
+
+    app = api.create_app(
+        lambda: social_cfg, notify_worker=True, notify_interval_s=0.01, clock=lambda: NOW
+    )
+    db.open_db(social_cfg.settings.data_dir / "codescroll.db").close()  # migrate before threads
+    with TestClient(app):
+        for _ in range(200):
+            with db.open_db(social_cfg.settings.data_dir / "codescroll.db") as conn:
+                n = conn.execute("SELECT COUNT(*) FROM notifications").fetchone()[0]
+            if n:
+                break
+            time.sleep(0.02)
+        assert n == 1
+    assert not [t for t in threading.enumerate() if t.name == "notify-worker"]
+
+
+def test_no_notify_worker_by_default(social_cfg):
+    import threading
+
+    with TestClient(api.create_app(lambda: social_cfg)):
+        assert not [t for t in threading.enumerate() if t.name == "notify-worker"]

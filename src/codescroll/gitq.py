@@ -236,3 +236,21 @@ def changed_old_ranges(repo: Path | str, commit: str, path: str) -> list[tuple[i
             count = 1 if m.group(2) is None else int(m.group(2))
             ranges.append((start, start + max(count, 1) - 1))
     return ranges
+
+
+def recent_commits(repo: Path | str, ref: str, since_ts: int) -> list[dict]:
+    """Non-merge commits on `ref` newer than `since_ts`, newest first, with changed files."""
+    _check_rev(ref)
+    out = run(
+        repo, "log", ref, "--no-merges", f"--since=@{since_ts}", "--name-only",
+        "--format=%x1e%H%x1f%an%x1f%ct%x1f%s", "--end-of-options",
+    )  # fmt: skip
+    commits = []
+    for block in out.split("\x1e")[1:]:
+        head, _, rest = block.partition("\n")
+        sha, author, ts, subject = head.split("\x1f", 3)
+        files = [ln for ln in rest.splitlines() if ln]
+        commits.append(
+            {"sha": sha, "author": author, "ts": int(ts), "subject": subject, "files": files}
+        )
+    return commits

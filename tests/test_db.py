@@ -25,7 +25,12 @@ def test_migrate_creates_all_spec_tables(tmp_path):
 def test_migrate_twice_applies_nothing_second_time(tmp_path):
     conn = db.connect(tmp_path / "x.db")
     first = db.migrate(conn)
-    assert first == ["0001_init.sql", "0002_story_key_unique.sql", "0003_learning_indexes.sql"]
+    assert first == [
+        "0001_init.sql",
+        "0002_story_key_unique.sql",
+        "0003_learning_indexes.sql",
+        "0004_social.sql",
+    ]
     assert db.migrate(conn) == []
     assert conn.execute("SELECT name FROM schema_migrations").fetchall()[0]["name"] == first[0]
 
@@ -103,3 +108,14 @@ def test_rewards_unique_per_impression_and_events_type_index(tmp_path):
     conn.execute(ins, ("c1", 7, 0.5, "2026-01-01T00:00:00Z"))
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(ins, ("c1", 7, 0.6, "2026-01-01T00:00:00Z"))
+
+
+def test_social_tables_and_notification_dedup_key_is_unique(tmp_path):
+    conn = db.open_db(tmp_path / "x.db")
+    assert "story_views" in table_names(conn)
+    ins = "INSERT INTO notifications(kind, text, created_at, dedup_key) VALUES ('k','t','now',?)"
+    conn.execute(ins, ("a",))
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(ins, ("a",))
+    conn.execute(ins, (None,))
+    conn.execute(ins, (None,))
