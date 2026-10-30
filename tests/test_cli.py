@@ -388,3 +388,56 @@ def test_notify_runs_one_pass_and_prints_counts(cfg, monkeypatch, capsys):
     assert capsys.readouterr().out.strip() == "new_cards=1 srs_due=0 hot_file=0 new_kind=0"
     cli.main(["notify"])
     assert capsys.readouterr().out.strip() == "new_cards=0 srs_due=0 hot_file=0 new_kind=0"
+
+
+# ---- install ----
+
+
+def _install_env(monkeypatch, tmp_path, cfg, **kw):
+    from codescroll import install
+
+    seen = {}
+
+    def fake(cfg_, args):
+        seen["args"] = args
+        return install.Env(
+            home=tmp_path / "home",
+            repo_root=cfg_.root,
+            data_dir=cfg_.settings.data_dir,
+            host="127.0.0.1",
+            port=8008,
+            runner=lambda cmd: (0, ""),
+            which=lambda n: f"/bin/{n}",
+            uid=501,
+            apply=args.apply,
+            force=args.force,
+        )
+
+    monkeypatch.setattr(cli, "_install_env", fake)
+    return seen
+
+
+def test_install_defaults_to_dry_run_all_parts(cfg, tmp_path, monkeypatch, capsys):
+    seen = _install_env(monkeypatch, tmp_path, cfg)
+    assert cli.main(["install"]) == 0
+    out = capsys.readouterr().out
+    assert "DRY RUN" in out
+    assert "mcp:" in out and "launchd:" in out
+    assert seen["args"].apply is False
+    assert not (tmp_path / "home").exists()
+
+
+def test_install_part_flags_select_parts(cfg, tmp_path, monkeypatch, capsys):
+    _install_env(monkeypatch, tmp_path, cfg)
+    assert cli.main(["install", "--launchd"]) == 0
+    out = capsys.readouterr().out
+    assert "launchd:" in out and "mcp:" not in out
+
+
+def test_install_apply_and_uninstall(cfg, tmp_path, monkeypatch, capsys):
+    _install_env(monkeypatch, tmp_path, cfg)
+    assert cli.main(["install", "--launchd", "--apply"]) == 0
+    plist = tmp_path / "home" / "Library" / "LaunchAgents" / "dev.codescroll.serve.plist"
+    assert plist.exists()
+    assert cli.main(["install", "--uninstall", "--launchd", "--apply"]) == 0
+    assert not plist.exists()

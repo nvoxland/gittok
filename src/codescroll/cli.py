@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from contextlib import closing
@@ -15,6 +16,7 @@ import uvicorn
 from codescroll import (
     avatars,
     db,
+    install,
     learning,
     mcp_server,
     profile,
@@ -331,6 +333,28 @@ def _avatars(args) -> int:
     return 0
 
 
+def _install_env(cfg, args) -> install.Env:
+    server = cfg.settings.server
+    return install.Env(
+        home=Path.home(),
+        repo_root=cfg.root,
+        data_dir=cfg.settings.data_dir,
+        host=server.host,
+        port=server.port,
+        uid=os.getuid(),
+        apply=args.apply,
+        force=args.force,
+    )
+
+
+def _install(args) -> int:
+    cfg = load_config()
+    parts = tuple(p for p in install.PARTS if getattr(args, p)) or install.PARTS
+    env = _install_env(cfg, args)
+    print("\n".join(install.run_install(env, parts, uninstall=args.uninstall)))
+    return 0
+
+
 def _mcp(args) -> int:
     mcp_server.main()
     return 0
@@ -440,6 +464,14 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("avatars", help="generate persona avatar PNGs with mflux")
     p.add_argument("--force", action="store_true")
     p.set_defaults(fn=_avatars)
+    p = sub.add_parser("install", help="register MCP, copy skills, add a LaunchAgent (dry run)")
+    p.add_argument("--apply", action="store_true", help="make the changes (default: print only)")
+    p.add_argument("--force", action="store_true", help="overwrite differing skill files")
+    p.add_argument("--uninstall", action="store_true", help="remove the LaunchAgent")
+    p.add_argument("--mcp", action="store_true", help="only the MCP entry")
+    p.add_argument("--skills", action="store_true", help="only the skills")
+    p.add_argument("--launchd", action="store_true", help="only the LaunchAgent")
+    p.set_defaults(fn=_install)
     p = sub.add_parser("mcp", help="stdio MCP server (fallback; prefer `serve`)")
     p.set_defaults(fn=_mcp)
     args = parser.parse_args(argv)

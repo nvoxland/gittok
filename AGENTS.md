@@ -84,6 +84,7 @@ npm --prefix web install
 npm --prefix web test            # vitest component tests
 npm --prefix web run build       # static build into web/build
 uv run codescroll serve          # feed at http://127.0.0.1:8008 and MCP at /mcp
+uv run codescroll install        # dry run: MCP + skills + LaunchAgent (--apply to do it; see docs/install.md)
 uv run codescroll mcp            # stdio MCP fallback; normally MCP is served by `serve` at /mcp
 uv sync --group images           # optional: mflux for mascot illustrations, comics, avatars
 uv run codescroll render         # one render pass (serve also renders in the background)
