@@ -2,19 +2,20 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from codescroll import db, mcp_server
+from codescroll import avatars, db, gitq, mcp_server, render, signals
 from codescroll.config import Config, load_config
-from codescroll.feed import ChronologicalRanker, Ranker, card_json
+from codescroll.feed import ChronologicalRanker, InvalidCursor, Ranker, card_json
 
 EventType = Literal[
     "impression",
@@ -48,6 +49,85 @@ NO_BUILD_HTML = (
 )
 
 
+ASSET_CACHE = "public, max-age=31536000, immutable"
+_CARD_DIR = re.compile(r"[A-Za-z0-9_]+")
+_CARD_FILE = re.compile(r"[0-9]+\.png")
+_MASCOT_FILE = re.compile(r"[A-Za-z0-9_-]+\.png")
+
+
+def asset_path(root, folder: str, file: str):
+    """The file under `root` for a card image or mascot image, else None."""
+    if folder == "mascots":
+        ok = _MASCOT_FILE.fullmatch(file)
+    else:
+        ok = _CARD_DIR.fullmatch(folder) and _CARD_FILE.fullmatch(file)
+    if not ok:
+        return None
+    path = root / folder / file
+    return path if path.is_file() else None
+
+
+_HISTORY_COUNTS: dict[tuple[str, str], tuple[int, int]] = {}
+
+
+def _year_counts(repo, head: str, t0: int) -> tuple[int, int]:
+    """(commits, authors) in the year before the last commit. Cached by head sha."""
+    key = (repo.name, head)
+    if key not in _HISTORY_COUNTS:
+        out = gitq.run(
+            repo.path, "log", head, "--no-merges", f"--since=@{t0 - 365 * 86400}",
+            "--format=%aE", "--",
+        )  # fmt: skip
+        authors = [ln for ln in out.splitlines() if ln]
+        _HISTORY_COUNTS[key] = (len(authors), len(set(authors)))
+    return _HISTORY_COUNTS[key]
+
+
+def _top(churn: dict | None, kind: str) -> list[dict]:
+    windows = (churn or {}).get(kind) or {}
+    rows = windows.get("365") or windows.get(max(windows, key=int, default=""), [])
+    return [{"path": r["path"], "commits": r["commits"]} for r in rows[:5]]
+
+
+def repo_profile(conn, cfg: Config, name: str) -> dict:
+    repo = cfg.repos[name]
+    sig = signals.load_signals(conn, name)
+    stats: dict[str, Any] = {
+        "commits_365": None,
+        "authors_365": None,
+        "last_commit_ts": None,
+        "top_files": [],
+        "top_dirs": [],
+    }
+    head = conn.execute("SELECT last_analyzed_sha FROM repos WHERE name = ?", (name,)).fetchone()
+    if sig and head and head["last_analyzed_sha"]:
+        sha = head["last_analyzed_sha"]
+        try:
+            stats["last_commit_ts"] = t0 = gitq.commit_time(repo.path, sha)
+            stats["commits_365"], stats["authors_365"] = _year_counts(repo, sha, t0)
+        except Exception:  # repo moved or unreadable: serve what the cache has
+            pass
+        stats["top_files"] = _top(sig.get("churn"), "files")
+        stats["top_dirs"] = _top(sig.get("churn"), "dirs")
+    mascot = repo.mascot or next((m.name for m in cfg.mascots.values() if m.repo == name), None)
+    image = None
+    if mascot and (cfg.settings.data_dir / "assets" / "mascots" / f"{mascot}.png").is_file():
+        image = f"/assets/mascots/{mascot}.png"
+    rows = conn.execute(
+        "SELECT c.* FROM cards c JOIN repos r ON r.id = c.repo_id "
+        "WHERE r.name = ? AND c.status = 'ready' ORDER BY c.created_at DESC, c.id DESC LIMIT 20",
+        (name,),
+    ).fetchall()
+    return {
+        "name": name,
+        "mascot": mascot,
+        "mascot_image": image,
+        "group": repo.group,
+        "stats": stats,
+        "cards": [card_json(r) for r in rows],
+    }
+
+
 class SPAStaticFiles(StaticFiles):
     """Serve the web build; unknown non-API paths fall back to index.html."""
 
@@ -60,7 +140,12 @@ class SPAStaticFiles(StaticFiles):
             raise
 
 
-def create_app(get_config: Callable[[], Config] = load_config, ranker: Ranker | None = None):
+def create_app(
+    get_config: Callable[[], Config] = load_config,
+    ranker: Ranker | None = None,
+    render_worker: bool = False,
+    renderers: dict | None = None,
+):
     ranker = ranker or ChronologicalRanker()
     mcp = mcp_server.build_server(get_config)
     mcp_app = mcp.streamable_http_app(
@@ -69,8 +154,15 @@ def create_app(get_config: Callable[[], Config] = load_config, ranker: Ranker | 
 
     @asynccontextmanager
     async def lifespan(_app):
-        async with mcp.session_manager.run():
-            yield
+        worker = render.RenderWorker(get_config, renderers) if render_worker else None
+        if worker:
+            worker.start()
+        try:
+            async with mcp.session_manager.run():
+                yield
+        finally:
+            if worker:
+                worker.stop()
 
     app = FastAPI(title="CodeScroll", lifespan=lifespan)
 
@@ -79,8 +171,11 @@ def create_app(get_config: Callable[[], Config] = load_config, ranker: Ranker | 
 
     @app.get("/api/feed")
     def feed(limit: int = Query(20, ge=1, le=50), cursor: str | None = None):
-        with conn() as c:
-            cards, next_cursor = ranker.page(c, limit, cursor)
+        try:
+            with conn() as c:
+                cards, next_cursor = ranker.page(c, limit, cursor)
+        except InvalidCursor:
+            raise HTTPException(400, "invalid cursor") from None
         return {"cards": cards, "next_cursor": next_cursor}
 
     @app.get("/api/cards/{card_id}")
@@ -106,6 +201,14 @@ def create_app(get_config: Callable[[], Config] = load_config, ranker: Ranker | 
             ]
         }
 
+    @app.get("/api/repos/{name}")
+    def repo_detail(name: str):
+        cfg = get_config()
+        if name not in cfg.repos:
+            raise HTTPException(404, f"unknown repo {name}")
+        with conn() as c:
+            return repo_profile(c, cfg, name)
+
     @app.post("/api/events")
     def events(batch: EventBatch):
         now = db.now_iso()
@@ -115,6 +218,24 @@ def create_app(get_config: Callable[[], Config] = load_config, ranker: Ranker | 
                 [(e.card_id, e.type, e.ts, db.dumps(e.data), now) for e in batch.events],
             )
         return {"stored": len(batch.events)}
+
+    @app.get("/assets/{folder}/{file}")
+    def asset(folder: str, file: str):
+        path = asset_path(get_config().settings.data_dir / "assets", folder, file)
+        if path is None:
+            raise HTTPException(404, "unknown asset")
+        return FileResponse(path, media_type="image/png", headers={"Cache-Control": ASSET_CACHE})
+
+    @app.get("/api/avatars/{handle:path}")
+    def avatar(handle: str):
+        cfg = get_config()
+        handle = handle.lstrip("@")
+        png = avatars.avatar_png(cfg.settings.data_dir, handle)
+        if png is not None:
+            return FileResponse(png, media_type="image/png", headers={"Cache-Control": "no-cache"})
+        persona = cfg.personas.get(handle)
+        svg = avatars.avatar_svg(handle, persona.name if persona else None)
+        return Response(svg, media_type="image/svg+xml", headers={"Cache-Control": "no-cache"})
 
     @app.get("/healthz")
     def healthz():

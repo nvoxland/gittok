@@ -29,8 +29,17 @@ def _encode(created_at: str, card_id: str) -> str:
     return base64.urlsafe_b64encode(raw).decode()
 
 
+class InvalidCursor(ValueError):
+    pass
+
+
 def _decode(cursor: str) -> tuple[str, str]:
-    created_at, card_id = json.loads(base64.urlsafe_b64decode(cursor.encode()))
+    try:
+        created_at, card_id = json.loads(base64.urlsafe_b64decode(cursor.encode()))
+    except (ValueError, TypeError) as e:  # bad base64, bad JSON, bad shape, bad UTF-8
+        raise InvalidCursor("invalid cursor") from e
+    if not isinstance(created_at, str) or not isinstance(card_id, str):
+        raise InvalidCursor("invalid cursor")
     return created_at, card_id
 
 

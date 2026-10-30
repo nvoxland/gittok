@@ -88,3 +88,82 @@ def test_mcp_command_runs_stdio_server(cfg, monkeypatch):
     monkeypatch.setattr(cli.mcp_server, "main", lambda: called.append(True))
     assert cli.main(["mcp"]) == 0
     assert called == [True]
+
+
+def _with_pending(cfg, fixture_repo, monkeypatch, renderer):
+    from codescroll import render
+    from tests.test_render import MEME, seed_pending
+
+    ids = seed_pending(cfg, fixture_repo, MEME, count=3)
+    monkeypatch.setattr(render, "default_renderers", lambda c: {"meme": renderer})
+    return ids
+
+
+def _statuses(cfg, ids):
+    from codescroll import db
+
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+        return [
+            conn.execute("SELECT status FROM cards WHERE id=?", (i,)).fetchone()[0] for i in ids
+        ]
+
+
+def test_render_runs_one_pass_with_limit_and_prints_counts(cfg, fixture_repo, monkeypatch, capsys):
+    from tests.test_render import FakeRenderer
+
+    ids = _with_pending(cfg, fixture_repo, monkeypatch, FakeRenderer())
+    assert cli.main(["render", "--limit", "2"]) == 0
+    assert "rendered=2 failed=0 waiting=0" in capsys.readouterr().out
+    assert _statuses(cfg, ids) == ["ready", "ready", "pending_render"]
+
+
+def test_render_retry_failed_resets_then_renders(cfg, fixture_repo, monkeypatch, capsys):
+    from codescroll import render
+    from tests.test_render import FakeRenderer
+
+    ids = _with_pending(
+        cfg, fixture_repo, monkeypatch, FakeRenderer(error=render.RenderError("nope"))
+    )
+    cli.main(["render"])
+    assert _statuses(cfg, ids) == ["render_failed"] * 3
+    monkeypatch.setattr(render, "default_renderers", lambda c: {"meme": FakeRenderer()})
+    capsys.readouterr()
+    assert cli.main(["render"]) == 0
+    assert "rendered=0" in capsys.readouterr().out
+    assert cli.main(["render", "--retry-failed"]) == 0
+    assert "rendered=3" in capsys.readouterr().out
+
+
+def test_avatars_command_generates_and_skips(cfg, monkeypatch, capsys):
+    from codescroll import render
+    from tests.test_render import FakeRunner
+
+    runner = FakeRunner()
+    real = render.IllustrationRenderer
+    monkeypatch.setattr(render, "IllustrationRenderer", lambda: real(runner=runner, command=["x"]))
+    assert cli.main(["avatars"]) == 0
+    n = len(cfg.personas)
+    assert f"generated={n} skipped=0" in capsys.readouterr().out
+    assert cli.main(["avatars"]) == 0
+    assert f"generated=0 skipped={n}" in capsys.readouterr().out
+    assert cli.main(["avatars", "--force"]) == 0
+    assert f"generated={n} skipped=0" in capsys.readouterr().out
+
+
+def test_avatars_command_explains_missing_mflux(cfg, monkeypatch, capsys):
+    from codescroll import render
+
+    monkeypatch.setattr(render.shutil, "which", lambda name: None)
+    monkeypatch.setattr(render.importlib.util, "find_spec", lambda name: None)
+    assert cli.main(["avatars"]) == 1
+    assert "uv sync --group images" in capsys.readouterr().err
+
+
+def test_serve_starts_the_render_worker(cfg, monkeypatch):
+    import uvicorn
+
+    seen = {}
+    monkeypatch.setattr(cli, "create_app", lambda get, **kw: seen.update(kw) or "app")
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kw: seen.update(app=app))
+    assert cli.main(["serve"]) == 0
+    assert seen == {"render_worker": True, "app": "app"}

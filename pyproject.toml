@@ -9,12 +9,14 @@ dependencies = [
   "pyyaml>=6",
   "jsonschema>=4.23",
   "mcp>=2.3",
+  "httpx>=0.27",
 ]
 
 [project.scripts]
 codescroll = "codescroll.cli:main"
 
 [dependency-groups]
+images = ["mflux"]
 dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.8", "anyio>=4"]
 
 [build-system]

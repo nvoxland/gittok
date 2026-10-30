@@ -151,3 +151,170 @@ def test_mcp_is_served_over_http_on_the_same_app(cfg):
         server.should_exit = True
         thread.join(timeout=5)
     assert {"get_brief", "submit_cards"} <= names
+
+
+@pytest.mark.parametrize("cursor", ["!!!notbase64", "e30=", "bm90LWpzb24=", "NQ=="])
+def test_feed_malformed_cursor_is_400(client, cursor):
+    res = client.get("/api/feed", params={"cursor": cursor})
+    assert res.status_code == 400
+    assert "cursor" in res.json()["detail"]
+
+
+def write_asset(cfg, rel, data=b"\x89PNGdata"):
+    path = cfg.settings.data_dir / "assets" / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+
+
+def test_asset_is_served_with_type_and_cache_header(cfg, client):
+    write_asset(cfg, "c_abc123/0.png")
+    res = client.get("/assets/c_abc123/0.png")
+    assert res.status_code == 200
+    assert res.content == b"\x89PNGdata"
+    assert res.headers["content-type"] == "image/png"
+    assert "max-age=31536000" in res.headers["cache-control"]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "/assets/c_abc123/1.png",  # missing
+        "/assets/c_abc123/0.jpg",
+        "/assets/c_abc123/a.png",
+        "/assets/..%2Fcodescroll.db/0.png",
+        "/assets/c_abc123/..%2F..%2Fsecret.png",
+        "/assets/c-abc/0.png",
+    ],
+)
+def test_asset_rejects_bad_paths(cfg, client, url):
+    write_asset(cfg, "c_abc123/0.png")
+    (cfg.settings.data_dir / "secret.png").write_bytes(b"s")
+    assert client.get(url).status_code == 404
+
+
+def test_mascot_images_are_served_but_avatars_dir_is_not(cfg, client):
+    write_asset(cfg, "mascots/night-otter.png")
+    write_asset(cfg, "avatars/greybeard.png")
+    assert client.get("/assets/mascots/night-otter.png").status_code == 200
+    assert client.get("/assets/avatars/greybeard.png").status_code == 404
+
+
+def test_lifespan_runs_render_worker_and_stops_it(fixture_repo, tmp_path):
+    import threading
+    import time
+
+    from tests.test_render import MEME, FakeRenderer, render_cfg, seed_pending
+
+    cfg = render_cfg(fixture_repo, tmp_path, worker_interval_s=0.01)
+    (cid,) = seed_pending(cfg, fixture_repo, MEME)
+    app = api.create_app(lambda: cfg, render_worker=True, renderers={"meme": FakeRenderer()})
+    with TestClient(app) as c:
+        for _ in range(200):
+            if c.get(f"/api/cards/{cid}").json().get("resolved", {}).get("visual"):
+                break
+            time.sleep(0.02)
+        assert c.get("/api/feed").json()["cards"][0]["id"] == cid
+    assert not [t for t in threading.enumerate() if t.name == "render-worker"]
+
+
+def test_no_render_worker_by_default(cfg):
+    import threading
+
+    with TestClient(api.create_app(lambda: cfg)):
+        assert not [t for t in threading.enumerate() if t.name == "render-worker"]
+
+
+def test_avatar_falls_back_to_svg_for_persona(client):
+    res = client.get("/api/avatars/greybeard")
+    assert res.status_code == 200
+    assert res.headers["content-type"].startswith("image/svg+xml")
+    assert "<svg" in res.text and ">G<" in res.text
+    assert res.text == client.get("/api/avatars/greybeard").text
+
+
+def test_avatar_unknown_handle_and_code_account_still_get_svg(client):
+    unknown = client.get("/api/avatars/zed_unknown")
+    assert unknown.status_code == 200 and ">Z<" in unknown.text
+    code = client.get("/api/avatars/fixture:billing/invoice.py")
+    assert code.status_code == 200 and ">I<" in code.text
+
+
+def test_avatar_prefers_generated_png(cfg, client):
+    write_asset(cfg, "avatars/greybeard.png", b"\x89PNGavatar")
+    res = client.get("/api/avatars/greybeard")
+    assert res.headers["content-type"] == "image/png"
+    assert res.content == b"\x89PNGavatar"
+
+
+def analyzed(cfg):
+    from codescroll import signals
+
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+        return signals.analyze(conn, cfg.repos["fixture"], cfg.settings.analysis)
+
+
+def test_repo_profile_has_stats_and_newest_ready_cards(cfg, client, fixture_repo):
+    res = analyzed(cfg)
+    (cid,) = seed(cfg, fixture_repo, [example_card(fixture_repo)])
+    body = client.get("/api/repos/fixture").json()
+    assert body["name"] == "fixture"
+    assert body["mascot"] is None
+    assert body["mascot_image"] is None
+    assert body["group"] is None
+    stats = body["stats"]
+    assert stats["last_commit_ts"] == res["t0"]
+    assert stats["commits_365"] >= 1
+    assert 1 <= stats["authors_365"] <= stats["commits_365"]
+    assert 0 < len(stats["top_files"]) <= 5
+    assert set(stats["top_files"][0]) == {"path", "commits"}
+    assert 0 < len(stats["top_dirs"]) <= 5
+    assert [c["id"] for c in body["cards"]] == [cid]
+    assert body["cards"][0]["repo"] == "fixture"
+
+
+def test_repo_profile_excludes_unready_cards_and_caps_at_20(cfg, client, fixture_repo):
+    (cid,) = seed(cfg, fixture_repo, [example_card(fixture_repo)])
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+        for i in range(25):
+            conn.execute(
+                "INSERT INTO cards SELECT ?, run_id, repo_id, story_type, format, persona, tone, "
+                "spec, resolved, ?, ?, ? FROM cards WHERE id = ?",
+                (
+                    f"c_x{i}",
+                    "ready" if i else "pending_render",
+                    f"k{i}",
+                    f"2027-01-{i + 1:02d}",
+                    cid,
+                ),
+            )
+        conn.commit()
+    ids = [c["id"] for c in client.get("/api/repos/fixture").json()["cards"]]
+    assert len(ids) == 20
+    assert "c_x0" not in ids
+    assert ids[0] == "c_x24"
+
+
+def test_repo_profile_without_analysis_has_empty_stats(client):
+    stats = client.get("/api/repos/fixture").json()["stats"]
+    assert stats["top_files"] == [] and stats["commits_365"] is None
+
+
+def test_repo_profile_unknown_is_404(client):
+    assert client.get("/api/repos/nope").status_code == 404
+
+
+def test_repo_profile_mascot_image_only_when_file_exists(cfg, fixture_repo, tmp_path):
+    import dataclasses
+
+    from codescroll.config import Mascot
+
+    cfg = dataclasses.replace(
+        cfg,
+        repos={"fixture": dataclasses.replace(cfg.repos["fixture"], mascot="otter")},
+        mascots={"otter": Mascot("otter", "fixture", "s", 1)},
+    )
+    c = TestClient(api.create_app(lambda: cfg))
+    body = c.get("/api/repos/fixture").json()
+    assert body["mascot"] == "otter" and body["mascot_image"] is None
+    write_asset(cfg, "mascots/otter.png")
+    assert c.get("/api/repos/fixture").json()["mascot_image"] == "/assets/mascots/otter.png"

@@ -11,8 +11,8 @@ from pathlib import Path
 
 import uvicorn
 
+from codescroll import avatars, db, mcp_server, render, signals, validator
 from codescroll import brief as brief_mod
-from codescroll import db, mcp_server, signals, validator
 from codescroll.api import create_app
 from codescroll.config import ConfigError, load_config
 
@@ -83,7 +83,34 @@ def _serve(args) -> int:
     host, port = args.host or server.host, args.port or server.port
     print(f"feed: http://{host}:{port}")
     print(f"mcp:  http://{host}:{port}/mcp")
-    uvicorn.run(create_app(load_config), host=host, port=port)
+    uvicorn.run(create_app(load_config, render_worker=True), host=host, port=port)
+    return 0
+
+
+def _render(args) -> int:
+    cfg = load_config()
+    with closing(db.open_db(_db_path(cfg))) as conn:
+        if args.retry_failed:
+            print(f"reset {render.retry_failed(conn)} failed cards")
+        counts = render.render_pending(conn, cfg, render.default_renderers(cfg), limit=args.limit)
+    print("rendered={rendered} failed={failed} waiting={waiting}".format(**counts))
+    return 0
+
+
+def _avatars(args) -> int:
+    cfg = load_config()
+    try:
+        res = avatars.generate_avatars(cfg, render.IllustrationRenderer(), force=args.force)
+    except render.RenderError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(f"generated={res['generated']} skipped={res['skipped']}")
+    if res["waiting"]:
+        print(
+            "error: mflux is not installed. Run `uv sync --group images` and retry.",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 
@@ -114,6 +141,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--host")
     p.add_argument("--port", type=int)
     p.set_defaults(fn=_serve)
+    p = sub.add_parser("render", help="render pending meme and illustration cards once")
+    p.add_argument("--limit", type=int, default=10)
+    p.add_argument("--retry-failed", action="store_true")
+    p.set_defaults(fn=_render)
+    p = sub.add_parser("avatars", help="generate persona avatar PNGs with mflux")
+    p.add_argument("--force", action="store_true")
+    p.set_defaults(fn=_avatars)
     p = sub.add_parser("mcp", help="stdio MCP server (fallback; prefer `serve`)")
     p.set_defaults(fn=_mcp)
     args = parser.parse_args(argv)
