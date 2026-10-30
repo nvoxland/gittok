@@ -510,3 +510,201 @@ def test_breaking_news_without_ticker_normalizes_to_empty(fixture_repo, repos):
 def test_comic_over_three_panels_rejected(fixture_repo, repos):
     _, rejected = check2([C.comic_card(fixture_repo, panels=4)], repos)
     assert reasons(rejected) == ["schema"]
+
+
+# ---- interactive cards (docs/learning.md section 2) ----
+
+from tests import cards as _cards  # noqa: E402
+
+BUILDERS = [
+    _cards.spot_the_bug_card,
+    _cards.guess_who_card,
+    _cards.guess_when_card,
+    _cards.quiz_card,
+    _cards.this_or_that_card,
+]
+
+
+@pytest.mark.parametrize("builder", BUILDERS, ids=lambda b: b.__name__)
+def test_valid_interactive_cards_accepted_with_resolved_interaction(fixture_repo, repos, builder):
+    card = builder(fixture_repo)
+    accepted, rejected = check([card], repos)
+    assert rejected == []
+    [a] = accepted
+    assert a.resolved["interaction"] == {"answer_index": card["interaction"].get("answer_index")}
+    assert a.card["interaction"] == card["interaction"]
+
+
+def test_this_or_that_resolves_null_answer(fixture_repo, repos):
+    [a], _ = check([_cards.this_or_that_card(fixture_repo)], repos)
+    assert a.resolved["interaction"] == {"answer_index": None}
+
+
+def test_non_interactive_cards_have_no_resolved_interaction(fixture_repo, repos):
+    [a], _ = check([example_card(fixture_repo)], repos)
+    assert "interaction" not in a.resolved
+
+
+def _one(card, repos):
+    accepted, rejected = check([card], repos)
+    assert accepted == [], accepted
+    return reasons(rejected)
+
+
+def test_quiz_format_requires_interaction(fixture_repo, repos):
+    card = _cards.quiz_card(fixture_repo)
+    del card["interaction"]
+    assert _one(card, repos) == ["interaction_required"]
+
+
+def test_interactive_story_type_requires_interaction(fixture_repo, repos):
+    card = _cards.guess_who_card(fixture_repo)
+    del card["interaction"]
+    card["format"] = "code_card"
+    assert _one(card, repos) == ["interaction_required"]
+
+
+def test_interaction_not_allowed_outside_quiz(fixture_repo, repos):
+    card = example_card(fixture_repo, interaction=_cards.quiz_card(fixture_repo)["interaction"])
+    assert _one(card, repos) == ["interaction_not_allowed"]
+
+
+def test_quiz_format_needs_code_or_text_visual(fixture_repo, repos):
+    card = _cards.quiz_card(
+        fixture_repo, visual={"kind": "meme", "template": "drake", "lines": ["a"]}
+    )
+    assert _one(card, repos) == ["format_kind_mismatch"]
+
+
+@pytest.mark.parametrize("index", [2, 3])
+def test_answer_index_must_be_in_range(fixture_repo, repos, index):
+    card = _cards.guess_who_card(fixture_repo)
+    card["interaction"]["answer_index"] = index
+    assert _one(card, repos) == ["invalid_answer_index"]
+
+
+def test_answer_index_required_except_this_or_that(fixture_repo, repos):
+    card = _cards.quiz_card(fixture_repo)
+    del card["interaction"]["answer_index"]
+    assert _one(card, repos) == ["invalid_answer_index"]
+
+
+def test_this_or_that_rejects_answer_index(fixture_repo, repos):
+    card = _cards.this_or_that_card(fixture_repo)
+    card["interaction"]["answer_index"] = 0
+    assert _one(card, repos) == ["invalid_answer_index"]
+
+
+@pytest.mark.parametrize(
+    "comments",
+    [
+        None,
+        [{"persona": "greybeard", "text": "one"}],
+        [{"persona": "greybeard", "text": "one"}, {"persona": "greybeard", "text": "two"}],
+    ],
+)
+def test_this_or_that_needs_two_personas_debating(fixture_repo, repos, comments):
+    card = _cards.this_or_that_card(fixture_repo)
+    if comments is None:
+        del card["comments"]
+    else:
+        card["comments"] = comments
+    assert _one(card, repos) == ["needs_debate"]
+
+
+def test_spot_the_bug_needs_fix_source_whose_parent_is_the_visual_commit(fixture_repo, repos):
+    s = fixture_repo.shas
+    card = _cards.spot_the_bug_card(fixture_repo)
+    card["sources"][0] = {"repo": "fixture", "commit": s["fix2"]}  # parent is fix1, not P
+    card["depth"][1]["commit"] = s["fix2"]
+    assert _one(card, repos) == ["not_a_bug_fix"]
+
+
+def test_spot_the_bug_without_any_commit_source(fixture_repo, repos):
+    card = _cards.spot_the_bug_card(fixture_repo)
+    del card["sources"][0]
+    assert _one(card, repos) == ["not_a_bug_fix"]
+
+
+def test_spot_the_bug_fix_must_touch_the_visual_path(fixture_repo, repos):
+    s = fixture_repo.shas
+    card = _cards.spot_the_bug_card(fixture_repo)
+    # cochange1 (parent: initial) changes src/app.py and src/util.py, not README.md
+    card["visual"].update(path="README.md", commit=s["initial"], lines=[1, 1])
+    card["sources"] = [
+        {"repo": "fixture", "commit": s["cochange1"]},
+        {"repo": "fixture", "path": "README.md", "lines": [1, 1]},
+    ]
+    card["depth"][1] = {
+        "kind": "code_diff",
+        "repo": "fixture",
+        "commit": s["cochange1"],
+        "path": "src/app.py",
+    }
+    assert _one(card, repos) == ["not_a_bug_fix"]
+
+
+@pytest.mark.parametrize(
+    ("ranges", "lines", "touches"),
+    [
+        ([(5, 5)], (15, 20), True),
+        ([(5, 5)], (16, 20), False),
+        ([(30, 31)], (10, 20), True),
+        ([(31, 31)], (10, 20), False),
+        ([], (1, 5), False),
+    ],
+)
+def test_ranges_touch_uses_ten_line_margin(ranges, lines, touches):
+    assert validator._ranges_touch(ranges, lines) is touches
+
+
+def test_spot_the_bug_requires_diff_panel_for_the_fix(fixture_repo, repos):
+    card = _cards.spot_the_bug_card(fixture_repo)
+    del card["depth"][1]
+    assert _one(card, repos) == ["missing_fix_diff"]
+
+
+def test_spot_the_bug_diff_panel_must_be_for_the_fix_commit(fixture_repo, repos):
+    card = _cards.spot_the_bug_card(fixture_repo)
+    card["depth"][1]["commit"] = fixture_repo.shas["fix2"]
+    assert _one(card, repos) == ["missing_fix_diff"]
+
+
+def test_spot_the_bug_needs_code_visual(fixture_repo, repos):
+    card = _cards.spot_the_bug_card(fixture_repo, visual={"kind": "text", "body": "x"})
+    assert _one(card, repos) == ["not_a_bug_fix"]
+
+
+def test_guess_who_wrong_author_rejected(fixture_repo, repos):
+    card = _cards.guess_who_card(fixture_repo)
+    card["interaction"]["answer_index"] = 1
+    assert _one(card, repos) == ["wrong_answer"]
+
+
+def test_guess_who_uses_majority_author_of_range(fixture_repo, repos):
+    card = _cards.guess_who_card(fixture_repo)
+    card["visual"]["lines"] = [1, 5]  # Alice 2 lines, Bob 3 lines
+    card["sources"][0]["lines"] = [1, 5]
+    assert _one(card, repos) == ["wrong_answer"]
+    card["interaction"]["answer_index"] = 1
+    accepted, rejected = check([card], repos)
+    assert rejected == [] and len(accepted) == 1
+
+
+def test_guess_who_needs_code_visual(fixture_repo, repos):
+    card = _cards.guess_who_card(fixture_repo, visual={"kind": "text", "body": "x"})
+    assert _one(card, repos) == ["wrong_answer"]
+
+
+def test_guess_when_wrong_year_rejected(fixture_repo, repos):
+    card = _cards.guess_when_card(fixture_repo)
+    card["interaction"]["answer_index"] = 0
+    assert _one(card, repos) == ["wrong_answer"]
+
+
+def test_guess_when_uses_median_year(fixture_repo, repos):
+    card = _cards.guess_when_card(fixture_repo)
+    card["interaction"]["choices"] = ["2025", "Sometime in 2026", "2027"]
+    card["interaction"]["answer_index"] = 1
+    accepted, rejected = check([card], repos)
+    assert rejected == [] and len(accepted) == 1

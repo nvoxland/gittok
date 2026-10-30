@@ -48,8 +48,9 @@ def test_object_type(fixture_repo):
 
 
 def test_run_caps_output(fixture_repo):
-    out = gitq.run(fixture_repo.path, "show", f"{fixture_repo.shas['huge']}:data/big.txt",
-                   max_bytes=100)
+    out = gitq.run(
+        fixture_repo.path, "show", f"{fixture_repo.shas['huge']}:data/big.txt", max_bytes=100
+    )
     assert len(out.encode()) <= 100 + len(gitq.TRUNCATED_MARKER.encode())
     assert out.endswith(gitq.TRUNCATED_MARKER)
 
@@ -112,3 +113,34 @@ def test_resolve_commit_id_unknown_or_non_commit(fixture_repo):
         gitq.resolve_commit_id(fixture_repo.path, "deadbee")
     with pytest.raises(gitq.GitError):
         gitq.resolve_commit_id(fixture_repo.path, "not-hex")
+
+
+def test_blame_range_gives_author_and_time_per_line(fixture_repo):
+    s = fixture_repo.shas
+    rows = gitq.blame_range(fixture_repo.path, s["head"], "src/app.py", 1, 5)
+    assert [r["author"] for r in rows] == [
+        "Alice Archer",
+        "Alice Archer",
+        "Bob Builder",
+        "Bob Builder",
+        "Bob Builder",
+    ]
+    assert rows[0]["author_time"] < rows[2]["author_time"]
+    assert rows[0]["sha"] == s["initial"]
+
+
+def test_blame_range_unknown_path_raises(fixture_repo):
+    with pytest.raises(gitq.GitError):
+        gitq.blame_range(fixture_repo.path, fixture_repo.shas["head"], "nope.py", 1, 2)
+
+
+def test_first_parent_of_fix_is_the_commit_before(fixture_repo):
+    s = fixture_repo.shas
+    assert gitq.first_parent(fixture_repo.path, s["fix1"]) == s["invoice_add"]
+    assert gitq.first_parent(fixture_repo.path, s["initial"]) is None
+
+
+def test_changed_old_ranges_lists_hunks_on_the_parent_side(fixture_repo):
+    s = fixture_repo.shas
+    ranges = gitq.changed_old_ranges(fixture_repo.path, s["fix1"], "billing/invoice.py")
+    assert ranges == [(5, 5)]

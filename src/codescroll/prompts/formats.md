@@ -69,3 +69,17 @@
 
 ### Format: `hot_take`
 `visual`: `{"kind": "template", "template": "hot_take", "data": {"take"}}`. `take` at most 280 characters. Put the pushback in `comments`. Good: a bold opinion about the code that the `depth` backs up with facts.
+
+
+### Format: `quiz`
+An interactive card. `visual` is `{"kind": "code", ...}` (a `code_card` visual: repo, path, commit, lines) or `{"kind": "text", "title", "body"}`. The card also has a top-level `interaction` (a quiz card must have one; no other format may):
+`"interaction": {"question": "...", "choices": ["...", "..."], "answer_index": 1, "explanation": "..."}`.
+Limits: 2 to 4 choices, each at most 120 characters; `question` at most 200; `explanation` at most 400 (the reader sees it after answering). `answer_index` counts from 0. Put the right answer at a random position, not always first. Wrong choices must be plausible and about the same length as the right one. The `depth` panels (explain first) are the "learn more" after the answer. Set `story_type` to one of these, with this exact shape:
+
+- `spot_the_bug`: `visual` is code at commit P, covering the buggy line(s) (`lines` at most 40). `sources` must include the fix commit F whose first parent is P, and F must change `visual.path` within the cited lines plus or minus 10. `depth` must include `{"kind": "code_diff", "repo", "commit": F, "path": visual.path}`. Find a pair with `git_log` on a "fix" commit, then `git_show` it and use `<F>^` as P. `choices` are three or four guesses at what is wrong (the real bug, plus believable wrong ones). `answer_index` is required. Rejected as `not_a_bug_fix` or `missing_fix_diff`.
+- `guess_who`: `visual` is code. `choices` are author names written exactly as `git_blame` prints them (for example `Alice Archer`). The right choice is the author with the most lines in `git blame` of the cited range at the cited commit. Cite a range with one clear main author, and use real authors for the wrong choices. `answer_index` is required. Rejected as `wrong_answer` when blame disagrees.
+- `guess_when`: `visual` is code. The right choice contains a 4-digit year (for example `2024` or `Spring 2024`). It must be the year of the median author-time of the blame lines in the cited range. Other choices use other years. `answer_index` is required. Rejected as `wrong_answer`.
+- `quiz`: a generic question about the code ("what does this return", "which file handles X"). The checks are the schema only, so verify the answer yourself with `read_file` before you submit. `answer_index` is required.
+- `this_or_that`: a design opinion with two to four options. Do NOT set `answer_index`. `comments` must have at least 2 entries from different personas, and they argue the sides. The `explanation` says what each side trades off. Rejected as `needs_debate` without a real debate.
+
+Good: the question stands alone without the file open, has one defensible answer, and the explanation teaches why. Bad: trivia nobody can derive, trick wording, or two choices that are both right.

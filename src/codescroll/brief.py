@@ -19,13 +19,14 @@ _DRAMA = (
     "whose_code",
 )
 
-# Story types that can be rendered, by default-mix category. `interactive` waits for M3.
+# Story types that can be rendered, by default-mix category.
 CATEGORY_STORIES: dict[str, tuple[str, ...]] = {
     "git_drama": _DRAMA,
     "memes": (*_DRAMA, "what_it_does"),
     "illustrated_explainers": ("what_it_does", "journey", "analogy"),
     "code": ("snippet_callouts", "cursed_clever_line", "before_after"),
     "cross_repo_and_recent": ("before_after", "new_arrival"),
+    "interactive": ("spot_the_bug", "guess_who", "guess_when", "quiz", "this_or_that"),
 }
 
 # Suggested card formats (docs/formats.md), by default-mix category.
@@ -51,6 +52,7 @@ CATEGORY_FORMATS: dict[str, tuple[str, ...]] = {
     ),
     "code": ("code_card", "glow_up", "flags", "tier_list"),
     "cross_repo_and_recent": ("breaking_news", "horoscope", "text_post"),
+    "interactive": ("quiz",),
 }
 
 # Illustrations each format costs against settings.render.max_illustrations_per_run.
@@ -197,6 +199,13 @@ def leads_for(story_type: str, sig: dict, t0: int | None = None) -> list[str]:
             for n in sig.get("new_files", [])
             if _useful(n["path"])
         ]
+    elif story_type == "spot_the_bug":
+        for c in (c for c in sig.get("fix_chains", []) if _useful(c["path"])):
+            for x in c["commits"]:
+                out.append(
+                    f'fix {_sha(x["sha"])} on {c["path"]}: "{x["subject"]}" '
+                    "(the visual is the file at that fix's first parent)"
+                )
     elif story_type == "before_after":
         recent = sig.get("commits_since", {}).get("commits", [])
         out += [

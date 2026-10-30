@@ -119,3 +119,55 @@ def test_new_kind_schema_limits(fixture_repo):
     for card in bad:
         assert errors(card), card["visual"]
     assert errors(c.illustration_card(fixture_repo, account="fixture:src/app.py")) == []
+
+
+INTERACTIVE = [
+    "spot_the_bug_card",
+    "guess_who_card",
+    "guess_when_card",
+    "quiz_card",
+    "this_or_that_card",
+]
+
+
+def _builder(name):
+    from tests import cards
+
+    return getattr(cards, name)
+
+
+@pytest.mark.parametrize("name", INTERACTIVE)
+def test_interactive_cards_pass_schema(fixture_repo, name):
+    assert errors(_builder(name)(fixture_repo)) == []
+
+
+def _quiz(fixture_repo):
+    return _builder("quiz_card")(fixture_repo)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda i: i.update(choices=["only one"]),
+        lambda i: i.update(choices=list("abcde")),
+        lambda i: i.update(choices=["x" * 121, "y"]),
+        lambda i: i.update(question="q" * 201),
+        lambda i: i.update(explanation="e" * 401),
+        lambda i: i.update(answer_index=-1),
+        lambda i: i.pop("question"),
+        lambda i: i.pop("explanation"),
+        lambda i: i.update(extra=1),
+    ],
+)
+def test_interaction_limits(fixture_repo, mutate):
+    card = _quiz(fixture_repo)
+    mutate(card["interaction"])
+    assert errors(card)
+
+
+def test_quiz_allows_code_and_text_visuals_only_in_schema(fixture_repo):
+    card = _builder("guess_who_card")(fixture_repo)
+    assert errors(card) == []
+    card["format"] = "quiz"
+    card["visual"] = {"kind": "meme", "template": "drake", "lines": ["a"]}
+    assert errors(card) == []  # kind/format pairing is a validator rule (format_kind_mismatch)

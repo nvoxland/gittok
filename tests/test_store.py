@@ -12,7 +12,7 @@ from codescroll.config import (
     ServerSettings,
     Settings,
 )
-from tests.cards import example_card
+from tests.cards import example_card, guess_who_card
 
 PERSONAS = ["greybeard", "penny_learns", "archivist", "meme_compiler", "paranoid_sec", "shipit_sam"]
 
@@ -88,6 +88,29 @@ def test_store_card_writes_features(conn, cfg, fixture_repo):
         ("has_comments", "1"),
         ("visual_kind", "code"),
     }
+
+
+def test_interactive_card_gets_interactive_feature_with_story_type(conn, cfg, fixture_repo):
+    _insert_run(conn)
+    acc = _accept(cfg, guess_who_card(fixture_repo))
+    card_id = store.store_card(conn, cfg, "r_1", acc)
+    feats = {
+        (r["feature"], r["value"])
+        for r in conn.execute("SELECT * FROM card_features WHERE card_id = ?", (card_id,))
+    }
+    assert ("interactive", "guess_who") in feats
+    assert ("story_type", "guess_who") in feats
+    assert db.loads(
+        conn.execute("SELECT resolved FROM cards WHERE id = ?", (card_id,)).fetchone()[0]
+    )["interaction"] == {"answer_index": 0}
+
+
+def test_plain_card_has_no_interactive_feature(conn, cfg, fixture_repo):
+    _insert_run(conn)
+    card_id = store.store_card(conn, cfg, "r_1", _accept(cfg, example_card(fixture_repo)))
+    assert not conn.execute(
+        "SELECT 1 FROM card_features WHERE card_id = ? AND feature = 'interactive'", (card_id,)
+    ).fetchone()
 
 
 def test_story_key_exists_respects_window(conn, cfg, fixture_repo):

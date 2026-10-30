@@ -14,6 +14,7 @@ This is the contract between the agent (card specs), the server (validation, ren
 | `comic` | `comic` |
 | `chart` | `chart` |
 | `diagram` | `diagram` |
+| `quiz` | `code` or `text` (and a required top-level `interaction`; see `docs/learning.md` section 2) |
 | `iceberg`, `tier_list`, `group_chat`, `flags`, `dating_profile`, `glow_up`, `breaking_news`, `horoscope`, `thread`, `day_in_life`, `hot_take` | `template` with `template` equal to the format name |
 
 A format/kind mismatch is rejected with reason `format_kind_mismatch`.

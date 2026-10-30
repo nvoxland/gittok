@@ -170,3 +170,130 @@ def template_card(fixture_repo, template: str = "hot_take", data: dict | None = 
     d = _copy.deepcopy(data if data is not None else TEMPLATE_DATA[template])
     v = {"kind": "template", "template": template, "data": d}
     return _base(fixture_repo, template, v, **overrides)
+
+
+def _interactive(fixture_repo, story_type: str, visual: dict, interaction: dict, /, **overrides):
+    card = {
+        "story_type": story_type,
+        "format": "quiz",
+        "persona": "penny_learns",
+        "tone": "earnest-teacher",
+        "repos": ["fixture"],
+        "dirs": ["src"],
+        "hook": "Quick check before you scroll on.",
+        "visual": visual,
+        "interaction": interaction,
+        "depth": [{"kind": "explain", "text": "Plain explanation."}],
+        "sources": [{"repo": "fixture", "path": "src/app.py", "lines": [1, 2]}],
+    }
+    card.update(overrides)
+    return card
+
+
+def spot_the_bug_card(fixture_repo, **overrides) -> dict:
+    """Visual at `invoice_add` (the buggy `round(t)`); the fix is `fix1`, whose parent it is."""
+    s = fixture_repo.shas
+    visual = {
+        "kind": "code",
+        "repo": "fixture",
+        "path": "billing/invoice.py",
+        "commit": s["invoice_add"],
+        "lines": [1, 5],
+    }
+    interaction = {
+        "question": "What is wrong with this total?",
+        "choices": ["It never loops", "round(t) drops the cents", "It returns a string"],
+        "answer_index": 1,
+        "explanation": "round() with no digits rounds to whole units, so the cents are lost.",
+    }
+    return _interactive(
+        fixture_repo,
+        "spot_the_bug",
+        visual,
+        interaction,
+        dirs=["billing"],
+        depth=[
+            {"kind": "explain", "text": "The fix passed 2 digits to round()."},
+            {"kind": "code_diff", "repo": "fixture", "commit": s["fix1"], "path": visual["path"]},
+        ],
+        sources=[
+            {"repo": "fixture", "commit": s["fix1"]},
+            {"repo": "fixture", "path": "billing/invoice.py", "lines": [1, 5]},
+        ],
+        **overrides,
+    )
+
+
+def guess_who_card(fixture_repo, **overrides) -> dict:
+    """src/app.py lines 1-2 at head are all Alice Archer's (Bob wrote the rest)."""
+    visual = {
+        "kind": "code",
+        "repo": "fixture",
+        "path": "src/app.py",
+        "commit": fixture_repo.shas["head"],
+        "lines": [1, 2],
+    }
+    interaction = {
+        "question": "Who wrote main()?",
+        "choices": ["Alice Archer", "Bob Builder"],
+        "answer_index": 0,
+        "explanation": "git blame credits both lines to Alice in the initial commit.",
+    }
+    return _interactive(fixture_repo, "guess_who", visual, interaction, **overrides)
+
+
+def guess_when_card(fixture_repo, **overrides) -> dict:
+    """billing/invoice.py was written in January 2026."""
+    visual = {
+        "kind": "code",
+        "repo": "fixture",
+        "path": "billing/invoice.py",
+        "commit": fixture_repo.shas["invoice_add"],
+        "lines": [1, 5],
+    }
+    interaction = {
+        "question": "When was this written?",
+        "choices": ["2023", "2024", "January 2026"],
+        "answer_index": 2,
+        "explanation": "Every line comes from the invoice commit of 2026-01-15.",
+    }
+    return _interactive(
+        fixture_repo,
+        "guess_when",
+        visual,
+        interaction,
+        dirs=["billing"],
+        sources=[{"repo": "fixture", "path": "billing/invoice.py", "lines": [1, 5]}],
+        **overrides,
+    )
+
+
+def quiz_card(fixture_repo, **overrides) -> dict:
+    visual = {"kind": "text", "body": "Which file defines main()?"}
+    interaction = {
+        "question": "Which file defines main()?",
+        "choices": ["src/app.py", "src/util.py", "billing/invoice.py"],
+        "answer_index": 0,
+        "explanation": "main() lives in src/app.py.",
+    }
+    return _interactive(fixture_repo, "quiz", visual, interaction, **overrides)
+
+
+def this_or_that_card(fixture_repo, **overrides) -> dict:
+    visual = {"kind": "text", "body": "Rounding money: round early or round late?"}
+    interaction = {
+        "question": "Round early or round late?",
+        "choices": ["Round early", "Round late"],
+        "explanation": "Both are defensible; the thread argues it out.",
+    }
+    return _interactive(
+        fixture_repo,
+        "this_or_that",
+        visual,
+        interaction,
+        comments=[
+            {"persona": "greybeard", "text": "Round late. Always."},
+            {"persona": "shipit_sam", "text": "Round early, ship today."},
+        ],
+        **overrides,
+    )

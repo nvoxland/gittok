@@ -185,3 +185,47 @@ def split_lines(text: str) -> list[str]:
     if lines and lines[-1] == "":
         lines.pop()
     return [ln[:-1] if ln.endswith("\r") else ln for ln in lines]
+
+
+_BLAME_HEAD = re.compile(r"^([0-9a-f]{40}) \d+ \d+")
+_HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+")
+
+
+def blame_range(repo: Path | str, rev: str, path: str, start: int, end: int) -> list[dict]:
+    """One `{"sha", "author", "author_time"}` per line of `path` lines start..end at `rev`."""
+    _check_rev(rev)
+    out = run(repo, "blame", "--line-porcelain", "-L", f"{start},{end}", rev, "--", path)
+    rows: list[dict] = []
+    for line in out.split("\n"):
+        if m := _BLAME_HEAD.match(line):
+            rows.append({"sha": m.group(1), "author": "", "author_time": 0})
+        elif rows and line.startswith("author "):
+            rows[-1]["author"] = line[len("author ") :]
+        elif rows and line.startswith("author-time "):
+            rows[-1]["author_time"] = int(line[len("author-time ") :])
+    return rows
+
+
+def first_parent(repo: Path | str, rev: str) -> str | None:
+    """Full SHA of the first parent of `rev`, or None for a root commit."""
+    sha = rev_parse(repo, rev)
+    parts = run(repo, "rev-list", "--parents", "-n", "1", sha).split()
+    return parts[1] if len(parts) > 1 else None
+
+
+def changed_old_ranges(repo: Path | str, commit: str, path: str) -> list[tuple[int, int]]:
+    """Line ranges of `path` on the first-parent side that `commit` changes.
+
+    A pure insertion after line N reports (N, N). A root commit has no old side: [].
+    """
+    parent = first_parent(repo, commit)
+    if parent is None:
+        return []
+    out = run(repo, "diff", "--no-color", "--no-ext-diff", "-U0", parent, commit, "--", path)
+    ranges = []
+    for line in out.split("\n"):
+        if m := _HUNK.match(line):
+            start = int(m.group(1))
+            count = 1 if m.group(2) is None else int(m.group(2))
+            ranges.append((start, start + max(count, 1) - 1))
+    return ranges

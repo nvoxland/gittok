@@ -31,6 +31,8 @@ def _features(card: dict) -> set[tuple[str, str]]:
     feats |= {("dir", d.rstrip("/")) for d in card.get("dirs", [])}
     if card.get("difficulty") is not None:
         feats.add(("difficulty", str(card["difficulty"])))
+    if "interaction" in card:
+        feats.add(("interactive", card["story_type"]))
     feats.add(("has_comments", "1" if card.get("comments") else "0"))
     feats.add(("visual_kind", card["visual"]["kind"]))
     if card["visual"]["kind"] == "template":

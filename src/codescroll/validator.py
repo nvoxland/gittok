@@ -53,6 +53,7 @@ def _short(err) -> str:
 
 import hashlib  # noqa: E402
 from dataclasses import dataclass, field  # noqa: E402
+from datetime import UTC, datetime  # noqa: E402
 from pathlib import PurePosixPath  # noqa: E402
 
 from codescroll import gitq  # noqa: E402
@@ -261,13 +262,24 @@ FORMAT_KIND = {
     "comic": "comic",
     "chart": "chart",
     "diagram": "diagram",
+    "quiz": ("code", "text"),
     **dict.fromkeys(TEMPLATE_FORMATS, "template"),
 }
+INTERACTIVE_STORIES = frozenset({"spot_the_bug", "guess_who", "guess_when", "quiz", "this_or_that"})
+BUG_MARGIN = 10  # a fix counts when it touches the cited lines +/- this many
 
 
 def _check_format(card: dict) -> None:
     fmt, visual = card["format"], card["visual"]
     want = FORMAT_KIND[fmt]
+    if isinstance(want, tuple):
+        if visual["kind"] not in want:
+            raise _Reject(
+                "format_kind_mismatch",
+                f"format {fmt!r} needs visual kind {' or '.join(map(repr, want))}; "
+                f"got {visual['kind']!r}",
+            )
+        return
     if visual["kind"] != want or (want == "template" and visual["template"] != fmt):
         got = visual["kind"] + (f"/{visual['template']}" if visual["kind"] == "template" else "")
         raise _Reject(
@@ -276,6 +288,101 @@ def _check_format(card: dict) -> None:
             + (f" with template {fmt!r}" if want == "template" else "")
             + f"; got {got!r}",
         )
+
+
+def _check_interaction_shape(card: dict) -> None:
+    """Presence and answer_index rules that need no git."""
+    has = "interaction" in card
+    if has and card["format"] != "quiz":
+        raise _Reject(
+            "interaction_not_allowed",
+            f"interaction is only allowed on quiz cards, not {card['format']!r}",
+        )
+    if not has:
+        if card["format"] == "quiz" or card["story_type"] in INTERACTIVE_STORIES:
+            raise _Reject(
+                "interaction_required",
+                f"{card['story_type']!r} cards need format 'quiz' and an interaction",
+            )
+        return
+    inter, story = card["interaction"], card["story_type"]
+    idx = inter.get("answer_index")
+    if story == "this_or_that":
+        if idx is not None:
+            raise _Reject("invalid_answer_index", "this_or_that must not have answer_index")
+        if len({c["persona"] for c in card.get("comments", [])}) < 2:
+            raise _Reject(
+                "needs_debate", "this_or_that needs comments from at least 2 different personas"
+            )
+    elif idx is None:
+        raise _Reject("invalid_answer_index", "answer_index is required")
+    elif idx >= len(inter["choices"]):
+        raise _Reject(
+            "invalid_answer_index", f"answer_index {idx} but only {len(inter['choices'])} choices"
+        )
+
+
+def _ranges_touch(ranges: list[tuple[int, int]], lines) -> bool:
+    lo, hi = lines[0] - BUG_MARGIN, lines[1] + BUG_MARGIN
+    return any(a <= hi and b >= lo for a, b in ranges)
+
+
+def _norm_choice(text: str) -> str:
+    return " ".join(text.split()).casefold()
+
+
+def _check_interactive_truth(card: dict, gc: _GitCache) -> None:
+    """Checks that need git. Runs after sources and depth are resolved to full SHAs."""
+    story = card["story_type"]
+    if story not in ("spot_the_bug", "guess_who", "guess_when"):
+        return
+    v = card["visual"]
+    if v["kind"] != "code":
+        reason = "not_a_bug_fix" if story == "spot_the_bug" else "wrong_answer"
+        raise _Reject(reason, f"{story} needs a code visual; got {v['kind']!r}")
+    repo = gc.repo(v["repo"]).path
+    if story == "spot_the_bug":
+        fixes = []
+        for src in card["sources"]:
+            if src.get("repo") != v["repo"] or "commit" not in src:
+                continue
+            if gitq.first_parent(repo, src["commit"]) != v["commit"]:
+                continue
+            if _ranges_touch(gitq.changed_old_ranges(repo, src["commit"], v["path"]), v["lines"]):
+                fixes.append(src["commit"])
+        if not fixes:
+            raise _Reject(
+                "not_a_bug_fix",
+                f"no source commit has {v['commit'][:10]} as first parent and changes "
+                f"{v['path']} within lines {v['lines']} +/- {BUG_MARGIN}",
+            )
+        if not any(
+            p["kind"] == "code_diff" and p["repo"] == v["repo"] and p["commit"] in fixes
+            for p in card["depth"]
+        ):
+            raise _Reject(
+                "missing_fix_diff",
+                f"add a code_diff depth panel for the fix commit {fixes[0][:10]}",
+            )
+        return
+    rows = gitq.blame_range(repo, v["commit"], v["path"], *v["lines"])
+    inter = card["interaction"]
+    choice = inter["choices"][inter["answer_index"]]
+    if story == "guess_who":
+        counts: dict[str, int] = {}
+        for r in rows:
+            counts[r["author"]] = counts.get(r["author"], 0) + 1
+        top = max(counts.values())
+        winners = [a for a, n in counts.items() if n == top]
+        if _norm_choice(choice) not in {_norm_choice(a) for a in winners}:
+            raise _Reject(
+                "wrong_answer", f"git blame says {' or '.join(winners)} wrote those lines"
+            )
+    else:
+        times = sorted(r["author_time"] for r in rows)
+        year = datetime.fromtimestamp(times[(len(times) - 1) // 2], UTC).year
+        if str(year) not in choice:
+            raise _Reject("wrong_answer", f"the median blame year of those lines is {year}")
 
 
 @dataclass
@@ -438,6 +545,7 @@ def _validate_one(card: dict, gc: _GitCache, ctx: _Ctx) -> tuple[dict, dict, str
         raise _Reject("schema", "; ".join(errs[:3]))
     card = copy.deepcopy(card)
     _check_format(card)
+    _check_interaction_shape(card)
     visual = card["visual"]
     if visual["kind"] == "template" and visual["template"] == "breaking_news":
         visual["data"].setdefault("ticker", [])  # optional in the schema; clients expect a list
@@ -496,6 +604,10 @@ def _validate_one(card: dict, gc: _GitCache, ctx: _Ctx) -> tuple[dict, dict, str
                 _check_range(src["lines"], len(content), src["path"])
             span = "-".join(map(str, src.get("lines", [])))
             keys.append(f"{src['repo']}:{src['path']}:{span}")
+
+    _check_interactive_truth(card, gc)
+    if "interaction" in card:
+        resolved["interaction"] = {"answer_index": card["interaction"].get("answer_index")}
 
     dirs: list[str] = []
     for d in card["dirs"]:

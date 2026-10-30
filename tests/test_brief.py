@@ -174,15 +174,34 @@ def test_packets_cover_count_and_carry_leads(count, size):
     assert len({p.id for p in b.packets}) == len(b.packets)
 
 
-def test_only_interactive_category_is_dropped():
+def test_interactive_category_is_renderable():
     b = build(count=10)
-    assert set(b.quotas) == {
-        "git_drama",
-        "memes",
-        "illustrated_explainers",
-        "code",
-        "cross_repo_and_recent",
-    }
+    assert set(b.quotas) == set(DEFAULTS["categories"])
+    assert b.quotas["interactive"] == 1
+
+
+def test_interactive_slots_use_quiz_format_and_sonnet_packets():
+    b = build(count=20, packet_size=4)
+    quiz = [p for p in b.packets if "interactive" in p.categories]
+    assert quiz
+    assert sum(f == "quiz" for p in b.packets for f in p.formats) == b.quotas["interactive"]
+    for p in quiz:
+        assert p.suggested_model == "sonnet"
+    for p in b.packets:
+        if "quiz" in p.formats:
+            assert p.suggested_model == "sonnet"
+
+
+def test_interactive_story_types_are_known_to_the_validator():
+    from codescroll import validator
+
+    assert set(brief.CATEGORY_STORIES["interactive"]) == validator.INTERACTIVE_STORIES
+    assert brief.CATEGORY_FORMATS["interactive"] == ("quiz",)
+
+
+def test_spot_the_bug_leads_point_at_fix_commits():
+    leads = brief.leads_for("spot_the_bug", signals(), T0)
+    assert leads and "billing/invoice.py" in leads[0] and "parent" in leads[0]
 
 
 def test_concrete_story_packets_suggest_haiku():
