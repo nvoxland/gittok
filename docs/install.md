@@ -35,6 +35,19 @@ Rules for safe changes:
 | Skills | `rm -r ~/.claude/skills/codescroll-generate ~/.claude/skills/codescroll-steer` |
 | LaunchAgent | `uv run codescroll install --uninstall --launchd --apply` (runs `launchctl bootout gui/<uid> <plist>` and removes the plist) |
 
+## Meme renderer (memegen)
+
+Meme cards are drawn by a local [memegen](https://github.com/jacebrowning/memegen) server at `settings.render.memegen_url` (default `http://127.0.0.1:5001`). There is no public image, so build it from source. The build file is `Containerfile`, and the app listens on 5000 inside the container.
+
+```bash
+git clone --depth 1 https://github.com/jacebrowning/memegen.git ~/src/other/memegen
+cd ~/src/other/memegen && docker build -f Containerfile -t memegen .
+docker run -d --name memegen --restart unless-stopped -p 127.0.0.1:5001:5000 memegen
+curl -s http://127.0.0.1:5001/templates/ | head -c 200   # JSON means it works
+```
+
+Restart `codescroll serve` afterwards. Until memegen answers, the brief skips the `meme` format and meme cards stay `pending_render`.
+
 ## Using Codex
 
 The MCP server also works with Codex. Add this to `~/.codex/config.toml`:
