@@ -39,6 +39,18 @@ The server checks every citation against git and rejects the card if anything is
 - Do **not** include an `excerpt` unless you copy the lines exactly. The server reads the real code from git and shows that, so you only need coordinates.
 - `dirs` must be real directories.
 
+## Cross-repo stories
+
+Some packets say "from repos `a`, `b`" and list `weekly_recap`, `drift_alert` or `ripple` story types. They connect repos of one configured group. Put all those repos in `repos`, and cite commits or paths in at least two of them in `sources`.
+
+- `ripple`: one change that landed in more than one repo. Use the `[ripple]` leads: two commits from different repos, close in time, with a shared ticket or words. Cite both commits. The cited commits must be at most 7 days apart.
+- `drift_alert`: a contract that may no longer match: a route (`/api/...`), a config or env key, or a file that exists in both repos. Use the `[drift_alert]` leads. Cite the commit that changed it in one repo and a commit or path in the other. Open the other repo's file with `read_file` before you write.
+- `weekly_recap`: what happened in the group this week. Use the `[weekly_recap]` leads. Cite commits from at least two repos; all cited commits must be within 7 days of the newest one.
+
+Use a text or template format (`breaking_news`, `text_post`, `listicle`, `thread`, `iceberg`, `group_chat`). In a `group_chat` the accounts may be `repo:path` files from both repos.
+
+Never invent a connection the commits do not show. A lead is a hint, not proof. If you cannot confirm the link, say "possible drift" or "may be related" in the hook and in the explain panel, and state what you did and did not check.
+
 ## Real people
 
 Git data about real people (names, commit messages, timestamps, authorship) is fair game. Personas may comment on real commits. **Never invent quotes, opinions, or feelings attributed to a real person.** Comments come only from the personas below.

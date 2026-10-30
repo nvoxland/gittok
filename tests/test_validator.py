@@ -777,3 +777,132 @@ def test_guess_when_year_uses_the_author_timezone(tmp_path):
     repos = {"fixture": Repo(name="fixture", path=path, ref="main")}
     accepted, rejected = check([card], repos)
     assert rejected == [] and len(accepted) == 1
+
+
+# --- cross-repo stories (SPEC 6.4) -----------------------------------------
+
+
+@pytest.fixture
+def pair(tmp_path):
+    from tests.fixture_repo import build_history_repo
+
+    api = build_history_repo(
+        tmp_path / "api",
+        [
+            ("Initial", {"app.py": "A = 1\n"}, "2026-02-01T10:00:00+00:00"),
+            ("Add export endpoint", {"app.py": "A = 2\n"}, "2026-02-20T10:00:00+00:00"),
+            ("Later api work", {"app.py": "A = 3\n"}, "2026-03-20T10:00:00+00:00"),
+        ],
+    )
+    web = build_history_repo(
+        tmp_path / "web",
+        [
+            ("Initial", {"web.ts": "1\n"}, "2026-02-01T10:00:00+00:00"),
+            ("Export button", {"web.ts": "2\n"}, "2026-02-21T10:00:00+00:00"),
+        ],
+    )
+    return api, web
+
+
+def pair_repos(pair, group_api="dev", group_web="dev"):
+    api, web = pair
+    return {
+        "api": Repo(name="api", path=api.path, ref="main", group=group_api),
+        "web": Repo(name="web", path=web.path, ref="main", group=group_web),
+    }
+
+
+def ripple(pair, **kw):
+    from tests.cards import cross_card
+
+    return cross_card(pair[0].shas["1"], pair[1].shas["1"], **kw)
+
+
+@pytest.mark.parametrize("story", ["ripple", "weekly_recap", "drift_alert"])
+def test_cross_repo_story_accepted(pair, story):
+    accepted, rejected = check([ripple(pair, story_type=story)], pair_repos(pair))
+    assert rejected == [] and len(accepted) == 1
+    assert accepted[0].card["repos"] == ["api", "web"]
+
+
+def test_cross_repo_story_needs_repos_of_one_configured_group(pair):
+    for repos in (
+        pair_repos(pair, "dev", "other"),
+        pair_repos(pair, None, None),
+        pair_repos(pair, "dev", None),
+    ):
+        _, rejected = check([ripple(pair)], repos)
+        assert reasons(rejected) == ["cross_repo_group"]
+    _, rejected = check(
+        [ripple(pair, repos=["api"], sources=[{"repo": "api", "commit": pair[0].shas["1"]}])],
+        pair_repos(pair),
+    )
+    assert reasons(rejected) == ["cross_repo_group"]  # noqa: E501
+
+
+def test_cross_repo_story_sources_must_span_two_repos(pair):
+    one_side = [
+        {"repo": "api", "commit": pair[0].shas["1"]},
+        {"repo": "api", "path": "app.py"},
+    ]
+    _, rejected = check([ripple(pair, sources=one_side)], pair_repos(pair))
+    assert reasons(rejected) == ["cross_repo_sources"]
+
+
+def test_cross_repo_sources_may_cite_paths_in_the_other_repo(pair):
+    mixed = [{"repo": "api", "commit": pair[0].shas["1"]}, {"repo": "web", "path": "web.ts"}]
+    accepted, rejected = check(
+        [ripple(pair, story_type="drift_alert", sources=mixed)], pair_repos(pair)
+    )
+    assert rejected == [] and len(accepted) == 1
+
+
+def test_ripple_commits_must_be_within_seven_days(pair):
+    far = [
+        {"repo": "api", "commit": pair[0].shas["2"]},
+        {"repo": "web", "commit": pair[1].shas["1"]},
+    ]
+    _, rejected = check([ripple(pair, sources=far)], pair_repos(pair))
+    assert reasons(rejected) == ["ripple_window"]
+    only_api = [{"repo": "api", "commit": pair[0].shas["1"]}, {"repo": "web", "path": "web.ts"}]
+    _, rejected = check([ripple(pair, sources=only_api)], pair_repos(pair))
+    assert reasons(rejected) == ["ripple_window"]  # needs commits from two repos
+
+
+def test_weekly_recap_commits_within_seven_days_of_the_newest(pair):
+    spread = [
+        {"repo": "api", "commit": pair[0].shas["2"]},
+        {"repo": "web", "commit": pair[1].shas["1"]},
+    ]
+    _, rejected = check([ripple(pair, story_type="weekly_recap", sources=spread)], pair_repos(pair))
+    assert reasons(rejected) == ["recap_window"]
+    three = [
+        {"repo": "api", "commit": pair[0].shas["0"]},
+        {"repo": "api", "commit": pair[0].shas["1"]},
+        {"repo": "web", "commit": pair[1].shas["1"]},
+    ]
+    _, rejected = check([ripple(pair, story_type="weekly_recap", sources=three)], pair_repos(pair))
+    assert reasons(rejected) == ["recap_window"]  # api initial is 20 days older
+
+
+def test_group_chat_with_code_accounts_from_both_repos(pair):
+    chat = {
+        "kind": "template",
+        "template": "group_chat",
+        "data": {
+            "title": "api vs web",
+            "messages": [
+                {"from": "api:app.py", "text": "I changed the endpoint."},
+                {"from": "web:web.ts", "text": "And I wired the button."},
+            ],
+        },
+    }
+    card = ripple(pair, format="group_chat", visual=chat)
+    accepted, rejected = check([card], pair_repos(pair))
+    assert rejected == [], rejected
+    assert accepted[0].card["visual"]["data"]["messages"][1]["from"] == "web:web.ts"
+
+
+def test_non_cross_story_with_two_repos_is_unaffected(pair):
+    _, rejected = check([ripple(pair, story_type="what_it_does")], pair_repos(pair, None, None))
+    assert rejected == []

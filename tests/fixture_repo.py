@@ -182,3 +182,19 @@ def build_shadowed_sha_repo(path: Path) -> FixtureRepo:
     fr.shas["second"] = b.commit("second", date="2026-01-06T10:00:00+00:00")
     b.git("branch", fr.shas["head"][:7], fr.shas["second"])
     return fr
+
+
+def build_history_repo(path: Path, steps: list[tuple[str, dict[str, str], str]]) -> FixtureRepo:
+    """Repo (branch main) from `(subject, {path: text}, iso_date)` steps, oldest first.
+
+    shas are keyed by step index as a string ("0", "1", ...).
+    """
+    path.mkdir(parents=True)
+    b = _Builder(path)
+    b.git("init", "-q", "-b", "main")
+    shas: dict[str, str] = {}
+    for i, (subject, files, date) in enumerate(steps):
+        for rel, text in files.items():
+            b.write(rel, text)
+        shas[str(i)] = b.commit(subject, date=date)
+    return FixtureRepo(path=path, shas=shas)

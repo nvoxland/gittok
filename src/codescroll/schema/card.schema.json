@@ -253,7 +253,8 @@
         "story_type": {"enum": [
           "commit_drama", "hot_spot", "archaeology", "rip", "ancient_todo", "secret_couples", "whose_code",
           "what_it_does", "journey", "analogy", "snippet_callouts", "cursed_clever_line", "before_after", "new_arrival",
-          "spot_the_bug", "guess_who", "guess_when", "quiz", "this_or_that"
+          "spot_the_bug", "guess_who", "guess_when", "quiz", "this_or_that",
+          "weekly_recap", "drift_alert", "ripple"
         ]},
         "format": {"enum": [
           "code_card", "text_post", "fun_fact", "listicle", "eli5", "meme", "text_meme", "mascot_scene", "comic",

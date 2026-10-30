@@ -297,3 +297,29 @@ def this_or_that_card(fixture_repo, **overrides) -> dict:
         ],
         **overrides,
     )
+
+
+def cross_card(a_sha: str, b_sha: str, **overrides) -> dict:
+    """A text_post cross-repo story citing one commit in repo `api` and one in repo `web`."""
+    card = {
+        "story_type": "ripple",
+        "format": "text_post",
+        "persona": "shipit_sam",
+        "tone": "hype",
+        "repos": ["api", "web"],
+        "dirs": [],
+        "hook": "The export endpoint landed in api and web the same week.",
+        "visual": {
+            "kind": "text",
+            "title": "Export ripple",
+            "body": "api added the endpoint, web wired the button.",
+            "bullets": ["api first", "web a day later"],
+        },
+        "depth": [{"kind": "explain", "text": "Two commits, two repos, one feature."}],
+        "sources": [
+            {"repo": "api", "commit": a_sha},
+            {"repo": "web", "commit": b_sha},
+        ],
+    }
+    card.update(overrides)
+    return card

@@ -534,6 +534,22 @@ def oldest_lines(
     return rows[:top]
 
 
+def recent_commits(commits: list[Commit], t0: int, days=30, limit=200, max_files=20) -> list[dict]:
+    """Non-merge commits of the last `days` days before t0, newest first (cross-repo leads)."""
+    cutoff = t0 - days * 86400
+    rows = sorted((c for c in commits if c.ts >= cutoff), key=lambda c: (-c.ts, c.sha))
+    return [
+        {
+            "sha": c.sha,
+            "ts": c.ts,
+            "author": c.author,
+            "subject": c.subject,
+            "files": [f.path for f in c.files][:max_files],
+        }
+        for c in rows[:limit]
+    ]
+
+
 SIGNAL_KINDS = (
     "churn",
     "co_change",
@@ -547,6 +563,7 @@ SIGNAL_KINDS = (
     "commits_since",
     "oldest_lines",
     "todo_ages",
+    "recent_commits",
 )
 
 
@@ -568,10 +585,11 @@ def analyze(conn, repo: Repo, settings: AnalysisSettings, force: bool = False) -
         "SELECT id, last_analyzed_sha FROM repos WHERE name = ?", (repo.name,)
     ).fetchone()
     previous = row["last_analyzed_sha"] if row else None
+    meta = {"head_sha": head, "t0": t0, "group": repo.group, "path": str(repo.path)}
     if row and not force and previous == head:
         cached = _cached(conn, row["id"], head)
         if cached is not None:
-            return {"head_sha": head, "t0": t0, "cached": True, "signals": cached}
+            return {**meta, "cached": True, "signals": cached}
 
     # All git work happens first, with no write transaction open.
     path, ref = repo.path, head
@@ -598,6 +616,7 @@ def analyze(conn, repo: Repo, settings: AnalysisSettings, force: bool = False) -
             added=added,
         ),
         "todo_ages": lambda: todo_ages(path, ref, settings.todo_max_hits),
+        "recent_commits": lambda: recent_commits(commits, t0),
     }
     computed: list[tuple[str, str, int]] = []
     for kind in SIGNAL_KINDS:
@@ -627,7 +646,7 @@ def analyze(conn, repo: Repo, settings: AnalysisSettings, force: bool = False) -
             (head, now, repo_id),
         )
     result = {kind: db.loads(text) for kind, text, _ in computed}
-    return {"head_sha": head, "t0": t0, "cached": False, "signals": result}
+    return {**meta, "cached": False, "signals": result}
 
 
 def load_signals(conn, repo_name: str) -> dict | None:

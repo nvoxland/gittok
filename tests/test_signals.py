@@ -456,3 +456,53 @@ def test_todo_ages_skips_file_whose_blame_fails(tiny, monkeypatch):
     monkeypatch.setattr(gitq, "run_bytes", flaky)
     rows = signals.todo_ages(tiny.path, "main")
     assert [r["path"] for r in rows] == ["good.py"]
+
+
+# --- recent_commits -------------------------------------------------------
+
+
+def test_recent_commits_last_30_days_newest_first(fixture_repo):
+    t0 = gitq.commit_time(fixture_repo.path, "main")
+    commits = signals.parse_log(fixture_repo.path, "main")
+    rows = signals.recent_commits(commits, t0)
+    s = fixture_repo.shas
+    assert [r["sha"] for r in rows] == [
+        s["head"], s["cochange3"], s["huge"], s["feature_commit"], s["delete_legacy"],
+    ]  # fmt: skip
+    top = rows[0]
+    assert set(top) == {"sha", "ts", "author", "subject", "files"}
+    assert top["author"] == "Bob Builder"
+    assert top["subject"] == "Tweak helper and join again"
+    assert top["files"] == ["src/app.py", "src/util.py"]
+
+
+def test_recent_commits_caps_commits_and_files():
+    many = tuple(signals.FileChange(f"f{i}.py", 1, 0) for i in range(30))
+    commits = [
+        signals.Commit(f"{i:040x}", (), 1000 + i, 12, "A", "a@x", f"c{i}", many) for i in range(250)
+    ]
+    rows = signals.recent_commits(commits, 2000)
+    assert len(rows) == 200
+    assert rows[0]["ts"] == 1249  # newest first
+    assert len(rows[0]["files"]) == 20
+
+
+def test_analyze_stores_recent_commits_and_recomputes_old_cache(conn, fixture_repo):
+    repo = _repo(fixture_repo)
+    first = signals.analyze(conn, repo, AnalysisSettings())
+    assert len(first["signals"]["recent_commits"]) == 5
+    conn.execute("DELETE FROM git_signals WHERE kind = 'recent_commits'")
+    conn.commit()
+    assert signals.load_signals(conn, repo.name).get("recent_commits") is None
+    again = signals.analyze(conn, repo, AnalysisSettings())
+    assert again["cached"] is False  # an old analysis without the kind is recomputed
+    assert again["signals"]["recent_commits"] == first["signals"]["recent_commits"]
+
+
+def test_analyze_reports_group_path_and_ref_for_cross_repo_leads(conn, fixture_repo):
+    repo = Repo(name="fixture", path=fixture_repo.path, ref="main", group="dev")
+    for cached in (False, True):
+        res = signals.analyze(conn, repo, AnalysisSettings())
+        assert res["cached"] is cached
+        assert res["group"] == "dev"
+        assert res["path"] == str(fixture_repo.path)

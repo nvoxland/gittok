@@ -171,3 +171,10 @@ def test_quiz_allows_code_and_text_visuals_only_in_schema(fixture_repo):
     card["format"] = "quiz"
     card["visual"] = {"kind": "meme", "template": "drake", "lines": ["a"]}
     assert errors(card) == []  # kind/format pairing is a validator rule (format_kind_mismatch)
+
+
+def test_cross_repo_story_types_pass_schema():
+    from tests.cards import cross_card
+
+    for t in ("weekly_recap", "drift_alert", "ripple"):
+        assert errors(cross_card("a" * 40, "b" * 40, story_type=t)) == [], t

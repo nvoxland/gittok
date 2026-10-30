@@ -720,3 +720,280 @@ def test_unavailable_formats_are_never_assigned_and_are_noted():
     assert not gone & set(all_formats(b))
     assert "Skipping meme, mascot_scene, comic: renderer not available" in b.to_markdown()
     assert sum(p.count for p in b.packets) == 20
+
+
+# --- cross-repo leads and stories (SPEC 6.4) -------------------------------
+
+DAY = 86400
+
+
+def rc(sha, days_ago, subject, files=(), author="Alice"):
+    return {
+        "sha": sha * 40,
+        "ts": T0 - int(days_ago * DAY),
+        "author": author,
+        "subject": subject,
+        "files": list(files),
+    }
+
+
+def member(recent, group="dev", path=None):
+    sig = {**signals(), "recent_commits": recent}
+    return {"t0": T0, "head_sha": "9" * 40, "group": group, "path": path, "signals": sig}
+
+
+def test_ripple_pairs_commits_sharing_a_ticket_within_three_days():
+    members = {
+        "api": member([rc("a", 2, "Add export endpoint (#412)")]),
+        "web": member([rc("b", 1, "Export button calls new endpoint #412")]),
+    }
+    leads = brief.cross_leads(members)["ripple"]
+    assert len(leads) == 1
+    assert "api" in leads[0] and "web" in leads[0]
+    assert "a" * 10 in leads[0] and "b" * 10 in leads[0]
+    assert "#412" in leads[0]
+
+
+def test_ripple_needs_the_commits_within_three_days():
+    members = {
+        "api": member([rc("a", 9, "Add export endpoint (#412)")]),
+        "web": member([rc("b", 1, "Export button calls new endpoint #412")]),
+    }
+    assert brief.cross_leads(members).get("ripple", []) == []
+
+
+def test_ripple_pairs_on_two_significant_subject_words():
+    members = {
+        "api": member([rc("a", 2, "Add the invoice export endpoint")]),
+        "web": member([rc("b", 2, "Wire invoice export into the toolbar")]),
+        "x": member([rc("c", 2, "Add the thing")]),
+    }
+    leads = brief.cross_leads(members)["ripple"]
+    assert len(leads) == 1 and "invoice" in leads[0] and "export" in leads[0]
+
+
+def test_ripple_ignores_one_shared_word_and_same_repo_pairs():
+    members = {
+        "api": member(
+            [rc("a", 2, "Fix invoice rounding"), rc("c", 2, "Fix invoice rounding again")]
+        ),
+        "web": member([rc("b", 2, "Tweak invoice layout")]),
+    }
+    assert brief.cross_leads(members).get("ripple", []) == []
+
+
+def test_weekly_recap_counts_and_top_subjects_per_repo_for_last_seven_days():
+    members = {
+        "api": member(
+            [
+                rc("a", 1, "Add export endpoint", ["a.py", "b.py", "c.py"]),
+                rc("b", 3, "Fix retry loop", ["a.py"]),
+                rc("c", 20, "Old news"),
+            ]
+        ),
+        "web": member([rc("d", 6, "Redesign toolbar", ["t.svelte"])]),
+    }
+    [lead_a, lead_w] = brief.cross_leads(members)["weekly_recap"]
+    assert lead_a.startswith("api: 2 commits")
+    assert "Add export endpoint" in lead_a and "Old news" not in lead_a
+    assert lead_a.index("Add export endpoint") < lead_a.index("Fix retry loop")  # most files first
+    assert lead_w.startswith("web: 1 commit")
+
+
+def test_weekly_recap_needs_commits_in_two_repos():
+    members = {
+        "api": member([rc("a", 1, "Add export endpoint")]),
+        "web": member([rc("d", 12, "Redesign toolbar")]),
+    }
+    assert "weekly_recap" not in brief.cross_leads(members)
+
+
+def test_cross_leads_need_two_repos():
+    assert brief.cross_leads({"api": member([rc("a", 1, "x y z")])}) == {}
+
+
+def test_drift_alert_shared_route_and_env_key_in_both_repos_recent_changes():
+    members = {
+        "api": member(
+            [
+                rc("a", 4, "Rename /api/invoices/export to /api/invoices/csv", ["x.py"]),
+                rc("c", 3, "Read EXPORT_BATCH_SIZE from env", ["conf.py"]),
+            ]
+        ),
+        "web": member(
+            [
+                rc("b", 2, "Call /api/invoices/export from toolbar", ["bar.ts"]),
+                rc("d", 1, "Default EXPORT_BATCH_SIZE to 50", ["env.ts"]),
+            ]
+        ),
+    }
+    leads = brief.cross_leads(members)["drift_alert"]
+    text = "\n".join(leads)
+    assert "/api/invoices/export" in text and "EXPORT_BATCH_SIZE" in text
+    route = next(x for x in leads if "/api/invoices/export" in x)
+    assert "a" * 10 in route and "b" * 10 in route and "x.py" in route and "bar.ts" in route
+
+
+def test_drift_alert_same_basename_changed_in_one_repo_but_not_since_in_the_other():
+    members = {
+        "api": member([rc("a", 2, "Add currency field", ["schemas/invoice.json"])]),
+        "web": member([rc("b", 20, "Add invoice form", ["src/types/invoice.json"])]),
+    }
+    [lead] = brief.cross_leads(members)["drift_alert"]
+    assert "invoice.json" in lead
+    assert "api" in lead and "web" in lead and "a" * 10 in lead and "b" * 10 in lead
+    assert "not changed since" in lead
+
+
+def test_drift_alert_ignores_generic_basenames_and_near_simultaneous_changes():
+    members = {
+        "api": member([rc("a", 2, "bump", ["package.json", "README.md", "schemas/invoice.json"])]),
+        "web": member(
+            [rc("b", 20, "bump", ["package.json", "README.md"]), rc("c", 1, "x", ["invoice.json"])]
+        ),
+    }
+    assert "drift_alert" not in brief.cross_leads(members)
+
+
+@pytest.fixture
+def two_repos(tmp_path):
+    from tests.fixture_repo import build_history_repo
+
+    api = build_history_repo(
+        tmp_path / "api",
+        [
+            ("Initial", {"conf.py": "SYNC_BATCH_SIZE = 10\nSYNC_CHUNK_SIZE = 5\n"}, "2026-02-01T10:00:00+00:00"),  # noqa: E501
+            ("Rename SYNC_BATCH_SIZE to SYNC_CHUNK_SIZE", {"conf.py": "SYNC_CHUNK_SIZE = 10\n"}, "2026-02-20T10:00:00+00:00"),  # noqa: E501
+        ],
+    )  # fmt: skip
+    web = build_history_repo(
+        tmp_path / "web",
+        [
+            ("Initial", {"src/env.ts": "export const SYNC_BATCH_SIZE = 10;\n", "a.ts": "1\n"}, "2026-02-01T10:00:00+00:00"),  # noqa: E501
+            ("Tweak toolbar", {"a.ts": "2\n"}, "2026-02-21T10:00:00+00:00"),
+        ],
+    )  # fmt: skip
+    return api, web
+
+
+def analyzed(tmp_path, api, web):
+    from codescroll import db, signals
+    from codescroll.config import AnalysisSettings, Repo
+
+    conn = db.open_db(tmp_path / "t.db")
+    out = {}
+    for name, fr in (("api", api), ("web", web)):
+        repo = Repo(name=name, path=fr.path, ref="main", group="dev")
+        out[name] = signals.analyze(conn, repo, AnalysisSettings())
+    conn.close()
+    return out
+
+
+def test_drift_alert_finds_identifier_still_used_in_the_other_repo_via_git_grep(
+    tmp_path, two_repos
+):
+    members = analyzed(tmp_path, *two_repos)
+    leads = brief.cross_leads(members)["drift_alert"]
+    [lead] = [x for x in leads if "SYNC_BATCH_SIZE" in x]
+    assert "api" in lead and "web" in lead
+    assert "src/env.ts" in lead  # where web still references it
+    assert two_repos[0].shas["1"][:10] in lead  # the api commit that changed it
+    assert "possible" in lead
+
+
+def test_drift_grep_is_bounded_to_five_identifiers_per_repo(tmp_path, two_repos, monkeypatch):
+    from codescroll import gitq
+
+    members = analyzed(tmp_path, *two_repos)
+    api_recent = members["api"]["signals"]["recent_commits"]
+    api_recent[:] = [
+        rc(c, 1, f"Change KEY_NUMBER_{c.upper()} for sync") for c in "abcdefgh"
+    ] + api_recent
+    calls = []
+    real = gitq.run_bytes
+
+    def spy(repo, *args, **kw):
+        if args and args[0] == "grep":
+            calls.append(args)
+        return real(repo, *args, **kw)
+
+    monkeypatch.setattr(gitq, "run_bytes", spy)
+    brief.cross_leads(members)
+    assert 1 <= len(calls) <= 5  # one other repo, so at most 5 greps in total
+
+
+def cross_members(group_a="dev", group_b="dev"):
+    return {
+        "api": member([rc("a", 2, "Add export endpoint (#412)", ["x.py"])], group=group_a),
+        "web": member([rc("b", 1, "Export button for endpoint #412", ["y.ts"])], group=group_b),
+    }
+
+
+def build_cross(members=None, count=10, **kw):
+    return brief.build_brief(
+        repo_signals=members or cross_members(),
+        defaults=DEFAULTS,
+        personas=PERSONAS,
+        count=count,
+        packet_size=4,
+        recent=[],
+        **kw,
+    )
+
+
+def cross_packets(b):
+    return [p for p in b.packets if set(p.story_types) & set(brief.CROSS_STORIES)]
+
+
+def test_cross_repo_slots_become_a_multi_repo_sonnet_packet():
+    b = build_cross(count=20)
+    assert sum(p.count for p in b.packets) == 20
+    assert sum(b.quotas.values()) == 20
+    [pk] = cross_packets(b)
+    assert pk.repos == ["api", "web"] and pk.repo == "api"
+    assert pk.suggested_model == "sonnet"
+    assert "cross_repo_and_recent" in pk.categories
+    assert set(pk.story_types) <= set(brief.CROSS_STORIES)
+    assert set(pk.formats) <= set(brief.CROSS_FORMATS)
+    assert len(pk.formats) == len(pk.tones) == len(pk.personas) == pk.count
+    assert any("#412" in x and "api" in x and "web" in x for x in pk.leads)
+    assert any(x.startswith("[ripple]") for x in pk.leads)
+    plain = [p for p in b.packets if p not in cross_packets(b)]
+    assert all(p.repos == [p.repo] for p in plain)
+
+
+def test_cross_packet_markdown_names_all_repos():
+    md = build_cross(count=20).to_markdown()
+    assert "from repos `api`, `web`" in md
+    assert "from repo `api`" in md  # ordinary packets keep the old header
+
+
+def test_no_cross_stories_without_a_group_of_two_repos_in_the_brief():
+    assert cross_packets(build_cross(cross_members("dev", "other"), count=20)) == []
+    assert cross_packets(build_cross(cross_members("dev", None), count=20)) == []
+    one = {"api": cross_members()["api"]}
+    assert cross_packets(build_cross(one, count=20)) == []
+
+
+def test_explicit_groups_argument_overrides_analysis_group():
+    members = cross_members(None, None)
+    assert cross_packets(build_cross(members, count=20)) == []
+    assert cross_packets(build_cross(members, count=20, groups={"g": ["api", "web"]}))
+
+
+def test_banned_cross_story_types_are_not_assigned():
+    rules = [
+        {"type": "ban", "feature": "story_type", "value": t, "reason": "x"}
+        for t in brief.CROSS_STORIES
+    ]
+    assert cross_packets(build_cross(count=20, rules=rules)) == []
+
+
+def test_cross_slots_fall_back_when_no_cross_lead_exists():
+    members = {
+        "api": member([rc("a", 40, "Old thing alpha")]),
+        "web": member([rc("b", 40, "Other beta")]),
+    }
+    b = build_cross(members, count=20)
+    assert cross_packets(b) == []
+    assert sum(p.count for p in b.packets) == 20

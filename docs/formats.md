@@ -120,3 +120,20 @@ A card may set `"account": "repo:path"`. The card is then shown as posted by tha
 ## Repo profile
 
 `GET /api/repos/<name>` → `{"name", "mascot", "mascot_image" (url or null), "group", "stats": {"commits_365", "authors_365", "last_commit_ts", "top_files": [{"path", "commits"}] (5), "top_dirs": [...] (5)}, "cards": [Card] (newest 20 ready cards)}`. Web route: `/repo/<name>`.
+
+## Cross-repo stories (SPEC section 6.4)
+
+Story types `weekly_recap`, `drift_alert` and `ripple` connect repos of one configured group (`config/repos.yaml`, `groups:` or a repo's `group:`). They work with any text or template format; the brief suggests `breaking_news`, `text_post`, `listicle`, `thread`, `iceberg` and `group_chat` (a `group_chat` may use `repo:path` code accounts from every repo in the card).
+
+| story | meaning | extra rule |
+|---|---|---|
+| `ripple` | one change landing in several repos | cited commits from different repos are at most 7 days apart (`ripple_window`); needs commits from 2+ repos |
+| `drift_alert` | a contract (route, env/config key, shared file) that may no longer match | none beyond the common rules |
+| `weekly_recap` | what changed across the group this week | every cited commit is within 7 days of the newest cited commit (`recap_window`) |
+
+Common rules, checked for all three:
+
+- `cross_repo_group`: `repos` lists 2 or more repos, and all of them belong to the same configured group.
+- `cross_repo_sources`: `sources` cite commits or paths in 2 or more of the card's `repos`.
+
+Brief and leads: when a group has 2 or more repos in the brief, slots of the `cross_repo_and_recent` category can become cross-repo packets. Such a packet has `repos: [...]` (`repo` is the first one) and its leads come from all repos. The packets go to sonnet. Leads come from the `recent_commits` signal (non-merge commits of the last 30 days, up to 200, each `{sha, ts, author, subject, files (max 20)}`): `ripple` (commits from two repos within 3 days sharing a ticket or 2+ subject words), `drift_alert` (a route or env key in both repos' recent subjects; an identifier changed in one repo that `git grep` still finds in the other repo with no later change there; a file name changed in one repo but not since in the other), and `weekly_recap` (per repo counts and top subjects of the last 7 days). The brief reads the group from each analysis (`group`) or from an explicit `groups={name: [repos]}` argument to `build_brief`.

@@ -124,6 +124,7 @@ class _Reject(Exception):
 class _GitCache:
     repos: dict
     shas: dict = field(default_factory=dict)
+    times: dict = field(default_factory=dict)
     files: dict = field(default_factory=dict)
     diffs: dict = field(default_factory=dict)
 
@@ -150,6 +151,12 @@ class _GitCache:
                 raise _Reject("commit_not_in_ref", f"{sha} is not on {repo.ref} in {repo_name}")
             self.shas[key] = full
         return self.shas[key]
+
+    def commit_ts(self, repo_name: str, full: str) -> int:
+        key = (repo_name, full)
+        if key not in self.times:
+            self.times[key] = gitq.commit_time(self.repo(repo_name).path, full)
+        return self.times[key]
 
     def file_lines(self, repo_name: str, rev: str, path: str) -> list[str]:
         key = (repo_name, rev, path)
@@ -195,6 +202,55 @@ class _GitCache:
                 max_bytes=200_000,
             )
         return self.diffs[key]
+
+
+CROSS_STORIES = frozenset({"weekly_recap", "drift_alert", "ripple"})
+CROSS_WINDOW_DAYS = 7
+
+
+def _check_cross_repo(card: dict, gc: _GitCache) -> None:
+    """Rules for cross-repo stories (SPEC 6.4); `sources` commits are already full shas."""
+    if card["story_type"] not in CROSS_STORIES:
+        return
+    repos = list(dict.fromkeys(card["repos"]))
+    groups = {getattr(gc.repo(r), "group", None) for r in repos}
+    if len(repos) < 2 or len(groups) != 1 or None in groups:
+        raise _Reject(
+            "cross_repo_group",
+            f"{card['story_type']} needs 2+ repos of one configured group; "
+            f"got {repos} in groups {sorted(map(str, groups))}",
+        )
+    cited = {s["repo"] for s in card["sources"]}
+    if len(cited & set(repos)) < 2:
+        raise _Reject(
+            "cross_repo_sources",
+            f"sources must cite commits or paths in 2+ of {repos}; got {sorted(cited)}",
+        )
+    commits = [(s["repo"], s["commit"]) for s in card["sources"] if "commit" in s]
+    when = {(r, c): gc.commit_ts(r, c) for r, c in commits}
+    window = CROSS_WINDOW_DAYS * 86400
+    if card["story_type"] == "ripple":
+        if len({r for r, _ in commits}) < 2:
+            raise _Reject("ripple_window", "ripple needs cited commits from 2+ repos within 7 days")
+        far = [
+            (ra, rb)
+            for i, (ra, ca) in enumerate(commits)
+            for rb, cb in commits[i + 1 :]
+            if ra != rb and abs(when[(ra, ca)] - when[(rb, cb)]) > window
+        ]
+        if far:
+            raise _Reject(
+                "ripple_window",
+                f"cited commits of {far[0][0]} and {far[0][1]} are more than "
+                f"{CROSS_WINDOW_DAYS} days apart",
+            )
+    elif card["story_type"] == "weekly_recap" and commits:
+        newest = max(when.values())
+        if any(newest - t > window for t in when.values()):
+            raise _Reject(
+                "recap_window",
+                f"weekly_recap commits must be within {CROSS_WINDOW_DAYS} days of the newest one",
+            )
 
 
 def _norm_lines(text: str) -> list[str]:
@@ -627,6 +683,7 @@ def _validate_one(card: dict, gc: _GitCache, ctx: _Ctx) -> tuple[dict, dict, str
             span = "-".join(map(str, src.get("lines", [])))
             keys.append(f"{src['repo']}:{src['path']}:{span}")
 
+    _check_cross_repo(card, gc)
     _check_interactive_truth(card, gc)
     if "interaction" in card:
         resolved["interaction"] = {"answer_index": card["interaction"].get("answer_index")}
