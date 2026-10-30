@@ -7,15 +7,21 @@ short message an agent can act on.
 from __future__ import annotations
 
 import difflib
+import fcntl
 import json
+import os
 import re
+import tempfile
+import threading
 import zlib
 from datetime import UTC, datetime, timedelta
 from importlib.resources import files
 from pathlib import Path
 
+import yaml
+
 from codescroll import brief, gitq, learning, signals
-from codescroll.config import ConfigError, load_config
+from codescroll.config import load_config
 
 
 class SteeringError(Exception):
@@ -261,7 +267,7 @@ def _trend(ages_and_rewards: list[tuple[float, float]]) -> str:
     recent = [r for age, r in ages_and_rewards if 0 <= age < RECENT_DAYS]
     before = [r for age, r in ages_and_rewards if RECENT_DAYS <= age < RECENT_DAYS + BEFORE_DAYS]
     if len(recent) < TREND_MIN or len(before) < TREND_MIN:
-        return "flat"
+        return "unknown"
     delta = sum(recent) / len(recent) - sum(before) / len(before)
     return "up" if delta > TREND_DELTA else "down" if delta < -TREND_DELTA else "flat"
 
@@ -271,8 +277,9 @@ def explain_weights(
 ) -> list[dict]:
     """Per (feature, value): learned mean, evidence, impressions, hit rate, and 7-day trend.
 
-    `hit_rate` is the share of impressions with reward >= 0.5. `trend` compares the mean reward
-    of the last 7 days with the 21 days before (needs 3 rewards in each; else "flat").
+    `hit_rate` is the share of rewards >= 0.5 (a blend of dwell, likes, and saves).
+    `trend` compares the mean reward of the last 7 days with the 21 days before
+    (needs 3 rewards in each; else "unknown").
     Sorted by feature, then mean (best first).
     """
     if feature is not None and feature not in FEATURES:
@@ -326,7 +333,12 @@ _NOUN = {
     "has_comments": "cards with comments",
     "interactive": "{} quiz cards",
 }
-_ENDING = {"up": ", trending up.", "down": ", trending down.", "flat": ", holding steady."}
+_ENDING = {
+    "up": ", trending up.",
+    "down": ", trending down.",
+    "flat": ", holding steady.",
+    "unknown": ".",
+}
 
 
 def _sentence(row: dict) -> str:
@@ -335,8 +347,8 @@ def _sentence(row: dict) -> str:
         noun = "cards without comments"
     pct = round(row["hit_rate"] * 100)
     return (
-        f"You read {noun} to the end {pct}% of the time over {row['impressions']} views"
-        f"{_ENDING[row['trend']]}"
+        f"You engaged with {noun}: average score {row['mean']:.2f}, and {pct}% scored well, "
+        f"over {row['impressions']} views{_ENDING[row['trend']]}"
     )
 
 
@@ -346,13 +358,16 @@ def _claim(row: dict) -> dict:
 
 
 def get_profile(conn, cfg, now: datetime | None = None) -> dict:
-    """Plain-English taste profile. Only values with evidence n >= 5 make claims."""
+    """Plain-English taste profile. Only values with at least 5 views make claims.
+
+    Top and bottom are ranked by the learned mean, the same number each sentence quotes.
+    """
     now = _now(now)
     evidence = conn.execute("SELECT COUNT(*) FROM rewards").fetchone()[0]
     rows = [
         r
         for r in explain_weights(conn, cfg, now=now)
-        if r["n"] >= MIN_CLAIM_N and r["hit_rate"] is not None
+        if r["impressions"] >= MIN_CLAIM_N and r["hit_rate"] is not None
     ]
     by_feature: dict[str, list[dict]] = {}
     for r in rows:
@@ -675,9 +690,37 @@ def _group_edit(lines: list[str], cfg, repo: str, group: str | None) -> None:
     _set_fields(lines, "repos", repo, {"group": group})
 
 
+_EDIT_LOCK = threading.Lock()
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
 def _edit_files(cfg, edits: dict) -> None:
-    """Apply `{file: fn(lines)}`, reload the config to validate, restore all files on failure."""
+    """Apply `{file: fn(lines)}`, reload the config to validate, restore all files on failure.
+
+    Edits run one at a time (a thread lock plus a file lock) and every write is a temp file
+    followed by `os.replace`.
+    """
     root = cfg.root / "config"
+    root.mkdir(parents=True, exist_ok=True)
+    with _EDIT_LOCK, open(root / ".edit.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            _edit_locked(cfg, root, edits)
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def _edit_locked(cfg, root: Path, edits: dict) -> None:
     original = {
         f: (root / f).read_text(encoding="utf-8") if (root / f).is_file() else None for f in edits
     }
@@ -685,33 +728,116 @@ def _edit_files(cfg, edits: dict) -> None:
         for f, fn in edits.items():
             lines = (original[f] or "").splitlines()
             fn(lines)
-            (root / f).write_text("\n".join(lines) + "\n", encoding="utf-8")
+            _write_atomic(root / f, "\n".join(lines) + "\n")
         load_config(cfg.root)
-    except (ConfigError, SteeringError, OSError) as e:
+    except BaseException as e:
         for f, old in original.items():
             if old is None:
                 (root / f).unlink(missing_ok=True)
             else:
-                (root / f).write_text(old, encoding="utf-8")
-        if isinstance(e, SteeringError):
+                _write_atomic(root / f, old)
+        if isinstance(e, SteeringError) or not isinstance(e, Exception):
             raise
         raise SteeringError(f"Config change rejected and undone: {e}") from e
 
 
+def _audit(cfg, tool: str, args: dict, created_by: str) -> None:
+    """Append one JSON line per config edit to <data_dir>/config_audit.log."""
+    entry = {
+        "timestamp": _iso(_now(None)),
+        "tool": tool,
+        "args": args,
+        "created_by": created_by,
+    }
+    try:
+        log = cfg.settings.data_dir / "config_audit.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except OSError:
+        pass  # the edit is done; a full disk must not undo or hide it
+
+
+MAX_NAME, MAX_VOICE, MAX_STYLE = 60, 200, 300
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]+")
+_INSTRUCTION = re.compile(
+    r"\bignor\w*|\binstructions?\b|system\s+prompt|\btools?\b|\bcall\b|\bmcp\b", re.IGNORECASE
+)
+
+
+def _check_text(kind: str, value, limit: int) -> str:
+    """Free text that reaches agent prompts: one clean line, short, and without commands."""
+    if not isinstance(value, str):
+        raise SteeringError(f"{kind} must be text.")
+    clean = " ".join(_CONTROL.sub(" ", value).split())
+    if len(clean) > limit:
+        raise SteeringError(f"{kind} is too long: {len(clean)} characters, the limit is {limit}.")
+    if m := _INSTRUCTION.search(clean):
+        raise SteeringError(
+            f"{kind} contains '{m[0]}'. It must describe a style or voice, not give orders to "
+            "an agent. Rewrite it, or edit the config file by hand."
+        )
+    return clean
+
+
 def _check_name(kind: str, name: str) -> str:
-    if not isinstance(name, str) or not _NAME.fullmatch(name):
-        raise SteeringError(f"Bad {kind} '{name}'. Use letters, digits, '_' and '-'.")
+    if not isinstance(name, str) or not _NAME.fullmatch(name) or not _loads_as_same_text(name):
+        raise SteeringError(
+            f"Bad {kind} '{name}'. Use letters, digits, '_' and '-', and not a word YAML "
+            "reads as a number, yes/no, or null."
+        )
     return name
 
 
-def set_group(cfg, repo: str, group: str | None) -> dict:
+def _loads_as_same_text(name: str) -> bool:
+    try:
+        loaded = yaml.safe_load(name)
+    except yaml.YAMLError:
+        return False
+    return type(loaded) is str and loaded == name and name.lower() not in _RESERVED
+
+
+def set_group(cfg, repo: str, group: str | None, created_by: str = "agent") -> dict:
     """Put a repo in a group (created if new), or take it out of all groups with None."""
     if repo not in cfg.repos:
         raise SteeringError(f"Unknown repo '{repo}'. Known: {', '.join(cfg.repos) or 'none'}.")
     if group is not None:
         _check_name("group name", group)
     _edit_files(cfg, {"repos.yaml": lambda lines: _group_edit(lines, cfg, repo, group)})
+    _audit(cfg, "set_group", {"repo": repo, "group": group}, created_by)
     return {"repo": repo, "group": group}
+
+
+def _allowed_roots(cfg) -> list[Path]:
+    home = Path.home().resolve()
+    configured = list(cfg.settings.repos.allowed_roots)
+    roots = configured or [r.path.parent for r in cfg.repos.values()]
+    return [r for r in (p.resolve() for p in roots) if r != Path("/") and r != home]
+
+
+def _check_allowed_path(cfg, full: Path) -> None:
+    """Refuse home, `/`, subdirectories of a repo, and repos outside the allowed roots."""
+    if full == Path("/") or full == Path.home().resolve():
+        raise SteeringError(
+            f"'{full}' is the root or home directory. Register one repo, not a whole tree."
+        )
+    try:
+        top = Path(gitq.run(full, "rev-parse", "--show-toplevel").strip()).resolve()
+    except (gitq.GitError, OSError):
+        raise SteeringError(
+            f"'{full}' is not a git repo. Give the path of a git checkout."
+        ) from None
+    if top != full:
+        raise SteeringError(
+            f"'{full}' is a subdirectory of the repo at '{top}'. Register the repo root instead."
+        )
+    roots = _allowed_roots(cfg)
+    if not any(full.is_relative_to(r) for r in roots):
+        shown = ", ".join(str(r) for r in roots) or "none"
+        raise SteeringError(
+            f"'{full}' is outside the allowed roots ({shown}). To allow it, the user must add "
+            "its parent directory to `repos.allowed_roots` in config/settings.yaml."
+        )
 
 
 def add_repo(
@@ -721,8 +847,10 @@ def add_repo(
     ref: str | None = None,
     group: str | None = None,
     mascot: str | None = None,
+    created_by: str = "agent",
 ) -> dict:
-    """Add a repo to config/repos.yaml. The path must be a git repo."""
+    """Add a repo to config/repos.yaml. The path must be the root of a git repo that sits
+    inside one of the allowed roots (settings `repos.allowed_roots`)."""
     _check_name("repo name", name)
     if name in cfg.repos:
         raise SteeringError(f"Repo '{name}' already exists. Use set_group to change its group.")
@@ -733,6 +861,7 @@ def add_repo(
         raise SteeringError(
             f"'{full}' is not a git repo. Give the path of a git checkout."
         ) from None
+    _check_allowed_path(cfg, full)
     if ref is not None:
         try:
             gitq.rev_parse(full, ref)
@@ -754,15 +883,28 @@ def add_repo(
             _group_edit(lines, cfg, name, group)
 
     _edit_files(cfg, {"repos.yaml": edit})
+    _audit(
+        cfg,
+        "add_repo",
+        {"name": name, "path": str(full), "ref": ref, "group": group, "mascot": mascot},
+        created_by,
+    )
     return {"name": name, "path": str(full), "ref": ref, "group": group, "mascot": mascot}
 
 
 def set_mascot(
-    cfg, name: str, repo: str | None = None, style: str | None = None, seed: int | None = None
+    cfg,
+    name: str,
+    repo: str | None = None,
+    style: str | None = None,
+    seed: int | None = None,
+    created_by: str = "agent",
 ) -> dict:
     """Create or change a mascot in config/mascots.yaml; with `repo`, link it to that repo."""
     _check_name("mascot name", name)
     old = cfg.mascots.get(name)
+    if style is not None:
+        style = _check_text("style", style, MAX_STYLE)
     if repo is not None and repo not in cfg.repos:
         raise SteeringError(f"Unknown repo '{repo}'. Known: {', '.join(cfg.repos) or 'none'}.")
     if old is None and not style:
@@ -780,17 +922,29 @@ def set_mascot(
     if repo is not None:
         edits["repos.yaml"] = lambda lines: _set_fields(lines, "repos", repo, {"mascot": name})
     _edit_files(cfg, edits)
+    _audit(cfg, "set_mascot", {"name": name, **final}, created_by)
     return {"name": name, **final}
 
 
-def edit_persona(cfg, handle: str, name: str | None = None, voice: str | None = None) -> dict:
+def edit_persona(
+    cfg,
+    handle: str,
+    name: str | None = None,
+    voice: str | None = None,
+    created_by: str = "agent",
+) -> dict:
     """Change a persona's display name or voice, or create one with both."""
     _check_name("persona handle", handle)
     old = cfg.personas.get(handle)
+    if name is not None:
+        name = _check_text("name", name, MAX_NAME)
+    if voice is not None:
+        voice = _check_text("voice", voice, MAX_VOICE)
     if name is None and voice is None:
         raise SteeringError("Nothing to change. Give a name, a voice, or both.")
     if old is None and not (name and voice):
         raise SteeringError(f"New persona '{handle}' needs both name and voice.")
     final = {"name": name or old.name, "voice": voice or old.voice}
     _edit_files(cfg, {"personas.yaml": lambda lines: _set_fields(lines, "personas", handle, final)})
+    _audit(cfg, "edit_persona", {"handle": handle, **final}, created_by)
     return {"handle": handle, **final}

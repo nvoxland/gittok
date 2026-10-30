@@ -1,4 +1,5 @@
 import os
+import re
 import time
 
 import pytest
@@ -35,7 +36,8 @@ def test_write_profile_writes_markdown_sections(conn, cfg):
     assert md.startswith("# CodeScroll profile\n")
     assert "2026-06-01" in md
     assert "## What you like" in md
-    assert "You read meme cards to the end 100% of the time over 6 views" in md
+    claim = r"You engaged with meme cards: average score 0\.\d+, and 100% scored well, over 6 views"
+    assert re.search(claim, md)
     assert "## Active rules" in md
     assert "ban format=horoscope" in md and "no stars" in md
     assert "## Coverage gaps" in md

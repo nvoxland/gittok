@@ -183,3 +183,39 @@ def test_mascot_with_unknown_key_is_an_error(tmp_path):
     )
     with pytest.raises(ConfigError, match="color"):
         load_config(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        {"repos.yaml": "repos:\n  on:\n    path: /x/a\n"},
+        {"repos.yaml": "repos:\n  123:\n    path: /x/a\n"},
+        {"repos.yaml": "repos:\n  a:\n    path: /x/a\ngroups:\n  null:\n    repos: [a]\n"},
+        {
+            "repos.yaml": "repos:\n  a:\n    path: /x/a\n",
+            "mascots.yaml": "mascots:\n  yes:\n    style: s\n",
+        },
+        {
+            "repos.yaml": "repos:\n  a:\n    path: /x/a\n",
+            "personas.yaml": "personas:\n  1:\n    name: n\n    voice: v\n",
+        },
+        {
+            "repos.yaml": "repos:\n  a:\n    path: /x/a\n",
+            "meme_templates.yaml": "templates:\n  true:\n    lines: 2\n",
+        },
+    ],
+)
+def test_non_string_keys_are_config_errors(tmp_path, files):
+    for name, body in files.items():
+        write(tmp_path, name, body)
+    with pytest.raises(ConfigError, match="must be text"):
+        load_config(tmp_path)
+
+
+def test_repos_allowed_roots_setting(tmp_path):
+    write(tmp_path, "repos.yaml", "repos:\n  a:\n    path: /x/a\n")
+    assert load_config(tmp_path).settings.repos.allowed_roots == ()
+    write(tmp_path, "settings.yaml", "repos:\n  allowed_roots: [~/src, /opt/code]\n")
+    roots = load_config(tmp_path).settings.repos.allowed_roots
+    assert roots[1] == Path("/opt/code").resolve()
+    assert roots[0] == (Path("~/src").expanduser()).resolve()

@@ -94,6 +94,12 @@ class ServerSettings:
 
 
 @dataclass(frozen=True)
+class ReposSettings:
+    # Empty means: the parent directories of the repos already configured.
+    allowed_roots: tuple[Path, ...] = ()
+
+
+@dataclass(frozen=True)
 class Settings:
     data_dir: Path
     server: ServerSettings
@@ -101,6 +107,7 @@ class Settings:
     analysis: AnalysisSettings
     research: ResearchSettings
     render: RenderSettings = field(default_factory=RenderSettings)
+    repos: ReposSettings = field(default_factory=ReposSettings)
 
 
 @dataclass(frozen=True)
@@ -151,6 +158,17 @@ def _mapping(value: Any, what: str, file: Path) -> dict:
     return value
 
 
+def _text_keys(data: dict, what: str, file: Path) -> dict:
+    """YAML reads keys such as `on`, `null`, or `123` as non-text; refuse them."""
+    for key in data:
+        if not isinstance(key, str):
+            raise ConfigError(
+                f"{what} name {key!r} must be text, but YAML reads it as {type(key).__name__}. "
+                f"Put quotes around it ({file})"
+            )
+    return data
+
+
 def _check_keys(data: dict, allowed: set[str], what: str, file: Path) -> None:
     for key in data:
         if key not in allowed:
@@ -166,11 +184,27 @@ def _section(cls: type, data: Any, what: str, file: Path) -> Any:
     return cls(**kwargs)
 
 
+def _repos_settings(data: Any, root: Path, file: Path) -> ReposSettings:
+    data = _mapping(data, "settings.repos", file)
+    _check_keys(data, {"allowed_roots"}, "settings.repos", file)
+    raw = data.get("allowed_roots") or []
+    if not isinstance(raw, list) or not all(isinstance(r, str) for r in raw):
+        raise ConfigError(f"settings.repos.allowed_roots must be a list of paths ({file})")
+    roots = []
+    for r in raw:
+        p = Path(r).expanduser()
+        roots.append((p if p.is_absolute() else root / p).resolve())
+    return ReposSettings(allowed_roots=tuple(roots))
+
+
 def _load_settings(root: Path) -> Settings:
     file = root / "config" / "settings.yaml"
     data = _mapping(_read(file), "settings", file)
     _check_keys(
-        data, {"data_dir", "server", "agent", "analysis", "research", "render"}, "settings", file
+        data,
+        {"data_dir", "server", "agent", "analysis", "research", "render", "repos"},
+        "settings",
+        file,
     )
     data_dir = Path(str(data.get("data_dir", "data"))).expanduser()
     if not data_dir.is_absolute():
@@ -182,6 +216,7 @@ def _load_settings(root: Path) -> Settings:
         analysis=_section(AnalysisSettings, data.get("analysis"), "settings.analysis", file),
         research=_section(ResearchSettings, data.get("research"), "settings.research", file),
         render=_section(RenderSettings, data.get("render"), "settings.render", file),
+        repos=_repos_settings(data.get("repos"), root, file),
     )
 
 
@@ -189,8 +224,8 @@ def _load_repos(root: Path) -> tuple[dict[str, Repo], dict[str, Group]]:
     file = root / "config" / "repos.yaml"
     data = _mapping(_read(file, required=True), "repos.yaml", file)
     _check_keys(data, {"repos", "groups"}, "repos.yaml", file)
-    raw_repos = _mapping(data.get("repos"), "repos", file)
-    raw_groups = _mapping(data.get("groups"), "groups", file)
+    raw_repos = _text_keys(_mapping(data.get("repos"), "repos", file), "repo", file)
+    raw_groups = _text_keys(_mapping(data.get("groups"), "groups", file), "group", file)
 
     assigned: dict[str, str] = {}
 
@@ -245,7 +280,9 @@ def _load_personas(root: Path) -> dict[str, Persona]:
     data = _mapping(_read(file), "personas.yaml", file)
     _check_keys(data, {"personas"}, "personas.yaml", file)
     out: dict[str, Persona] = {}
-    for handle, raw in _mapping(data.get("personas"), "personas", file).items():
+    for handle, raw in _text_keys(
+        _mapping(data.get("personas"), "personas", file), "persona", file
+    ).items():
         raw = _mapping(raw, f"persona '{handle}'", file)
         _check_keys(raw, {"name", "voice"}, f"persona '{handle}'", file)
         for req in ("name", "voice"):
@@ -260,7 +297,9 @@ def _load_mascots(root: Path) -> dict[str, Mascot]:
     data = _mapping(_read(file), "mascots.yaml", file)
     _check_keys(data, {"mascots"}, "mascots.yaml", file)
     out: dict[str, Mascot] = {}
-    for name, raw in _mapping(data.get("mascots"), "mascots", file).items():
+    for name, raw in _text_keys(
+        _mapping(data.get("mascots"), "mascots", file), "mascot", file
+    ).items():
         raw = _mapping(raw, f"mascot '{name}'", file)
         _check_keys(raw, {"repo", "style", "seed"}, f"mascot '{name}'", file)
         if not raw.get("style"):
@@ -274,7 +313,9 @@ def _load_meme_templates(root: Path) -> dict[str, MemeTemplate]:
     data = _mapping(_read(file), "meme_templates.yaml", file)
     _check_keys(data, {"templates"}, "meme_templates.yaml", file)
     out: dict[str, MemeTemplate] = {}
-    for tid, raw in _mapping(data.get("templates"), "templates", file).items():
+    for tid, raw in _text_keys(
+        _mapping(data.get("templates"), "templates", file), "meme template", file
+    ).items():
         raw = _mapping(raw, f"meme template '{tid}'", file)
         _check_keys(raw, {"lines", "hint"}, f"meme template '{tid}'", file)
         out[tid] = MemeTemplate(tid, int(raw.get("lines", 2)), str(raw.get("hint", "")))
