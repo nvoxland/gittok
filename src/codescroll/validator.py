@@ -1,0 +1,295 @@
+"""Strict, LLM-free validation of agent-written card specs (SPEC §10.6)."""
+
+from __future__ import annotations
+
+import copy
+import json
+from functools import cache
+from importlib.resources import files
+
+from jsonschema import Draft202012Validator
+
+
+@cache
+def _base_schema() -> dict:
+    return json.loads((files("codescroll") / "schema" / "card.schema.json").read_text())
+
+
+def card_schema(personas: list[str] | tuple[str, ...]) -> dict:
+    """The submission schema with the persona enum set to the configured handles."""
+    doc = copy.deepcopy(_base_schema())
+    doc["$defs"]["persona"]["enum"] = sorted(personas)
+    return doc
+
+
+@cache
+def _card_validator(personas: tuple[str, ...]) -> Draft202012Validator:
+    doc = card_schema(personas)
+    card_doc = {"$schema": doc["$schema"], "$defs": doc["$defs"], **doc["$defs"]["card"]}
+    return Draft202012Validator(card_doc)
+
+
+def schema_errors(card: object, personas) -> list[str]:
+    """Human-readable schema errors for one card; empty when valid."""
+    v = _card_validator(tuple(sorted(personas)))
+    out = []
+    for err in sorted(v.iter_errors(card), key=lambda e: list(e.absolute_path)):
+        where = "/".join(str(p) for p in err.absolute_path) or "(card)"
+        out.append(f"{where}: {_short(err)}")
+    return out
+
+
+def _short(err) -> str:
+    if err.validator == "oneOf" and err.context:
+        best = min(err.context, key=lambda e: len(list(e.absolute_path)) * -1)
+        return best.message[:300]
+    return err.message[:300]
+
+
+# ---------------------------------------------------------------------------
+# Git-backed checks
+# ---------------------------------------------------------------------------
+
+import hashlib  # noqa: E402
+from dataclasses import dataclass, field  # noqa: E402
+from pathlib import PurePosixPath  # noqa: E402
+
+from codescroll import gitq  # noqa: E402
+
+MAX_SPAN = 40
+
+LANGUAGES = {
+    ".py": "python",
+    ".clj": "clojure",
+    ".cljs": "clojure",
+    ".cljc": "clojure",
+    ".edn": "clojure",
+    ".js": "javascript",
+    ".jsx": "jsx",
+    ".ts": "typescript",
+    ".tsx": "tsx",
+    ".svelte": "svelte",
+    ".go": "go",
+    ".rs": "rust",
+    ".java": "java",
+    ".kt": "kotlin",
+    ".rb": "ruby",
+    ".sh": "bash",
+    ".sql": "sql",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+    ".json": "json",
+    ".md": "markdown",
+    ".html": "html",
+    ".css": "css",
+    ".toml": "toml",
+    ".c": "c",
+    ".h": "c",
+    ".cpp": "cpp",
+}
+
+
+def language_for(path: str) -> str | None:
+    return LANGUAGES.get(PurePosixPath(path).suffix.lower())
+
+
+@dataclass(frozen=True)
+class Rejection:
+    index: int
+    reason: str
+    detail: str
+
+    def as_dict(self) -> dict:
+        return {"index": self.index, "reason": self.reason, "detail": self.detail}
+
+
+@dataclass
+class Accepted:
+    index: int
+    card: dict
+    resolved: dict
+    story_key: str
+
+
+class _Reject(Exception):
+    def __init__(self, reason: str, detail: str):
+        super().__init__(f"{reason}: {detail}")
+        self.reason = reason
+        self.detail = detail
+
+
+@dataclass
+class _GitCache:
+    repos: dict
+    shas: dict = field(default_factory=dict)
+    files: dict = field(default_factory=dict)
+    diffs: dict = field(default_factory=dict)
+
+    def repo(self, name: str):
+        if name not in self.repos:
+            raise _Reject(
+                "unknown_repo", f"{name!r} is not configured; known: {sorted(self.repos)}"
+            )
+        return self.repos[name]
+
+    def commit(self, repo_name: str, sha: str) -> str:
+        key = (repo_name, sha)
+        if key not in self.shas:
+            repo = self.repo(repo_name)
+            try:
+                full = gitq.rev_parse(repo.path, sha)
+            except gitq.GitError as e:
+                raise _Reject("unknown_commit", f"{sha} not found in {repo_name}") from e
+            if not gitq.is_ancestor(repo.path, full, repo.ref):
+                raise _Reject("commit_not_in_ref", f"{sha} is not on {repo.ref} in {repo_name}")
+            self.shas[key] = full
+        return self.shas[key]
+
+    def file_lines(self, repo_name: str, rev: str, path: str) -> list[str]:
+        key = (repo_name, rev, path)
+        if key not in self.files:
+            repo = self.repo(repo_name)
+            try:
+                data = gitq.show_file(repo.path, rev, path)
+            except gitq.GitError as e:
+                raise _Reject("path_not_at_commit", f"{path} does not exist at {rev[:10]}") from e
+            if b"\0" in data[:8192]:
+                raise _Reject("binary_path", f"{path} is binary")
+            self.files[key] = data.decode(errors="replace").splitlines()
+        return self.files[key]
+
+    def diff(self, repo_name: str, full: str, path: str) -> str:
+        key = (repo_name, full, path)
+        if key not in self.diffs:
+            repo = self.repo(repo_name)
+            self.diffs[key] = gitq.run(
+                repo.path,
+                "show",
+                "--format=",
+                "--no-color",
+                "--no-ext-diff",
+                full,
+                "--",
+                path,
+                max_bytes=200_000,
+            )
+        return self.diffs[key]
+
+
+def _norm_lines(text: str) -> list[str]:
+    lines = [ln.expandtabs(4).rstrip() for ln in text.splitlines()]
+    while lines and not lines[0]:
+        lines.pop(0)
+    while lines and not lines[-1]:
+        lines.pop()
+    return lines
+
+
+def _check_range(lines: list[int], nlines: int, path: str) -> tuple[int, int]:
+    a, b = lines
+    if not (1 <= a <= b <= nlines):
+        raise _Reject("lines_out_of_range", f"{path} has {nlines} lines; got [{a}, {b}]")
+    if b - a + 1 > MAX_SPAN:
+        raise _Reject("excerpt_too_long", f"[{a}, {b}] spans {b - a + 1} lines; max {MAX_SPAN}")
+    return a, b
+
+
+def _resolve_code(gc: _GitCache, ref: dict, *, excerpt: str | None = None) -> dict:
+    full = gc.commit(ref["repo"], ref["commit"])
+    ref["commit"] = full
+    content = gc.file_lines(ref["repo"], full, ref["path"])
+    a, b = _check_range(ref["lines"], len(content), ref["path"])
+    code = content[a - 1 : b]
+    if excerpt is not None and _norm_lines(excerpt) != _norm_lines("\n".join(code)):
+        raise _Reject(
+            "excerpt_mismatch",
+            f"excerpt does not match {ref['path']} lines {a}-{b} at {full[:10]}; "
+            "omit excerpt or copy the lines exactly",
+        )
+    return {"code": "\n".join(code), "language": language_for(ref["path"]), "start_line": a}
+
+
+def _validate_one(card: dict, gc: _GitCache, personas) -> tuple[dict, dict, str]:
+    errs = schema_errors(card, personas)
+    if errs:
+        raise _Reject("schema", "; ".join(errs[:3]))
+    card = copy.deepcopy(card)
+    for name in card["repos"]:
+        gc.repo(name)
+
+    resolved: dict = {"visual": None, "depth": []}
+    visual = card["visual"]
+    if visual["kind"] == "code":
+        resolved["visual"] = _resolve_code(gc, visual, excerpt=visual.get("excerpt"))
+        a, b = visual["lines"]
+        for c in visual.get("callouts", []):
+            if not a <= c["line"] <= b:
+                raise _Reject("callout_out_of_range", f"callout line {c['line']} not in [{a}, {b}]")
+
+    for panel in card["depth"]:
+        if panel["kind"] == "explain":
+            resolved["depth"].append(None)
+        elif panel["kind"] == "code":
+            resolved["depth"].append(_resolve_code(gc, panel))
+        else:  # code_diff
+            full = gc.commit(panel["repo"], panel["commit"])
+            panel["commit"] = full
+            diff = gc.diff(panel["repo"], full, panel["path"])
+            if not diff.strip():
+                raise _Reject("empty_diff", f"{panel['path']} did not change in {full[:10]}")
+            resolved["depth"].append({"diff": diff})
+    if not any(p["kind"] == "explain" for p in card["depth"]):
+        raise _Reject("missing_explain_panel", "every card needs a plain-language explain panel")
+
+    keys = []
+    for src in card["sources"]:
+        repo = gc.repo(src["repo"])
+        if "commit" in src:
+            src["commit"] = gc.commit(src["repo"], src["commit"])
+            keys.append(f"{src['repo']}:{src['commit']}")
+        else:
+            content = gc.file_lines(src["repo"], repo.ref, src["path"])
+            if "lines" in src:
+                _check_range(src["lines"], len(content), src["path"])
+            span = "-".join(map(str, src.get("lines", [])))
+            keys.append(f"{src['repo']}:{src['path']}:{span}")
+
+    for d in card["dirs"]:
+        if not any(_is_dir(gc, name, d) for name in card["repos"]):
+            raise _Reject("unknown_dir", f"{d} is not a directory at the repo ref")
+
+    story_key = hashlib.sha1(
+        (card["story_type"] + "|" + "|".join(sorted(keys))).encode()
+    ).hexdigest()[:16]
+    return card, resolved, story_key
+
+
+def _is_dir(gc: _GitCache, repo_name: str, d: str) -> bool:
+    """`d` is repo-relative, optionally prefixed with the repo name (SPEC §10.5 example)."""
+    repo = gc.repo(repo_name)
+    rel = d.strip("/")
+    if rel == repo_name:
+        return True
+    if rel.startswith(repo_name + "/"):
+        rel = rel[len(repo_name) + 1 :]
+    return gitq.object_type(repo.path, repo.ref, rel) == "tree"
+
+
+def validate_cards(cards: list, repos: dict, personas) -> tuple[list[Accepted], list[Rejection]]:
+    """Validate agent cards against the schema and git. Never raises for bad cards."""
+    gc = _GitCache(repos=repos)
+    accepted: list[Accepted] = []
+    rejected: list[Rejection] = []
+    seen: set[str] = set()
+    for i, card in enumerate(cards):
+        try:
+            normalized, resolved, key = _validate_one(card, gc, personas)
+            if key in seen:
+                raise _Reject("duplicate_story", "same story_type and sources as an earlier card")
+            seen.add(key)
+            accepted.append(Accepted(i, normalized, resolved, key))
+        except _Reject as r:
+            rejected.append(Rejection(i, r.reason, r.detail))
+        except gitq.GitError as e:
+            rejected.append(Rejection(i, "git_error", str(e)[:300]))
+    return accepted, rejected

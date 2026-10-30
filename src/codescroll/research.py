@@ -1,0 +1,187 @@
+"""Read-only repo research tools exposed to the card-writing agent."""
+
+from __future__ import annotations
+
+import re
+
+from codescroll import gitq
+
+
+class ResearchError(Exception):
+    """Message is shown to the agent: keep it short and actionable."""
+
+
+def _clean_path(path: str) -> str:
+    if "\0" in path:
+        raise ResearchError("invalid path: contains NUL")
+    if path.startswith("/"):
+        raise ResearchError(f"path must be relative to the repo root: {path}")
+    if path.startswith("-"):
+        raise ResearchError(f"invalid path (leading '-'): {path}")
+    parts = [p for p in path.split("/") if p not in ("", ".")]
+    if ".." in parts:
+        raise ResearchError(f"path must stay inside the repo (no '..'): {path}")
+    return "/".join(parts)
+
+
+def _resolve(cfg, repo: str, ref: str | None):
+    r = cfg.repos.get(repo)
+    if r is None:
+        known = ", ".join(sorted(cfg.repos)) or "(none)"
+        raise ResearchError(f"unknown repo: {repo}. Known repos: {known}")
+    ref = ref or r.ref
+    try:
+        gitq.rev_parse(r.path, ref)
+    except gitq.GitError as e:
+        raise ResearchError(f"unknown or invalid ref: {ref}") from e
+    return r.path, ref
+
+
+def _check_span(lines, limit: int) -> tuple[int, int]:
+    start, end = lines
+    if start < 1 or end < start:
+        raise ResearchError(f"invalid lines {list(lines)}: need 1 <= a <= b")
+    return start, min(end, start + limit - 1)
+
+
+def _git(cfg, root, *args: str) -> str:
+    try:
+        return gitq.run(root, *args, max_bytes=cfg.settings.research.max_output_bytes)
+    except gitq.GitError as e:
+        raise ResearchError(f"git {args[0]} failed: {str(e).rsplit(': ', 1)[-1]}") from e
+
+
+def read_file(cfg, repo: str, path: str, ref=None, lines=None) -> str:
+    path = _clean_path(path)
+    root, ref = _resolve(cfg, repo, ref)
+    if path and gitq.object_type(root, ref, path) == "tree":
+        raise ResearchError(f"{path} is a directory; use list_dir")
+    try:
+        _, data = gitq.run_bytes(
+            root,
+            "show",
+            f"{ref}:{path}",
+            max_bytes=cfg.settings.research.max_output_bytes,
+        )
+    except gitq.GitError as e:
+        raise ResearchError(f"path not found at {ref}: {path}") from e
+    if b"\0" in data[:8192]:
+        raise ResearchError(f"binary file: {path}")
+    text = data.decode(errors="replace")
+    all_lines = text.splitlines()
+    limit = cfg.settings.research.max_read_lines
+    if lines is None:
+        shown = all_lines[:limit]
+        start = 1
+    else:
+        start, end = _check_span(lines, limit)
+        shown = all_lines[start - 1 : end]
+    out = "\n".join(f"{i}\t{line}" for i, line in enumerate(shown, start))
+    if lines is None and len(all_lines) > limit:
+        out += f"\n… file has {len(all_lines)} lines; pass lines=[a,b]"
+    return out
+
+
+def list_dir(cfg, repo: str, path: str = "", ref=None) -> str:
+    path = _clean_path(path)
+    root, ref = _resolve(cfg, repo, ref)
+    if path:
+        kind = gitq.object_type(root, ref, path)
+        if kind is None:
+            raise ResearchError(f"path not found at {ref}: {path}")
+        if kind != "tree":
+            raise ResearchError(f"{path} is a file; use read_file")
+    out = _git(cfg, root, "ls-tree", "--format=%(objecttype) %(path)", f"{ref}:{path}")
+    dirs, files = [], []
+    for row in out.splitlines():
+        kind, _, name = row.partition(" ")
+        name = name.rsplit("/", 1)[-1]
+        (dirs if kind == "tree" else files).append(name + "/" if kind == "tree" else name)
+    return "\n".join(sorted(dirs) + sorted(files))
+
+
+def git_grep(
+    cfg,
+    repo: str,
+    pattern: str,
+    pathspec: str | None = None,
+    ref=None,
+    max_hits: int = 100,
+    fixed: bool = False,
+) -> str:
+    root, ref = _resolve(cfg, repo, ref)
+    args = ["grep", "-n", "-I", "-F" if fixed else "-E", "-e", pattern, ref, "--"]
+    if pathspec:
+        args.append(_clean_path(pathspec))
+    try:
+        _, data = gitq.run_bytes(
+            root, *args, ok_codes=(0, 1), max_bytes=cfg.settings.research.max_output_bytes
+        )
+    except gitq.GitError as e:
+        detail = str(e).rsplit(": ", 1)[-1]
+        raise ResearchError(f"git grep failed: {detail}") from e
+    prefix = f"{ref}:"
+    hits = [
+        h[len(prefix) :] if h.startswith(prefix) else h
+        for h in data.decode(errors="replace").splitlines()
+    ]
+    if not hits:
+        return "no matches"
+    extra = len(hits) - max_hits
+    if extra > 0:
+        hits = [*hits[:max_hits], f"… {extra} more"]
+    return "\n".join(hits)
+
+
+def git_log(
+    cfg,
+    repo: str,
+    path: str | None = None,
+    since: str | None = None,
+    max: int = 50,
+    grep: str | None = None,
+    ref=None,
+) -> str:
+    if max < 1:
+        raise ResearchError("max must be >= 1")
+    root, ref = _resolve(cfg, repo, ref)
+    args = ["log", f"--max-count={min(max, 200)}", "--date=short", "--format=%h %ad %an %s"]
+    if since:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", since):
+            raise ResearchError(f"since must be YYYY-MM-DD: {since}")
+        args.append(f"--since={since}")
+    if grep:
+        args += ["--regexp-ignore-case", f"--grep={grep}"]
+    args += [ref, "--"]
+    if path:
+        args.append(_clean_path(path))
+    return _git(cfg, root, *args).rstrip("\n") or "no commits"
+
+
+def git_show(cfg, repo: str, commit: str, path: str | None = None, stat: bool = False) -> str:
+    root, _ = _resolve(cfg, repo, None)
+    try:
+        sha = gitq.rev_parse(root, commit)
+    except gitq.GitError as e:
+        raise ResearchError(f"unknown commit: {commit}") from e
+    args = ["show", "--date=short", "--format=commit %H%nAuthor: %an%nDate:   %ad%n%n%B"]
+    if stat:
+        args.append("--stat")
+    args += [sha, "--"]
+    if path:
+        args.append(_clean_path(path))
+    return _git(cfg, root, *args)
+
+
+def git_blame(cfg, repo: str, path: str, lines=None, ref=None) -> str:
+    path = _clean_path(path)
+    root, ref = _resolve(cfg, repo, ref)
+    limit = cfg.settings.research.max_read_lines
+    args = ["blame", "--date=short"]
+    start, end = _check_span(lines or (1, limit), limit)
+    args += ["-L", f"{start},{end}", ref, "--", path]
+    try:
+        out = gitq.run(root, *args, max_bytes=cfg.settings.research.max_output_bytes)
+    except gitq.GitError as e:
+        raise ResearchError(f"path not found at {ref}: {path}") from e
+    return out.rstrip("\n")
