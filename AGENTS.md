@@ -85,6 +85,9 @@ npm --prefix web test            # vitest component tests
 npm --prefix web run build       # static build into web/build
 uv run codescroll serve          # feed at http://127.0.0.1:8008 and MCP at /mcp
 uv run codescroll mcp            # stdio MCP fallback; normally MCP is served by `serve` at /mcp
+uv sync --group images           # optional: mflux for mascot illustrations, comics, avatars
+uv run codescroll render         # one render pass (serve also renders in the background)
+uv run codescroll avatars        # generate persona avatar PNGs (needs the images group)
 ```
 
 Red/green TDD is required: write the failing test first.
@@ -97,6 +100,7 @@ CodeScroll (working name; see `SPEC.md`) is a personal TikTok-style feed of card
 - **One server process.** `codescroll serve` runs a FastAPI app that serves the feed API, the web build, and the MCP endpoint at `/mcp`. The project `.mcp.json` points Claude Code at `http://127.0.0.1:8008/mcp`, so the server must be running before a generation session. `codescroll mcp` (stdio) is a fallback.
 - Card generation does **not** shell out to `claude -p`. A Claude Code session runs the `codescroll-generate` skill (`.claude/skills/`). The skill calls `get_brief`, gives each work packet to a haiku or sonnet subagent that researches through the read-only MCP tools, and submits card specs back for validation. The driver only orchestrates.
 - `web/` is a SvelteKit static app: vertical snap-scroll feed, horizontal depth panels.
+- Card formats, visual kinds, and the `resolved` shapes the client renders are specified in `docs/formats.md`. Meme, illustration, and comic cards are stored `pending_render` and appear in the feed after the render worker draws them (memegen for memes, mflux for illustrations).
 - Config lives in `config/*.yaml`; the card contract is `src/codescroll/schema/card.schema.json`; agent guidance is `src/codescroll/prompts/generate.md`; runtime data goes in `data/` (gitignored).
 
 ## Conventions & Patterns
