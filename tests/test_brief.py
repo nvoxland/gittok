@@ -174,16 +174,22 @@ def test_packets_cover_count_and_carry_leads(count, size):
     assert len({p.id for p in b.packets}) == len(b.packets)
 
 
-def test_unrenderable_categories_are_dropped():
+def test_only_interactive_category_is_dropped():
     b = build(count=10)
-    assert set(b.quotas) == {"git_drama", "illustrated_explainers", "code", "cross_repo_and_recent"}
+    assert set(b.quotas) == {
+        "git_drama",
+        "memes",
+        "illustrated_explainers",
+        "code",
+        "cross_repo_and_recent",
+    }
 
 
 def test_concrete_story_packets_suggest_haiku():
     b = build(count=20)
     for p in b.packets:
-        concrete = set(p.story_types) <= brief.CONCRETE_TYPES
-        assert p.suggested_model == ("haiku" if concrete else "sonnet"), p
+        cheap = set(p.story_types) <= brief.CONCRETE_TYPES and set(p.formats) <= brief.HAIKU_FORMATS
+        assert p.suggested_model == ("haiku" if cheap else "sonnet"), p
 
 
 def test_markdown_lists_packets_leads_and_recent():
@@ -424,3 +430,111 @@ def test_before_after_skips_noise_fix_chains():
     sig = signals()
     sig["fix_chains"][0]["path"] = ".beads/issues.jsonl"
     assert not any(".beads" in x for x in brief.leads_for("before_after", sig, T0))
+
+
+def test_packets_carry_one_allowed_format_per_card():
+    b = build(count=20)
+    for p in b.packets:
+        assert len(p.formats) == p.count == len(p.tones) == len(p.personas)
+        allowed = {f for c in p.categories for f in brief.CATEGORY_FORMATS[c]}
+        assert set(p.formats) <= allowed, p
+
+
+def test_formats_rotate_in_a_ten_card_brief():
+    from collections import Counter
+
+    b = build(count=10)
+    counts = Counter(f for p in b.packets for f in p.formats)
+    assert max(counts.values()) <= 2, counts
+
+
+def _illustration_cost(b):
+    return sum(brief.ILLUSTRATION_COST.get(f, 0) for p in b.packets for f in p.formats)
+
+
+def test_illustration_budget_is_respected():
+    big = build(count=20)
+    assert _illustration_cost(big) > 0  # the budget test below is meaningful
+    for budget in (0, 1, 2, 4):
+        b = brief.build_brief(
+            repo_signals={"fixture": {"t0": T0, "head_sha": "9" * 40, "signals": signals()}},
+            defaults=DEFAULTS,
+            personas=PERSONAS,
+            count=20,
+            packet_size=4,
+            recent=[],
+            max_illustrations=budget,
+        )
+        assert _illustration_cost(b) <= budget, budget
+        assert sum(p.count for p in b.packets) == 20
+
+
+def test_illustrated_packets_need_sonnet():
+    b = build(count=20)
+    for p in b.packets:
+        if set(p.formats) & (set(brief.ILLUSTRATION_COST) | {"thread", "diagram", "day_in_life"}):
+            assert p.suggested_model == "sonnet", p
+
+
+def test_cheap_formats_on_concrete_stories_use_haiku():
+    sig = signals()
+    b = brief.build_brief(
+        repo_signals={"fixture": {"t0": T0, "head_sha": "9" * 40, "signals": sig}},
+        defaults={"categories": {"memes": 1.0}, "tones": DEFAULTS["tones"]},
+        personas=PERSONAS,
+        count=7,
+        packet_size=7,
+        recent=[],
+    )
+    models = {p.suggested_model for p in b.packets if set(p.story_types) <= brief.CONCRETE_TYPES}
+    assert models <= {"haiku"} and models
+    assert all(set(p.formats) <= {"meme", "text_meme"} for p in b.packets)
+
+
+def test_markdown_lists_formats_per_packet():
+    md = build(count=10).to_markdown()
+    assert "- formats, one per card: " in md
+
+
+def _personas():
+    from codescroll.config import Persona
+
+    return {"greybeard": Persona("greybeard", "Greybeard", "Grumpy senior. Dry.")}
+
+
+def test_guidance_includes_only_requested_format_sections():
+    md = brief.guidance_markdown(_personas(), formats=["flags"])
+    assert '"template": "flags"' in md
+    assert '"kind": "meme"' not in md and '"kind": "comic"' not in md
+    assert "Real people" in md  # base guidance stays
+    assert "{" + "personas}" not in md
+
+
+def test_guidance_without_formats_arg_includes_all_sections():
+    md = brief.guidance_markdown(_personas())
+    for fmt in (*{f for fs in brief.CATEGORY_FORMATS.values() for f in fs},):
+        assert f"### Format: `{fmt}`" in md, fmt
+
+
+def test_base_guidance_explains_account_and_points_to_formats():
+    md = brief.guidance_markdown(_personas(), formats=[])
+    assert "`account`" in md and "repo:path" in md
+    assert "Format:" not in md  # no format sections
+
+
+def test_meme_section_lists_templates_with_line_counts():
+    from codescroll.config import MemeTemplate
+
+    tpl = {"drake": MemeTemplate("drake", 2, "top = rejected, bottom = preferred")}
+    md = brief.guidance_markdown(_personas(), formats=["meme"], meme_templates=tpl)
+    assert "`drake`" in md and "2 lines" in md and "top = rejected, bottom = preferred" in md
+
+
+def test_illustration_sections_name_mascots_and_forbid_text():
+    from codescroll.config import Mascot
+
+    mascots = {"otter": Mascot("otter", "storefront", "style", 1)}
+    for fmt in ("mascot_scene", "comic"):
+        md = brief.guidance_markdown(_personas(), formats=[fmt], mascots=mascots)
+        assert "`otter`" in md, fmt
+        assert "no text" in md.lower(), fmt

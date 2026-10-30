@@ -29,6 +29,13 @@ async def test_scripted_run_stores_valid_cards_and_reports_rejects(fixture_repo,
         assert "## Packet p1" in brief["brief_markdown"]
         assert "Real people" in brief["guidance_markdown"]
         assert brief["packets"][0]["suggested_model"] in ("haiku", "sonnet")
+        # Top-level guidance is the base only; each packet carries its own with its formats.
+        assert "Format sections" not in brief["guidance_markdown"]
+        for pk in brief["packets"]:
+            assert len(pk["formats"]) == pk["count"]
+            assert "Real people" in pk["guidance_markdown"]
+            for fmt in pk["formats"]:
+                assert f"### Format: `{fmt}`" in pk["guidance_markdown"]
 
         # A subagent researches with the read-only tools...
         shown = await client.call_tool(

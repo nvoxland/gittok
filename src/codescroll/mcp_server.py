@@ -97,7 +97,9 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
         """Analyze the repos (cached by HEAD), open a generation run, and return the brief.
 
         The brief is split into work packets. Give each packet to one subagent on its
-        suggested model, together with guidance_markdown. Returns run_id for submit_cards.
+        suggested model, together with that packet's own guidance_markdown (base rules plus
+        its format sections). The top-level guidance_markdown is the base rules only.
+        Returns run_id for submit_cards.
         """
         count = count or cfg.settings.agent.default_count
         names = [cfg.repo(repo).name] if repo else sorted(cfg.repos)
@@ -119,14 +121,23 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
                 count=count,
                 packet_size=cfg.settings.agent.packet_size,
                 recent=recent_cards(conn),
+                max_illustrations=cfg.settings.render.max_illustrations_per_run,
             )
             md = b.to_markdown()
             run_id = runs.open_run(conn, cfg, repo=repo, brief=md, requested=count)
         return {
             "run_id": run_id,
             "brief_markdown": md,
-            "guidance_markdown": brief_mod.guidance_markdown(cfg.personas),
-            "packets": b.to_dict()["packets"],
+            "guidance_markdown": brief_mod.guidance_markdown(cfg.personas, formats=[]),
+            "packets": [
+                {
+                    **pk,
+                    "guidance_markdown": brief_mod.guidance_markdown(
+                        cfg.personas, pk["formats"], cfg.meme_templates, cfg.mascots
+                    ),
+                }
+                for pk in b.to_dict()["packets"]
+            ],
             "skipped": skipped,
         }
 

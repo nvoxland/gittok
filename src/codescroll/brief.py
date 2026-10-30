@@ -9,21 +9,57 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-# Story types that can be rendered in M1, by default-mix category.
+_DRAMA = (
+    "commit_drama",
+    "hot_spot",
+    "archaeology",
+    "rip",
+    "ancient_todo",
+    "secret_couples",
+    "whose_code",
+)
+
+# Story types that can be rendered, by default-mix category. `interactive` waits for M3.
 CATEGORY_STORIES: dict[str, tuple[str, ...]] = {
-    "git_drama": (
-        "commit_drama",
-        "hot_spot",
-        "archaeology",
-        "rip",
-        "ancient_todo",
-        "secret_couples",
-        "whose_code",
-    ),
+    "git_drama": _DRAMA,
+    "memes": (*_DRAMA, "what_it_does"),
     "illustrated_explainers": ("what_it_does", "journey", "analogy"),
-    "code": ("snippet_callouts", "cursed_clever_line"),
+    "code": ("snippet_callouts", "cursed_clever_line", "before_after"),
     "cross_repo_and_recent": ("before_after", "new_arrival"),
 }
+
+# Suggested card formats (docs/formats.md), by default-mix category.
+CATEGORY_FORMATS: dict[str, tuple[str, ...]] = {
+    "git_drama": (
+        "text_post",
+        "code_card",
+        "breaking_news",
+        "iceberg",
+        "chart",
+        "hot_take",
+        "group_chat",
+    ),
+    "memes": ("meme", "text_meme"),
+    "illustrated_explainers": (
+        "mascot_scene",
+        "comic",
+        "eli5",
+        "day_in_life",
+        "dating_profile",
+        "thread",
+        "diagram",
+    ),
+    "code": ("code_card", "glow_up", "flags", "tier_list"),
+    "cross_repo_and_recent": ("breaking_news", "horoscope", "text_post"),
+}
+
+# Illustrations each format costs against settings.render.max_illustrations_per_run.
+ILLUSTRATION_COST = {"mascot_scene": 1, "comic": 3}
+
+# Formats a haiku can write when the story type is concrete. Everything else needs sonnet.
+HAIKU_FORMATS = frozenset(
+    {"meme", "text_meme", "chart", "breaking_news", "horoscope", "flags", "tier_list"}
+)
 
 
 def largest_remainder(weights: dict[str, float], total: int) -> dict[str, int]:
@@ -185,6 +221,7 @@ class Packet:
     tones: list[str]
     personas: list[str]
     leads: list[str]
+    formats: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -228,6 +265,7 @@ class Brief:
                 f"- suggested model: {pk.suggested_model}",
                 f"- categories: {', '.join(pk.categories)}",
                 f"- story types: {', '.join(pk.story_types)}",
+                f"- formats, one per card: {', '.join(pk.formats)}",
                 f"- tones, one per card: {', '.join(pk.tones)}",
                 f"- personas, one per card: {', '.join(pk.personas)}",
                 "- leads:",
@@ -258,7 +296,18 @@ DEFAULT_PERSONAS = (
 )
 
 
-def build_brief(*, repo_signals, defaults, personas, count, packet_size, recent) -> Brief:
+def _pick_format(category: str, used: dict[str, int], spent: int, budget: int) -> str:
+    """Least-used format of the category that still fits the illustration budget."""
+    options = CATEGORY_FORMATS[category]
+    fits = [f for f in options if spent + ILLUSTRATION_COST.get(f, 0) <= budget] or [
+        f for f in options if f not in ILLUSTRATION_COST
+    ]
+    return min(fits, key=lambda f: (used.get(f, 0), options.index(f)))
+
+
+def build_brief(
+    *, repo_signals, defaults, personas, count, packet_size, recent, max_illustrations=4
+) -> Brief:
     if not repo_signals:
         raise ValueError("no repos to build a brief from")
     cats = {k: w for k, w in defaults.get("categories", {}).items() if k in CATEGORY_STORIES}
@@ -268,8 +317,10 @@ def build_brief(*, repo_signals, defaults, personas, count, packet_size, recent)
     repo_names = sorted(repo_signals)
     persona_cycle = list(personas) or list(DEFAULT_PERSONAS)
 
-    # 1. Allocate every card slot to (repo, category, story_type).
-    slots: list[tuple[str, str, str]] = []
+    # 1. Allocate every card slot to (repo, category, story_type, format).
+    slots: list[tuple[str, str, str, str]] = []
+    used: dict[str, int] = {}
+    spent = 0
     leads_by: dict[tuple[str, str], list[str]] = {}
     for ci, (category, n) in enumerate(sorted(quotas.items(), key=lambda kv: (-kv[1], kv[0]))):
         if not n:
@@ -285,34 +336,43 @@ def build_brief(*, repo_signals, defaults, personas, count, packet_size, recent)
             usable = [t for t in CATEGORY_STORIES[category] if leads_by[(repo, t)]] or list(
                 CATEGORY_STORIES[category]
             )
-            slots += [(repo, category, usable[i % len(usable)]) for i in range(per_repo[repo])]
+            for i in range(per_repo[repo]):
+                fmt = _pick_format(category, used, spent, max_illustrations)
+                used[fmt] = used.get(fmt, 0) + 1
+                spent += ILLUSTRATION_COST.get(fmt, 0)
+                slots.append((repo, category, usable[i % len(usable)], fmt))
 
     # 2. Pack slots into as few packets as possible per (repo, model tier).
     packets: list[Packet] = []
     slot_no = 0
     for repo in repo_names:
-        for concrete in (True, False):
-            group = [s for s in slots if s[0] == repo and (s[2] in CONCRETE_TYPES) == concrete]
+        for cheap in (True, False):
+            group = [
+                s
+                for s in slots
+                if s[0] == repo and (s[2] in CONCRETE_TYPES and s[3] in HAIKU_FORMATS) == cheap
+            ]
             for start in range(0, len(group), packet_size):
                 chunk = group[start : start + packet_size]
-                types = list(dict.fromkeys(t for _, _, t in chunk))
+                types = list(dict.fromkeys(t for _, _, t, _ in chunk))
                 plead = [f"[{t}] {line}" for t in types for line in leads_by[(repo, t)]] or [
                     "No precomputed leads: explore with list_dir and git_log."
                 ]
                 packets.append(
                     Packet(
                         id=f"p{len(packets) + 1}",
-                        categories=list(dict.fromkeys(c for _, c, _ in chunk)),
+                        categories=list(dict.fromkeys(c for _, c, _, _ in chunk)),
                         repo=repo,
                         count=len(chunk),
                         story_types=types,
-                        suggested_model="haiku" if concrete else "sonnet",
+                        suggested_model="haiku" if cheap else "sonnet",
                         tones=tone_pool[slot_no : slot_no + len(chunk)],
                         personas=[
                             persona_cycle[(slot_no + i) % len(persona_cycle)]
                             for i in range(len(chunk))
                         ],
                         leads=plead,
+                        formats=[f for _, _, _, f in chunk],
                     )
                 )
                 slot_no += len(chunk)
@@ -325,10 +385,41 @@ def build_brief(*, repo_signals, defaults, personas, count, packet_size, recent)
     )
 
 
-def guidance_markdown(personas: dict) -> str:
-    """Card-writing rules handed to each packet subagent (from prompts/generate.md)."""
+_FORMAT_SECTION = re.compile(r"^### Format: `(\w+)`", re.MULTILINE)
+
+
+def _format_sections() -> dict[str, str]:
+    from importlib.resources import files
+
+    text = (files("codescroll") / "prompts" / "formats.md").read_text()
+    marks = list(_FORMAT_SECTION.finditer(text))
+    return {
+        m.group(1): text[m.start() : marks[i + 1].start() if i + 1 < len(marks) else len(text)]
+        for i, m in enumerate(marks)
+    }
+
+
+def guidance_markdown(
+    personas: dict, formats=None, meme_templates: dict | None = None, mascots: dict | None = None
+) -> str:
+    """Card-writing rules for a packet subagent: base guidance plus the format sections.
+
+    `formats=None` includes every format section; a list includes only those (`[]` is base only).
+    """
     from importlib.resources import files
 
     text = (files("codescroll") / "prompts" / "generate.md").read_text()
     roster = "\n".join(f"- `@{p.handle}` ({p.name}): {p.voice}" for p in personas.values())
-    return text.replace("{personas}", roster)
+    out = text.replace("{personas}", roster)
+    sections = _format_sections()
+    wanted = list(sections) if formats is None else list(dict.fromkeys(formats))
+    chosen = [sections[f].strip() for f in wanted if f in sections]
+    if not chosen:
+        return out
+    tpl = "\n".join(
+        f"- `{t.id}` ({t.lines} lines): {t.hint}" for t in (meme_templates or {}).values()
+    )
+    masc = "\n".join(f"- `{m.name}` (repo {m.repo or 'none'})" for m in (mascots or {}).values())
+    body = "\n\n".join(chosen).replace("{meme_templates}", tpl or "(none configured)")
+    body = body.replace("{mascots}", masc or "(none configured)")
+    return out.rstrip() + "\n\n## Format sections\n\n" + body + "\n"
