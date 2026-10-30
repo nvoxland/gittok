@@ -1,0 +1,63 @@
+"""SQLite access: connection setup, migrations, and JSON/time helpers."""
+
+import json
+import sqlite3
+from datetime import UTC, datetime
+from importlib import resources
+from pathlib import Path
+
+
+def connect(path: Path | str) -> sqlite3.Connection:
+    memory = str(path) == ":memory:"
+    if not memory:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path))
+    conn.row_factory = sqlite3.Row
+    if not memory:
+        conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=5000")
+    return conn
+
+
+def _migration_files():
+    root = resources.files("codescroll") / "migrations"
+    return sorted((f for f in root.iterdir() if f.name.endswith(".sql")), key=lambda f: f.name)
+
+
+def migrate(conn: sqlite3.Connection) -> list[str]:
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schema_migrations "
+        "(name TEXT PRIMARY KEY, applied_at TEXT)"
+    )
+    done = {r[0] for r in conn.execute("SELECT name FROM schema_migrations")}
+    applied = []
+    for f in _migration_files():
+        if f.name in done:
+            continue
+        conn.executescript(f.read_text(encoding="utf-8"))
+        conn.execute(
+            "INSERT INTO schema_migrations(name, applied_at) VALUES (?, ?)",
+            (f.name, now_iso()),
+        )
+        conn.commit()
+        applied.append(f.name)
+    return applied
+
+
+def open_db(path: Path | str) -> sqlite3.Connection:
+    conn = connect(path)
+    migrate(conn)
+    return conn
+
+
+def dumps(obj) -> str:
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def loads(s: str | None):
+    return None if s is None else json.loads(s)
+
+
+def now_iso() -> str:
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
