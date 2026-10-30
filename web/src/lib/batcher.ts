@@ -47,7 +47,7 @@ export function createBatcher(
 
 	return {
 		push(e: FeedEvent) {
-			queue.push(e);
+			queue.push({ ...e, data: { ...e.data, event_id: crypto.randomUUID() } });
 		},
 		flush,
 		start() {

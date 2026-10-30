@@ -62,3 +62,29 @@ export async function replayQueue(store: QueueStore, send: (body: string) => Pro
 	}
 	return sent;
 }
+
+// What to do with a queued batch after the server answered with this status.
+// done: sent. retry: keep it queued (5xx, 408, 425, 429). drop: it will never succeed (other 4xx).
+export function statusOutcome(status: number): 'done' | 'retry' | 'drop' {
+	if (status >= 200 && status < 300) return 'done';
+	if (status >= 500 || status === 408 || status === 425 || status === 429) return 'retry';
+	return status >= 400 ? 'drop' : 'done';
+}
+
+// Overlapping calls share one in-flight run. Used so replay never runs twice at once.
+export function singleFlight<T>(fn: () => Promise<T>): () => Promise<T> {
+	let inflight: Promise<T> | null = null;
+	return () => {
+		inflight ??= fn().finally(() => {
+			inflight = null;
+		});
+		return inflight;
+	};
+}
+
+// Caches to delete on activate. Keep the current cache and the newest older one: a page from
+// the previous build may still ask for its /_app/ chunks. Relies on caches.keys() creation order.
+export function staleCaches(keys: string[], current: string, prefix = 'codescroll-'): string[] {
+	const others = keys.filter((k) => k.startsWith(prefix) && k !== current);
+	return others.slice(0, -1);
+}

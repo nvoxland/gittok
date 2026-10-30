@@ -4,7 +4,22 @@ import type { FeedEvent } from './types.ts';
 
 const ev = (n: number): FeedEvent => ({ card_id: `c_${n}`, type: 'impression', ts: n });
 
+const withId = (e: FeedEvent) => ({ ...e, data: { ...e.data, event_id: expect.stringMatching(/^[0-9a-f-]{36}$/) } });
+
 describe('createBatcher', () => {
+	it('stamps a unique event_id, keeps existing data, and keeps it across requeue', async () => {
+		const post = vi.fn().mockRejectedValueOnce(new Error('down')).mockResolvedValue(undefined);
+		const b = createBatcher(post, 5000);
+		b.push({ ...ev(1), data: { k: 1 } });
+		b.push(ev(2));
+		await b.flush();
+		await b.flush();
+		const [first, second] = post.mock.calls[1][0] as FeedEvent[];
+		expect(first.data?.k).toBe(1);
+		expect(first.data?.event_id).not.toBe(second.data?.event_id);
+		expect(first.data?.event_id).toBe((post.mock.calls[0][0] as FeedEvent[])[0].data?.event_id);
+	});
+
 	afterEach(() => vi.useRealTimers());
 
 	it('posts queued events every interval and not when empty', async () => {
@@ -17,7 +32,7 @@ describe('createBatcher', () => {
 		b.push(ev(1));
 		b.push(ev(2));
 		vi.advanceTimersByTime(5000);
-		expect(post).toHaveBeenCalledWith([ev(1), ev(2)]);
+		expect(post).toHaveBeenCalledWith([withId(ev(1)), withId(ev(2))]);
 		vi.advanceTimersByTime(5000);
 		expect(post).toHaveBeenCalledTimes(1);
 		b.stop();
@@ -30,7 +45,7 @@ describe('createBatcher', () => {
 		await b.flush();
 		b.push(ev(2));
 		await b.flush();
-		expect(post).toHaveBeenLastCalledWith([ev(1), ev(2)]);
+		expect(post).toHaveBeenLastCalledWith([withId(ev(1)), withId(ev(2))]);
 	});
 
 	describe('leaving the page', () => {
@@ -47,7 +62,7 @@ describe('createBatcher', () => {
 			const [url, blob] = beacon.mock.calls[0] as [string, Blob];
 			expect(url).toBe('/api/events');
 			expect(blob.type).toBe('application/json');
-			expect(JSON.parse(await blob.text())).toEqual({ events: [ev(1)] });
+			expect(JSON.parse(await blob.text())).toEqual({ events: [withId(ev(1))] });
 			b.stop();
 			expect(beacon).toHaveBeenCalledTimes(1);
 		});
@@ -62,7 +77,7 @@ describe('createBatcher', () => {
 			expect(f).toHaveBeenCalledTimes(1);
 			const init = f.mock.calls[0][1] as RequestInit;
 			expect(init.keepalive).toBe(true);
-			expect(JSON.parse(init.body as string)).toEqual({ events: [ev(1)] });
+			expect(JSON.parse(init.body as string)).toEqual({ events: [withId(ev(1))] });
 		});
 
 		it('stop() with nothing queued sends nothing', () => {

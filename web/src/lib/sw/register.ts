@@ -20,5 +20,6 @@ export async function registerServiceWorker(
 		await reg.sync?.register(SYNC_TAG).catch(() => {});
 	} catch {
 		// the app works without a worker
+		console.info('CodeScroll: offline mode is off. Service workers need HTTPS or localhost.');
 	}
 }

@@ -1,7 +1,16 @@
 /// <reference lib="webworker" />
 // Service worker entry. Built into build/sw.js by scripts/build-sw.mjs (see that file).
 // All decisions live in lib/sw/logic.ts; this file only wires them to the worker APIs.
-import { cacheKey, classifyRequest, markFromCache, replayQueue, type QueueRow } from './lib/sw/logic.ts';
+import {
+	cacheKey,
+	classifyRequest,
+	markFromCache,
+	replayQueue,
+	singleFlight,
+	staleCaches,
+	statusOutcome,
+	type QueueRow
+} from './lib/sw/logic.ts';
 
 declare const __PRECACHE__: string[];
 declare const __VERSION__: string;
@@ -33,17 +42,22 @@ const queueStore = {
 	add: (body: string) => tx('readwrite', (s) => s.add({ body })).then(() => {})
 };
 
-function replay(): Promise<number> {
-	return replayQueue(queueStore, async (body) => {
-		const res = await fetch('/api/events', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body
-		});
-		// A 4xx will never succeed; drop it rather than block the queue.
-		return res.ok || (res.status >= 400 && res.status < 500);
-	});
-}
+// Page load, the online event and Background Sync can all ask for a replay. One run at a time.
+const replay = singleFlight(() =>
+	replayQueue(queueStore, async (body) => {
+		try {
+			const res = await fetch('/api/events', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body
+			});
+			// done and drop both leave the queue; retry keeps the row and stops this run.
+			return statusOutcome(res.status) !== 'retry';
+		} catch {
+			return false;
+		}
+	})
+);
 
 // ---- lifecycle ----
 self.addEventListener('install', (event) => {
@@ -59,7 +73,7 @@ self.addEventListener('activate', (event) => {
 	event.waitUntil(
 		caches
 			.keys()
-			.then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+			.then((keys) => Promise.all(staleCaches(keys, CACHE).map((k) => caches.delete(k))))
 			.then(() => self.clients.claim())
 	);
 });
@@ -75,7 +89,8 @@ self.addEventListener('sync', (event) => {
 // ---- fetch ----
 async function cacheFirst(req: Request, key: string): Promise<Response> {
 	const cache = await caches.open(CACHE);
-	const hit = await cache.match(key);
+	// Also look in the previous build's cache (kept on activate) for pages that are still open.
+	const hit = (await cache.match(key)) ?? (await caches.match(key));
 	if (hit) return hit;
 	const res = await fetch(req);
 	if (res.ok) await cache.put(key, res.clone());
@@ -108,16 +123,19 @@ async function navigate(req: Request): Promise<Response> {
 
 async function queueEvents(req: Request): Promise<Response> {
 	const copy = req.clone();
+	let res: Response | null = null;
 	try {
-		return await fetch(req);
+		res = await fetch(req);
 	} catch {
-		await queueStore.add(await copy.text());
-		// 202 so the page does not requeue the batch itself.
-		return new Response(JSON.stringify({ stored: 0, queued: true }), {
-			status: 202,
-			headers: { 'Content-Type': 'application/json' }
-		});
+		// offline: queue below
 	}
+	if (res && statusOutcome(res.status) !== 'retry') return res;
+	await queueStore.add(await copy.text());
+	// 202 so the page does not requeue the batch itself.
+	return new Response(JSON.stringify({ stored: 0, queued: true }), {
+		status: 202,
+		headers: { 'Content-Type': 'application/json' }
+	});
 }
 
 self.addEventListener('fetch', (event) => {

@@ -35,4 +35,13 @@ describe('registerServiceWorker', () => {
 		await Promise.resolve();
 		expect(e.active.postMessage).toHaveBeenCalledWith({ type: 'replay' });
 	});
+	it('logs one info line when registration fails (plain HTTP)', async () => {
+		const e = fakeEnv();
+		e.sw.register.mockRejectedValue(new Error('insecure'));
+		const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+		await registerServiceWorker({ serviceWorker: e.sw } as never, e.win as never, true);
+		expect(info).toHaveBeenCalledTimes(1);
+		expect(String(info.mock.calls[0][0])).toMatch(/HTTPS or localhost/);
+		info.mockRestore();
+	});
 });
