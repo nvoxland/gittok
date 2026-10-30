@@ -1,0 +1,45 @@
+# Reward and ranking knobs (docs/learning.md). Expected to be tuned with real use.
+skip_ms: 1000
+weights:
+  dwell: 0.45
+  depth_open: 0.15
+  explain_more: 0.15
+  like: 0.25
+  save: 0.30
+  source_tap: 0.10
+  scroll_back: 0.35
+  answer: 0.20
+ms_per_word: 250
+expected_ms_max: 45000
+format_base_ms:
+  default: 2500
+  meme: 1500
+  text_meme: 1500
+  fun_fact: 2000
+  chart: 3000
+  code_card: 4000
+  quiz: 4000
+  thread: 6000
+  comic: 6000
+  iceberg: 5000
+  day_in_life: 5000
+importance:
+  story_type: 1.0
+  format: 1.0
+  tone: 0.7
+  persona: 0.5
+  repo: 0.8
+  group: 0.4
+  dir: 0.6
+  visual_kind: 0.5
+  template: 0.5
+  recency: 0.6
+  difficulty: 0.3
+  has_comments: 0.2
+half_life_days: 21
+slotting:
+  repeat_days: 7
+  learning_boost_share: 0.10
+  max_srs_per_batch: 2
+  fast_formats: [meme, text_meme, fun_fact, chart, hot_take]
+  slow_formats: [thread, comic, code_card, quiz, iceberg, day_in_life]
