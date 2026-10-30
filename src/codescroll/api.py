@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hmac
+import ipaddress
 import random
 import re
 from collections.abc import Callable
@@ -10,9 +12,9 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from codescroll import (
@@ -45,11 +47,113 @@ EventType = Literal[
 ]
 
 
+MAX_EVENT_DATA_BYTES = 4096
+MAX_BODY_BYTES = 1024 * 1024
+LAN_COOKIE = "cs_lan"
+LAN_COOKIE_MAX_AGE = 10 * 365 * 86400
+_SHA = re.compile(r"[0-9a-fA-F]{7,40}")
+
+PAIR_HTML = (
+    "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'>"
+    "<title>CodeScroll</title><h1>Pair this device</h1>"
+    "<p>Open the pairing URL printed by <code>codescroll serve --lan</code>.</p>"
+)
+
+
+def _is_loopback(scope) -> bool:
+    client = scope.get("client")
+    if not client:
+        return False
+    try:
+        return ipaddress.ip_address(client[0].split("%")[0]).is_loopback
+    except ValueError:
+        return False
+
+
+class SecurityMiddleware:
+    """Loopback-only MCP, LAN pairing cookie, and a request body size limit."""
+
+    def __init__(self, app, lan_token: str | None = None):
+        self.app = app
+        self.token = lan_token
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        path = scope["path"]
+        loopback = _is_loopback(scope)
+
+        def reply(response):
+            return response(scope, receive, send)
+
+        if path == "/mcp" or path.startswith("/mcp/"):
+            if not loopback:
+                return await reply(JSONResponse({"detail": "MCP is loopback-only"}, 403))
+        elif self.token and not loopback and path != "/pair":
+            cookie = _cookie(scope, LAN_COOKIE)
+            if cookie is None or not hmac.compare_digest(cookie.encode(), self.token.encode()):
+                if path.startswith("/api/"):
+                    return await reply(JSONResponse({"detail": "pair this device"}, 401))
+                return await reply(HTMLResponse(PAIR_HTML, 401))
+
+        headers = dict(scope["headers"])
+        try:
+            if int(headers.get(b"content-length", b"0")) > MAX_BODY_BYTES:
+                return await reply(JSONResponse({"detail": "request body too large"}, 413))
+        except ValueError:
+            return await reply(JSONResponse({"detail": "bad content-length"}, 400))
+
+        seen = 0
+        started = False
+
+        async def counting_receive():
+            nonlocal seen
+            msg = await receive()
+            if msg["type"] == "http.request":
+                seen += len(msg.get("body", b""))
+                if seen > MAX_BODY_BYTES:
+                    raise _BodyTooLarge
+            return msg
+
+        async def tracking_send(msg):
+            nonlocal started
+            if msg["type"] == "http.response.start":
+                started = True
+            await send(msg)
+
+        try:
+            await self.app(scope, counting_receive, tracking_send)
+        except _BodyTooLarge:
+            if not started:
+                await reply(JSONResponse({"detail": "request body too large"}, 413))
+
+
+class _BodyTooLarge(Exception):
+    pass
+
+
+def _cookie(scope, name: str) -> str | None:
+    for k, v in scope["headers"]:
+        if k == b"cookie":
+            for part in v.decode("latin-1").split(";"):
+                key, _, val = part.strip().partition("=")
+                if key == name:
+                    return val
+    return None
+
+
 class Event(BaseModel):
     card_id: str | None = None
     type: EventType
     ts: int
     data: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("data")
+    @classmethod
+    def _data_small(cls, v):
+        if len(db.dumps(v)) > MAX_EVENT_DATA_BYTES:
+            raise ValueError("event data too large")
+        return v
 
 
 class Answer(BaseModel):
@@ -60,7 +164,14 @@ class Answer(BaseModel):
 
 class StorySeen(BaseModel):
     repo: str
-    shas: list[str]
+    shas: list[str] = Field(max_length=100)
+
+    @field_validator("shas")
+    @classmethod
+    def _hex(cls, v):
+        if not all(_SHA.fullmatch(s) for s in v):
+            raise ValueError("shas must be 7-40 hex characters")
+        return v
 
 
 class NotificationsRead(BaseModel):
@@ -69,7 +180,7 @@ class NotificationsRead(BaseModel):
 
 
 class EventBatch(BaseModel):
-    events: list[Event]
+    events: list[Event] = Field(max_length=500)
 
 
 NO_BUILD_HTML = (
@@ -80,6 +191,7 @@ NO_BUILD_HTML = (
 
 
 ASSET_CACHE = "public, max-age=31536000, immutable"
+MASCOT_CACHE = "public, max-age=3600"
 _CARD_DIR = re.compile(r"[A-Za-z0-9_]+")
 _CARD_FILE = re.compile(r"[0-9]+\.png")
 _MASCOT_FILE = re.compile(r"[A-Za-z0-9_-]+\.png")
@@ -178,6 +290,7 @@ def create_app(
     notify_worker: bool = False,
     notify_interval_s: float = 60.0,
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    lan_token: str | None = None,
 ):
     mcp = mcp_server.build_server(get_config)
     mcp_app = mcp.streamable_http_app(
@@ -207,6 +320,17 @@ def create_app(
                     w.stop()
 
     app = FastAPI(title="CodeScroll", lifespan=lifespan)
+    app.add_middleware(SecurityMiddleware, lan_token=lan_token)
+
+    @app.get("/pair")
+    def pair(t: str = ""):
+        if not lan_token or not hmac.compare_digest(t.encode(), lan_token.encode()):
+            raise HTTPException(401, "bad pairing token")
+        resp = RedirectResponse("/", status_code=303)
+        resp.set_cookie(
+            LAN_COOKIE, lan_token, max_age=LAN_COOKIE_MAX_AGE, httponly=True, samesite="lax"
+        )
+        return resp
 
     def conn():
         return db.open_db(get_config().settings.data_dir / "codescroll.db")
@@ -334,7 +458,8 @@ def create_app(
         path = asset_path(get_config().settings.data_dir / "assets", folder, file)
         if path is None:
             raise HTTPException(404, "unknown asset")
-        return FileResponse(path, media_type="image/png", headers={"Cache-Control": ASSET_CACHE})
+        cache = MASCOT_CACHE if folder == "mascots" else ASSET_CACHE
+        return FileResponse(path, media_type="image/png", headers={"Cache-Control": cache})
 
     @app.get("/api/avatars/{handle:path}")
     def avatar(handle: str):

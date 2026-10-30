@@ -108,20 +108,27 @@ def _serve(args) -> int:
     port = args.port or server.port
     host = "0.0.0.0" if args.lan else (args.host or server.host)
     shown = "127.0.0.1" if args.lan else host
+    lan_token = None
     print(f"feed: http://{shown}:{port}")
     print(f"mcp:  http://{shown}:{port}/mcp")
     if args.lan:
         for url in social.lan_urls(port):
             print(f"lan:  {url}")
-        print("WARNING: the feed has no authentication. Anyone on this network can open it.")
-        print("Installing the app as a PWA on a phone needs HTTPS.")
-        print("It works in the browser over HTTP. Tailscale is the planned HTTPS path (M6).")
+        lan_token = social.ensure_lan_token(load_config().settings.data_dir)
+        for a in social.lan_addresses():
+            print(f"pair: http://{a}:{port}/pair?t={lan_token}")
+        print("The feed is token-protected: open a pairing URL once on each device.")
+        print("MCP (/mcp) is loopback-only and is never reachable from the LAN.")
+        print("PWA install and offline mode need HTTPS: service workers do not register")
+        print("on plain-HTTP LAN origins. The feed still works in the browser over HTTP.")
+        print("Tailscale is the planned HTTPS path (M6).")
     app = create_app(
         load_config,
         render_worker=True,
         learning_worker=True,
         profile_worker=True,
         notify_worker=True,
+        lan_token=lan_token,
     )
     uvicorn.run(app, host=host, port=port)
     return 0

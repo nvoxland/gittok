@@ -336,7 +336,9 @@ def test_repo_profile_mascot_image_only_when_file_exists(cfg, fixture_repo, tmp_
     body = c.get("/api/repos/fixture").json()
     assert body["mascot"] == "otter" and body["mascot_image"] is None
     write_asset(cfg, "mascots/otter.png")
-    assert c.get("/api/repos/fixture").json()["mascot_image"] == "/assets/mascots/otter.png"
+    mtime = int((cfg.settings.data_dir / "assets" / "mascots" / "otter.png").stat().st_mtime)
+    image = c.get("/api/repos/fixture").json()["mascot_image"]
+    assert image == f"/assets/mascots/otter.png?v={mtime}"
 
 
 def test_lifespan_runs_learning_worker_and_stops_it(cfg, fixture_repo):
@@ -509,7 +511,7 @@ def test_stories_endpoint_and_seen_roundtrip(social_client):
 
 
 def test_stories_seen_unknown_repo_is_404(social_client):
-    r = social_client.post("/api/stories/seen", json={"repo": "nope", "shas": ["a"]})
+    r = social_client.post("/api/stories/seen", json={"repo": "nope", "shas": ["abcdef1"]})
     assert r.status_code == 404
 
 

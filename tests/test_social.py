@@ -156,7 +156,8 @@ def test_mascot_image_when_file_exists(cfg, conn):
     (img / "otter.png").write_bytes(b"x")
     s = social.stories(conn, cfg, NOW)[0]
     assert s["mascot"] == "otter"
-    assert s["mascot_image"] == "/assets/mascots/otter.png"
+    mtime = int((img / "otter.png").stat().st_mtime)
+    assert s["mascot_image"] == f"/assets/mascots/otter.png?v={mtime}"
 
 
 def finished_run(conn, cfg, accepted, repo="fixture"):
@@ -213,16 +214,20 @@ def test_srs_due_notification_once_while_unread(cfg, conn):
     conn.execute("UPDATE notifications SET read_at='x'")
     conn.commit()
     later = NOW + timedelta(hours=1)
-    assert social.generate_notifications(conn, cfg, later)["srs_due"] == 1
+    assert social.generate_notifications(conn, cfg, later)["srs_due"] == 0  # same due set
+    cid2 = insert_card(conn, cfg, "q2", "commit_drama")
+    srs._upsert(conn, cid2, 1, NOW - timedelta(hours=1), 0, 0)
+    conn.commit()
+    assert social.generate_notifications(conn, cfg, later)["srs_due"] == 1  # new due set
 
 
 def test_hot_file_for_files_in_three_commits_once_per_day(cfg, conn):
     assert social.generate_notifications(conn, cfg, NOW)["hot_file"] == 1
-    assert texts(conn, "hot_file") == ["auth.py was in 3 commits today"]
+    assert texts(conn, "hot_file") == ["auth.py was in 3 commits in the last 24 hours"]
     assert social.generate_notifications(conn, cfg, NOW)["hot_file"] == 0
-    next_day = NOW + timedelta(hours=2)  # new UTC day: dedup key differs, still in the window
-    assert next_day.date() == NOW.date()
-    assert social.generate_notifications(conn, cfg, next_day)["hot_file"] == 0
+    assert social.generate_notifications(conn, cfg, NOW + timedelta(minutes=5))["hot_file"] == 0
+    key = conn.execute("SELECT dedup_key FROM notifications WHERE kind='hot_file'").fetchone()[0]
+    assert str(NOW.date()) not in key
 
 
 def test_new_kind_for_spot_the_bug_card(cfg, conn):
@@ -232,6 +237,13 @@ def test_new_kind_for_spot_the_bug_card(cfg, conn):
     row = conn.execute("SELECT * FROM notifications WHERE kind='new_kind'").fetchone()
     assert row["text"] == "A new Spot the Bug from billing/"
     assert row["card_id"] == "s1"
+    assert social.generate_notifications(conn, cfg, NOW)["new_kind"] == 0
+
+
+def test_new_kind_ignores_cards_older_than_24h(cfg, conn):
+    insert_card(conn, cfg, "old", "spot_the_bug", {"dirs": ["billing"]})
+    conn.execute("UPDATE cards SET created_at='2026-10-20T10:00:00Z' WHERE id='old'")
+    conn.commit()
     assert social.generate_notifications(conn, cfg, NOW)["new_kind"] == 0
 
 

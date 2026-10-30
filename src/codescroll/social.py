@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import os
+import secrets
 import socket
 import threading
-from collections import Counter
 from contextlib import closing
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from codescroll import db, gitq, srs
@@ -35,7 +37,10 @@ def mascot_info(cfg: Config, name: str) -> tuple[str | None, str | None]:
     mascot = repo.mascot or next((m.name for m in cfg.mascots.values() if m.repo == name), None)
     image = None
     if mascot and (cfg.settings.data_dir / "assets" / "mascots" / f"{mascot}.png").is_file():
-        image = f"/assets/mascots/{mascot}.png"
+        mtime = int(
+            (cfg.settings.data_dir / "assets" / "mascots" / f"{mascot}.png").stat().st_mtime
+        )
+        image = f"/assets/mascots/{mascot}.png?v={mtime}"
     return mascot, image
 
 
@@ -138,32 +143,39 @@ def generate_notifications(conn, cfg: Config, now: datetime) -> dict[str, int]:
     ).fetchone()
     if due and not unread:
         n = len(due)
+        ids = sorted(due)
+        digest = hashlib.sha256("\n".join(ids).encode()).hexdigest()[:16]
         text = (
             "1 quiz card is back for another try"
             if n == 1
             else f"{n} quiz cards are back for another try"
         )
-        made["srs_due"] += _add(conn, "srs_due", text, f"srs_due:{now.strftime(FMT)}", now)
+        made["srs_due"] += _add(conn, "srs_due", text, f"srs_due:{digest}", now)
 
-    day = now.strftime("%Y-%m-%d")
     for name in cfg.repos:
         try:
             commits = recent_commits(cfg, name, now)
         except gitq.GitError:
             log.warning("hot files: cannot read %s", name)
             continue
-        counts = Counter(f for c in commits for f in set(c["files"]))
-        for path, n in sorted(counts.items()):
+        shas_by_path: dict[str, list[str]] = {}
+        for c in commits:  # newest first
+            for f in set(c["files"]):
+                shas_by_path.setdefault(f, []).append(c["sha"])
+        for path, shas in sorted(shas_by_path.items()):
+            n = len(shas)
             if n >= HOT_FILE_COMMITS:
                 base = path.rsplit("/", 1)[-1]
                 made["hot_file"] += _add(
-                    conn, "hot_file", f"{base} was in {n} commits today",
-                    f"hot_file:{name}:{path}:{day}", now,
+                    conn, "hot_file", f"{base} was in {n} commits in the last 24 hours",
+                    f"hot_file:{name}:{path}:{shas[HOT_FILE_COMMITS - 1]}", now,
                 )  # fmt: skip
 
     for c in conn.execute(
         "SELECT c.id, c.spec, r.name AS repo FROM cards c JOIN repos r ON r.id = c.repo_id "
-        "WHERE c.story_type = 'spot_the_bug' AND c.status = 'ready' ORDER BY c.created_at, c.id"
+        "WHERE c.story_type = 'spot_the_bug' AND c.status = 'ready' AND c.created_at >= ? "
+        "ORDER BY c.created_at, c.id",
+        ((now - timedelta(seconds=DAY_S)).strftime(FMT),),
     ).fetchall():
         spec = db.loads(c["spec"]) or {}
         dirs = spec.get("dirs") or []
@@ -266,3 +278,21 @@ def lan_addresses() -> list[str]:
 
 def lan_urls(port: int, addresses: list[str] | None = None) -> list[str]:
     return [f"http://{a}:{port}" for a in (lan_addresses() if addresses is None else addresses)]
+
+
+def ensure_lan_token(data_dir) -> str:
+    """The LAN pairing token in `<data_dir>/lan_token` (mode 0600); created when missing."""
+    path = data_dir / "lan_token"
+    try:
+        token = path.read_text().strip()
+        if token:
+            return token
+    except FileNotFoundError:
+        pass
+    data_dir.mkdir(parents=True, exist_ok=True)
+    token = secrets.token_urlsafe(32)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(token + "\n")
+    os.chmod(path, 0o600)
+    return token

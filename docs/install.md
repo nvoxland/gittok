@@ -50,3 +50,7 @@ Notes:
 
 - The `codescroll-generate` skill pins models (Sonnet for the driver, Haiku or Sonnet for packets). This is Claude-specific. Codex users should run each work packet by hand on a small model.
 - Comparing Codex card quality with Claude card quality is tracked in beads. It spends ChatGPT quota, so the user runs it.
+
+## LAN notes
+
+`codescroll serve --lan` binds all interfaces. The feed and `/api/*` need a pairing cookie from non-loopback peers: open the `pair:` URL printed at start-up once on each device. The token lives in `<data_dir>/lan_token` (mode 0600). `/mcp` is loopback-only and refuses LAN peers. PWA install and offline mode need HTTPS, because service workers do not register on plain-HTTP LAN origins. See `docs/social.md`.

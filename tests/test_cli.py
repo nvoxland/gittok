@@ -184,6 +184,7 @@ def test_serve_starts_the_render_learning_and_profile_workers(cfg, monkeypatch):
         "learning_worker": True,
         "profile_worker": True,
         "notify_worker": True,
+        "lan_token": None,
         "app": "app",
     }
 
@@ -361,8 +362,11 @@ def test_serve_lan_binds_all_interfaces_and_warns(cfg, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "http://127.0.0.1:9123" in out
     assert "http://192.168.1.5:9123" in out and "http://10.0.0.2:9123" in out
-    assert "no authentication" in out
+    assert "token-protected" in out
+    assert "loopback-only" in out
     assert "HTTPS" in out
+    tok = (cfg.settings.data_dir / "lan_token").read_text().strip()
+    assert f"http://192.168.1.5:9123/pair?t={tok}" in out
 
 
 def test_serve_without_lan_prints_no_warning(cfg, monkeypatch, capsys):
