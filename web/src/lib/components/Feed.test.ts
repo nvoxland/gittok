@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/svelte';
 import { describe, expect, it } from 'vitest';
 import Feed from './Feed.svelte';
-import type { Card } from '$lib/types';
+import type { Card } from '#lib/types.ts';
 
 function fakeCard(n: number): Card {
 	return {

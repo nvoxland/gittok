@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import Feed from '$lib/components/Feed.svelte';
-	import { fetchFeed } from '$lib/api';
-	import type { Card } from '$lib/types';
+	import Feed from '#lib/components/Feed.svelte';
+	import { fetchFeed } from '#lib/api.ts';
+	import type { Card } from '#lib/types.ts';
 
 	let cards = $state<Card[]>([]);
 	let loading = $state(true);
