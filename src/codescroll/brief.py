@@ -55,6 +55,8 @@ CATEGORY_FORMATS: dict[str, tuple[str, ...]] = {
     "interactive": ("quiz",),
 }
 
+CATEGORY_FORMATS_FLAT = tuple(dict.fromkeys(f for fs in CATEGORY_FORMATS.values() for f in fs))
+
 # Illustrations each format costs against settings.render.max_illustrations_per_run.
 # A comic has 2 or 3 panels (one illustration each); the brief reserves the worst case, 3.
 ILLUSTRATION_COST = {"mascot_scene": 1, "comic": 3}
@@ -118,7 +120,9 @@ def _old(ts, t0) -> bool:
     return t0 is None or (ts or t0) <= t0 - ANCIENT_DAYS * 86400
 
 
-def leads_for(story_type: str, sig: dict, t0: int | None = None) -> list[str]:
+def leads_for(
+    story_type: str, sig: dict, t0: int | None = None, limit: int = MAX_LEADS_PER_TYPE
+) -> list[str]:
     """Human-readable leads for one story type, drawn from precomputed signals.
 
     Generated files and lockfiles are never leads. "Ancient" stories need material
@@ -217,7 +221,7 @@ def leads_for(story_type: str, sig: dict, t0: int | None = None) -> list[str]:
             out.append(f'fix {_sha(x["sha"])} on {c["path"]}: "{x["subject"]}"')
     else:  # explanatory types: point at central, much-edited files
         out += [f"{f['path']} ({f['commits']} commits in the last year)" for f in wide]
-    return out[:MAX_LEADS_PER_TYPE]
+    return out[:limit]
 
 
 @dataclass
@@ -242,6 +246,9 @@ class Brief:
     packets: list = field(default_factory=list)
     recent: list = field(default_factory=list)
     mix_evidence: int | None = None  # rewards behind a learned mix; None means default mix
+    rules: list = field(default_factory=list)
+    focus: list = field(default_factory=list)  # (repo or None, dir or None, slots)
+    unavailable: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
         from dataclasses import asdict
@@ -270,6 +277,17 @@ class Brief:
             f"{len(self.packets)} work packets. Give each packet to one subagent on its "
             "suggested model.",
         ]
+        if self.unavailable:
+            out += [
+                "",
+                f"Skipping {', '.join(self.unavailable)}: renderer not available.",
+            ]
+        if self.rules:
+            out += ["", "Rules:"]
+            out += [_rule_line(r) for r in self.rules]
+        for repo, d, slots in self.focus:
+            where = f"{d}/" if d else f"repo {repo}"
+            out += [f"Focus: {where} ({slots} slots): lead with it; its leads come first."]
         if self.recent:
             out += ["", "## Recently posted (do not repeat these stories)", ""]
             out += [f"- [{r['story_type']}] {r['hook']}" for r in self.recent]
@@ -288,6 +306,34 @@ class Brief:
             ]
             out += [f"  - {line}" for line in pk.leads]
         return "\n".join(out) + "\n"
+
+
+def _rule_line(r: dict) -> str:
+    extra = []
+    if r.get("factor"):
+        extra.append(f"x{r['factor']:g}")
+    if r.get("slots"):
+        extra.append(f"{r['slots']} slots")
+    if r.get("max_share") is not None:
+        extra.append(f"max share {r['max_share']:g}")
+    if r.get("expires_at"):
+        extra.append(f"expires {r['expires_at'][:10]}")
+    tail = f" ({', '.join(extra)})" if extra else ""
+    why = f': "{r["reason"]}"' if r.get("reason") else ""
+    return f"- {r['type']} {r['feature']}={r['value']}{tail}{why}"
+
+
+def _factors(rules, feature: str) -> dict[str, float]:
+    """Combined boost/prefer factor per value of a feature."""
+    out: dict[str, float] = {}
+    for r in rules:
+        if r["type"] in ("boost", "prefer") and r["feature"] == feature:
+            out[r["value"]] = out.get(r["value"], 1.0) * (r.get("factor") or 2.0)
+    return out
+
+
+def _banned(rules, feature: str) -> set[str]:
+    return {r["value"] for r in rules if r["type"] == "ban" and r["feature"] == feature}
 
 
 def _interleave(quotas: dict[str, int]) -> list[str]:
@@ -312,13 +358,20 @@ DEFAULT_PERSONAS = (
 )
 
 
-def _pick_format(category: str, used: dict[str, int], spent: int, budget: int) -> str:
-    """Least-used format of the category that still fits the illustration budget."""
-    options = CATEGORY_FORMATS[category]
-    fits = [f for f in options if spent + ILLUSTRATION_COST.get(f, 0) <= budget] or [
-        f for f in options if f not in ILLUSTRATION_COST
-    ]
-    return min(fits, key=lambda f: (used.get(f, 0), options.index(f)))
+def _pick_format(
+    options, used: dict[str, int], spent: int, budget: int, boost: dict[str, float] | None = None
+) -> str:
+    """Least-used format of the category that still fits the illustration budget.
+
+    A boost factor divides a format's use count, so boosted formats come up more often.
+    """
+    boost = boost or {}
+    fits = (
+        [f for f in options if spent + ILLUSTRATION_COST.get(f, 0) <= budget]
+        or [f for f in options if f not in ILLUSTRATION_COST]
+        or list(options)
+    )
+    return min(fits, key=lambda f: ((used.get(f, 0) + 1) / boost.get(f, 1.0), options.index(f)))
 
 
 def build_brief(
@@ -332,22 +385,56 @@ def build_brief(
     max_illustrations=4,
     category_shares: dict[str, float] | None = None,
     evidence: int | None = None,
+    rules=None,
+    unavailable_formats=frozenset(),
 ) -> Brief:
     if not repo_signals:
         raise ValueError("no repos to build a brief from")
+    rules = list(rules or [])
+    gone_formats = set(unavailable_formats) | _banned(rules, "format")
+    gone_stories = _banned(rules, "story_type")
+    stories_in = {
+        c: tuple(t for t in ts if t not in gone_stories) for c, ts in CATEGORY_STORIES.items()
+    }
+    formats_in = {
+        c: tuple(f for f in fs if f not in gone_formats) for c, fs in CATEGORY_FORMATS.items()
+    }
+    live = {c for c in CATEGORY_STORIES if stories_in[c] and formats_in[c]}
+    fmt_boost = _factors(rules, "format")
+    story_boost = _factors(rules, "story_type")
+    repo_boost = _factors(rules, "repo")
+    focus = []
+    for r in rules:
+        if r["type"] == "focus" and r["feature"] in ("repo", "dir"):
+            n = r.get("slots") or 3
+            focus.append((r["value"], None, n) if r["feature"] == "repo" else (None, r["value"], n))
+    focus_dirs = [d.strip("/") + "/" for _, d, _ in focus if d]
+    focus_repos = {rp: n for rp, _, n in focus if rp}
+
+    def focused_first(lines: list[str]) -> list[str]:
+        return sorted(lines, key=lambda x: not any(d in x for d in focus_dirs))
+
     learned = bool(category_shares) and evidence != 0  # no rewards: keep the default mix
     source = category_shares if learned else defaults.get("categories", {})
-    cats = {k: w for k, w in source.items() if k in CATEGORY_STORIES}
+    cats = {k: w for k, w in source.items() if k in live}
+    if not cats:
+        raise ValueError("active rules leave no category with a story type and format")
     quotas = largest_remainder(cats, count)
     if learned and count >= len(cats):
         for k in [k for k, v in quotas.items() if v < 1]:
             donor = max(quotas, key=lambda c: (quotas[c], c))
             quotas[donor] -= 1
             quotas[k] = 1
-    tone_quotas = largest_remainder(defaults.get("tones", {}), count)
+    banned_tones = _banned(rules, "tone")
+    tones_in = {k: w for k, w in defaults.get("tones", {}).items() if k not in banned_tones}
+    tone_quotas = largest_remainder(tones_in or defaults.get("tones", {}), count)
     tone_pool = _interleave(tone_quotas)
     repo_names = sorted(repo_signals)
     persona_cycle = list(personas) or list(DEFAULT_PERSONAS)
+    persona_cycle = [
+        p for p in persona_cycle if p not in _banned(rules, "persona")
+    ] or persona_cycle
+    story_used: dict[str, int] = {}
 
     # 1. Allocate every card slot to (repo, category, story_type, format).
     slots: list[tuple[str, str, str, str]] = []
@@ -359,20 +446,32 @@ def build_brief(
             continue
         # Split the category across repos; rotate the start so small quotas spread out.
         order = repo_names[ci % len(repo_names) :] + repo_names[: ci % len(repo_names)]
-        per_repo = largest_remainder({r: 1.0 for r in order}, n)
+        per_repo = largest_remainder(
+            {r: repo_boost.get(r, 1.0) * (1 + focus_repos.get(r, 0)) for r in order}, n
+        )
         for repo in order:
             sig = repo_signals[repo]["signals"]
             t0 = repo_signals[repo].get("t0")
-            for t in CATEGORY_STORIES[category]:
-                leads_by.setdefault((repo, t), leads_for(t, sig, t0))
-            usable = [t for t in CATEGORY_STORIES[category] if leads_by[(repo, t)]] or list(
-                CATEGORY_STORIES[category]
+            for t in stories_in[category]:
+                if (repo, t) not in leads_by:
+                    wide = leads_for(t, sig, t0, limit=1000 if focus_dirs else MAX_LEADS_PER_TYPE)
+                    leads_by[(repo, t)] = focused_first(wide)[:MAX_LEADS_PER_TYPE]
+            usable = [t for t in stories_in[category] if leads_by[(repo, t)]] or list(
+                stories_in[category]
             )
-            for i in range(per_repo[repo]):
-                fmt = _pick_format(category, used, spent, max_illustrations)
+            for _ in range(per_repo[repo]):
+                fmt = _pick_format(formats_in[category], used, spent, max_illustrations, fmt_boost)
                 used[fmt] = used.get(fmt, 0) + 1
                 spent += ILLUSTRATION_COST.get(fmt, 0)
-                slots.append((repo, category, usable[i % len(usable)], fmt))
+                story = min(
+                    usable,
+                    key=lambda t: (
+                        (story_used.get(t, 0) + 1) / story_boost.get(t, 1.0),
+                        usable.index(t),
+                    ),
+                )
+                story_used[story] = story_used.get(story, 0) + 1
+                slots.append((repo, category, story, fmt))
 
     # 2. Pack slots into as few packets as possible per (repo, model tier).
     packets: list[Packet] = []
@@ -415,6 +514,9 @@ def build_brief(
         packets=packets,
         recent=list(recent),
         mix_evidence=(evidence or 0) if learned else None,
+        rules=rules,
+        focus=focus,
+        unavailable=[f for f in CATEGORY_FORMATS_FLAT if f in set(unavailable_formats)],
     )
 
 

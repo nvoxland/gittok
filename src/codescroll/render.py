@@ -98,7 +98,7 @@ class MemeRenderer:
 
     def available(self) -> bool:
         try:
-            with self._client(2.0) as c:
+            with self._client(1.0) as c:
                 return c.get(f"{self.base_url}/templates/").status_code < 500
         except httpx.HTTPError:
             return False

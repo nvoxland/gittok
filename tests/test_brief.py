@@ -592,9 +592,10 @@ def test_markdown_mix_line_default_and_learned():
     assert "Mix: default\n" in build().to_markdown()
     md = build(category_shares=DEFAULTS["categories"], evidence=42).to_markdown()
     assert "Mix: learned from 42 rewards\n" in md
-    assert "Mix: learned from 1 reward\n" in build(
-        category_shares=DEFAULTS["categories"], evidence=1
-    ).to_markdown()
+    assert (
+        "Mix: learned from 1 reward\n"
+        in build(category_shares=DEFAULTS["categories"], evidence=1).to_markdown()
+    )
 
 
 def test_zero_evidence_keeps_default_mix_even_with_shares():
@@ -602,3 +603,120 @@ def test_zero_evidence_keeps_default_mix_even_with_shares():
     b = build(count=10, category_shares=shares, evidence=0)
     assert b.quotas == build(count=10).quotas
     assert "Mix: default\n" in b.to_markdown()
+
+
+# ---- active rules (SPEC 10.3) and unavailable formats
+
+
+def rule(type, feature, value, **kw):
+    return {
+        "type": type,
+        "feature": feature,
+        "value": value,
+        "factor": kw.pop("factor", None),
+        "slots": kw.pop("slots", None),
+        "max_share": kw.pop("max_share", None),
+        "expires_at": kw.pop("expires_at", None),
+        "reason": kw.pop("reason", ""),
+        "id": kw.pop("id", 1),
+    }
+
+
+def all_formats(b):
+    return [f for p in b.packets for f in p.formats]
+
+
+def test_ban_format_excludes_it_from_every_slot():
+    b = build(count=20, rules=[rule("ban", "format", "code_card")])
+    assert "code_card" not in all_formats(b)
+    assert sum(p.count for p in b.packets) == 20
+
+
+def test_ban_story_type_excludes_it_and_falls_back_in_category():
+    b = build(count=20, rules=[rule("ban", "story_type", "commit_drama")])
+    assert "commit_drama" not in {t for p in b.packets for t in p.story_types}
+    assert sum(p.count for p in b.packets) == 20
+
+
+def test_ban_every_format_of_a_category_drops_it_and_renormalizes():
+    rules = [rule("ban", "format", "meme"), rule("ban", "format", "text_meme")]
+    b = build(count=10, rules=rules)
+    assert "memes" not in b.quotas
+    assert sum(b.quotas.values()) == 10
+    assert sum(p.count for p in b.packets) == 10
+
+
+def test_ban_tone_and_persona_are_not_assigned():
+    rules = [rule("ban", "tone", "roast"), rule("ban", "persona", "greybeard")]
+    b = build(count=20, rules=rules)
+    assert "roast" not in {t for p in b.packets for t in p.tones}
+    assert "roast" not in b.tone_quotas
+    assert "greybeard" not in {x for p in b.packets for x in p.personas}
+
+
+def test_boost_format_biases_rotation_toward_it():
+    base = all_formats(build(count=20)).count("hot_take")
+    boosted = all_formats(build(count=20, rules=[rule("boost", "format", "hot_take", factor=10.0)]))
+    assert boosted.count("hot_take") > base
+
+
+def test_prefer_story_type_picks_it_more_often():
+    def n(rules):
+        return sum(
+            1 for p in build(count=20, rules=rules).packets for t in p.story_types if t == "rip"
+        )
+
+    assert n([rule("prefer", "story_type", "rip", factor=10.0)]) >= n([])
+
+
+def test_boost_repo_shifts_slots_to_that_repo():
+    sig = signals()
+    rs = {
+        "a": {"t0": T0, "head_sha": "9" * 40, "signals": sig},
+        "b": {"t0": T0, "head_sha": "8" * 40, "signals": sig},
+    }
+    kw = dict(
+        repo_signals=rs, defaults=DEFAULTS, personas=PERSONAS, count=20, packet_size=4, recent=[]
+    )
+    even = {r: sum(p.count for p in brief.build_brief(**kw).packets if p.repo == r) for r in "ab"}
+    b = brief.build_brief(**kw, rules=[rule("boost", "repo", "a", factor=3.0)])
+    got = {r: sum(p.count for p in b.packets if p.repo == r) for r in "ab"}
+    assert got["a"] > even["a"]
+    assert got["a"] + got["b"] == 20
+
+
+def test_focus_dir_puts_its_leads_first_and_adds_focus_line():
+    sig = signals()
+    sig["churn"]["files"]["90"] = [
+        {"path": "other/x.py", "commits": 9, "lines": 90},
+        {"path": "src/app.py", "commits": 2, "lines": 10},
+    ]
+    b = build(count=10, sig=sig, rules=[rule("focus", "dir", "src", slots=3, reason="sync work")])
+    md = b.to_markdown()
+    assert "Focus: src/ (3 slots)" in md
+    hot = [pk for pk in b.packets if any("[hot_spot]" in x for x in pk.leads)]
+    for pk in hot:
+        leads = [x for x in pk.leads if x.startswith("[hot_spot]")]
+        assert "src/" in leads[0]
+
+
+def test_markdown_lists_active_rules_with_reason():
+    md = build(
+        count=5,
+        rules=[rule("boost", "format", "quiz", factor=2.0, reason="more quizzes please")],
+    ).to_markdown()
+    assert "Rules:" in md
+    assert "boost format=quiz" in md
+    assert "more quizzes please" in md
+
+
+def test_no_rules_section_without_rules():
+    assert "Rules:" not in build(count=5).to_markdown()
+
+
+def test_unavailable_formats_are_never_assigned_and_are_noted():
+    gone = frozenset({"meme", "mascot_scene", "comic"})
+    b = build(count=20, unavailable_formats=gone)
+    assert not gone & set(all_formats(b))
+    assert "Skipping meme, mascot_scene, comic: renderer not available" in b.to_markdown()
+    assert sum(p.count for p in b.packets) == 20

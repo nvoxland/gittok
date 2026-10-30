@@ -16,7 +16,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from codescroll import brief as brief_mod
-from codescroll import db, gitq, learning, research, runs, signals, validator
+from codescroll import db, gitq, learning, render, research, runs, signals, steering, validator
 from codescroll.config import Config, ConfigError, load_config
 
 INSTRUCTIONS = """\
@@ -26,7 +26,13 @@ codescroll-generate skill: call get_brief, hand each work packet to a cheap suba
 git_grep / read_file / list_dir and returns card JSON, then submit_cards and finish_run.
 All repo tools are read-only and take a configured repo name, never a path."""
 
-_ERRORS = (research.ResearchError, runs.RunError, ConfigError, gitq.GitError)
+_ERRORS = (
+    research.ResearchError,
+    runs.RunError,
+    ConfigError,
+    gitq.GitError,
+    steering.SteeringError,
+)
 log = logging.getLogger(__name__)
 
 
@@ -42,13 +48,29 @@ def mix_inputs(conn, cfg) -> dict:
     }
 
 
-def recent_cards(conn, days: int = 30, limit: int = 30) -> list[dict]:
+def recent_stories(conn, days: int = 30, limit: int = 30) -> list[dict]:
+    """Story type and hook of recent cards, for the brief's do-not-repeat list."""
     since = (datetime.now(UTC) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
     rows = conn.execute(
         "SELECT story_type, spec FROM cards WHERE created_at >= ? ORDER BY created_at DESC LIMIT ?",
         (since, limit),
     ).fetchall()
     return [{"story_type": r["story_type"], "hook": db.loads(r["spec"])["hook"]} for r in rows]
+
+
+# Kept for callers that import the old name.
+recent_cards = recent_stories
+
+
+def unavailable_formats(cfg) -> frozenset[str]:
+    """Formats whose renderer cannot run now, so the agent does not write unrenderable cards."""
+    renderers = render.default_renderers(cfg)
+    gone: set[str] = set()
+    if not renderers["meme"].available():
+        gone.add("meme")
+    if not renderers["illustration"].available():
+        gone |= {"mascot_scene", "comic"}
+    return frozenset(gone)
 
 
 def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
@@ -128,7 +150,9 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
                 personas=list(cfg.personas),
                 count=count,
                 packet_size=cfg.settings.agent.packet_size,
-                recent=recent_cards(conn),
+                recent=recent_stories(conn),
+                rules=steering.list_rules(conn),
+                unavailable_formats=unavailable_formats(cfg),
                 max_illustrations=cfg.settings.render.max_illustrations_per_run,
                 **mix_inputs(conn, cfg),
             )
@@ -248,6 +272,163 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
         with _db(cfg) as conn:
             summary = runs.finish_run(conn, run_id, notes)
         return summary
+
+    # ---- steering (SPEC 14, 15). The tool docstrings are what the agent reads.
+
+    @tool
+    def get_profile(cfg: Config) -> dict:
+        """What CodeScroll has learned about the user: top and bottom features with evidence.
+
+        Example: get_profile() before answering "what have you learned about me".
+        """
+        with _db(cfg) as conn:
+            return steering.get_profile(conn, cfg)
+
+    @tool
+    def explain_weights(cfg: Config, feature: str | None = None) -> Any:
+        """Learned weight per feature value with counts, trend, and a plain sentence.
+
+        Example: explain_weights(feature="format") to see why memes show up so often.
+        """
+        with _db(cfg) as conn:
+            return steering.explain_weights(conn, cfg, feature)
+
+    @tool
+    def list_rules(cfg: Config, include_expired: bool = False) -> list[dict]:
+        """Steering rules with ids, reasons, and expiry. Expired rules are hidden by default.
+
+        Example: list_rules(include_expired=True).
+        """
+        with _db(cfg) as conn:
+            return steering.list_rules(conn, include_expired=include_expired)
+
+    @tool
+    def add_rule(
+        cfg: Config,
+        type: str,
+        feature: str,
+        value: str,
+        factor: float | None = None,
+        slots: int | None = None,
+        max_share: float | None = None,
+        expires: str | None = None,
+        reason: str = "",
+    ) -> dict:
+        """Add a steering rule. type: boost, prefer, ban, limit, or focus.
+
+        boost and prefer take factor (default 2.0 and 1.5). limit takes max_share (0 to 1).
+        focus takes slots and works on repo or dir. expires is "7d", "12h", "2w" or a date.
+        Always pass the user's own words as reason. Returns the rule with its id.
+        Example: add_rule(type="limit", feature="format", value="meme", max_share=0.05,
+        expires="7d", reason="less memes").
+        """
+        with _db(cfg) as conn:
+            return steering.add_rule(
+                conn,
+                cfg,
+                type=type,
+                feature=feature,
+                value=value,
+                factor=factor,
+                slots=slots,
+                max_share=max_share,
+                expires=expires,
+                created_by="agent",
+                reason=reason,
+            )
+
+    @tool
+    def remove_rule(cfg: Config, rule_id: int) -> dict:
+        """Delete a steering rule by id. Get ids from list_rules.
+
+        Example: remove_rule(rule_id=3).
+        """
+        with _db(cfg) as conn:
+            return steering.remove_rule(conn, rule_id)
+
+    @tool
+    def reset_defaults(cfg: Config, feature: str | None = None) -> dict:
+        """Forget learned weights (all, or one feature) so the default mix applies again.
+
+        Only call this when the user explicitly asks to reset. Rules stay.
+        Example: reset_defaults(feature="format").
+        """
+        with _db(cfg) as conn:
+            return steering.reset_defaults(conn, feature)
+
+    @tool
+    def add_repo(
+        cfg: Config,
+        name: str,
+        path: str,
+        ref: str | None = None,
+        group: str | None = None,
+        mascot: str | None = None,
+    ) -> dict:
+        """Add a git repo to config/repos.yaml. Later tool calls see it at once.
+
+        Example: add_repo(name="harbor", path="~/src/harbor", group="work").
+        """
+        return steering.add_repo(cfg, name, path, ref=ref, group=group, mascot=mascot)
+
+    @tool
+    def set_group(cfg: Config, repo: str, group: str | None) -> dict:
+        """Put a repo in a group (created if new). group=null removes it from all groups.
+
+        Example: set_group(repo="harbor", group="work").
+        """
+        return steering.set_group(cfg, repo, group)
+
+    @tool
+    def set_mascot(
+        cfg: Config,
+        name: str,
+        repo: str | None = None,
+        style: str | None = None,
+        seed: int | None = None,
+    ) -> dict:
+        """Create or change a mascot. A new mascot needs a style. repo links it to that repo.
+
+        Example: set_mascot(name="owl", style="flat vector owl, teal", repo="harbor").
+        """
+        return steering.set_mascot(cfg, name, repo=repo, style=style, seed=seed)
+
+    @tool
+    def edit_persona(
+        cfg: Config, handle: str, name: str | None = None, voice: str | None = None
+    ) -> dict:
+        """Change a persona's display name or voice. A new persona needs both.
+
+        Example: edit_persona(handle="greybeard", voice="Dry, tired, always right.").
+        """
+        return steering.edit_persona(cfg, handle, name=name, voice=voice)
+
+    @tool
+    def recent_cards(cfg: Config, limit: int = 20) -> list[dict]:
+        """Newest cards with format, hook, impressions, and mean reward.
+
+        Example: recent_cards(limit=10).
+        """
+        with _db(cfg) as conn:
+            return steering.recent_cards(conn, limit=limit)
+
+    @tool
+    def card_stats(cfg: Config, card_id: str) -> dict:
+        """Events, dwell time, rewards, and answers for one card.
+
+        Example: card_stats(card_id="c_ab12cd34") with an id from recent_cards.
+        """
+        with _db(cfg) as conn:
+            return steering.card_stats(conn, card_id)
+
+    @tool
+    def coverage(cfg: Config, repo: str | None = None) -> list[dict]:
+        """How much of each top-level directory the user has seen, per repo.
+
+        Example: coverage(repo="harbor") to find unseen directories before adding a focus rule.
+        """
+        with _db(cfg) as conn:
+            return steering.coverage(conn, cfg, repo)
 
     return server
 
