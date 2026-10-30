@@ -140,6 +140,19 @@ export type Resolved = {
 export type Comment = { persona: string; text: string };
 export type Source = { repo: string; commit: string };
 
+export type Interaction = {
+	question: string;
+	choices: string[];
+	// Stripped by the feed API; revealed by POST /api/answer.
+	answer_index?: number | null;
+	explanation?: string;
+};
+export type AnswerResponse = {
+	correct: boolean | null;
+	answer_index: number | null;
+	explanation: string;
+};
+
 export type Card = {
 	id: string;
 	created_at: string;
@@ -151,6 +164,7 @@ export type Card = {
 	hook: string;
 	visual: Visual;
 	account?: string;
+	interaction?: Interaction;
 	depth: DepthPanel[];
 	comments: Comment[];
 	sources: Source[];

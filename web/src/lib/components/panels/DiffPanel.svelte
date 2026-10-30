@@ -5,8 +5,15 @@
 		repo,
 		path,
 		commit,
-		diff
-	}: { repo: string; path: string; commit: string; diff: string } = $props();
+		diff,
+		onSourceTap
+	}: {
+		repo: string;
+		path: string;
+		commit: string;
+		diff: string;
+		onSourceTap?: () => void;
+	} = $props();
 
 	function cls(line: string): string {
 		if (line.startsWith('+++') || line.startsWith('---')) return 'meta';
@@ -20,7 +27,7 @@
 </script>
 
 <div class="diff-panel">
-	<SourceLine {repo} {path} {commit} />
+	<SourceLine {repo} {path} {commit} onTap={onSourceTap} />
 	<pre class="diff"><code
 			>{#each lines as line, i (i)}<span class="dl {cls(line)}">{line}</span>{/each}</code
 		></pre>

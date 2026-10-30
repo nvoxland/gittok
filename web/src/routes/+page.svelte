@@ -35,6 +35,8 @@
 	}
 </script>
 
+<nav class="topbar"><a href="/saved">Saved</a></nav>
+
 {#if error}
 	<p class="status error" role="alert">Failed to load feed: {error}</p>
 {:else if loading}
@@ -46,6 +48,21 @@
 {/if}
 
 <style>
+	.topbar {
+		position: fixed;
+		top: 0;
+		right: 0;
+		z-index: 10;
+		padding: 0.5rem 16px;
+	}
+	.topbar a {
+		display: inline-flex;
+		align-items: center;
+		min-height: 44px;
+		color: var(--muted);
+		text-decoration: none;
+		font-size: 0.85rem;
+	}
 	.status {
 		display: grid;
 		place-items: center;

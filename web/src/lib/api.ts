@@ -1,4 +1,4 @@
-import type { Card, FeedEvent, FeedResponse, RepoProfile } from './types';
+import type { AnswerResponse, Card, FeedEvent, FeedResponse, RepoProfile } from './types';
 
 export async function fetchFeed(cursor?: string, limit = 20): Promise<FeedResponse> {
 	const params = new URLSearchParams({ limit: String(limit) });
@@ -27,4 +27,20 @@ export async function fetchCard(id: string): Promise<Card> {
 	const res = await fetch(`/api/cards/${encodeURIComponent(id)}`);
 	if (!res.ok) throw new Error(`GET /api/cards/${id} failed: ${res.status}`);
 	return (await res.json()) as Card;
+}
+
+export async function postAnswer(card_id: string, choice: number): Promise<AnswerResponse> {
+	const res = await fetch('/api/answer', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ card_id, choice })
+	});
+	if (!res.ok) throw new Error(`POST /api/answer failed: ${res.status}`);
+	return (await res.json()) as AnswerResponse;
+}
+
+export async function fetchSaved(): Promise<Card[]> {
+	const res = await fetch('/api/saved');
+	if (!res.ok) throw new Error(`GET /api/saved failed: ${res.status}`);
+	return ((await res.json()) as { cards: Card[] }).cards;
 }

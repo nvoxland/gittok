@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchCard, fetchFeed, fetchRepo, postEvents } from './api';
+import { fetchCard, fetchFeed, fetchRepo, fetchSaved, postAnswer, postEvents } from './api';
 
 const fetchMock = vi.fn();
 
@@ -55,5 +55,29 @@ describe('fetchRepo / fetchCard', () => {
 		fetchMock.mockResolvedValue({ ok: true, json: async () => ({ id: 'c_1' }) });
 		await fetchCard('c_1');
 		expect(fetchMock.mock.calls[0][0]).toBe('/api/cards/c_1');
+	});
+});
+
+describe('postAnswer', () => {
+	it('posts card_id and choice and returns the reveal', async () => {
+		const reveal = { correct: true, answer_index: 1, explanation: 'because' };
+		fetchMock.mockResolvedValue({ ok: true, json: async () => reveal });
+		expect(await postAnswer('c_1', 1)).toEqual(reveal);
+		const [url, init] = fetchMock.mock.calls[0];
+		expect(url).toBe('/api/answer');
+		expect(init.method).toBe('POST');
+		expect(JSON.parse(init.body)).toEqual({ card_id: 'c_1', choice: 1 });
+	});
+	it('throws on non-ok', async () => {
+		fetchMock.mockResolvedValue({ ok: false, status: 404 });
+		await expect(postAnswer('c_1', 0)).rejects.toThrow('404');
+	});
+});
+
+describe('fetchSaved', () => {
+	it('gets /api/saved and returns the cards', async () => {
+		fetchMock.mockResolvedValue({ ok: true, json: async () => ({ cards: [{ id: 'c_1' }] }) });
+		expect(await fetchSaved()).toEqual([{ id: 'c_1' }]);
+		expect(fetchMock.mock.calls[0][0]).toBe('/api/saved');
 	});
 });

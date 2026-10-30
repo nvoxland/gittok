@@ -1,10 +1,24 @@
 <script lang="ts">
-	let { repo, path, commit }: { repo: string; path: string; commit: string } = $props();
+	let {
+		repo,
+		path,
+		commit,
+		onTap
+	}: { repo: string; path: string; commit: string; onTap?: () => void } = $props();
 </script>
 
-<p class="source">{repo} · {path} · {commit.slice(0, 7)}</p>
+<p class="source">
+	<a href="/repo/{encodeURIComponent(repo)}" onclick={() => onTap?.()}
+		>{repo} · {path} · {commit.slice(0, 7)}</a
+	>
+</p>
 
 <style>
+	.source a {
+		color: inherit;
+		display: inline-block;
+		padding: 0.6rem 0;
+	}
 	.source {
 		margin: 0 0 0.4rem;
 		font-size: 0.75rem;

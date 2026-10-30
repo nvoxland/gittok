@@ -3,11 +3,39 @@
 	import DiffPanel from './panels/DiffPanel.svelte';
 	import ExplainPanel from './panels/ExplainPanel.svelte';
 	import Avatar from './Avatar.svelte';
+	import Quiz from './Quiz.svelte';
 	import Poster from './Poster.svelte';
 	import { visuals } from './visuals/index.ts';
-	import type { Card, ResolvedCode, ResolvedDiff } from '#lib/types.ts';
+	import { getAnswer, getFlags, setFlag } from '#lib/cardState.ts';
+	import type { Card, FeedEventType, ResolvedCode, ResolvedDiff } from '#lib/types.ts';
 
-	let { card, onPanelChange }: { card: Card; onPanelChange?: (panel: number) => void } = $props();
+	let {
+		card,
+		onPanelChange,
+		onAction
+	}: {
+		card: Card;
+		onPanelChange?: (panel: number) => void;
+		onAction?: (type: FeedEventType, data?: Record<string, unknown>) => void;
+	} = $props();
+	let row: HTMLElement | undefined = $state();
+	let answered = $state(card.interaction ? getAnswer(card.id) !== undefined : true);
+	let liked = $state(getFlags(card.id).liked ?? false);
+	let saved = $state(getFlags(card.id).saved ?? false);
+
+	function toggle(flag: 'liked' | 'saved') {
+		const on = flag === 'liked' ? !liked : !saved;
+		if (flag === 'liked') liked = on;
+		else saved = on;
+		setFlag(card.id, flag, on);
+		onAction?.(flag === 'liked' ? 'like' : 'save', { on });
+	}
+
+	function explainMore() {
+		const i = card.depth.findIndex((d) => d.kind === 'explain');
+		if (row && i >= 0) row.scrollTo({ left: (i + 1) * row.clientWidth, behavior: 'smooth' });
+		onAction?.('explain_more', {});
+	}
 	let panel = $state(0);
 
 	function onScroll(e: Event) {
@@ -35,15 +63,25 @@
 		</span>
 		<span class="tone">{card.tone}</span>
 	</header>
-	<div class="panels" onscroll={onScroll}>
+	<div class="panels" bind:this={row} onscroll={onScroll}>
 		<section data-panel="0">
 			{#if Visual}
 				<Visual visual={card.visual} resolved={card.resolved.visual} persona={card.persona} />
 			{:else}
 				<p class="unsupported">Unsupported card type: {card.visual.kind}</p>
 			{/if}
+			{#if card.interaction}
+				<Quiz
+					cardId={card.id}
+					interaction={card.interaction}
+					onAnswer={(choice, correct) => {
+						answered = true;
+						onAction?.('answer', { choice, correct });
+					}}
+				/>
+			{/if}
 			<h2>{card.hook}</h2>
-			{#if card.comments.length}
+			{#if card.comments.length && answered}
 				<ul class="comments">
 					{#each card.comments as c, i (i)}
 						<li><Avatar handle={c.persona} size={20} /><span class="handle">@{c.persona}</span>: {c.text}</li>
@@ -61,6 +99,7 @@
 						path={d.path}
 						commit={d.commit}
 						resolved={(card.resolved.depth[i] as ResolvedCode | null) ?? null}
+						onSourceTap={() => onAction?.('source_tap', { panel: i + 1 })}
 					/>
 				{:else if d.kind === 'code_diff'}
 					<DiffPanel
@@ -68,10 +107,20 @@
 						path={d.path}
 						commit={d.commit}
 						diff={(card.resolved.depth[i] as ResolvedDiff | null)?.diff ?? ''}
+						onSourceTap={() => onAction?.('source_tap', { panel: i + 1 })}
 					/>
 				{/if}
 			</section>
 		{/each}
+	</div>
+	<div class="actions">
+		<button type="button" aria-pressed={liked} aria-label="Like" onclick={() => toggle('liked')}>
+			{liked ? '♥' : '♡'}
+		</button>
+		<button type="button" aria-pressed={saved} aria-label="Save" onclick={() => toggle('saved')}>
+			{saved ? '★' : '☆'}
+		</button>
+		<button type="button" aria-label="Explain more" onclick={explainMore}>?</button>
 	</div>
 	<div class="dots">
 		{#each { length: count } as _, i (i)}
@@ -82,6 +131,7 @@
 
 <style>
 	article {
+		position: relative;
 		height: 100dvh;
 		scroll-snap-align: start;
 		display: flex;
@@ -90,6 +140,7 @@
 	}
 	header {
 		display: flex;
+		padding-right: 4.5rem; /* room for the feed top bar link */
 		gap: 0.5rem;
 		align-items: center;
 		font-size: 0.85rem;
@@ -155,6 +206,28 @@
 	}
 	.handle {
 		color: var(--muted);
+	}
+	.actions {
+		position: absolute;
+		right: 12px;
+		bottom: 3.5rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+	.actions button {
+		width: 44px;
+		height: 44px;
+		border-radius: 50%;
+		border: 1px solid var(--border);
+		background: var(--surface);
+		color: inherit;
+		font-size: 1.2rem;
+		cursor: pointer;
+	}
+	.actions button[aria-pressed='true'] {
+		color: var(--accent);
+		border-color: var(--accent);
 	}
 	.dots {
 		display: flex;

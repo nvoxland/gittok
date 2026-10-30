@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import Feed from './Feed.svelte';
 import type { Card, FeedEvent } from '#lib/types.ts';
+import { getSessionId } from '#lib/session.ts';
 
 function fakeCard(n: number): Card {
 	return {
@@ -84,6 +85,26 @@ describe('Feed', () => {
 			expect(typeof events[0].ts).toBe('number');
 		});
 
+		it('adds the session id to every event', () => {
+			const { events, io, el } = setup();
+			io.fire(el('c_1'), true);
+			io.fire(el('c_1'), false);
+			expect(events.length).toBeGreaterThanOrEqual(2);
+			for (const e of events) expect(e.data?.session).toBe(getSessionId());
+			expect(events[1].data).toMatchObject({ ms: expect.any(Number) });
+		});
+
+		it('emits scroll_back only when an already-impressed card becomes visible again', () => {
+			const { events, io, el } = setup();
+			io.fire(el('c_1'), true);
+			io.fire(el('c_1'), false);
+			expect(events.map((e) => e.type)).not.toContain('scroll_back');
+			io.fire(el('c_1'), true);
+			expect(events.map((e) => e.type)).toEqual(['impression', 'dwell', 'skip', 'impression', 'scroll_back']);
+			io.fire(el('c_2'), true);
+			expect(events.filter((e) => e.type === 'scroll_back')).toHaveLength(1);
+		});
+
 		it('emits dwell with ms (no skip) when a card leaves after 1s or more', () => {
 			vi.useFakeTimers();
 			const { events, io, el } = setup();
@@ -91,7 +112,7 @@ describe('Feed', () => {
 			vi.advanceTimersByTime(4200);
 			io.fire(el('c_1'), false);
 			expect(events.map((e) => e.type)).toEqual(['impression', 'dwell']);
-			expect(events[1].data).toEqual({ ms: 4200 });
+			expect(events[1].data).toMatchObject({ ms: 4200 });
 		});
 
 		it('emits dwell and skip when a card leaves in under 1000 ms', () => {
@@ -101,7 +122,7 @@ describe('Feed', () => {
 			vi.advanceTimersByTime(400);
 			io.fire(el('c_1'), false);
 			expect(events.map((e) => e.type)).toEqual(['impression', 'dwell', 'skip']);
-			expect(events[1].data).toEqual({ ms: 400 });
+			expect(events[1].data).toMatchObject({ ms: 400 });
 		});
 
 		it('emits depth_open with the panel index when the horizontal panel changes', async () => {
