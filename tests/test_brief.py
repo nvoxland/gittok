@@ -399,3 +399,28 @@ def test_build_brief_without_personas_uses_default_list():
         recent=[],
     )
     assert all(p.personas for p in b.packets)
+
+
+def test_code_and_explainer_leads_skip_docs():
+    sig = signals()
+    sig["churn"]["files"]["365"] = [
+        {"path": "AGENTS.md", "commits": 9, "lines": 9},
+        {"path": "docs/guide.rst", "commits": 9, "lines": 9},
+        {"path": "NOTES.txt", "commits": 9, "lines": 9},
+        {"path": "src/real.py", "commits": 2, "lines": 9},
+    ]
+    for t in ("snippet_callouts", "cursed_clever_line", "what_it_does", "journey", "analogy"):
+        assert brief.leads_for(t, sig, T0) == ["src/real.py (2 commits in the last year)"], t
+
+
+def test_fix_chains_on_noise_paths_are_not_leads():
+    sig = signals()
+    sig["fix_chains"][0]["path"] = ".beads/issues.jsonl"
+    leads = brief.leads_for("commit_drama", sig, T0)
+    assert not any(".beads" in x for x in leads)
+
+
+def test_before_after_skips_noise_fix_chains():
+    sig = signals()
+    sig["fix_chains"][0]["path"] = ".beads/issues.jsonl"
+    assert not any(".beads" in x for x in brief.leads_for("before_after", sig, T0))

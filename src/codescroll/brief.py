@@ -66,6 +66,7 @@ _NOISE = re.compile(
 _TEST = re.compile(
     r"(^|/)(tests?|spec|__tests__)/|(_test|_spec|\.test|\.spec)\.[a-z]+$|(^|/)test_[^/]+$"
 )
+_DOC = re.compile(r"\.(md|markdown|txt|rst|adoc)$", re.IGNORECASE)
 _COMMENT_TODO = re.compile(r"(#|//|;|--|/\*|\*|<!--)\s*(TODO|FIXME|HACK|XXX)\b")
 ANCIENT_DAYS = 90
 
@@ -89,7 +90,7 @@ def leads_for(story_type: str, sig: dict, t0: int | None = None) -> list[str]:
     wide = [
         f
         for f in churn_files.get("365") or churn_files.get("90") or []
-        if _useful(f["path"]) and not _TEST.search(f["path"])
+        if _useful(f["path"]) and not _TEST.search(f["path"]) and not _DOC.search(f["path"])
     ]
     out: list[str] = []
     if story_type == "hot_spot":
@@ -104,7 +105,7 @@ def leads_for(story_type: str, sig: dict, t0: int | None = None) -> list[str]:
                 f"revert {_sha(r['sha'])} ({_date(r['ts'])}, {r['author']}) undid "
                 f'{_sha(r.get("reverted_sha"))} "{r.get("reverted_subject", "?")}"'
             )
-        for c in sig.get("fix_chains", []):
+        for c in (c for c in sig.get("fix_chains", []) if _useful(c["path"])):
             subj = " -> ".join(f'{_sha(x["sha"])} "{x["subject"]}"' for x in c["commits"])
             out.append(f"fix chain on {c['path']}: {subj}")
         for h in sig.get("huge_diffs", []):
@@ -165,7 +166,7 @@ def leads_for(story_type: str, sig: dict, t0: int | None = None) -> list[str]:
             f'recent commit {_sha(c["sha"])} ({_date(c["ts"])}, {c["author"]}): "{c["subject"]}"'
             for c in recent
         ]
-        for c in sig.get("fix_chains", []):
+        for c in (c for c in sig.get("fix_chains", []) if _useful(c["path"])):
             x = c["commits"][-1]
             out.append(f'fix {_sha(x["sha"])} on {c["path"]}: "{x["subject"]}"')
     else:  # explanatory types: point at central, much-edited files
