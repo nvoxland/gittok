@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from codescroll import avatars, db, gitq, mcp_server, render, signals
+from codescroll import avatars, db, gitq, learning, mcp_server, render, signals
 from codescroll.config import Config, load_config
 from codescroll.feed import ChronologicalRanker, InvalidCursor, Ranker, card_json
 
@@ -145,6 +145,8 @@ def create_app(
     ranker: Ranker | None = None,
     render_worker: bool = False,
     renderers: dict | None = None,
+    learning_worker: bool = False,
+    learning_interval_s: float = 30.0,
 ):
     ranker = ranker or ChronologicalRanker()
     mcp = mcp_server.build_server(get_config)
@@ -155,14 +157,19 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app):
         worker = render.RenderWorker(get_config, renderers) if render_worker else None
-        if worker:
-            worker.start()
+        learner = None
+        if learning_worker:
+            learner = learning.LearningWorker(get_config, learning_interval_s)
+        for w in (worker, learner):
+            if w:
+                w.start()
         try:
             async with mcp.session_manager.run():
                 yield
         finally:
-            if worker:
-                worker.stop()
+            for w in (worker, learner):
+                if w:
+                    w.stop()
 
     app = FastAPI(title="CodeScroll", lifespan=lifespan)
 

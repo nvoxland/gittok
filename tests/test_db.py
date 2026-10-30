@@ -25,7 +25,7 @@ def test_migrate_creates_all_spec_tables(tmp_path):
 def test_migrate_twice_applies_nothing_second_time(tmp_path):
     conn = db.connect(tmp_path / "x.db")
     first = db.migrate(conn)
-    assert first == ["0001_init.sql", "0002_story_key_unique.sql"]
+    assert first == ["0001_init.sql", "0002_story_key_unique.sql", "0003_learning_indexes.sql"]
     assert db.migrate(conn) == []
     assert conn.execute("SELECT name FROM schema_migrations").fetchall()[0]["name"] == first[0]
 
@@ -89,3 +89,17 @@ def test_card_cascade_and_events_survive(tmp_path):
     conn.execute("DELETE FROM cards WHERE id='c'")
     assert conn.execute("SELECT count(*) FROM card_features").fetchone()[0] == 0
     assert conn.execute("SELECT count(*) FROM events").fetchone()[0] == 1
+
+
+def test_rewards_unique_per_impression_and_events_type_index(tmp_path):
+    import sqlite3
+
+    import pytest
+
+    conn = db.open_db(tmp_path / "x.db")
+    idx = {r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+    assert "idx_events_type_ts" in idx
+    ins = "INSERT INTO rewards (card_id, impression_event_id, reward, computed_at) VALUES (?,?,?,?)"
+    conn.execute(ins, ("c1", 7, 0.5, "2026-01-01T00:00:00Z"))
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(ins, ("c1", 7, 0.6, "2026-01-01T00:00:00Z"))

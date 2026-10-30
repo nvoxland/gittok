@@ -140,7 +140,9 @@ def test_avatars_command_generates_and_skips(cfg, monkeypatch, capsys):
 
     runner = FakeRunner()
     real = render.IllustrationRenderer
-    monkeypatch.setattr(render, "IllustrationRenderer", lambda **kw: real(runner=runner, command=["x"]))
+    monkeypatch.setattr(
+        render, "IllustrationRenderer", lambda **kw: real(runner=runner, command=["x"])
+    )
     assert cli.main(["avatars"]) == 0
     n = len(cfg.personas)
     assert f"generated={n} skipped=0" in capsys.readouterr().out
@@ -159,11 +161,54 @@ def test_avatars_command_explains_missing_mflux(cfg, monkeypatch, capsys):
     assert "uv sync --group images" in capsys.readouterr().err
 
 
-def test_serve_starts_the_render_worker(cfg, monkeypatch):
+def test_serve_starts_the_render_and_learning_workers(cfg, monkeypatch):
     import uvicorn
 
     seen = {}
     monkeypatch.setattr(cli, "create_app", lambda get, **kw: seen.update(kw) or "app")
     monkeypatch.setattr(uvicorn, "run", lambda app, **kw: seen.update(app=app))
     assert cli.main(["serve"]) == 0
-    assert seen == {"render_worker": True, "app": "app"}
+    assert seen == {"render_worker": True, "learning_worker": True, "app": "app"}
+
+
+def _seed_learning(cfg, fixture_repo):
+    import time
+
+    from codescroll import db, runs
+
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+        run_id = runs.open_run(conn, cfg, repo=None, brief="b", requested=2)
+        res = runs.submit(conn, cfg, run_id, [example_card(fixture_repo), text_card(fixture_repo)])
+        ids = [a["card_id"] for a in res["accepted"]]
+        old = int((time.time() - 3 * 3600) * 1000)
+        conn.executemany(
+            "INSERT INTO events(card_id, type, ts, data, received_at) "
+            "VALUES (?, 'impression', ?, '{\"session\": \"s\"}', 'x')",
+            [(ids[0], old), (ids[1], old + 1000)],
+        )
+        conn.commit()
+
+
+def test_learn_prints_counts_and_is_idempotent(cfg, fixture_repo, capsys):
+    _seed_learning(cfg, fixture_repo)
+    assert cli.main(["learn"]) == 0
+    out = capsys.readouterr().out
+    assert "impressions=2" in out and "rewards=2" in out and "weights=" in out
+    assert "weights=0" not in out
+    assert cli.main(["learn"]) == 0
+    assert "impressions=0 rewards=0 weights=0" in capsys.readouterr().out
+
+
+def test_reset_weights_all_and_by_feature(cfg, fixture_repo, capsys):
+    from codescroll import db
+
+    _seed_learning(cfg, fixture_repo)
+    cli.main(["learn"])
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+        persona = conn.execute("SELECT COUNT(*) FROM weights WHERE feature='persona'").fetchone()[0]
+        total = conn.execute("SELECT COUNT(*) FROM weights").fetchone()[0]
+    capsys.readouterr()
+    assert cli.main(["reset-weights", "--feature", "persona"]) == 0
+    assert capsys.readouterr().out.strip() == f"deleted {persona} weights"
+    assert cli.main(["reset-weights"]) == 0
+    assert capsys.readouterr().out.strip() == f"deleted {total - persona} weights"

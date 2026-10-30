@@ -11,7 +11,7 @@ from pathlib import Path
 
 import uvicorn
 
-from codescroll import avatars, db, mcp_server, render, signals, validator
+from codescroll import avatars, db, learning, mcp_server, render, signals, validator
 from codescroll import brief as brief_mod
 from codescroll.api import create_app
 from codescroll.config import ConfigError, load_config
@@ -83,7 +83,23 @@ def _serve(args) -> int:
     host, port = args.host or server.host, args.port or server.port
     print(f"feed: http://{host}:{port}")
     print(f"mcp:  http://{host}:{port}/mcp")
-    uvicorn.run(create_app(load_config, render_worker=True), host=host, port=port)
+    app = create_app(load_config, render_worker=True, learning_worker=True)
+    uvicorn.run(app, host=host, port=port)
+    return 0
+
+
+def _learn(args) -> int:
+    cfg = load_config()
+    with closing(db.open_db(_db_path(cfg))) as conn:
+        res = learning.process_events(conn, cfg)
+    print("impressions={impressions} rewards={rewards} weights={weights}".format(**res))
+    return 0
+
+
+def _reset_weights(args) -> int:
+    with closing(db.open_db(_db_path(load_config()))) as conn:
+        n = learning.reset_weights(conn, args.feature)
+    print(f"deleted {n} weights")
     return 0
 
 
@@ -145,6 +161,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--host")
     p.add_argument("--port", type=int)
     p.set_defaults(fn=_serve)
+    p = sub.add_parser("learn", help="turn new impressions into rewards and update weights once")
+    p.set_defaults(fn=_learn)
+    p = sub.add_parser("reset-weights", help="delete learned weights (all, or one feature)")
+    p.add_argument("--feature")
+    p.set_defaults(fn=_reset_weights)
     p = sub.add_parser("render", help="render pending meme and illustration cards once")
     p.add_argument("--limit", type=int, default=10)
     p.add_argument("--retry-failed", action="store_true")

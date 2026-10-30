@@ -318,3 +318,35 @@ def test_repo_profile_mascot_image_only_when_file_exists(cfg, fixture_repo, tmp_
     assert body["mascot"] == "otter" and body["mascot_image"] is None
     write_asset(cfg, "mascots/otter.png")
     assert c.get("/api/repos/fixture").json()["mascot_image"] == "/assets/mascots/otter.png"
+
+
+def test_lifespan_runs_learning_worker_and_stops_it(cfg, fixture_repo):
+    import threading
+    import time
+
+    ids = seed(cfg, fixture_repo, [example_card(fixture_repo), text_card(fixture_repo)])
+    old = int((time.time() - 3 * 3600) * 1000)
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+        conn.executemany(
+            "INSERT INTO events(card_id, type, ts, data, received_at) "
+            "VALUES (?, 'impression', ?, ?, 'x')",
+            [(ids[0], old, '{"session": "s"}'), (ids[1], old + 1000, '{"session": "s"}')],
+        )
+        conn.commit()
+    app = api.create_app(lambda: cfg, learning_worker=True, learning_interval_s=0.01)
+    with TestClient(app):
+        for _ in range(200):
+            with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+                done = conn.execute("SELECT COUNT(*) FROM rewards").fetchone()[0]
+            if done == 2:
+                break
+            time.sleep(0.02)
+        assert done == 2
+    assert not [t for t in threading.enumerate() if t.name == "learning-worker"]
+
+
+def test_no_learning_worker_by_default(cfg):
+    import threading
+
+    with TestClient(api.create_app(lambda: cfg)):
+        assert not [t for t in threading.enumerate() if t.name == "learning-worker"]
