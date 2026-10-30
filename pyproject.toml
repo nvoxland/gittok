@@ -1,0 +1,37 @@
+[project]
+name = "codescroll"
+version = "0.1.0"
+description = "A personal TikTok-style feed for understanding your own codebases"
+requires-python = ">=3.13"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn>=0.32",
+  "pyyaml>=6",
+  "jsonschema>=4.23",
+  "mcp>=2.3",
+]
+
+[project.scripts]
+codescroll = "codescroll.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.8", "anyio>=4"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/codescroll"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["live: needs a real repo or Claude session; skipped unless CODESCROLL_LIVE=1"]
+addopts = "-m 'not live'"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

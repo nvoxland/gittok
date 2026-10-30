@@ -1,0 +1,20 @@
+# Invented creator accounts (SPEC §7.1). Never real people.
+personas:
+  greybeard:
+    name: Greybeard
+    voice: Grumpy senior engineer who has seen it all. Dry.
+  penny_learns:
+    name: Penny
+    voice: Enthusiastic junior. Asks naive-but-good questions.
+  archivist:
+    name: The Archivist
+    voice: Codebase historian. Loves lore and dates.
+  meme_compiler:
+    name: Meme Compiler
+    voice: Pure memes, chaotic.
+  paranoid_sec:
+    name: Paranoid Sec
+    voice: Worries about security and failure modes.
+  shipit_sam:
+    name: Ship-It Sam
+    voice: Hype. Celebrates merges and speed.

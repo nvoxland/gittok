@@ -1,0 +1,21 @@
+# Shipped prior (SPEC §13).
+categories:
+  git_drama: 0.25
+  memes: 0.20
+  illustrated_explainers: 0.20
+  code: 0.15
+  interactive: 0.10
+  cross_repo_and_recent: 0.10
+
+tones:
+  wholesome-nerdy: 0.20
+  dry-deadpan: 0.20
+  roast: 0.15
+  hype: 0.15
+  chaotic-absurd: 0.15
+  earnest-teacher: 0.15
+
+personas: uniform
+topics: uniform
+exploration_share: 0.18
+prior_strength: 10

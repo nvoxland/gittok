@@ -1,0 +1,18 @@
+data_dir: data                 # relative to the project root, or absolute / ~
+server:
+  host: 127.0.0.1
+  port: 8008
+agent:
+  default_count: 10            # cards per get_brief
+  max_count: 20                # get_brief refuses larger counts
+  per_day_runs: 4              # get_brief refuses to open more runs per day
+  packet_size: 4               # cards per work packet (3-5)
+analysis:
+  history_window_days: 720     # relative to the ref's last commit date
+  churn_windows_days: [30, 90, 365]
+  blame_max_files: 50
+  blame_max_bytes: 2000000
+  todo_max_hits: 150
+research:
+  max_output_bytes: 200000
+  max_read_lines: 300
