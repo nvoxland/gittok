@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 SKILL_NAMES = ("codescroll-generate", "codescroll-steer")
+AGENT_FILES = ("codescroll-writer.md",)  # subagent types the generate skill uses
 LABEL = "dev.codescroll.serve"
 
 Runner = Callable[[list[str]], tuple[int, str]]
@@ -92,34 +93,42 @@ def _diff_summary(src: Path, dst: Path, rel: Path, limit: int = 12) -> list[str]
 
 
 def install_skills(env: Env) -> list[str]:
+    """Copy our skills to ~/.claude/skills and our subagent files to ~/.claude/agents."""
+    items = [
+        (name, env.repo_root / ".claude" / "skills" / name, env.home / ".claude" / "skills" / name,
+         None)
+        for name in SKILL_NAMES
+    ] + [
+        (f"agent {name}", env.repo_root / ".claude" / "agents", env.home / ".claude" / "agents",
+         [Path(name)])
+        for name in AGENT_FILES
+    ]  # fmt: skip
     lines: list[str] = []
-    for name in SKILL_NAMES:
-        src = env.repo_root / ".claude" / "skills" / name
-        dst = env.home / ".claude" / "skills" / name
+    for label, src, dst, only in items:
         todo: list[Path] = []
         blocked: list[Path] = []
-        for rel in _files(src):
+        for rel in only if only is not None else _files(src):
             target = dst / rel
             if not target.exists():
                 todo.append(rel)
             elif target.read_bytes() != (src / rel).read_bytes():
                 (todo if env.force else blocked).append(rel)
         if blocked:
-            lines.append(f"skills: skipped {name}: {dst} differs from the repo (use --force)")
+            lines.append(f"skills: skipped {label}: {dst} differs from the repo (use --force)")
             for rel in blocked:
                 lines.append(f"  {rel}")
                 lines += _diff_summary(src / rel, dst / rel, rel)
             continue
         if not todo:
-            lines.append(f"skills: {name} unchanged")
+            lines.append(f"skills: {label} unchanged")
             continue
         if not env.apply:
-            lines.append(f"skills: would copy {name} to {dst}")
+            lines.append(f"skills: would copy {label} to {dst}")
             continue
         for rel in todo:
             (dst / rel).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src / rel, dst / rel)
-        lines.append(f"skills: copied {name} to {dst}")
+        lines.append(f"skills: copied {label} to {dst}")
     return lines
 
 
@@ -221,7 +230,10 @@ def _undo_lines(env: Env, parts: tuple[str, ...]) -> list[str]:
         out.append("  mcp:     claude mcp remove codescroll --scope user")
     if "skills" in parts:
         skills = env.home / ".claude" / "skills"
-        paths = " ".join(str(skills / n) for n in SKILL_NAMES)
+        agents = env.home / ".claude" / "agents"
+        paths = " ".join(
+            [str(skills / n) for n in SKILL_NAMES] + [str(agents / n) for n in AGENT_FILES]
+        )
         out.append(f"  skills:  rm -r {paths}")
     if "launchd" in parts:
         out.append("  launchd: codescroll install --uninstall --launchd --apply")

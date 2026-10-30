@@ -298,12 +298,11 @@ Tones: lean dry-deadpan and roast; at least 4 other tones for exploration.
 `claude -p` is not allowed on a subscription, so generation runs inside an interactive agent session:
 
 - The user (or a `/loop` later) runs the `codescroll-generate` skill in Claude Code. The MCP server is part of the same process as the feed: `codescroll serve` exposes the feed API, the PWA, and MCP (streamable HTTP) at `/mcp`. The project's `.mcp.json` points at that URL.
-- The skill calls `get_brief`, which runs analysis, builds the brief, opens a `runs` row, and returns the brief split into **work packets** (3–5 cards each, with leads and a suggested model).
-- **Cost control:** the session model only orchestrates. Each packet goes to a cheap subagent (haiku for concrete-lead stories, sonnet for explanatory ones). Subagents research with read-only MCP tools (`git_log`, `git_show`, `git_blame`, `git_grep`, `read_file`, `list_dir`), scoped to configured repos, and return card JSON.
-- The driver calls `submit_cards`; the server validates (§10.6), stores accepted cards, and returns reject reasons. One fix round by the same subagent, then rejected cards are dropped.
-- `finish_run` closes the run and records models used and MCP call counts.
+- The skill calls `get_brief`, which runs analysis, builds the brief, opens a `runs` row, and returns a short summary and a list of **work packets** (3–5 cards each, with a suggested model). Leads and guidance stay on the server.
+- **Cost control:** the session model only hands out packet ids. Each packet goes to a `codescroll-writer` subagent (`.claude/agents/`, only CodeScroll tools) on the packet's model (haiku for concrete-lead stories, sonnet for explanatory ones). The writer calls `get_packet` for its leads and guidance, researches with read-only MCP tools (`git_log`, `git_show`, `git_blame`, `git_grep`, `read_file`, `list_dir`) scoped to configured repos, dry-runs `check_cards`, and calls `submit_cards(packet_id)` itself. The server validates (§10.6), stores accepted cards, and returns reject reasons. One fix round, then rejected cards are dropped. The writer replies with one line, so card JSON never passes through the driver.
+- `finish_run` closes the run and records models used, MCP call counts, and per-packet results.
 - Per-run card count and per-day run caps are enforced by the server in `get_brief`.
-- Card-writing guidance lives in `prompts/generate.md` and is returned with the brief: schema, persona and tone definitions, mascot styles, and the real-people rule.
+- Card-writing guidance lives in `prompts/generate.md` and is returned by `get_packet`: schema, persona and tone definitions, mascot styles, and the real-people rule.
 
 ### 10.5 Card spec (agent output)
 

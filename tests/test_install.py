@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from codescroll import install
 
 
@@ -39,6 +41,11 @@ def make_env(tmp_path, *, apply=False, force=False, runner=None, which=which_all
     for name in install.SKILL_NAMES:
         (skills / name).mkdir(parents=True, exist_ok=True)
         (skills / name / "SKILL.md").write_text(f"skill {name}\n")
+    agents = repo / ".claude" / "agents"
+    agents.mkdir(parents=True, exist_ok=True)
+    for name in install.AGENT_FILES:
+        (agents / name).write_text(f"agent {name}\n")
+    (agents / "someone-elses.md").write_text("not ours\n")
     return install.Env(
         home=tmp_path / "home",
         repo_root=repo,
@@ -104,7 +111,7 @@ def test_skills_dry_run_copies_nothing(tmp_path):
     env = make_env(tmp_path)
     lines = install.install_skills(env)
     assert not (env.home / ".claude").exists()
-    assert sum("would copy" in line for line in lines) == 2
+    assert sum("would copy" in line for line in lines) == 2 + len(install.AGENT_FILES)
 
 
 # 8. skills apply copies both
@@ -267,3 +274,35 @@ def test_run_uninstall(tmp_path):
     text = "\n".join(install.run_install(env, parts=("launchd",), uninstall=True))
     assert not plist_path(env).exists()
     assert "launchctl bootout" in text
+
+
+def test_skills_apply_copies_our_agents_only(tmp_path):
+    env = make_env(tmp_path, apply=True)
+    lines = install.install_skills(env)
+    agents = env.home / ".claude" / "agents"
+    for name in install.AGENT_FILES:
+        assert (agents / name).read_text() == f"agent {name}\n"
+    assert not (agents / "someone-elses.md").exists()
+    assert any("codescroll-writer.md" in x for x in lines)
+    again = install.install_skills(env)
+    assert any(x.startswith("skills: agent codescroll-writer.md unchanged") for x in again)
+
+
+def test_skills_dry_run_copies_no_agents(tmp_path):
+    env = make_env(tmp_path)
+    lines = install.install_skills(env)
+    assert any("would copy agent codescroll-writer.md" in x for x in lines)
+    assert not (env.home / ".claude" / "agents").exists()
+
+
+def test_repo_writer_agent_only_has_codescroll_tools():
+    root = Path(__file__).resolve().parents[1]
+    text = (root / ".claude" / "agents" / "codescroll-writer.md").read_text()
+    front = text.split("---")[1]
+    tools_line = next(ln for ln in front.splitlines() if ln.startswith("tools:"))
+    tools = [t.strip() for t in tools_line.removeprefix("tools:").split(",")]
+    assert tools and all(t.startswith("mcp__codescroll__") for t in tools)
+    assert {"mcp__codescroll__get_packet", "mcp__codescroll__check_cards"} <= set(tools)
+    assert "mcp__codescroll__submit_cards" in tools
+    assert not {"mcp__codescroll__add_rule", "mcp__codescroll__get_brief"} & set(tools)
+    assert "model: sonnet" in front
