@@ -241,6 +241,7 @@ class Brief:
     tone_quotas: dict[str, int]
     packets: list = field(default_factory=list)
     recent: list = field(default_factory=list)
+    mix_evidence: int | None = None  # rewards behind a learned mix; None means default mix
 
     def to_dict(self) -> dict:
         from dataclasses import asdict
@@ -256,9 +257,14 @@ class Brief:
     def to_markdown(self) -> str:
         cats = ", ".join(f"{k} {v}" for k, v in self.quotas.items() if v)
         tones = ", ".join(f"{k} {v}" for k, v in self.tone_quotas.items() if v)
+        if self.mix_evidence is None:
+            mix = "default"
+        else:
+            mix = f"learned from {self.mix_evidence} reward{'s' * (self.mix_evidence != 1)}"
         out = [
             f"# Brief: Make {self.count} cards",
             "",
+            f"Mix: {mix}",
             f"Categories: {cats}.",
             f"Tones: {tones}.",
             f"{len(self.packets)} work packets. Give each packet to one subagent on its "
@@ -316,12 +322,28 @@ def _pick_format(category: str, used: dict[str, int], spent: int, budget: int) -
 
 
 def build_brief(
-    *, repo_signals, defaults, personas, count, packet_size, recent, max_illustrations=4
+    *,
+    repo_signals,
+    defaults,
+    personas,
+    count,
+    packet_size,
+    recent,
+    max_illustrations=4,
+    category_shares: dict[str, float] | None = None,
+    evidence: int | None = None,
 ) -> Brief:
     if not repo_signals:
         raise ValueError("no repos to build a brief from")
-    cats = {k: w for k, w in defaults.get("categories", {}).items() if k in CATEGORY_STORIES}
+    learned = bool(category_shares) and evidence != 0  # no rewards: keep the default mix
+    source = category_shares if learned else defaults.get("categories", {})
+    cats = {k: w for k, w in source.items() if k in CATEGORY_STORIES}
     quotas = largest_remainder(cats, count)
+    if learned and count >= len(cats):
+        for k in [k for k, v in quotas.items() if v < 1]:
+            donor = max(quotas, key=lambda c: (quotas[c], c))
+            quotas[donor] -= 1
+            quotas[k] = 1
     tone_quotas = largest_remainder(defaults.get("tones", {}), count)
     tone_pool = _interleave(tone_quotas)
     repo_names = sorted(repo_signals)
@@ -392,6 +414,7 @@ def build_brief(
         tone_quotas=tone_quotas,
         packets=packets,
         recent=list(recent),
+        mix_evidence=(evidence or 0) if learned else None,
     )
 
 

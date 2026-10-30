@@ -16,7 +16,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from codescroll import brief as brief_mod
-from codescroll import db, gitq, research, runs, signals, validator
+from codescroll import db, gitq, learning, research, runs, signals, validator
 from codescroll.config import Config, ConfigError, load_config
 
 INSTRUCTIONS = """\
@@ -32,6 +32,14 @@ log = logging.getLogger(__name__)
 
 def _db(cfg: Config):
     return db.open_db(cfg.settings.data_dir / "codescroll.db")
+
+
+def mix_inputs(conn, cfg) -> dict:
+    """Learned category shares and the reward count behind them, as build_brief kwargs."""
+    return {
+        "category_shares": learning.category_shares(conn, cfg),
+        "evidence": conn.execute("SELECT COUNT(*) FROM rewards").fetchone()[0],
+    }
 
 
 def recent_cards(conn, days: int = 30, limit: int = 30) -> list[dict]:
@@ -122,6 +130,7 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
                 packet_size=cfg.settings.agent.packet_size,
                 recent=recent_cards(conn),
                 max_illustrations=cfg.settings.render.max_illustrations_per_run,
+                **mix_inputs(conn, cfg),
             )
             md = b.to_markdown()
             run_id = runs.open_run(conn, cfg, repo=repo, brief=md, requested=count)

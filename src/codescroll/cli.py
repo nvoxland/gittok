@@ -73,6 +73,7 @@ def _brief(args) -> int:
             count=args.count or cfg.settings.agent.default_count,
             packet_size=cfg.settings.agent.packet_size,
             recent=mcp_server.recent_cards(conn),
+            **mcp_server.mix_inputs(conn, cfg),
         )
     print(b.to_markdown())
     return 0

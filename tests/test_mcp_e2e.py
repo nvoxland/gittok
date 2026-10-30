@@ -134,3 +134,33 @@ async def test_get_brief_all_repos_failing_is_a_tool_error(fixture_repo, tmp_pat
         res = await client.call_tool("get_brief", {"count": 3})
     assert res.is_error
     assert "broken" in res.content[0].text and "no-such-ref" in res.content[0].text
+
+
+async def test_get_brief_uses_learned_mix_when_rewards_exist(fixture_repo, tmp_path):
+    from codescroll import db, learning
+
+    cfg = make_config(fixture_repo, tmp_path)
+    server = mcp_server.build_server(lambda: cfg)
+    async with Client(server) as client:
+        plain = data(await client.call_tool("get_brief", {"count": 12}))
+    assert "Mix: default" in plain["brief_markdown"]
+
+    from codescroll import brief
+
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+        for f in brief.CATEGORY_FORMATS["code"]:
+            if f != "code_card":
+                a0, b0 = learning._prior(cfg, "format", f)
+                conn.execute(
+                    "INSERT OR REPLACE INTO weights VALUES (?, ?, ?, ?, ?)",
+                    ("format", f, a0 + 50, b0, learning._iso(learning._now(None))),
+                )
+        for i in range(7):
+            conn.execute(
+                "INSERT INTO rewards(card_id, reward, computed_at) VALUES (?, 0.5, 'x')",
+                (f"c{i}",),
+            )
+        conn.commit()
+    async with Client(server) as client:
+        learned = data(await client.call_tool("get_brief", {"count": 12}))
+    assert "Mix: learned from 7 rewards" in learned["brief_markdown"]

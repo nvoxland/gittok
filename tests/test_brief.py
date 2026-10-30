@@ -141,7 +141,7 @@ def signals():
     }
 
 
-def build(count=10, packet_size=4, recent=None, sig=None):
+def build(count=10, packet_size=4, recent=None, sig=None, **kw):
     return brief.build_brief(
         repo_signals={"fixture": {"t0": T0, "head_sha": "9" * 40, "signals": sig or signals()}},
         defaults=DEFAULTS,
@@ -149,6 +149,7 @@ def build(count=10, packet_size=4, recent=None, sig=None):
         count=count,
         packet_size=packet_size,
         recent=recent or [],
+        **kw,
     )
 
 
@@ -557,3 +558,47 @@ def test_illustration_sections_name_mascots_and_forbid_text():
         md = brief.guidance_markdown(_personas(), formats=[fmt], mascots=mascots)
         assert "`otter`" in md, fmt
         assert "no text" in md.lower(), fmt
+
+
+def test_category_shares_shift_quotas_toward_favored_category():
+    shares = {**DEFAULTS["categories"], "code": 0.75}
+    b = build(count=20, category_shares=shares)
+    assert b.quotas["code"] > build(count=20).quotas["code"]
+    assert sum(b.quotas.values()) == 20
+
+
+def test_floor_gives_every_category_one_slot_when_count_allows():
+    shares = {**{k: 0.001 for k in DEFAULTS["categories"]}, "code": 0.995}
+    b = build(count=6, category_shares=shares)
+    assert all(v >= 1 for v in b.quotas.values()) and sum(b.quotas.values()) == 6
+    b = build(count=10, category_shares=shares)
+    assert all(v >= 1 for v in b.quotas.values()) and sum(b.quotas.values()) == 10
+    assert b.quotas["code"] == 5
+
+
+def test_floor_does_not_apply_when_count_is_below_category_count():
+    shares = {**{k: 0.001 for k in DEFAULTS["categories"]}, "code": 0.995}
+    b = build(count=3, category_shares=shares)
+    assert sum(b.quotas.values()) == 3 and b.quotas["code"] == 3
+
+
+def test_no_shares_keeps_default_quotas_without_floor():
+    b = build(count=3, category_shares=None)
+    assert b.quotas == brief.largest_remainder(DEFAULTS["categories"], 3)
+    assert 0 in b.quotas.values()
+
+
+def test_markdown_mix_line_default_and_learned():
+    assert "Mix: default\n" in build().to_markdown()
+    md = build(category_shares=DEFAULTS["categories"], evidence=42).to_markdown()
+    assert "Mix: learned from 42 rewards\n" in md
+    assert "Mix: learned from 1 reward\n" in build(
+        category_shares=DEFAULTS["categories"], evidence=1
+    ).to_markdown()
+
+
+def test_zero_evidence_keeps_default_mix_even_with_shares():
+    shares = {**DEFAULTS["categories"], "code": 0.75}
+    b = build(count=10, category_shares=shares, evidence=0)
+    assert b.quotas == build(count=10).quotas
+    assert "Mix: default\n" in b.to_markdown()

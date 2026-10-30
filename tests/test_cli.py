@@ -66,9 +66,20 @@ def test_brief_prints_markdown_without_opening_a_run(cfg, capsys):
     from codescroll import db
 
     assert cli.main(["brief", "--count", "3"]) == 0
-    assert "## Packet p1" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "## Packet p1" in out and "Mix: default" in out
     with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
         assert conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 0
+
+
+def test_brief_prints_learned_mix_line_when_rewards_exist(cfg, capsys):
+    from codescroll import db
+
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+        conn.execute("INSERT INTO rewards(card_id, reward, computed_at) VALUES ('c', 0.5, 'x')")
+        conn.commit()
+    assert cli.main(["brief", "--count", "3"]) == 0
+    assert "Mix: learned from 1 reward\n" in capsys.readouterr().out
 
 
 def test_serve_runs_uvicorn_and_prints_urls(cfg, monkeypatch, capsys):
