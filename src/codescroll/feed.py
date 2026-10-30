@@ -1,16 +1,13 @@
-"""Feed ranking and the card JSON shape served to the client."""
+"""Feed paging (slotted) and the card JSON shape served to the client."""
 
 from __future__ import annotations
 
 import base64
+import copy
 import json
-from typing import Protocol
+from datetime import datetime
 
-from codescroll import db
-
-
-class Ranker(Protocol):
-    def page(self, conn, limit: int, cursor: str | None) -> tuple[list[dict], str | None]: ...
+from codescroll import db, slotter
 
 
 def card_json(row) -> dict:
@@ -24,38 +21,64 @@ def card_json(row) -> dict:
     }
 
 
-def _encode(created_at: str, card_id: str) -> str:
-    raw = json.dumps([created_at, card_id]).encode()
-    return base64.urlsafe_b64encode(raw).decode()
+def strip_answers(card: dict) -> dict:
+    """A copy of `card` without the interaction answer and explanation (docs/learning.md 2)."""
+    card = copy.deepcopy(card)
+    if isinstance(card.get("interaction"), dict):
+        card["interaction"].pop("answer_index", None)
+        card["interaction"].pop("explanation", None)
+    resolved = card.get("resolved")
+    if isinstance(resolved, dict) and isinstance(resolved.get("interaction"), dict):
+        resolved["interaction"].pop("answer_index", None)
+    return card
+
+
+def public_card(row) -> dict:
+    return strip_answers(card_json(row))
 
 
 class InvalidCursor(ValueError):
     pass
 
 
-def _decode(cursor: str) -> tuple[str, str]:
+def encode_cursor(served: list[str], seed: int) -> str:
+    raw = json.dumps({"served": served, "seed": seed}).encode()
+    return base64.urlsafe_b64encode(raw).decode()
+
+
+def decode_cursor(cursor: str) -> tuple[list[str], int]:
     try:
-        created_at, card_id = json.loads(base64.urlsafe_b64decode(cursor.encode()))
-    except (ValueError, TypeError) as e:  # bad base64, bad JSON, bad shape, bad UTF-8
+        data = json.loads(base64.urlsafe_b64decode(cursor.encode()))
+    except (ValueError, TypeError) as e:  # bad base64, bad JSON, bad UTF-8
         raise InvalidCursor("invalid cursor") from e
-    if not isinstance(created_at, str) or not isinstance(card_id, str):
+    if not isinstance(data, dict):
         raise InvalidCursor("invalid cursor")
-    return created_at, card_id
+    served, seed = data.get("served"), data.get("seed")
+    if (
+        not isinstance(served, list)
+        or not all(isinstance(s, str) for s in served)
+        or not isinstance(seed, int)
+        or isinstance(seed, bool)
+    ):
+        raise InvalidCursor("invalid cursor")
+    return served, seed
 
 
-class ChronologicalRanker:
-    """Newest first. The cursor encodes the last card's (created_at, id)."""
+def page(
+    conn, cfg, limit: int, cursor: str | None, seed: int, now: datetime
+) -> tuple[list[dict], str | None]:
+    """The next batch of public cards and the cursor for the one after (None when exhausted).
 
-    def page(self, conn, limit: int, cursor: str | None) -> tuple[list[dict], str | None]:
-        sql = "SELECT * FROM cards WHERE status = 'ready'"
-        params: list = []
-        if cursor:
-            created_at, card_id = _decode(cursor)
-            sql += " AND (created_at < ? OR (created_at = ? AND id < ?))"
-            params += [created_at, created_at, card_id]
-        sql += " ORDER BY created_at DESC, id DESC LIMIT ?"
-        rows = conn.execute(sql, [*params, limit + 1]).fetchall()
-        more = len(rows) > limit
-        rows = rows[:limit]
-        next_cursor = _encode(rows[-1]["created_at"], rows[-1]["id"]) if more else None
-        return [card_json(r) for r in rows], next_cursor
+    `seed` is used only when there is no cursor; a cursor carries its own seed.
+    """
+    served: list[str] = []
+    if cursor:
+        served, seed = decode_cursor(cursor)
+    ids = slotter.build_batch(conn, cfg, limit, set(served), seed, now)
+    rows = {
+        r["id"]: r
+        for r in conn.execute(f"SELECT * FROM cards WHERE id IN ({','.join('?' * len(ids))})", ids)
+    }
+    cards = [public_card(rows[i]) for i in ids]
+    next_cursor = encode_cursor(served + ids, seed) if len(ids) >= limit else None
+    return cards, next_cursor

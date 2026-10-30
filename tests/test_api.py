@@ -1,8 +1,11 @@
+import base64
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
 from codescroll import api, db, runs
-from tests.cards import example_card, text_card
+from tests.cards import example_card, quiz_card, text_card, this_or_that_card
 from tests.conftest import make_config
 
 
@@ -23,30 +26,46 @@ def client(cfg):
     return TestClient(api.create_app(lambda: cfg))
 
 
-def test_feed_returns_newest_cards(cfg, client, fixture_repo):
-    first = seed(cfg, fixture_repo, [example_card(fixture_repo)])
-    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
-        conn.execute("UPDATE cards SET created_at = '2026-01-01T00:00:00Z'")
-        conn.commit()
-    second = seed(cfg, fixture_repo, [text_card(fixture_repo)])
+def test_feed_returns_ready_cards(cfg, client, fixture_repo):
+    ids = seed(cfg, fixture_repo, [example_card(fixture_repo), text_card(fixture_repo)])
     body = client.get("/api/feed").json()
-    assert [c["id"] for c in body["cards"]] == [second[0], first[0]]
-    card = body["cards"][0]
+    assert {c["id"] for c in body["cards"]} == set(ids)
+    card = next(c for c in body["cards"] if c["id"] == ids[1])
     assert card["repo"] == "fixture"
     assert card["hook"] == text_card(fixture_repo)["hook"]
     assert card["resolved"]["visual"] is None
     assert body["next_cursor"] is None
 
 
-def test_feed_pages_with_cursor(cfg, client, fixture_repo):
+def test_feed_pages_with_cursor_without_repeats(cfg, client, fixture_repo):
     ids = seed(cfg, fixture_repo, [example_card(fixture_repo), text_card(fixture_repo)])
     first = client.get("/api/feed", params={"limit": 1}).json()
     assert len(first["cards"]) == 1
     assert first["next_cursor"]
     second = client.get("/api/feed", params={"limit": 1, "cursor": first["next_cursor"]}).json()
     assert len(second["cards"]) == 1
-    assert second["next_cursor"] is None
     assert {first["cards"][0]["id"], second["cards"][0]["id"]} == set(ids)
+    third = client.get("/api/feed", params={"limit": 1, "cursor": second["next_cursor"]}).json()
+    assert third == {"cards": [], "next_cursor": None}
+
+
+def test_feed_cursor_is_base64_json_with_served_and_seed(cfg, client, fixture_repo):
+    (cid,) = seed(cfg, fixture_repo, [text_card(fixture_repo)])
+    cursor = client.get("/api/feed", params={"limit": 1}).json()["next_cursor"]
+    data = json.loads(base64.urlsafe_b64decode(cursor))
+    assert data["served"] == [cid] and isinstance(data["seed"], int)
+
+
+def test_feed_and_card_endpoints_hide_quiz_answers(cfg, client, fixture_repo):
+    (cid,) = seed(cfg, fixture_repo, [quiz_card(fixture_repo)])
+    for card in (
+        client.get("/api/feed").json()["cards"][0],
+        client.get(f"/api/cards/{cid}").json(),
+    ):
+        assert card["interaction"]["choices"]
+        assert "answer_index" not in card["interaction"]
+        assert "explanation" not in card["interaction"]
+        assert "answer_index" not in card["resolved"]["interaction"]
 
 
 @pytest.mark.parametrize("limit", [0, 51])
@@ -350,3 +369,75 @@ def test_no_learning_worker_by_default(cfg):
 
     with TestClient(api.create_app(lambda: cfg)):
         assert not [t for t in threading.enumerate() if t.name == "learning-worker"]
+
+
+def answer_events(cfg):
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+        rows = conn.execute("SELECT * FROM events WHERE type = 'answer' ORDER BY id").fetchall()
+    return [(r["card_id"], db.loads(r["data"])) for r in rows]
+
+
+def test_answer_returns_truth_and_records_server_side_event(cfg, client, fixture_repo):
+    (cid,) = seed(cfg, fixture_repo, [quiz_card(fixture_repo)])
+    res = client.post("/api/answer", json={"card_id": cid, "choice": 1, "session": "s1"})
+    assert res.status_code == 200
+    assert res.json() == {
+        "correct": False,
+        "answer_index": 0,
+        "explanation": "main() lives in src/app.py.",
+    }
+    assert answer_events(cfg) == [(cid, {"choice": 1, "correct": False, "session": "s1"})]
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+        row = conn.execute("SELECT * FROM srs WHERE card_id = ?", (cid,)).fetchone()
+    assert row["interval_days"] == 1 and row["mastered"] == 0
+    assert client.post("/api/answer", json={"card_id": cid, "choice": 0}).json()["correct"] is True
+    assert answer_events(cfg)[1] == (cid, {"choice": 0, "correct": True})
+
+
+def test_answer_this_or_that_has_null_correctness(cfg, client, fixture_repo):
+    (cid,) = seed(cfg, fixture_repo, [this_or_that_card(fixture_repo)])
+    res = client.post("/api/answer", json={"card_id": cid, "choice": 0}).json()
+    assert res["correct"] is None and res["answer_index"] is None
+    assert answer_events(cfg) == [(cid, {"choice": 0, "correct": None})]
+
+
+def test_answer_errors(cfg, client, fixture_repo):
+    quiz, plain = seed(cfg, fixture_repo, [quiz_card(fixture_repo), text_card(fixture_repo)])
+    assert client.post("/api/answer", json={"card_id": "c_nope", "choice": 0}).status_code == 404
+    assert client.post("/api/answer", json={"card_id": plain, "choice": 0}).status_code == 400
+    assert client.post("/api/answer", json={"card_id": quiz, "choice": 3}).status_code == 400
+    assert client.post("/api/answer", json={"card_id": quiz, "choice": -1}).status_code == 400
+    assert client.post("/api/answer", json={"card_id": quiz}).status_code == 422
+    assert answer_events(cfg) == []
+
+
+def save_event(client, card_id, on, ts):
+    body = {"events": [{"card_id": card_id, "type": "save", "ts": ts, "data": {"on": on}}]}
+    client.post("/api/events", json=body)
+
+
+def test_saved_lists_cards_whose_latest_save_is_on(cfg, client, fixture_repo):
+    a, b, c, q = seed(
+        cfg,
+        fixture_repo,
+        [
+            example_card(fixture_repo),
+            text_card(fixture_repo),
+            text_card(
+                fixture_repo,
+                hook="Another card.",
+                sources=[{"repo": "fixture", "commit": fixture_repo.shas["fix1"]}],
+            ),
+            quiz_card(fixture_repo),
+        ],
+    )
+    assert client.get("/api/saved").json() == {"cards": []}
+    save_event(client, a, True, 1000)
+    save_event(client, b, True, 2000)
+    save_event(client, b, False, 3000)
+    save_event(client, q, True, 4000)
+    save_event(client, "c_gone", True, 5000)
+    body = client.get("/api/saved").json()
+    assert [card["id"] for card in body["cards"]] == [q, a]  # most recent save first
+    assert "answer_index" not in body["cards"][0]["interaction"]
+    assert c not in {card["id"] for card in body["cards"]}

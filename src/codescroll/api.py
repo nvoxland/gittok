@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import random
 import re
 from collections.abc import Callable
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query
@@ -13,9 +15,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from codescroll import avatars, db, gitq, learning, mcp_server, render, signals
+from codescroll import avatars, db, gitq, learning, mcp_server, render, signals, srs
+from codescroll import feed as feedmod
 from codescroll.config import Config, load_config
-from codescroll.feed import ChronologicalRanker, InvalidCursor, Ranker, card_json
+from codescroll.feed import InvalidCursor, card_json, public_card
 
 EventType = Literal[
     "impression",
@@ -36,6 +39,12 @@ class Event(BaseModel):
     type: EventType
     ts: int
     data: dict[str, Any] = Field(default_factory=dict)
+
+
+class Answer(BaseModel):
+    card_id: str
+    choice: int
+    session: str | None = None
 
 
 class EventBatch(BaseModel):
@@ -142,13 +151,11 @@ class SPAStaticFiles(StaticFiles):
 
 def create_app(
     get_config: Callable[[], Config] = load_config,
-    ranker: Ranker | None = None,
     render_worker: bool = False,
     renderers: dict | None = None,
     learning_worker: bool = False,
     learning_interval_s: float = 30.0,
 ):
-    ranker = ranker or ChronologicalRanker()
     mcp = mcp_server.build_server(get_config)
     mcp_app = mcp.streamable_http_app(
         streamable_http_path="/mcp", stateless_http=True, json_response=True
@@ -178,9 +185,12 @@ def create_app(
 
     @app.get("/api/feed")
     def feed(limit: int = Query(20, ge=1, le=50), cursor: str | None = None):
+        cfg = get_config()
         try:
             with conn() as c:
-                cards, next_cursor = ranker.page(c, limit, cursor)
+                cards, next_cursor = feedmod.page(
+                    c, cfg, limit, cursor, random.randrange(2**31), datetime.now(UTC)
+                )
         except InvalidCursor:
             raise HTTPException(400, "invalid cursor") from None
         return {"cards": cards, "next_cursor": next_cursor}
@@ -191,7 +201,47 @@ def create_app(
             row = c.execute("SELECT * FROM cards WHERE id = ?", (card_id,)).fetchone()
         if row is None:
             raise HTTPException(404, f"unknown card {card_id}")
-        return card_json(row)
+        return public_card(row)
+
+    @app.post("/api/answer")
+    def answer(body: Answer):
+        now = datetime.now(UTC)
+        with conn() as c:
+            try:
+                result = srs.record_answer(c, body.card_id, body.choice, now)
+            except srs.UnknownCard:
+                raise HTTPException(404, f"unknown card {body.card_id}") from None
+            except srs.NotInteractive:
+                raise HTTPException(400, "card has no question to answer") from None
+            except srs.BadChoice as e:
+                raise HTTPException(400, str(e)) from None
+            data = {"choice": body.choice, "correct": result["correct"]}
+            if body.session:
+                data["session"] = body.session
+            c.execute(
+                "INSERT INTO events(card_id, type, ts, data, received_at) "
+                "VALUES (?, 'answer', ?, ?, ?)",
+                (body.card_id, int(now.timestamp() * 1000), db.dumps(data), db.now_iso()),
+            )
+        return result
+
+    @app.get("/api/saved")
+    def saved():
+        with conn() as c:
+            latest: dict[str, tuple[int, bool]] = {}
+            for e in c.execute(
+                "SELECT card_id, ts, data FROM events WHERE type = 'save' "
+                "AND card_id IS NOT NULL ORDER BY ts, id"
+            ):
+                latest[e["card_id"]] = (e["ts"], bool((db.loads(e["data"]) or {}).get("on", True)))
+            ids = sorted((k for k, (_, on) in latest.items() if on), key=lambda k: -latest[k][0])
+            rows = {
+                r["id"]: r
+                for r in c.execute(
+                    f"SELECT * FROM cards WHERE id IN ({','.join('?' * len(ids))})", ids
+                )
+            }
+        return {"cards": [public_card(rows[i]) for i in ids if i in rows]}
 
     @app.get("/api/repos")
     def repos():

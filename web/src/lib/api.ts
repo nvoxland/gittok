@@ -1,3 +1,4 @@
+import { getSessionId } from './session.ts';
 import type { AnswerResponse, Card, FeedEvent, FeedResponse, RepoProfile } from './types';
 
 export async function fetchFeed(cursor?: string, limit = 20): Promise<FeedResponse> {
@@ -33,7 +34,7 @@ export async function postAnswer(card_id: string, choice: number): Promise<Answe
 	const res = await fetch('/api/answer', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ card_id, choice })
+		body: JSON.stringify({ card_id, choice, session: getSessionId() })
 	});
 	if (!res.ok) throw new Error(`POST /api/answer failed: ${res.status}`);
 	return (await res.json()) as AnswerResponse;

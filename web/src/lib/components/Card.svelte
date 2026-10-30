@@ -74,9 +74,9 @@
 				<Quiz
 					cardId={card.id}
 					interaction={card.interaction}
-					onAnswer={(choice, correct) => {
+					onAnswer={() => {
+						// POST /api/answer records the answer event server-side; do not emit another.
 						answered = true;
-						onAction?.('answer', { choice, correct });
 					}}
 				/>
 			{/if}

@@ -229,8 +229,9 @@ describe('Card quiz', () => {
 		render(Card, { card: quiz(), onAction: (t: string, d?: unknown) => calls.push([t, d]) });
 		await fireEvent.click(screen.getByRole('button', { name: 'Beta' }));
 		expect(await screen.findByText('Beta wins.')).toBeInTheDocument();
-		expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ card_id: 'q_1', choice: 1 });
-		expect(calls).toEqual([['answer', { choice: 1, correct: true }]]);
+		expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ card_id: 'q_1', choice: 1 });
+		// The server records the answer event (POST /api/answer); the card must not emit a second one.
+		expect(calls.filter(([t]) => t === 'answer')).toEqual([]);
 		expect(screen.getByRole('button', { name: 'Beta' })).toHaveClass('correct');
 		for (const n of ['Alpha', 'Beta', 'Gamma'])
 			expect(screen.getByRole('button', { name: n })).toBeDisabled();
@@ -244,7 +245,8 @@ describe('Card quiz', () => {
 		render(Card, { card: quiz(), onAction: (t: string, d?: unknown) => calls.push([t, d]) });
 		await fireEvent.click(screen.getByRole('button', { name: 'Alpha' }));
 		expect(await screen.findByText('It was Gamma.')).toBeInTheDocument();
-		expect(calls).toEqual([['answer', { choice: 0, correct: false }]]);
+		// The server records the answer event (POST /api/answer); the card must not emit a second one.
+		expect(calls.filter(([t]) => t === 'answer')).toEqual([]);
 		expect(screen.getByRole('button', { name: 'Alpha' })).toHaveClass('wrong');
 		expect(screen.getByRole('button', { name: 'Gamma' })).toHaveClass('correct');
 		expect(screen.getByText('Incorrect')).toBeInTheDocument();
@@ -266,7 +268,8 @@ describe('Card quiz', () => {
 		expect(
 			await screen.findByText('No right answer. See what the personas think.')
 		).toBeInTheDocument();
-		expect(calls).toEqual([['answer', { choice: 1, correct: null }]]);
+		// The server records the answer event (POST /api/answer); the card must not emit a second one.
+		expect(calls.filter(([t]) => t === 'answer')).toEqual([]);
 		expect(screen.getByText(/Told you so/)).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Tabs' })).toBeDisabled();
 	});

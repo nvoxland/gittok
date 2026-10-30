@@ -66,7 +66,9 @@ describe('postAnswer', () => {
 		const [url, init] = fetchMock.mock.calls[0];
 		expect(url).toBe('/api/answer');
 		expect(init.method).toBe('POST');
-		expect(JSON.parse(init.body)).toEqual({ card_id: 'c_1', choice: 1 });
+		const body = JSON.parse(init.body);
+		expect(body).toMatchObject({ card_id: 'c_1', choice: 1 });
+		expect(typeof body.session).toBe('string');
 	});
 	it('throws on non-ok', async () => {
 		fetchMock.mockResolvedValue({ ok: false, status: 404 });
