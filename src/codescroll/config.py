@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +61,33 @@ class ResearchSettings:
 
 
 @dataclass(frozen=True)
+class RenderSettings:
+    max_illustrations_per_run: int = 4
+    memegen_url: str = "http://127.0.0.1:5001"
+    mflux_model: str = "z-image-turbo"
+    mflux_steps: int = 8
+    mflux_quantize: int = 8
+    image_width: int = 768
+    image_height: int = 960
+    worker_interval_s: float = 5.0
+
+
+@dataclass(frozen=True)
+class Mascot:
+    name: str
+    repo: str | None
+    style: str
+    seed: int
+
+
+@dataclass(frozen=True)
+class MemeTemplate:
+    id: str
+    lines: int
+    hint: str = ""
+
+
+@dataclass(frozen=True)
 class ServerSettings:
     host: str = "127.0.0.1"
     port: int = 8008
@@ -73,6 +100,7 @@ class Settings:
     agent: AgentSettings
     analysis: AnalysisSettings
     research: ResearchSettings
+    render: RenderSettings = field(default_factory=RenderSettings)
 
 
 @dataclass(frozen=True)
@@ -83,6 +111,8 @@ class Config:
     settings: Settings
     defaults: dict
     personas: dict[str, Persona]
+    mascots: dict[str, Mascot] = field(default_factory=dict)
+    meme_templates: dict[str, MemeTemplate] = field(default_factory=dict)
 
     def repo(self, name: str) -> Repo:
         try:
@@ -139,7 +169,9 @@ def _section(cls: type, data: Any, what: str, file: Path) -> Any:
 def _load_settings(root: Path) -> Settings:
     file = root / "config" / "settings.yaml"
     data = _mapping(_read(file), "settings", file)
-    _check_keys(data, {"data_dir", "server", "agent", "analysis", "research"}, "settings", file)
+    _check_keys(
+        data, {"data_dir", "server", "agent", "analysis", "research", "render"}, "settings", file
+    )
     data_dir = Path(str(data.get("data_dir", "data"))).expanduser()
     if not data_dir.is_absolute():
         data_dir = root / data_dir
@@ -149,6 +181,7 @@ def _load_settings(root: Path) -> Settings:
         agent=_section(AgentSettings, data.get("agent"), "settings.agent", file),
         analysis=_section(AnalysisSettings, data.get("analysis"), "settings.analysis", file),
         research=_section(ResearchSettings, data.get("research"), "settings.research", file),
+        render=_section(RenderSettings, data.get("render"), "settings.render", file),
     )
 
 
@@ -222,6 +255,32 @@ def _load_personas(root: Path) -> dict[str, Persona]:
     return out
 
 
+def _load_mascots(root: Path) -> dict[str, Mascot]:
+    file = root / "config" / "mascots.yaml"
+    data = _mapping(_read(file), "mascots.yaml", file)
+    _check_keys(data, {"mascots"}, "mascots.yaml", file)
+    out: dict[str, Mascot] = {}
+    for name, raw in _mapping(data.get("mascots"), "mascots", file).items():
+        raw = _mapping(raw, f"mascot '{name}'", file)
+        _check_keys(raw, {"repo", "style", "seed"}, f"mascot '{name}'", file)
+        if not raw.get("style"):
+            raise ConfigError(f"mascot '{name}' is missing 'style' ({file})")
+        out[name] = Mascot(name, raw.get("repo"), raw["style"], int(raw.get("seed", 0)))
+    return out
+
+
+def _load_meme_templates(root: Path) -> dict[str, MemeTemplate]:
+    file = root / "config" / "meme_templates.yaml"
+    data = _mapping(_read(file), "meme_templates.yaml", file)
+    _check_keys(data, {"templates"}, "meme_templates.yaml", file)
+    out: dict[str, MemeTemplate] = {}
+    for tid, raw in _mapping(data.get("templates"), "templates", file).items():
+        raw = _mapping(raw, f"meme template '{tid}'", file)
+        _check_keys(raw, {"lines", "hint"}, f"meme template '{tid}'", file)
+        out[tid] = MemeTemplate(tid, int(raw.get("lines", 2)), str(raw.get("hint", "")))
+    return out
+
+
 def load_config(root: Path | None = None) -> Config:
     root = project_root() if root is None else Path(root).resolve()
     repos, groups = _load_repos(root)
@@ -234,4 +293,6 @@ def load_config(root: Path | None = None) -> Config:
         settings=_load_settings(root),
         defaults=defaults,
         personas=_load_personas(root),
+        mascots=_load_mascots(root),
+        meme_templates=_load_meme_templates(root),
     )

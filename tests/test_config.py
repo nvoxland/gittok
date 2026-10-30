@@ -155,3 +155,31 @@ def test_real_repo_config():
     assert cfg.repo("gittok").group == "dev"
     assert len(cfg.personas) == 6
     assert cfg.personas["greybeard"].name == "Greybeard"
+
+
+def test_real_config_has_mascots_meme_templates_and_render_settings():
+    from pathlib import Path
+
+    from codescroll.config import load_config
+
+    cfg = load_config(Path(__file__).parents[1])
+    assert cfg.mascots["otter"].repo == "storefront"
+    assert cfg.mascots["otter"].seed == 4242
+    assert "a small round otter" in cfg.mascots["otter"].style
+    assert cfg.meme_templates["drake"].lines == 2
+    assert cfg.settings.render.max_illustrations_per_run == 4
+    assert cfg.settings.render.memegen_url.startswith("http://127.0.0.1")
+
+
+def test_mascot_with_unknown_key_is_an_error(tmp_path):
+    import pytest
+
+    from codescroll.config import ConfigError, load_config
+
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "repos.yaml").write_text("repos: {r: {path: /tmp/r}}\n")
+    (tmp_path / "config" / "mascots.yaml").write_text(
+        "mascots: {crow: {repo: r, style: s, seed: 1, color: red}}\n"
+    )
+    with pytest.raises(ConfigError, match="color"):
+        load_config(tmp_path)
