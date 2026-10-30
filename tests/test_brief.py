@@ -744,20 +744,20 @@ def member(recent, group="dev", path=None):
 
 def test_ripple_pairs_commits_sharing_a_ticket_within_three_days():
     members = {
-        "api": member([rc("a", 2, "Add export endpoint (#412)")]),
-        "web": member([rc("b", 1, "Export button calls new endpoint #412")]),
+        "api": member([rc("a", 2, "Add export endpoint (API-412)")]),
+        "web": member([rc("b", 1, "Export button calls new endpoint API-412")]),
     }
     leads = brief.cross_leads(members)["ripple"]
     assert len(leads) == 1
     assert "api" in leads[0] and "web" in leads[0]
     assert "a" * 10 in leads[0] and "b" * 10 in leads[0]
-    assert "#412" in leads[0]
+    assert "api-412" in leads[0].lower()
 
 
 def test_ripple_needs_the_commits_within_three_days():
     members = {
-        "api": member([rc("a", 9, "Add export endpoint (#412)")]),
-        "web": member([rc("b", 1, "Export button calls new endpoint #412")]),
+        "api": member([rc("a", 9, "Add export endpoint (API-412)")]),
+        "web": member([rc("b", 1, "Export button calls new endpoint API-412")]),
     }
     assert brief.cross_leads(members).get("ripple", []) == []
 
@@ -924,8 +924,8 @@ def test_drift_grep_is_bounded_to_five_identifiers_per_repo(tmp_path, two_repos,
 
 def cross_members(group_a="dev", group_b="dev"):
     return {
-        "api": member([rc("a", 2, "Add export endpoint (#412)", ["x.py"])], group=group_a),
-        "web": member([rc("b", 1, "Export button for endpoint #412", ["y.ts"])], group=group_b),
+        "api": member([rc("a", 2, "Add export endpoint (API-412)", ["x.py"])], group=group_a),
+        "web": member([rc("b", 1, "Export button for endpoint API-412", ["y.ts"])], group=group_b),
     }
 
 
@@ -956,7 +956,7 @@ def test_cross_repo_slots_become_a_multi_repo_sonnet_packet():
     assert set(pk.story_types) <= set(brief.CROSS_STORIES)
     assert set(pk.formats) <= set(brief.CROSS_FORMATS)
     assert len(pk.formats) == len(pk.tones) == len(pk.personas) == pk.count
-    assert any("#412" in x and "api" in x and "web" in x for x in pk.leads)
+    assert any("api-412" in x.lower() and "api" in x and "web" in x for x in pk.leads)
     assert any(x.startswith("[ripple]") for x in pk.leads)
     plain = [p for p in b.packets if p not in cross_packets(b)]
     assert all(p.repos == [p.repo] for p in plain)
@@ -997,3 +997,204 @@ def test_cross_slots_fall_back_when_no_cross_lead_exists():
     b = build_cross(members, count=20)
     assert cross_packets(b) == []
     assert sum(p.count for p in b.packets) == 20
+
+
+# ---- rule semantics shared with the slotter (docs/learning.md section 10)
+
+
+def two(sig=None, groups=("dev", "ops")):
+    sig = sig or signals()
+    return {
+        "a": {"t0": T0, "head_sha": "9" * 40, "group": groups[0], "signals": sig},
+        "b": {"t0": T0, "head_sha": "8" * 40, "group": groups[1], "signals": sig},
+    }
+
+
+def build2(count=20, rs=None, **kw):
+    return brief.build_brief(
+        repo_signals=rs or two(),
+        defaults=DEFAULTS,
+        personas=PERSONAS,
+        count=count,
+        packet_size=4,
+        recent=[],
+        **kw,
+    )
+
+
+def test_ban_repo_and_group_remove_the_repo():
+    b = build2(rules=[rule("ban", "repo", "a")])
+    assert {p.repo for p in b.packets} == {"b"}
+    b = build2(rules=[rule("ban", "group", "ops")])
+    assert {r for p in b.packets for r in p.repos} == {"a"}
+    with pytest.raises(ValueError):
+        build2(rules=[rule("ban", "repo", "a"), rule("ban", "repo", "b")])
+
+
+def test_ban_dir_uses_path_prefix_semantics():
+    sig = signals()
+    sig["churn"]["files"]["90"] = [
+        {"path": "src/app.py", "commits": 5, "lines": 40},
+        {"path": "lib/src/x.py", "commits": 4, "lines": 30},
+    ]
+    b = build(count=20, sig=sig, rules=[rule("ban", "dir", "src/")])
+    leads = [x for p in b.packets for x in p.leads]
+    assert not any("src/app.py" in x.split("lib/src")[0] and "lib/src" not in x for x in leads)
+    assert not any(x.startswith("[hot_spot] src/app.py") for x in leads)
+    assert any("lib/src/x.py" in x for x in leads)
+
+
+def test_focus_dir_matches_nested_dirs_not_lookalikes():
+    sig = signals()
+    sig["churn"]["files"]["90"] = [
+        {"path": "lib/src/x.py", "commits": 9, "lines": 90},
+        {"path": "src/api/app.py", "commits": 2, "lines": 10},
+    ]
+    b = build(count=10, sig=sig, rules=[rule("focus", "dir", "src", slots=3)])
+    for pk in b.packets:
+        hot = [x for x in pk.leads if x.startswith("[hot_spot]")]
+        if hot:
+            assert "src/api/app.py" in hot[0]
+
+
+def test_ban_visual_kind_and_template_map_to_formats():
+    fmts = all_formats(build(count=30, rules=[rule("ban", "visual_kind", "meme")]))
+    assert "meme" not in fmts and "text_meme" in fmts
+    fmts = all_formats(build(count=30, rules=[rule("ban", "visual_kind", "template")]))
+    assert not set(fmts) & {"iceberg", "hot_take", "group_chat", "breaking_news", "thread"}
+    fmts = all_formats(build(count=30, rules=[rule("ban", "template", "iceberg")]))
+    assert "iceberg" not in fmts and "hot_take" in fmts
+
+
+def test_ban_difficulty_drops_interactive_slots():
+    b = build(count=20, rules=[rule("ban", "difficulty", "3")])
+    assert "interactive" not in b.quotas
+    assert sum(p.count for p in b.packets) == 20
+    assert "quiz" not in all_formats(b)
+
+
+def test_ban_one_interactive_story_type_keeps_the_others():
+    b = build(count=40, rules=[rule("ban", "interactive", "guess_who")])
+    types = {t for p in b.packets for t in p.story_types}
+    assert "guess_who" not in types and "quiz" in types
+    b = build(count=40, rules=[rule("ban", "interactive", "quiz")])
+    assert "quiz" not in {t for p in b.packets for t in p.story_types}
+
+
+def test_limit_format_story_type_and_tone_are_share_ceilings():
+    def n(b, pred):
+        return sum(1 for p in b.packets for x in zip(p.formats, p.tones, strict=True) if pred(x))
+
+    base = build(count=40)
+    assert n(base, lambda x: x[0] == "meme") > 2
+    b = build(count=40, rules=[rule("limit", "format", "meme", max_share=0.05)])
+    assert n(b, lambda x: x[0] == "meme") <= 2
+    assert sum(p.count for p in b.packets) == 40
+    b = build(count=20, rules=[rule("limit", "tone", "roast", max_share=0.05)])
+    assert n(b, lambda x: x[1] == "roast") <= 1
+    assert sum(b.tone_quotas.values()) == 20
+    b = build(count=40, rules=[rule("limit", "story_type", "rip", max_share=0.0)])
+    assert "rip" not in {t for p in b.packets for t in p.story_types}
+
+
+def test_limit_repo_caps_that_repos_slots():
+    b = build2(count=20, rules=[rule("limit", "repo", "a", max_share=0.25)])
+    got = sum(p.count for p in b.packets if p.repo == "a")
+    assert got <= 5
+    assert sum(p.count for p in b.packets) == 20
+
+
+def test_boost_without_stored_factor_is_neutral():
+    assert brief._factors([rule("boost", "format", "hot_take")], "format") == {"hot_take": 1.0}
+    assert brief._factors(
+        [
+            rule("boost", "format", "hot_take", factor=3.0),
+            rule("prefer", "format", "hot_take", factor=2.0),
+        ],
+        "format",
+    ) == {"hot_take": 6.0}
+
+
+def test_focus_on_other_features_biases_like_boost():
+    base = all_formats(build(count=20)).count("hot_take")
+    got = all_formats(build(count=20, rules=[rule("focus", "format", "hot_take", slots=8)]))
+    assert got.count("hot_take") > base
+
+
+def test_boost_group_shifts_slots_to_its_repos():
+    even = sum(p.count for p in build2().packets if p.repo == "a")
+    b = build2(rules=[rule("boost", "group", "dev", factor=4.0)])
+    assert sum(p.count for p in b.packets if p.repo == "a") > even
+
+
+# ---- ripple and drift lead quality
+
+
+def test_ripple_ignores_bare_pr_numbers_and_hyphenated_common_words():
+    members = {
+        "api": member([rc("a", 1, "Fix bug (#12) in pre-commit hook")]),
+        "web": member([rc("b", 1, "Add toolbar (#12) with pre-commit follow-up")]),
+    }
+    assert brief.cross_leads(members).get("ripple", []) == []
+    members = {
+        "api": member([rc("a", 1, "Make read-only opt-in set-up")]),
+        "web": member([rc("b", 1, "Wire read-only opt-in set-up page")]),
+    }
+    assert brief.cross_leads(members).get("ripple", []) == []
+
+
+def test_ripple_still_pairs_on_jira_ids():
+    members = {
+        "api": member([rc("a", 1, "PAY-77 add endpoint")]),
+        "web": member([rc("b", 1, "PAY-77 call it")]),
+    }
+    [lead] = brief.cross_leads(members)["ripple"]
+    assert "pay-77" in lead.lower()
+
+
+def test_drift_grep_matches_whole_words_only(tmp_path):
+    from tests.fixture_repo import build_history_repo
+
+    api = build_history_repo(
+        tmp_path / "api",
+        [("Initial", {"c.py": "A = 1\n"}, "2026-02-01T10:00:00+00:00")],
+    )
+    web = build_history_repo(
+        tmp_path / "web",
+        [("Initial", {"env.ts": "X_SYNC_BATCH_SIZE = 1; fetch('/api/users')\n"}, "2026-02-01T10:00:00+00:00")],  # noqa: E501
+    )  # fmt: skip
+    members = {
+        "api": member(
+            [rc("a", 1, "Change SYNC_BATCH_SIZE and /api/user", ["c.py"])], path=api.path
+        ),
+        "web": member([rc("b", 3, "Tweak toolbar", ["bar.ts"])], path=web.path),
+    }
+    members["web"]["head_sha"] = web.shas["0"]
+    leads = brief.cross_leads(members).get("drift_alert", [])
+    assert not any("SYNC_BATCH_SIZE" in x or "/api/user " in x for x in leads), leads
+
+
+def test_drift_since_uses_the_full_changed_file_list(tmp_path):
+    from tests.fixture_repo import build_history_repo
+
+    files = {f"f{i}.ts": "1\n" for i in range(25)}
+    files["env.ts"] = "SYNC_BATCH_SIZE = 1\n"
+    web = build_history_repo(
+        tmp_path / "web",
+        [
+            ("Initial", files, "2026-02-01T10:00:00+00:00"),
+            ("Touch env", {"env.ts": "SYNC_BATCH_SIZE = 2\n"}, "2026-02-20T10:00:00+00:00"),
+        ],
+    )
+    # the truncated recent_commits list (20 files) misses env.ts
+    touched = [f"f{i}.ts" for i in range(20)]
+    api = build_history_repo(
+        tmp_path / "api", [("Initial", {"c.py": "A = 1\n"}, "2026-02-01T10:00:00+00:00")]
+    )
+    members = {
+        "api": member([rc("a", 5, "Rename SYNC_BATCH_SIZE", ["c.py"])], path=api.path),
+        "web": member([rc("b", 2, "Touch env", touched)], path=web.path),
+    }
+    members["web"]["head_sha"] = web.shas["1"]
+    leads = brief.cross_leads(members).get("drift_alert", [])
+    assert not any("possible drift: SYNC_BATCH_SIZE" in x for x in leads), leads

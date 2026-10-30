@@ -820,7 +820,13 @@ def ripple(pair, **kw):
 
 @pytest.mark.parametrize("story", ["ripple", "weekly_recap", "drift_alert"])
 def test_cross_repo_story_accepted(pair, story):
-    accepted, rejected = check([ripple(pair, story_type=story)], pair_repos(pair))
+    card = ripple(pair, story_type=story)
+    if story == "weekly_recap":  # newest commit of each repo
+        card["sources"] = [
+            {"repo": "api", "commit": pair[0].shas["2"]},
+            {"repo": "web", "commit": pair[1].shas["1"]},
+        ]
+    accepted, rejected = check([card], pair_repos(pair))
     assert rejected == [] and len(accepted) == 1
     assert accepted[0].card["repos"] == ["api", "web"]
 
@@ -869,9 +875,28 @@ def test_ripple_commits_must_be_within_seven_days(pair):
     assert reasons(rejected) == ["ripple_window"]  # needs commits from two repos
 
 
+def test_weekly_recap_newest_commit_per_repo_within_seven_days_of_repo_head(pair):
+    old = [
+        {"repo": "api", "commit": pair[0].shas["1"]},  # api head is a month later
+        {"repo": "web", "commit": pair[1].shas["1"]},
+    ]
+    _, rejected = check([ripple(pair, story_type="weekly_recap", sources=old)], pair_repos(pair))
+    assert reasons(rejected) == ["recap_window"]
+
+
+def test_weekly_recap_needs_a_commit_for_every_cited_repo(pair):
+    paths = [{"repo": "api", "path": "app.py"}, {"repo": "web", "path": "web.ts"}]
+    _, rejected = check([ripple(pair, story_type="weekly_recap", sources=paths)], pair_repos(pair))
+    assert reasons(rejected) == ["recap_window"]
+    mixed = [{"repo": "api", "commit": pair[0].shas["2"]}, {"repo": "web", "path": "web.ts"}]
+    _, rejected = check([ripple(pair, story_type="weekly_recap", sources=mixed)], pair_repos(pair))
+    assert reasons(rejected) == ["recap_window"]
+
+
 def test_weekly_recap_commits_within_seven_days_of_the_newest(pair):
     spread = [
         {"repo": "api", "commit": pair[0].shas["2"]},
+        {"repo": "api", "commit": pair[0].shas["1"]},
         {"repo": "web", "commit": pair[1].shas["1"]},
     ]
     _, rejected = check([ripple(pair, story_type="weekly_recap", sources=spread)], pair_repos(pair))

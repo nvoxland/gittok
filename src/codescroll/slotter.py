@@ -117,6 +117,25 @@ def _candidates(conn, rc, served: set[str], now: datetime) -> list[str]:
     return [r["id"] for r in rows if r["id"] not in served and r["id"] not in recent]
 
 
+def dir_matches(card_dir: str, rule_dir: str) -> bool:
+    """Path-prefix match: `src` covers `src` and `src/api`, not `lib/src`."""
+    d = rule_dir.strip("/")
+    c = card_dir.strip("/")
+    return c == d or c.startswith(d + "/")
+
+
+def rule_matches(feature: str, value: str, feats) -> bool:
+    """Does a card with `feats` (set of (feature, value)) match a rule on (feature, value)?
+
+    `dir` uses path-prefix semantics; a rule dir may carry a `repo/` prefix of a card repo.
+    """
+    if feature != "dir":
+        return (feature, value) in feats
+    repos = [v for f, v in feats if f == "repo"]
+    wants = [value] + [value[len(r) + 1 :] for r in repos if value.startswith(r + "/")]
+    return any(dir_matches(v, w) for f, v in feats if f == "dir" for w in wants)
+
+
 def _active_rules(conn, now: datetime) -> list:
     iso = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     return conn.execute(
@@ -136,15 +155,15 @@ def build_batch(conn, cfg, limit: int, served: set[str], seed: int, now: datetim
     rules = _active_rules(conn, now)
     for r in rules:
         if r["type"] == "ban":
-            ids = [i for i in ids if (r["feature"], r["value"]) not in feats[i]]
-            due = [i for i in due if (r["feature"], r["value"]) not in feats[i]]
+            ids = [i for i in ids if not rule_matches(r["feature"], r["value"], feats[i])]
+            due = [i for i in due if not rule_matches(r["feature"], r["value"], feats[i])]
     due = _reserve_srs(len(ids), due[: knobs["max_srs_per_batch"]], limit)
     slots = limit - len(due)
     scores = learning.score_cards(conn, cfg, ids, rng, now=now)
     for r in rules:
         if r["type"] in ("boost", "prefer"):
             for i in ids:
-                if (r["feature"], r["value"]) in feats[i]:
+                if rule_matches(r["feature"], r["value"], feats[i]):
                     scores[i] = scores.get(i, 0.0) * (
                         r["factor"] if r["factor"] is not None else 1.0
                     )
@@ -152,7 +171,7 @@ def build_batch(conn, cfg, limit: int, served: set[str], seed: int, now: datetim
 
     caps = [
         (
-            (r["feature"], r["value"]),
+            r,
             0 if r["max_share"] == 0 else max(1, round(r["max_share"] * limit)),
         )
         for r in rules
@@ -163,20 +182,23 @@ def build_batch(conn, cfg, limit: int, served: set[str], seed: int, now: datetim
     def take(i: str) -> bool:
         if i in picked or len(picked) >= slots:
             return False
-        for key, cap in caps:
-            if key in feats[i] and sum(key in feats[p] for p in picked) >= cap:
+        for r, cap in caps:
+            hit = rule_matches
+            if hit(r["feature"], r["value"], feats[i]) and (
+                sum(hit(r["feature"], r["value"], feats[p]) for p in picked) >= cap
+            ):
                 return False
         picked.append(i)
         return True
 
     for r in rules:
         if r["type"] == "focus":
-            key, want = (r["feature"], r["value"]), r["slots"] or 0
-            have = sum(key in feats[p] for p in picked)
+            f, v, want = r["feature"], r["value"], r["slots"] or 0
+            have = sum(rule_matches(f, v, feats[p]) for p in picked)
             for i in ids:
                 if have >= want:
                     break
-                if key in feats[i] and take(i):
+                if rule_matches(f, v, feats[i]) and take(i):
                     have += 1
 
     share = float(cfg.defaults.get("exploration_share", 0.18))

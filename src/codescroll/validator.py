@@ -244,13 +244,21 @@ def _check_cross_repo(card: dict, gc: _GitCache) -> None:
                 f"cited commits of {far[0][0]} and {far[0][1]} are more than "
                 f"{CROSS_WINDOW_DAYS} days apart",
             )
-    elif card["story_type"] == "weekly_recap" and commits:
-        newest = max(when.values())
-        if any(newest - t > window for t in when.values()):
-            raise _Reject(
-                "recap_window",
-                f"weekly_recap commits must be within {CROSS_WINDOW_DAYS} days of the newest one",
-            )
+    elif card["story_type"] == "weekly_recap":
+        for r in dict.fromkeys(s["repo"] for s in card["sources"]):
+            times = [when[rc] for rc in when if rc[0] == r]
+            if not times:
+                raise _Reject(
+                    "recap_window", f"weekly_recap must cite at least one commit in {r}, not paths"
+                )
+            repo = gc.repo(r)
+            head = gitq.commit_time(repo.path, repo.ref)
+            if head - max(times) > window or max(times) - min(times) > window:
+                raise _Reject(
+                    "recap_window",
+                    f"weekly_recap commits in {r} must be within {CROSS_WINDOW_DAYS} days of "
+                    f"each other and of the last commit of {r}",
+                )
 
 
 def _norm_lines(text: str) -> list[str]:

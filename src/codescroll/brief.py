@@ -233,22 +233,23 @@ DAY_SECONDS = 86400
 RIPPLE_DAYS = 3
 RECAP_DAYS = 7
 
-_TICKET = re.compile(r"#\d+|\b[A-Za-z][A-Za-z0-9]+-\d+\b")
-_BRANCHISH = re.compile(r"\b[a-z][a-z0-9]+(?:[-_/][a-z0-9]+)+\b")
+_TICKET = re.compile(r"\b[A-Z][A-Z0-9]+-\d+\b")  # JIRA style only; bare #123 is per repo
 _WORD = re.compile(r"[a-z][a-z0-9]{2,}")
 _STOP = frozenset(
     """the and for with from into onto that this these those not but are was were has have had
     its use uses used using add adds added adding fix fixes fixed fixing update updates updated
     remove removes removed change changes changed make makes made get gets set sets new old
     feat chore refactor test tests docs doc merge revert wip again more some also now when then
-    than out off all any can will should per via call calls""".split()
+    than out off all any can will should per via call calls
+    pre commit follow read only opt built e2e non self multi auto end back front check run
+    ready work code file files page fixes bump wire tweak minor small""".split()
 )
 
 
 def _tokens(subject: str) -> tuple[set[str], set[str]]:
     """(ticket-like tokens, significant words) of a commit subject, lowercased."""
     low = subject.lower()
-    ids = {t.lower() for t in _TICKET.findall(subject)} | set(_BRANCHISH.findall(low))
+    ids = {t.lower() for t in _TICKET.findall(subject)}
     words = {w for w in _WORD.findall(low) if w not in _STOP}
     return ids, words
 
@@ -334,6 +335,8 @@ def _files_text(c: dict) -> str:
 
 
 MAX_GREP_IDENTIFIERS = 5
+GREP_MAX_BYTES = 100_000
+DIFF_MAX_BYTES = 1_000_000
 
 
 def _grep_files(member: dict, ident: str, limit: int = 3) -> list[str]:
@@ -345,13 +348,44 @@ def _grep_files(member: dict, ident: str, limit: int = 3) -> list[str]:
         return []
     try:
         raw = gitq.run_bytes(
-            path, "grep", "-l", "-F", "-I", "-e", ident, head, "--", ok_codes=(0, 1)
+            path,
+            "grep",
+            "-l",
+            "-F",
+            "-w",
+            "-I",
+            "-e",
+            ident,
+            head,
+            "--",
+            ok_codes=(0, 1),
+            max_bytes=GREP_MAX_BYTES,
         )[1].decode(errors="replace")
     except gitq.GitError:
         return []
     prefix = f"{head}:"
     files = [ln.removeprefix(prefix) for ln in raw.splitlines() if ln]
     return [f for f in files if _useful(f)][:limit]
+
+
+def _changed_since(member: dict, ts: int) -> set[str] | None:
+    """Files changed at the analyzed head since the last commit at or before `ts`.
+
+    None means unknown or everything (no older commit); callers treat that as "touched".
+    """
+    from codescroll import gitq
+
+    path, head = member.get("path"), member.get("head_sha")
+    if not path or not head:
+        return None
+    try:
+        old = gitq.run(path, "rev-list", "-1", f"--before={ts}", head).strip()
+        if not old:
+            return None
+        raw = gitq.run(path, "diff", "--name-only", f"{old}..{head}", max_bytes=DIFF_MAX_BYTES)
+    except gitq.GitError:
+        return None
+    return {ln for ln in raw.splitlines() if ln}
 
 
 def _drift_leads(members: dict[str, dict]) -> list[str]:
@@ -386,10 +420,12 @@ def _drift_leads(members: dict[str, dict]) -> list[str]:
                 hits = _grep_files(members[rb], ident)
                 if not hits:
                     continue
-                since = [
-                    c for c in recent[rb] if c["ts"] >= ca["ts"] and set(c["files"]) & set(hits)
-                ]
-                if since:
+                changed = _changed_since(members[rb], ca["ts"])
+                if changed is None:  # no full list: fall back to the (truncated) recent list
+                    changed = {
+                        f for c in recent[rb] if c["ts"] >= ca["ts"] for f in c.get("files", [])
+                    }
+                if set(hits) & changed:
                     continue
                 out.append(
                     f"possible drift: {ident} changed in {ra} {_sha(ca['sha'])} "
@@ -542,16 +578,85 @@ def _rule_line(r: dict) -> str:
 
 
 def _factors(rules, feature: str) -> dict[str, float]:
-    """Combined boost/prefer factor per value of a feature."""
+    """Combined bias per value of a feature, as the slotter multiplies scores.
+
+    boost/prefer use the stored factor (None counts as 1.0: the steering layer stores the
+    defaults). focus on a feature without a slot meaning here biases like a boost of 1 + slots.
+    """
     out: dict[str, float] = {}
     for r in rules:
-        if r["type"] in ("boost", "prefer") and r["feature"] == feature:
-            out[r["value"]] = out.get(r["value"], 1.0) * (r.get("factor") or 2.0)
+        if r["feature"] != feature:
+            continue
+        if r["type"] in ("boost", "prefer"):
+            f = r["factor"] if r.get("factor") is not None else 1.0
+        elif r["type"] == "focus":
+            f = 1 + (r.get("slots") or 3)
+        else:
+            continue
+        out[r["value"]] = out.get(r["value"], 1.0) * f
     return out
 
 
 def _banned(rules, feature: str) -> set[str]:
     return {r["value"] for r in rules if r["type"] == "ban" and r["feature"] == feature}
+
+
+def _caps(rules, feature: str, count: int) -> dict[str, int]:
+    """Slot ceilings from `limit` rules, computed like the slotter (share 0 means none)."""
+    out: dict[str, int] = {}
+    for r in rules:
+        if r["type"] == "limit" and r["feature"] == feature and r.get("max_share") is not None:
+            cap = 0 if r["max_share"] == 0 else max(1, round(r["max_share"] * count))
+            out[r["value"]] = min(cap, out.get(r["value"], cap))
+    return out
+
+
+def _clip(alloc: dict[str, int], room: dict[str, int]) -> dict[str, int]:
+    """Cut each key to its room and hand the excess to keys that still have room.
+
+    With no room anywhere the excess stays (a ceiling is best effort, never a short brief).
+    """
+    out = dict(alloc)
+    extra = 0
+    for k, r in room.items():
+        if k in out and out[k] > r:
+            extra += out[k] - r
+            out[k] = r
+    for _ in range(extra):
+        open_ = [k for k in out if k not in room or out[k] < room[k]] or list(out)
+        k = min(open_, key=lambda k: (out[k], k))
+        out[k] += 1
+    return out
+
+
+def _dir_candidates(value: str, repos) -> list[str]:
+    v = value.strip("/")
+    return [v] + [v[len(r) + 1 :] for r in repos if v.startswith(r + "/")]
+
+
+def _line_in_dirs(line: str, dirs: list[str]) -> bool:
+    """Does a lead mention a path equal to or under one of `dirs` (path-prefix match)?"""
+    for tok in re.findall(r"[\w@.+-]+(?:/[\w@.+-]+)*", line):
+        for d in dirs:
+            if tok == d or tok.startswith(d + "/"):
+                return True
+    return False
+
+
+def _banned_formats(rules) -> set[str]:
+    """Formats that can only produce a banned visual kind or template."""
+    from codescroll.validator import FORMAT_KIND, TEMPLATE_FORMATS
+
+    kinds, templates = _banned(rules, "visual_kind"), _banned(rules, "template")
+    gone = {f for f, k in FORMAT_KIND.items() if set((k,) if isinstance(k, str) else k) <= kinds}
+    return gone | (templates & TEMPLATE_FORMATS)
+
+
+def _banned_stories(rules) -> set[str]:
+    gone = set(_banned(rules, "story_type")) | set(_banned(rules, "interactive"))
+    if _banned(rules, "difficulty"):
+        gone |= set(CATEGORY_STORIES["interactive"])
+    return gone
 
 
 def _interleave(quotas: dict[str, int]) -> list[str]:
@@ -577,13 +682,20 @@ DEFAULT_PERSONAS = (
 
 
 def _pick_format(
-    options, used: dict[str, int], spent: int, budget: int, boost: dict[str, float] | None = None
+    options,
+    used: dict[str, int],
+    spent: int,
+    budget: int,
+    boost: dict[str, float] | None = None,
+    caps: dict[str, int] | None = None,
 ) -> str:
     """Least-used format of the category that still fits the illustration budget.
 
     A boost factor divides a format's use count, so boosted formats come up more often.
     """
     boost = boost or {}
+    caps = caps or {}
+    options = [f for f in options if used.get(f, 0) < caps.get(f, 1 << 30)] or list(options)
     fits = (
         [f for f in options if spent + ILLUSTRATION_COST.get(f, 0) <= budget]
         or [f for f in options if f not in ILLUSTRATION_COST]
@@ -610,8 +722,36 @@ def build_brief(
     if not repo_signals:
         raise ValueError("no repos to build a brief from")
     rules = list(rules or [])
-    gone_formats = set(unavailable_formats) | _banned(rules, "format")
-    gone_stories = _banned(rules, "story_type")
+    # Cross-repo groups: >= 2 repos of one group in this brief. `groups` (name -> repos)
+    # overrides the group each analysis carries.
+    if groups is None:
+        groups = {}
+        for r in sorted(repo_signals):
+            g = repo_signals[r].get("group")
+            if g:
+                groups.setdefault(g, []).append(r)
+    group_of = {r: g for g, rs in groups.items() for r in rs}
+    zero = {
+        f: {v for v, c in _caps(rules, f, count).items() if c == 0}
+        for f in ("repo", "format", "story_type", "tone")
+    }
+    gone_repos = _banned(rules, "repo") | zero["repo"]
+    gone_groups = _banned(rules, "group")
+    repo_signals = {
+        r: v
+        for r, v in repo_signals.items()
+        if r not in gone_repos and group_of.get(r) not in gone_groups
+    }
+    if not repo_signals:
+        raise ValueError("active rules ban every repo")
+    groups = {g: [r for r in rs if r in repo_signals] for g, rs in groups.items()}
+    gone_formats = (
+        set(unavailable_formats)
+        | _banned(rules, "format")
+        | _banned_formats(rules)
+        | zero["format"]
+    )
+    gone_stories = _banned_stories(rules) | zero["story_type"]
     stories_in = {
         c: tuple(t for t in ts if t not in gone_stories) for c, ts in CATEGORY_STORIES.items()
     }
@@ -622,16 +762,29 @@ def build_brief(
     fmt_boost = _factors(rules, "format")
     story_boost = _factors(rules, "story_type")
     repo_boost = _factors(rules, "repo")
+    group_boost = _factors(rules, "group")
+    fmt_caps = _caps(rules, "format", count)
+    story_caps = _caps(rules, "story_type", count)
+    repo_caps = _caps(rules, "repo", count)
     focus = []
     for r in rules:
         if r["type"] == "focus" and r["feature"] in ("repo", "dir"):
             n = r.get("slots") or 3
             focus.append((r["value"], None, n) if r["feature"] == "repo" else (None, r["value"], n))
-    focus_dirs = [d.strip("/") + "/" for _, d, _ in focus if d]
-    focus_repos = {rp: n for rp, _, n in focus if rp}
+    prefer_dirs = [
+        r["value"]
+        for r in rules
+        if r["feature"] == "dir" and (r["type"] in ("focus", "boost", "prefer"))
+    ]
+    ban_dirs = [r["value"] for r in rules if r["type"] == "ban" and r["feature"] == "dir"]
+    all_repos = list(repo_signals)
 
     def focused_first(lines: list[str]) -> list[str]:
-        return sorted(lines, key=lambda x: not any(d in x for d in focus_dirs))
+        if ban_dirs:
+            bad = [d for v in ban_dirs for d in _dir_candidates(v, all_repos)]
+            lines = [x for x in lines if not _line_in_dirs(x, bad)]
+        want = [d for v in prefer_dirs for d in _dir_candidates(v, all_repos)]
+        return sorted(lines, key=lambda x: not _line_in_dirs(x, want))
 
     learned = bool(category_shares) and evidence != 0  # no rewards: keep the default mix
     source = category_shares if learned else defaults.get("categories", {})
@@ -644,9 +797,15 @@ def build_brief(
             donor = max(quotas, key=lambda c: (quotas[c], c))
             quotas[donor] -= 1
             quotas[k] = 1
-    banned_tones = _banned(rules, "tone")
-    tones_in = {k: w for k, w in defaults.get("tones", {}).items() if k not in banned_tones}
+    banned_tones = _banned(rules, "tone") | zero["tone"]
+    tone_boost = _factors(rules, "tone")
+    tones_in = {
+        k: w * tone_boost.get(k, 1.0)
+        for k, w in defaults.get("tones", {}).items()
+        if k not in banned_tones
+    }
     tone_quotas = largest_remainder(tones_in or defaults.get("tones", {}), count)
+    tone_quotas = _clip(tone_quotas, _caps(rules, "tone", count)) if tones_in else tone_quotas
     tone_pool = _interleave(tone_quotas)
     repo_names = sorted(repo_signals)
     persona_cycle = list(personas) or list(DEFAULT_PERSONAS)
@@ -655,14 +814,6 @@ def build_brief(
     ] or persona_cycle
     story_used: dict[str, int] = {}
 
-    # Cross-repo groups: >= 2 repos of one group in this brief. `groups` (name -> repos)
-    # overrides the group each analysis carries.
-    if groups is None:
-        groups = {}
-        for r in repo_names:
-            g = repo_signals[r].get("group")
-            if g:
-                groups.setdefault(g, []).append(r)
     cross_groups = {
         g: [r for r in rs if r in repo_signals]
         for g, rs in sorted(groups.items())
@@ -676,6 +827,7 @@ def build_brief(
     used: dict[str, int] = {}
     spent = 0
     leads_by: dict[tuple[str, str], list[str]] = {}
+    repo_total: dict[str, int] = {}
     for ci, (category, n) in enumerate(sorted(quotas.items(), key=lambda kv: (-kv[1], kv[0]))):
         if not n:
             continue
@@ -685,7 +837,11 @@ def build_brief(
             combos = []
             for g, rs in cross_groups.items():
                 if g not in cross_by_group:
-                    cross_by_group[g] = cross_leads({r: repo_signals[r] for r in rs})
+                    cross_by_group[g] = {
+                        t: [x for x in focused_first(ls)]
+                        for t, ls in cross_leads({r: repo_signals[r] for r in rs}).items()
+                    }
+                    cross_by_group[g] = {t: ls for t, ls in cross_by_group[g].items() if ls}
                 combos += [
                     (g, t)
                     for t in CROSS_STORIES
@@ -694,8 +850,13 @@ def build_brief(
             if combos and cross_fmts:
                 cross_n = min(-(-n // 2), len(combos))
                 for _ in range(cross_n):
+                    open_gt = [
+                        gt
+                        for gt in combos
+                        if story_used.get(gt[1], 0) < story_caps.get(gt[1], 1 << 30)
+                    ] or combos
                     g, t = min(
-                        combos,
+                        open_gt,
                         key=lambda gt: (
                             (story_used.get(gt[1], 0) + 1) / story_boost.get(gt[1], 1.0),
                             CROSS_STORIES.index(gt[1]),
@@ -703,33 +864,49 @@ def build_brief(
                         ),
                     )
                     combos.remove((g, t))
-                    fmt = _pick_format(cross_fmts, used, spent, max_illustrations, fmt_boost)
+                    fmt = _pick_format(
+                        cross_fmts, used, spent, max_illustrations, fmt_boost, fmt_caps
+                    )
                     used[fmt] = used.get(fmt, 0) + 1
                     spent += ILLUSTRATION_COST.get(fmt, 0)
                     story_used[t] = story_used.get(t, 0) + 1
-                    slots.append((cross_groups[g][0], category, t, fmt, g))
+                    lead_repo = cross_groups[g][0]
+                    repo_total[lead_repo] = repo_total.get(lead_repo, 0) + 1
+                    slots.append((lead_repo, category, t, fmt, g))
         n -= cross_n
         # Split the category across repos; rotate the start so small quotas spread out.
         order = repo_names[ci % len(repo_names) :] + repo_names[: ci % len(repo_names)]
         per_repo = largest_remainder(
-            {r: repo_boost.get(r, 1.0) * (1 + focus_repos.get(r, 0)) for r in order}, n
+            {r: repo_boost.get(r, 1.0) * group_boost.get(group_of.get(r), 1.0) for r in order}, n
         )
+        per_repo = _clip(
+            per_repo, {r: max(0, c - repo_total.get(r, 0)) for r, c in repo_caps.items()}
+        )
+        for r, k in per_repo.items():
+            repo_total[r] = repo_total.get(r, 0) + k
         for repo in order:
             sig = repo_signals[repo]["signals"]
             t0 = repo_signals[repo].get("t0")
             for t in stories_in[category]:
                 if (repo, t) not in leads_by:
-                    wide = leads_for(t, sig, t0, limit=1000 if focus_dirs else MAX_LEADS_PER_TYPE)
+                    wide = leads_for(
+                        t, sig, t0, limit=1000 if prefer_dirs or ban_dirs else MAX_LEADS_PER_TYPE
+                    )
                     leads_by[(repo, t)] = focused_first(wide)[:MAX_LEADS_PER_TYPE]
             usable = [t for t in stories_in[category] if leads_by[(repo, t)]] or list(
                 stories_in[category]
             )
             for _ in range(per_repo[repo]):
-                fmt = _pick_format(formats_in[category], used, spent, max_illustrations, fmt_boost)
+                fmt = _pick_format(
+                    formats_in[category], used, spent, max_illustrations, fmt_boost, fmt_caps
+                )
                 used[fmt] = used.get(fmt, 0) + 1
                 spent += ILLUSTRATION_COST.get(fmt, 0)
+                open_t = [
+                    t for t in usable if story_used.get(t, 0) < story_caps.get(t, 1 << 30)
+                ] or usable
                 story = min(
-                    usable,
+                    open_t,
                     key=lambda t: (
                         (story_used.get(t, 0) + 1) / story_boost.get(t, 1.0),
                         usable.index(t),

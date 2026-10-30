@@ -94,7 +94,7 @@ def reset_weights(conn, feature: str | None = None) -> int
 
 `GET /api/feed?limit=20&cursor=...` builds the next batch:
 1. Candidates: `ready` cards not impressed in the last `repeat_days` (7), not already served this feed session (the cursor carries served ids), plus due SRS cards.
-2. Rules from the `rules` table (M4 writes them; the slotter honors them now): `ban` removes, `boost`/`prefer` multiply the score, `focus` reserves `slots` per batch for matching cards, `limit` caps the matching share of the batch.
+2. Rules from the `rules` table (M4 writes them; the slotter honors them now): `ban` removes, `boost`/`prefer` multiply the score, `focus` reserves `slots` per batch for matching cards, `limit` caps the matching share of the batch. `dir` rules use path-prefix matching (`src` covers `src` and `src/api`, not `lib/src`; a leading `repo/` is accepted).
 3. Exploration: `exploration_share` (0.18) of slots are filled uniformly at random from candidates outside the top half.
 4. Learning boost: 10% of slots go to cards whose dirs have the fewest impressions (coverage).
 5. Rhythm: never more than 2 of the same format in a row; alternate fast formats (meme, text_meme, fun_fact, chart, hot_take) with slow ones (thread, comic, code_card, quiz, iceberg, day_in_life) when both are available.
@@ -118,3 +118,23 @@ On a wrong answer (`POST /api/answer`), upsert `srs(card_id)` with interval 1 da
 ## 9. Reset
 
 `codescroll reset-weights [--feature F]` and `learning.reset_weights`. M4's MCP `reset_defaults` calls the same function.
+
+## 10. Which rules change generation (brief) and which only rank (slotter)
+
+`brief.build_brief` and `slotter.build_batch` read the same rules. Boost and prefer use the stored `factor` as is (the steering layer stores the defaults, so `None` counts as 1.0). `dir` rules use path-prefix matching in both.
+
+| (type, feature) | brief (generation) | slotter (ranking) |
+|---|---|---|
+| ban `format`, `story_type`, `tone`, `persona`, `repo` | never assigned | cards removed |
+| ban `group` | repos of the group are left out | cards removed |
+| ban `dir` | leads under the dir are dropped | cards removed |
+| ban `visual_kind`, `template` | formats that can only produce them are not assigned (`meme` kind: `meme`; template `X`: format `X`) | cards removed |
+| ban `interactive` (value = story type) | that story type is not assigned | cards removed |
+| ban `difficulty` | all interactive story types are dropped | cards removed |
+| limit `format`, `story_type`, `repo`, `tone` | share ceiling on matching slots (best effort when no alternative remains; share 0 acts as a ban) | share ceiling on the batch |
+| limit on other features | no effect | share ceiling on the batch |
+| boost, prefer `format`, `story_type`, `repo`, `group`, `tone` | slot weight times the factor | score times the factor |
+| boost, prefer `dir` | matching leads come first | score times the factor |
+| focus `repo`, `dir` | slot weight (1 + slots) / leads first, plus a focus line | reserved slots |
+| focus `format`, `story_type`, `group`, `tone` | like boost with factor 1 + slots | reserved slots |
+| any rule on `recency`, `has_comments`, `persona` (except ban), `template` or `visual_kind` (except ban) | no effect | ranking only |

@@ -274,3 +274,22 @@ def test_exploration_uses_probabilistic_rounding_for_small_limits(conn, cfg, mon
     seeds = range(300)
     explored = sum(len(set(batch(conn, cfg, limit=4, seed=s)) - top) for s in seeds)
     assert 0.45 * len(seeds) < explored < 0.75 * len(seeds)
+
+
+def test_dir_rules_match_by_path_prefix(conn, cfg, monkeypatch):
+    nested = add_card(conn, cfg, format="meme", dirs=["src/api"])
+    other = add_card(conn, cfg, format="meme", dirs=["lib/src"])
+    fix_scores(monkeypatch, {nested: 0.1, other: 0.9})
+    add_rule(conn, "focus", "dir", "src", slots=1)
+    assert batch(conn, cfg, limit=1) == [nested]
+    add_rule(conn, "ban", "dir", "src/")
+    assert batch(conn, cfg) == [other]
+
+
+def test_dir_rule_accepts_repo_prefix(conn, cfg):
+    a = add_card(conn, cfg, format="meme", dirs=["src/api"])
+    repo = conn.execute(
+        "SELECT value FROM card_features WHERE card_id = ? AND feature = 'repo'", (a,)
+    ).fetchone()[0]
+    add_rule(conn, "ban", "dir", f"{repo}/src")
+    assert batch(conn, cfg) == []
