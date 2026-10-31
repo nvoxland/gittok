@@ -15,6 +15,7 @@
 	let fromCache = $state(false);
 	let stories = $state<Story[]>([]);
 	let openStory = $state<number | null>(null);
+	let chromeH = $state(0);
 
 	const batcher = createBatcher(postEvents, 5000);
 
@@ -66,8 +67,10 @@
 	}
 </script>
 
-<div class="app">
-<header class="chrome" aria-label="Top bar">
+<!-- An exact feed height: WebKit does not resolve percentage heights inside flex items, so
+     the feed grew to fit every card and the page scrolled instead of snapping. -->
+<div class="app" style="--feed-h: calc(100dvh - {chromeH}px)">
+<header class="chrome" aria-label="Top bar" bind:offsetHeight={chromeH}>
 	<div class="stories-slot"><StoriesRow {stories} onOpen={(i) => (openStory = i)} /></div>
 	<nav class="links">
 		<a href="/saved">Saved</a>
@@ -153,7 +156,7 @@
 	.status {
 		display: grid;
 		place-items: center;
-		height: 100%;
+		height: var(--feed-h, 100dvh);
 		margin: 0;
 		color: var(--muted);
 	}

@@ -132,7 +132,7 @@
 <style>
 	article {
 		position: relative;
-		height: 100%;
+		height: var(--feed-h, 100dvh);
 		scroll-snap-align: start;
 		display: flex;
 		flex-direction: column;
