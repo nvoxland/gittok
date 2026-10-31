@@ -197,22 +197,29 @@ describe('Card actions', () => {
 		expect(JSON.parse(localStorage.getItem('codescroll.card-state')!).c_save.saved).toBe(true);
 	});
 
-	it('explain more scrolls the depth row to the first explain panel and emits', async () => {
-		const calls: [string, unknown][] = [];
+	it('a comments button with the count jumps to the comments panel', async () => {
 		const card = fakeCard({
-			depth: [
-				{ kind: 'code', repo: 'gittok', path: 'a.py', commit: 'abcdef1234', lines: [1, 2] },
-				{ kind: 'explain', text: 'Plain words.' }
-			],
-			resolved: { visual: null, depth: [null, null] }
+			depth: [{ kind: 'explain', text: 'Plain words.' }],
+			comments: [
+				{ persona: 'greybeard', text: 'Told you.' },
+				{ persona: 'archivist', text: 'Since 2019.' }
+			]
 		});
-		const { container } = render(Card, { card, onAction: (t: string, d?: unknown) => calls.push([t, d]) });
+		const { container } = render(Card, { card });
 		const row = container.querySelector('.panels') as HTMLElement;
 		Object.defineProperty(row, 'clientWidth', { value: 300, configurable: true });
 		row.scrollTo = vi.fn() as never;
-		await fireEvent.click(screen.getByRole('button', { name: /explain more/i }));
+		const btn = screen.getByRole('button', { name: 'Comments (2)' });
+		expect(btn).toHaveTextContent('2');
+		await fireEvent.click(btn);
 		expect(row.scrollTo).toHaveBeenCalledWith({ left: 600, behavior: 'smooth' });
-		expect(calls).toEqual([['explain_more', {}]]);
+	});
+
+	it('has no explain-more button, and no comments button without comments', () => {
+		render(Card, { card: fakeCard({ comments: [] }) });
+		expect(screen.queryByRole('button', { name: /explain more/i })).toBeNull();
+		expect(screen.queryByRole('button', { name: /comments/i })).toBeNull();
+		expect(screen.getByRole('button', { name: 'Like' })).toBeInTheDocument();
 	});
 
 	it('emits source_tap with the panel index from a code panel link', async () => {

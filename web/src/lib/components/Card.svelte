@@ -38,11 +38,6 @@
 		onAction?.(flag === 'liked' ? 'like' : 'save', { on });
 	}
 
-	function explainMore() {
-		const i = card.depth.findIndex((d) => d.kind === 'explain');
-		if (row && i >= 0) row.scrollTo({ left: (i + 1) * row.clientWidth, behavior: 'smooth' });
-		onAction?.('explain_more', {});
-	}
 	let panel = $state(0);
 
 	function onScroll(e: Event) {
@@ -153,7 +148,17 @@
 		<button type="button" aria-pressed={saved} aria-label="Save" onclick={() => toggle('saved')}>
 			{saved ? '★' : '☆'}
 		</button>
-		<button type="button" aria-label="Explain more" onclick={explainMore}>?</button>
+		{#if showComments}
+			<!-- Jumps to the comments panel; the panel change itself is the depth_open signal. -->
+			<button
+				type="button"
+				class="comments-btn"
+				aria-label="Comments ({card.comments.length})"
+				onclick={openComments}
+			>
+				<span aria-hidden="true">💬</span><span class="count">{card.comments.length}</span>
+			</button>
+		{/if}
 	</div>
 	<div class="dots">
 		{#each { length: count } as _, i (i)}
@@ -309,6 +314,20 @@
 		color: inherit;
 		font-size: 1.2rem;
 		cursor: pointer;
+	}
+	.comments-btn {
+		display: grid;
+		place-items: center;
+		align-content: center;
+		gap: 0;
+		line-height: 1;
+	}
+	.comments-btn span:first-child {
+		font-size: 1rem;
+	}
+	.comments-btn .count {
+		font-size: 0.65rem;
+		color: var(--muted);
 	}
 	.actions button[aria-pressed='true'] {
 		color: var(--accent);

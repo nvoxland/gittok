@@ -17,7 +17,7 @@ Existing types keep their meaning. Data per type:
 | `scroll_back` | a card already seen this session becomes visible again | `{}` |
 | `depth_open` | horizontal panel changes | `{"panel": int}` |
 | `like` / `save` | toggle buttons | `{"on": bool}` |
-| `explain_more` | "Explain more" button (opens the first explain panel) | `{}` |
+| `explain_more` | retired: the "?" button is now a comments button whose jump to the comments panel is a `depth_open`. Old events still count. | `{}` |
 | `answer` | a choice is picked on an interactive card | `{"choice": int, "correct": bool \| null}` |
 | `source_tap` | a file/commit link in a depth panel is tapped | `{"panel": int}` |
 

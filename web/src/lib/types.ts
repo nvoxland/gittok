@@ -181,7 +181,6 @@ export type FeedEventType =
 	| 'depth_open'
 	| 'like'
 	| 'save'
-	| 'explain_more'
 	| 'answer'
 	| 'source_tap'
 	| 'beats_done'
