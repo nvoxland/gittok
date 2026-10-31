@@ -1,12 +1,13 @@
 <script lang="ts">
 	import type { IcebergData } from '#lib/types.ts';
-	let { data }: { data: IcebergData } = $props();
+	// `shown`: how many layers the beats player has revealed (all by default).
+	let { data, shown = Infinity }: { data: IcebergData; shown?: number } = $props();
 	const n = $derived(Math.max(1, data.layers.length - 1));
 </script>
 
 <div class="iceberg">
 	<h3>{data.title}</h3>
-	{#each data.layers as layer, i (i)}
+	{#each data.layers.slice(0, shown) as layer, i (i)}
 		<div class="layer" data-depth={i} style="--t:{i / n}">
 			<h4>{layer.label}</h4>
 			<ul>
@@ -25,6 +26,21 @@
 		color: #fff;
 		background: color-mix(in srgb, #7fc8f8 calc((1 - var(--t)) * 100%), #05182e);
 		text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+	}
+	.layer {
+		animation: sink 0.45s ease-out;
+	}
+	/* each new layer rises out of the deep, so the eye moves down the iceberg */
+	@keyframes sink {
+		from {
+			opacity: 0;
+			transform: translateY(18px) scale(0.98);
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.layer {
+			animation: none;
+		}
 	}
 	.layer:first-of-type {
 		border-radius: 12px 12px 0 0;

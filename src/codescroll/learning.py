@@ -34,6 +34,8 @@ class RewardConfig:
             "source_tap": 0.10,
             "scroll_back": 0.35,
             "answer": 0.20,
+            "complete": 0.15,
+            "replay": 0.30,
         }
     )
     ms_per_word: int = 250
@@ -164,6 +166,19 @@ def _toggled_on(events: list[tuple[str, dict]], name: str) -> bool:
     return bool(toggles and toggles[-1])
 
 
+def _watch_fraction(rc: RewardConfig, spec: dict, dwell_events: list[dict], dwell_ms: int) -> float:
+    """How much of the card was 'watched', 0..1, like a video's watch fraction.
+
+    A beat card reports the time its sequence played (`ms_played`, holds included) and the
+    sequence length (`total_ms`); time on screen after playback earns nothing. A static card
+    is a one-beat video as long as its expected reading time.
+    """
+    total = max((_ms(d.get("total_ms", 0)) for d in dwell_events), default=0)
+    if total > 0:
+        return min(1.0, sum(_ms(d.get("ms_played", 0)) for d in dwell_events) / total)
+    return min(1.0, dwell_ms / expected_ms(rc, spec))
+
+
 def _reward(rc: RewardConfig, spec: dict, events: list[tuple[str, dict]]) -> float:
     w = rc.weights
     dwell_events = [d for t, d in events if t == "dwell"]
@@ -174,10 +189,14 @@ def _reward(rc: RewardConfig, spec: dict, events: list[tuple[str, dict]]) -> flo
     )
     if skipped and not (_toggled_on(events, "like") or _toggled_on(events, "save")):
         return 0.0
-    r = w["dwell"] * min(1.0, dwell_ms / expected_ms(rc, spec))
+    r = w["dwell"] * _watch_fraction(rc, spec, dwell_events, dwell_ms)
     for name in ("depth_open", "explain_more", "source_tap", "scroll_back"):
         if name in types:
             r += w[name]
+    if "beats_done" in types:
+        r += w["complete"]
+    if "replay" in types:
+        r += w["replay"]
     if "answer" in types:
         r += w["answer"]
     for name in ("like", "save"):

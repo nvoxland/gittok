@@ -15,8 +15,9 @@
 
 	let {
 		visual,
-		persona
-	}: { visual: TemplateVisual; resolved?: unknown; persona?: string } = $props();
+		persona,
+		shown = Infinity
+	}: { visual: TemplateVisual; resolved?: unknown; persona?: string; shown?: number } = $props();
 
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const templates: Record<string, Component<any>> = {
@@ -36,7 +37,7 @@
 </script>
 
 {#if Template}
-	<Template data={visual.data} {persona} />
+	<Template data={visual.data} {persona} {shown} />
 {:else}
 	<p class="unsupported">Unsupported template: {visual.template}</p>
 {/if}

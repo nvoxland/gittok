@@ -3,6 +3,7 @@
 	import CardView from './Card.svelte';
 	import type { Card, FeedEvent } from '#lib/types.ts';
 	import { getSessionId } from '#lib/session.ts';
+	import { playStats } from '#lib/playStats.ts';
 
 	let { cards, onEvent }: { cards: Card[]; onEvent?: (e: FeedEvent) => void } = $props();
 
@@ -17,16 +18,28 @@
 		onEvent?.({ card_id, type, ts: Date.now(), data: { ...data, session: getSessionId() } });
 	}
 
+	// The card that plays its beats: on screen and the tab shown.
+	let activeId = $state<string | null>(null);
+	let pageShown = $state(true);
+
 	function closeDwell(id: string) {
 		const since = visibleSince.get(id);
 		if (since === undefined) return;
 		const ms = Date.now() - since;
 		visibleSince.delete(id);
+		// A beat card reports watch time like a video; leaving during its first beat is a skip.
+		const play = playStats(id);
+		if (play && play.totalMs > 0) {
+			emit(id, 'dwell', { ms, ms_played: play.msPlayed, total_ms: play.totalMs });
+			if (!play.done && play.beat <= 0) emit(id, 'skip');
+			return;
+		}
 		emit(id, 'dwell', { ms });
 		if (ms < 1000) emit(id, 'skip');
 	}
 
 	function onVisibility() {
+		pageShown = document.visibilityState !== 'hidden';
 		if (document.visibilityState === 'hidden') {
 			for (const id of [...visibleSince.keys()]) closeDwell(id);
 		} else {
@@ -51,6 +64,8 @@
 			const visible = entry.isIntersecting && entry.intersectionRatio >= 0.6;
 			if (visible) inView.add(id);
 			else inView.delete(id);
+			if (visible) activeId = id;
+			else if (activeId === id) activeId = null;
 			if (document.visibilityState === 'hidden') continue; // timers restart when shown
 			if (visible && !visibleSince.has(id)) {
 				visibleSince.set(id, Date.now());
@@ -77,6 +92,7 @@
 		<CardView
 			{card}
 			first={i === 0}
+			active={activeId === card.id && pageShown}
 			onPanelChange={(panel) => emit(card.id, 'depth_open', { panel })}
 			onAction={(type, data) => emit(card.id, type, data)}
 		/>

@@ -1,7 +1,7 @@
 # Reward and ranking knobs (docs/learning.md). Expected to be tuned with real use.
 skip_ms: 1000
 weights:
-  dwell: 0.45
+  dwell: 0.45                  # x watch fraction: beat cards by time played, static by dwell/expected
   depth_open: 0.15
   explain_more: 0.15
   like: 0.25
@@ -9,6 +9,8 @@ weights:
   source_tap: 0.10
   scroll_back: 0.35
   answer: 0.20
+  complete: 0.15               # a beat card played to the end
+  replay: 0.30                 # replayed a beat card (counts once)
 ms_per_word: 250
 expected_ms_max: 45000
 format_base_ms:

@@ -44,6 +44,9 @@ EventType = Literal[
     "explain_more",
     "answer",
     "source_tap",
+    "beats_done",
+    "replay",
+    "beat_tap",
 ]
 
 

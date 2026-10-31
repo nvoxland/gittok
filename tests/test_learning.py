@@ -441,3 +441,43 @@ def test_category_with_default_share_zero_stays_zero(conn, cfg):
     assert shares["interactive"] == 0.0
     assert shares["code"] == pytest.approx(0.05)
     assert sum(shares.values()) == pytest.approx(1.0)
+
+
+# Video-style signals for beat cards.
+
+BEAT_SPEC = {"format": "group_chat", "hook": "h", "visual": {}, "depth": []}
+
+
+def beat_reward(*events):
+    return learning._reward(learning.RewardConfig(), BEAT_SPEC, list(events))
+
+
+def test_beat_card_reward_is_watch_fraction_by_time_played_not_dwell():
+    # 20 s on screen, but only half of the 6 s sequence played: after playback is not credit.
+    r = beat_reward(("dwell", {"ms": 20000, "ms_played": 3000, "total_ms": 6000}))
+    assert r == pytest.approx(0.45 * 0.5)
+
+
+def test_watch_fraction_adds_up_across_visits():
+    r = beat_reward(
+        ("dwell", {"ms": 2000, "ms_played": 2000, "total_ms": 8000}),
+        ("dwell", {"ms": 2500, "ms_played": 2000, "total_ms": 8000}),
+    )
+    assert r == pytest.approx(0.45 * 0.5)
+
+
+def test_completion_and_one_replay_add_their_weights():
+    full = ("dwell", {"ms": 7000, "ms_played": 6000, "total_ms": 6000})
+    assert beat_reward(full, ("beats_done", {"beats": 4})) == pytest.approx(0.45 + 0.15)
+    with_replays = beat_reward(full, ("replay", {}), ("replay", {}))
+    assert with_replays == pytest.approx(0.45 + 0.30)  # a replay counts once
+
+
+def test_beat_tap_is_recorded_but_not_rewarded():
+    played = ("dwell", {"ms": 3000, "ms_played": 3000, "total_ms": 6000})
+    assert beat_reward(played, ("beat_tap", {"beat": 1})) == beat_reward(played)
+
+
+def test_early_swipe_on_a_beat_card_is_a_skip():
+    r = beat_reward(("dwell", {"ms": 1500, "ms_played": 1500, "total_ms": 6000}), ("skip", {}))
+    assert r == 0.0

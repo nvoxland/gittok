@@ -110,6 +110,14 @@ def test_events_are_stored(cfg, client):
     assert rows[0]["received_at"]
 
 
+def test_events_accept_the_beat_player_types(client):
+    events = [
+        {"card_id": "c_1", "type": t, "ts": 1, "data": {}}
+        for t in ("beats_done", "replay", "beat_tap")
+    ]
+    assert client.post("/api/events", json={"events": events}).json() == {"stored": 3}
+
+
 def test_events_reject_unknown_type(client):
     bad = {"events": [{"card_id": "c_1", "type": "teleport", "ts": 1}]}
     assert client.post("/api/events", json=bad).status_code == 422

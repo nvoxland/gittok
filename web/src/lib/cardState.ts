@@ -71,7 +71,28 @@ export function clearAnswers(ids: string[]): void {
 	if (changed) save(() => sessionStorage, ANSWER_KEY, answers);
 }
 
+// Beat cards play once; afterwards they open on the full view.
+const PLAYED_KEY = 'codescroll.played';
+let playedCache: Record<string, number> | undefined;
+const playedMap = () => (playedCache ??= load<Record<string, number>>(() => localStorage, PLAYED_KEY));
+
+export function hasPlayed(id: string): boolean {
+	return id in playedMap();
+}
+
+export function setPlayed(id: string): void {
+	const played = playedMap();
+	played[id] = Date.now();
+	save(() => localStorage, PLAYED_KEY, played);
+}
+
 export function resetCardStateForTest(): void {
 	flagsCache = undefined;
 	answersCache = undefined;
+	playedCache = undefined;
+	try {
+		localStorage.removeItem(PLAYED_KEY);
+	} catch {
+		// no storage
+	}
 }

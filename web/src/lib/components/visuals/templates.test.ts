@@ -138,3 +138,27 @@ describe('TemplateVisual with only required fields', () => {
 		});
 	}
 });
+
+describe('beats: templates reveal their first `shown` parts', () => {
+	const rs = (name: string, shown: number) =>
+		render(TemplateVisual, { visual: templateFixtures[name], resolved: null, shown }).container;
+
+	it('group_chat shows the first messages and typing dots for the next one', () => {
+		const c = rs('group_chat', 1);
+		expect(c.querySelectorAll('.bubble:not(.typing)')).toHaveLength(1);
+		expect(c.querySelector('.typing')).not.toBeNull();
+		const full = rs('group_chat', Infinity);
+		expect(full.querySelectorAll('.bubble:not(.typing)')).toHaveLength(2);
+		expect(full.querySelector('.typing')).toBeNull();
+	});
+
+	it('iceberg shows the title and the top layers only', () => {
+		const c = rs('iceberg', 2);
+		expect(c.querySelectorAll('.layer')).toHaveLength(2);
+		expect(c.querySelector('h3')).not.toBeNull();
+	});
+
+	it('shows everything by default', () => {
+		expect(r('iceberg').querySelectorAll('.layer')).toHaveLength(3);
+	});
+});

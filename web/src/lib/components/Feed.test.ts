@@ -1,8 +1,11 @@
+import { tick } from 'svelte';
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import Feed from './Feed.svelte';
 import type { Card, FeedEvent } from '#lib/types.ts';
 import { getSessionId } from '#lib/session.ts';
+import { resetCardStateForTest } from '#lib/cardState.ts';
+import { templateFixtures } from './fixtures.ts';
 
 function fakeCard(n: number): Card {
 	return {
@@ -58,6 +61,7 @@ describe('Feed', () => {
 		}
 
 		afterEach(() => {
+			resetCardStateForTest();
 			setVisibility('visible');
 			vi.unstubAllGlobals();
 			vi.useRealTimers();
@@ -126,6 +130,51 @@ describe('Feed', () => {
 			io.fire(el('c_1'), false);
 			expect(events.map((e) => e.type)).toEqual(['impression', 'dwell']);
 			expect(events[1].data).toMatchObject({ ms: 4200 });
+		});
+
+		function setupChat() {
+			vi.stubGlobal('IntersectionObserver', FakeIO);
+			const events: FeedEvent[] = [];
+			const chat = { ...fakeCard(1), id: 'c_chat', visual: templateFixtures.group_chat } as Card;
+			const { container } = render(Feed, {
+				cards: [chat, fakeCard(2)],
+				onEvent: (e: FeedEvent) => events.push(e)
+			});
+			const el = container.querySelector('[data-card-id="c_chat"]')!;
+			return { events, io: observers[0], el, container };
+		}
+
+		it('plays a beat card only while it is the card on screen', async () => {
+			vi.useFakeTimers();
+			const { io, el } = setupChat();
+			await tick();
+			expect(el.querySelectorAll('.bubble:not(.typing)')).toHaveLength(0);
+			io.fire(el, true);
+			await tick();
+			expect(el.querySelectorAll('.bubble:not(.typing)')).toHaveLength(1);
+		});
+
+		it('sends watch time with the dwell of a beat card', async () => {
+			vi.useFakeTimers();
+			const { events, io, el } = setupChat();
+			io.fire(el, true);
+			await tick();
+			await vi.advanceTimersByTimeAsync(3000);
+			io.fire(el, false);
+			const dwell = events.find((e) => e.type === 'dwell')!;
+			expect(dwell.data).toMatchObject({ ms: 3000, total_ms: expect.any(Number) });
+			expect(dwell.data!.ms_played).toBeGreaterThan(0);
+			expect(dwell.data!.ms_played).toBeLessThanOrEqual(3000);
+		});
+
+		it('leaving a beat card during its first beat is a skip, even after 1 s', async () => {
+			vi.useFakeTimers();
+			const { events, io, el } = setupChat();
+			io.fire(el, true);
+			await tick();
+			await vi.advanceTimersByTimeAsync(1100); // the first message waits longer than this
+			io.fire(el, false);
+			expect(events.map((e) => e.type)).toEqual(['impression', 'dwell', 'skip']);
 		});
 
 		it('emits dwell and skip when a card leaves in under 1000 ms', () => {

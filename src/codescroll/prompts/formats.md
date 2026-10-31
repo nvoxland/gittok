@@ -38,13 +38,13 @@
 `visual`: `{"kind": "diagram", "title": "Request flow", "mermaid": "flowchart LR\n  A[api] --> B[store]"}`. `mermaid`: at most 2000 characters, valid Mermaid. Good: 4 to 8 nodes that are real modules or functions.
 
 ### Format: `iceberg`
-`visual`: `{"kind": "template", "template": "iceberg", "data": {"title", "layers": [{"label", "items": [str, 1 to 5]}]}}`. 3 or 4 layers, surface first, deepest last, 1 or 2 items each, each under 60 characters (the front budget). Good: each layer is more obscure than the one above.
+`visual`: `{"kind": "template", "template": "iceberg", "data": {"title", "layers": [{"label", "items": [str, 1 to 5]}]}}`. 3 or 4 layers, surface first, deepest last, 1 or 2 items each, each under 60 characters (the front budget). The feed reveals one layer at a time, so the deepest layer is the punchline. Good: each layer is more obscure than the one above.
 
 ### Format: `tier_list`
 `visual`: `{"kind": "template", "template": "tier_list", "data": {"title", "rows": [{"tier": "S", "items": [{"name", "why"}]}]}}`. 2 to 4 rows; `tier` is `S`, `A`, `B`, `C`, `D` or `F`; 1 or 2 items per row, `why` under 50 characters. Good: real files or functions, and a one-line reason for each rank.
 
 ### Format: `group_chat`
-`visual`: `{"kind": "template", "template": "group_chat", "data": {"title", "messages": [{"from": account, "text"}]}}`. 3 to 6 messages, each under 80 characters. `from` is a persona handle (`greybeard`) or a code account `repo:path`. Good: files "talk" like their role in the code.
+`visual`: `{"kind": "template", "template": "group_chat", "data": {"title", "messages": [{"from": account, "text"}]}}`. 3 to 6 messages, each under 80 characters. The feed plays them one at a time with typing dots, so the last message is the punchline. `from` is a persona handle (`greybeard`) or a code account `repo:path`. Good: files "talk" like their role in the code.
 
 ### Format: `flags`
 `visual`: `{"kind": "template", "template": "flags", "data": {"subject", "red": [str], "green": [str]}}`. 2 or 3 of each is best, each under 60 characters; at least one flag in total. Good: every flag is a checkable fact about the subject.

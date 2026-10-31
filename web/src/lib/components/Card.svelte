@@ -1,4 +1,6 @@
 <script lang="ts">
+	import Beats from './Beats.svelte';
+	import { beatsFor } from '#lib/beats.ts';
 	import CodePanel from './panels/CodePanel.svelte';
 	import DiffPanel from './panels/DiffPanel.svelte';
 	import ExplainPanel from './panels/ExplainPanel.svelte';
@@ -13,10 +15,13 @@
 		card,
 		onPanelChange,
 		onAction,
-		first = false
+		first = false,
+		active
 	}: {
 		card: Card;
 		first?: boolean;
+		// Set only by the feed: the card on screen plays its beats. Elsewhere cards are static.
+		active?: boolean;
 		onPanelChange?: (panel: number) => void;
 		onAction?: (type: FeedEventType, data?: Record<string, unknown>) => void;
 	} = $props();
@@ -50,6 +55,7 @@
 	}
 
 	const Visual = $derived(visuals[card.visual.kind]);
+	const beats = $derived(active === undefined ? [] : beatsFor(card.visual));
 	// Comments wait for a quiz answer: they can give it away.
 	const showComments = $derived(!!card.comments?.length && answered);
 	const count = $derived(1 + card.depth.length + (showComments ? 1 : 0));
@@ -75,7 +81,16 @@
 		<section data-panel="0" class="front">
 			<div class="visual">
 				{#if Visual}
-					<Visual visual={card.visual} resolved={card.resolved.visual} persona={card.persona} />
+					<Beats cardId={card.id} {beats} active={!!active} onAction={(t, d) => onAction?.(t, d)}>
+						{#snippet children(shown: number)}
+							<Visual
+								visual={card.visual}
+								resolved={card.resolved.visual}
+								persona={card.persona}
+								{shown}
+							/>
+						{/snippet}
+					</Beats>
 				{:else}
 					<p class="unsupported">Unsupported card type: {card.visual.kind}</p>
 				{/if}

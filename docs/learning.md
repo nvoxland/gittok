@@ -9,8 +9,11 @@ Existing types keep their meaning. Data per type:
 | type | when | `data` |
 |---|---|---|
 | `impression` | card becomes ≥60% visible | `{}` |
-| `dwell` | card stops being visible | `{"ms": int}` |
-| `skip` | left in under 1000 ms (sent with the dwell) | `{"ms": int}` |
+| `dwell` | card stops being visible | `{"ms": int}`; a beat card adds `"ms_played"` and `"total_ms"` |
+| `skip` | left in under 1000 ms, or a beat card left during its first beat (sent with the dwell) | `{"ms": int}` |
+| `beats_done` | a beat card played to its end (by itself or by taps) | `{"beats": int, "ms_played": int}` |
+| `replay` | the replay control on a finished beat card | `{}` |
+| `beat_tap` | a tap that skipped to the next beat (recorded, not rewarded yet) | `{"beat": int}` |
 | `scroll_back` | a card already seen this session becomes visible again | `{}` |
 | `depth_open` | horizontal panel changes | `{"panel": int}` |
 | `like` / `save` | toggle buttons | `{"on": bool}` |
@@ -57,15 +60,19 @@ skipped = a `skip` event, or dwell_ms < skip_ms (reward.yaml, default 1000) with
           and no other engagement (client did not send `skip`)
 if skipped and not (like on or save on): reward = 0      # explicit positive feedback wins
 else:
-  dwell_ratio = min(1, dwell_ms / expected_ms(card))
-  reward = w.dwell * dwell_ratio
+  watch = beat card:   min(1, sum(ms_played) / total_ms)     # time played, holds included
+          static card: min(1, dwell_ms / expected_ms(card))  # a one-beat "video"
+  reward = w.dwell * watch
          + w.depth_open (once) + w.explain_more + w.like (on) + w.save (on)
          + w.source_tap (once) + w.scroll_back + w.answer (any answer)
+         + w.complete (beats_done) + w.replay (once)
   reward = clip(reward, 0, 1)
 expected_ms(card) = format_base_ms[format] + ms_per_word * words(hook + visual text + first explain panel)
                     capped at expected_ms_max
 ```
-Defaults: `w.dwell 0.45, depth_open 0.15, explain_more 0.15, like 0.25, save 0.30, source_tap 0.10, scroll_back 0.35, answer 0.20`; `ms_per_word 250`, `expected_ms_max 45000`; `format_base_ms`: memes 1500, charts 3000, code 4000, threads/comics 6000, others 2500 (per-format table in reward.yaml).
+Watch fraction works like a video's: time on screen after a beat card finished earns nothing (it mostly means "looked away"), and tapping through to the end does not count as fully watched. Static and beat cards share one 0..1 scale, so autoplay gets no free credit.
+
+Defaults: `w.complete 0.15, w.replay 0.30, w.dwell 0.45, depth_open 0.15, explain_more 0.15, like 0.25, save 0.30, source_tap 0.10, scroll_back 0.35, answer 0.20`; `ms_per_word 250`, `expected_ms_max 45000`; `format_base_ms`: memes 1500, charts 3000, code 4000, threads/comics 6000, others 2500 (per-format table in reward.yaml).
 
 `ms` values from the client are cleaned before use: non-numeric, null or negative becomes 0, and the value is capped at 24 hours. Events whose `data` is not an object are treated as having no data. One bad event never stops the processing of the others.
 

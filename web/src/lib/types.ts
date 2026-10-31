@@ -183,7 +183,10 @@ export type FeedEventType =
 	| 'save'
 	| 'explain_more'
 	| 'answer'
-	| 'source_tap';
+	| 'source_tap'
+	| 'beats_done'
+	| 'replay'
+	| 'beat_tap';
 
 export type FeedEvent = {
 	card_id: string;
