@@ -89,24 +89,27 @@
 		onpointercancel={() => release(false)}
 		onpointerleave={() => release(false)}
 	>
-		{#if !view.done || view.beat < beats.length}
-			<div class="progress" class:paused={view.paused} aria-hidden="true">
-				{#each beats as b, i (i)}
-					<span
-						class="seg"
-						class:full={view.done || i < view.beat}
-						class:now={!view.done && i === view.beat}
-						style="--ms:{b.ms}ms"
-					></span>
-				{/each}
-			</div>
-		{/if}
+		<!-- One fixed-height row: the progress bar while playing, the replay button after. It sits
+		     above the content, so nothing covers the button and nothing jumps when it swaps. -->
+		<div class="controls">
+			{#if view.done}
+				<button type="button" class="replay" aria-label="Replay" onclick={() => player.replay()}
+					>↻ Replay</button
+				>
+			{:else}
+				<div class="progress" class:paused={view.paused} aria-hidden="true">
+					{#each beats as b, i (i)}
+						<span
+							class="seg"
+							class:full={i < view.beat}
+							class:now={i === view.beat}
+							style="--ms:{b.ms}ms"
+						></span>
+					{/each}
+				</div>
+			{/if}
+		</div>
 		{@render children(view.shown)}
-		{#if view.done}
-			<button type="button" class="replay" aria-label="Replay" onclick={() => player.replay()}
-				>↻</button
-			>
-		{/if}
 	</div>
 {/if}
 
@@ -118,10 +121,17 @@
 		-webkit-user-select: none;
 		-webkit-touch-callout: none;
 	}
+	.controls {
+		display: flex;
+		align-items: center;
+		justify-content: flex-end;
+		height: 28px;
+		margin-bottom: 0.25rem;
+	}
 	.progress {
+		flex: 1;
 		display: flex;
 		gap: 3px;
-		margin-bottom: 0.5rem;
 	}
 	.seg {
 		flex: 1;
@@ -147,16 +157,14 @@
 		}
 	}
 	.replay {
-		position: absolute;
-		top: 0;
-		right: 0;
-		width: 36px;
-		height: 36px;
-		border-radius: 50%;
+		height: 28px;
+		padding: 0 0.75rem;
+		border-radius: 999px;
 		border: 1px solid var(--border);
 		background: var(--surface);
-		color: inherit;
-		font-size: 1.1rem;
+		color: var(--muted);
+		font: inherit;
+		font-size: 0.8rem;
 		cursor: pointer;
 	}
 	@media (prefers-reduced-motion: reduce) {

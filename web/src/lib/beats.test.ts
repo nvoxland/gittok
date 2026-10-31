@@ -45,16 +45,20 @@ describe('beatsFor', () => {
 		expect(beatsFor(take)).toEqual([]);
 	});
 
-	it('keeps every beat between 0.8 and 4 seconds', () => {
-		const long = structuredClone(chat) as typeof chat & {
-			data: { messages: { text: string }[] };
-		};
+	it('keeps every beat between 0.7 and 2.5 seconds', () => {
+		const long = structuredClone(chat) as typeof chat & { data: { messages: { text: string }[] } };
 		long.data.messages[0].text = 'x'.repeat(500);
-		for (const b of beatsFor(long)) {
-			expect(b.ms).toBeGreaterThanOrEqual(800);
-			expect(b.ms).toBeLessThanOrEqual(4000);
-		}
+		long.data.messages[1].text = 'x';
+		const ms = beatsFor(long).map((b) => b.ms);
+		expect(ms).toEqual([2500, 700]);
 	});
+
+	it('gives a 55-character line about 1.6 seconds', () => {
+		const one = structuredClone(chat) as typeof chat & { data: { messages: { text: string }[] } };
+		one.data.messages[0].text = 'x'.repeat(55);
+		expect(beatsFor(one)[0].ms).toBe(1610);
+	});
+
 
 	it('totals the sequence length', () => {
 		const beats = beatsFor(iceberg);

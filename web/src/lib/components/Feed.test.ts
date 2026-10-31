@@ -135,7 +135,9 @@ describe('Feed', () => {
 		function setupChat() {
 			vi.stubGlobal('IntersectionObserver', FakeIO);
 			const events: FeedEvent[] = [];
-			const chat = { ...fakeCard(1), id: 'c_chat', visual: templateFixtures.group_chat } as Card;
+			const visual = structuredClone(templateFixtures.group_chat);
+			visual.data.messages[0].text = 'a first message long enough to take over a second to read';
+			const chat = { ...fakeCard(1), id: 'c_chat', visual } as Card;
 			const { container } = render(Feed, {
 				cards: [chat, fakeCard(2)],
 				onEvent: (e: FeedEvent) => events.push(e)

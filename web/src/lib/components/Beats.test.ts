@@ -37,6 +37,28 @@ describe('Beats', () => {
 		expect(screen.getByTestId('shown')).toHaveTextContent('1');
 	});
 
+	it('puts replay in the progress row, not over the content, and keeps the row height', async () => {
+		const { container } = setup();
+		const row = container.querySelector('.controls')!;
+		expect(row.querySelector('.progress')).not.toBeNull();
+		await vi.advanceTimersByTimeAsync(2000);
+		expect(container.querySelector('.controls')).toBe(row);
+		expect(row.querySelector('.replay')).not.toBeNull();
+		expect(row.querySelector('.progress')).toBeNull();
+	});
+
+	it('a card that already played can be replayed from the start', async () => {
+		setup();
+		await vi.advanceTimersByTimeAsync(2000);
+		document.body.innerHTML = '';
+		const { onAction } = setup();
+		await fireEvent.click(screen.getByRole('button', { name: 'Replay' }));
+		expect(onAction).toHaveBeenCalledWith('replay');
+		expect(screen.getByTestId('shown')).toHaveTextContent('1');
+		await vi.advanceTimersByTimeAsync(1000);
+		expect(screen.getByTestId('shown')).toHaveTextContent('2');
+	});
+
 	it('a quick tap skips ahead and is recorded', async () => {
 		const { container, onAction } = setup();
 		const stage = container.querySelector('.beats')!;

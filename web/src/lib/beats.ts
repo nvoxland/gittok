@@ -5,10 +5,10 @@ import type { Visual } from './types.ts';
 
 export type Beat = { shown: number; ms: number };
 
-const MIN_MS = 800;
-const MAX_MS = 4000;
-const BASE_MS = 600;
-const MS_PER_CHAR = 35;
+const MIN_MS = 700;
+const MAX_MS = 2500;
+const BASE_MS = 400;
+const MS_PER_CHAR = 22;
 
 // Each part in reveal order: a `key` the component uses to know which parts are shown, and
 // the `text` that sets how long its beat waits. A component given `shown` displays the first
