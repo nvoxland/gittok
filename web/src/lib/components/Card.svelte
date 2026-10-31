@@ -64,12 +64,14 @@
 		<span class="tone">{card.tone}</span>
 	</header>
 	<div class="panels" bind:this={row} onscroll={onScroll}>
-		<section data-panel="0">
-			{#if Visual}
-				<Visual visual={card.visual} resolved={card.resolved.visual} persona={card.persona} />
-			{:else}
-				<p class="unsupported">Unsupported card type: {card.visual.kind}</p>
-			{/if}
+		<section data-panel="0" class="front">
+			<div class="visual">
+				{#if Visual}
+					<Visual visual={card.visual} resolved={card.resolved.visual} persona={card.persona} />
+				{:else}
+					<p class="unsupported">Unsupported card type: {card.visual.kind}</p>
+				{/if}
+			</div>
 			{#if card.interaction}
 				<Quiz
 					cardId={card.id}
@@ -176,6 +178,7 @@
 		min-height: 0;
 		display: flex;
 		overflow-x: auto;
+		overflow-y: hidden;
 		scroll-snap-type: x mandatory;
 	}
 	section {
@@ -186,9 +189,29 @@
 		overflow-wrap: anywhere; /* long paths and identifiers wrap instead of widening the card */
 		padding: 1rem 0;
 	}
+	/* The front never scrolls: on iOS an inner vertical scroller takes the swipe and the
+	   feed never flips. The visual shrinks and clips; the hook always shows. */
+	.front {
+		overflow: hidden;
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+	}
+	.visual {
+		flex: 0 1 auto;
+		min-height: 0;
+		overflow: hidden;
+	}
 	h2 {
+		flex: none;
 		margin: 0;
-		font-size: 1.5rem;
+		padding-right: 52px; /* clear of the like/save/explain buttons */
+		font-size: 1.25rem;
+		display: -webkit-box;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 6;
+		line-clamp: 6;
+		overflow: hidden;
 	}
 	.unsupported {
 		border: 1px dashed var(--border);
@@ -198,6 +221,10 @@
 		font-size: 0.85rem;
 	}
 	.comments {
+		flex: 0 1 auto;
+		min-height: 0;
+		overflow: hidden;
+		padding-right: 52px;
 		list-style: none;
 		margin: 1rem 0 0;
 		padding: 0;

@@ -3,8 +3,15 @@
 		code,
 		language,
 		startLine = 1,
-		highlight = []
-	}: { code: string; language?: string; startLine?: number; highlight?: number[] } = $props();
+		highlight = [],
+		wrap = false
+	}: {
+		code: string;
+		language?: string;
+		startLine?: number;
+		highlight?: number[];
+		wrap?: boolean;
+	} = $props();
 
 	const lines = $derived(code.replace(/\n$/, '').split('\n'));
 
@@ -52,9 +59,9 @@
 </script>
 
 {#if html}
-	<div class="codeblock shiki-wrap">{@html html}</div>
+	<div class="codeblock shiki-wrap" class:wrap>{@html html}</div>
 {:else}
-<pre class="codeblock"><code
+<pre class="codeblock" class:wrap><code
 		>{#each lines as line, i (i)}<span class="line" class:hl={highlight.includes(startLine + i)}
 				><span class="ln">{startLine + i}</span><span class="src">{line}</span></span
 			>{/each}</code
@@ -97,6 +104,18 @@
 		display: block;
 		padding-right: 0.75rem;
 		white-space: pre;
+	}
+	/* wrap: long lines fold instead of scrolling sideways (used on the card front). */
+	.codeblock.wrap {
+		overflow-x: hidden;
+	}
+	.wrap code,
+	.wrap :global(pre) {
+		width: auto;
+	}
+	.wrap :global(.line) {
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
 	}
 	.codeblock :global(.line.hl) {
 		background: color-mix(in srgb, var(--accent) 18%, transparent);

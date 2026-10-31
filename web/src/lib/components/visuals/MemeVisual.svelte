@@ -21,7 +21,7 @@
 		display: block;
 		width: 100%;
 		height: auto;
-		max-height: 60dvh;
+		max-height: 45dvh; /* leaves room for the hook on the card front */
 		object-fit: contain;
 		border-radius: 8px;
 	}

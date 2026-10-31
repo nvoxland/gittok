@@ -66,6 +66,33 @@ describe('Card', () => {
 		expect(container.querySelector('.line.hl .ln')?.textContent).toBe('11');
 	});
 
+	it('keeps the front panel from scrolling so a vertical swipe moves the feed', () => {
+		const card = fakeCard({
+			visual: {
+				kind: 'code',
+				repo: 'gittok',
+				path: 'src/x.py',
+				commit: 'abcdef1234567890',
+				lines: [10, 10]
+			} as unknown as CardT['visual'],
+			resolved: {
+				visual: { code: 'x = 1', language: 'python', start_line: 10 },
+				depth: [null, { code: 'y = 2', language: 'python', start_line: 1 }]
+			},
+			depth: [
+				{ kind: 'explain', text: 'Why.' },
+				{ kind: 'code', repo: 'gittok', path: 'src/x.py', commit: 'abcdef1234567890', lines: [1, 1] }
+			] as CardT['depth']
+		});
+		const { container } = render(Card, { card });
+		const front = container.querySelector('section[data-panel="0"]')!;
+		expect(front).toHaveClass('front');
+		expect(container.querySelector('section[data-panel="1"]')).not.toHaveClass('front');
+		// Front code wraps (no sideways scroller fighting the panel swipe); depth code does not.
+		expect(front.querySelector('.codeblock')).toHaveClass('wrap');
+		expect(container.querySelector('section[data-panel="2"] .codeblock')).not.toHaveClass('wrap');
+	});
+
 	it('renders comments with @handles', () => {
 		const card = fakeCard({
 			comments: [

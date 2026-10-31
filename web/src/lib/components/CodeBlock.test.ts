@@ -17,6 +17,13 @@ describe('CodeBlock', () => {
 		expect(nums).toEqual(['10', '11', '12']);
 	});
 
+	it('wraps long lines only when asked', () => {
+		const { container } = render(CodeBlock, { code: 'a', wrap: true });
+		expect(container.querySelector('.codeblock')).toHaveClass('wrap');
+		const plain = render(CodeBlock, { code: 'b' });
+		expect(plain.container.querySelector('.codeblock')).not.toHaveClass('wrap');
+	});
+
 	it('escapes HTML in code', () => {
 		const { container } = render(CodeBlock, { code: '<script>alert(1)</script> & <b>x</b>' });
 		expect(container.querySelector('script')).toBeNull();
