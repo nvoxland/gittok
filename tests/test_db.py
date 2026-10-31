@@ -30,6 +30,7 @@ def test_migrate_twice_applies_nothing_second_time(tmp_path):
         "0002_story_key_unique.sql",
         "0003_learning_indexes.sql",
         "0004_social.sql",
+        "0005_prefs.sql",
     ]
     assert db.migrate(conn) == []
     assert conn.execute("SELECT name FROM schema_migrations").fetchall()[0]["name"] == first[0]

@@ -4,7 +4,8 @@
 	import StoriesRow from '#lib/components/StoriesRow.svelte';
 	import StoryViewer from '#lib/components/StoryViewer.svelte';
 	import NotificationBell from '#lib/components/NotificationBell.svelte';
-	import { fetchFeed, fetchStories, markStoriesSeen, postEvents } from '#lib/api.ts';
+	import { fetchFeed, fetchPrefs, fetchStories, markStoriesSeen, postEvents } from '#lib/api.ts';
+	import { setPlaybackSpeed } from '#lib/beats.ts';
 	import { createBatcher } from '#lib/batcher.ts';
 	import { clearAnswers } from '#lib/cardState.ts';
 	import type { Card, Story } from '#lib/types.ts';
@@ -53,7 +54,9 @@
 
 	async function load() {
 		try {
-			const feed = await fetchFeed();
+			// The speed must be set before beat cards mount; a failed prefs call keeps the default.
+			const [feed, prefs] = await Promise.all([fetchFeed(), fetchPrefs().catch(() => null)]);
+			if (prefs) setPlaybackSpeed(prefs.playback_speed);
 			fromCache = !!feed.fromCache;
 			const fresh = feed.cards;
 			// Cards the server serves again are new or due for review: let them be answered again.

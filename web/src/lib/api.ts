@@ -63,6 +63,14 @@ export async function fetchStories(): Promise<Story[]> {
 	return ((await res.json()) as { stories?: Story[] }).stories ?? [];
 }
 
+export type Prefs = { playback_speed: number };
+
+export async function fetchPrefs(): Promise<Prefs> {
+	const res = await fetch('/api/prefs');
+	if (!res.ok) throw new Error(`GET /api/prefs failed: ${res.status}`);
+	return (await res.json()) as Prefs;
+}
+
 async function postJson(url: string, body: unknown): Promise<void> {
 	const res = await fetch(url, {
 		method: 'POST',

@@ -4,7 +4,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from codescroll import api, db, runs
+from codescroll import api, db, runs, steering
 from tests.cards import example_card, quiz_card, text_card, this_or_that_card
 from tests.conftest import make_config
 
@@ -143,6 +143,26 @@ def test_static_build_is_served_with_spa_fallback(cfg):
     assert client.get("/x.txt").text == "asset"
     assert client.get("/some/route").text == "<h1>app</h1>"
     assert client.get("/api/nope").status_code == 404
+
+
+def test_pages_are_revalidated_and_hashed_assets_cached_forever(cfg):
+    build = cfg.root / "web" / "build"
+    (build / "_app" / "immutable").mkdir(parents=True)
+    (build / "index.html").write_text("<h1>app</h1>")
+    (build / "_app" / "immutable" / "start.abc123.js").write_text("js")
+    client = TestClient(api.create_app(lambda: cfg))
+    # An old index.html would load old JavaScript, so the page is always checked.
+    assert client.get("/").headers["cache-control"] == "no-cache"
+    assert client.get("/some/route").headers["cache-control"] == "no-cache"
+    immutable = client.get("/_app/immutable/start.abc123.js").headers["cache-control"]
+    assert immutable == "public, max-age=31536000, immutable"
+
+
+def test_prefs_default_and_follow_the_steering_setting(cfg, client):
+    assert client.get("/api/prefs").json() == {"playback_speed": 1.0}
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+        steering.set_playback_speed(conn, cfg, 1.5)
+    assert client.get("/api/prefs").json() == {"playback_speed": 1.5}
 
 
 def test_mcp_is_served_over_http_on_the_same_app(cfg):

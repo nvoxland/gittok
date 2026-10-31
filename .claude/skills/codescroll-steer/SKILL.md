@@ -12,7 +12,7 @@ Requires the `codescroll` MCP server (tools named `mcp__codescroll__*`). If thos
 
 ## Tools
 
-`get_profile`, `explain_weights(feature)`, `list_rules`, `add_rule`, `remove_rule`, `reset_defaults`, `coverage(repo)`, `recent_cards`, `card_stats`, `list_repos`. Config tools: `add_repo`, `set_group`, `set_mascot`, `edit_persona`.
+`get_profile`, `explain_weights(feature)`, `list_rules`, `add_rule`, `remove_rule`, `reset_defaults`, `coverage(repo)`, `recent_cards`, `card_stats`, `list_repos`. Config tools: `add_repo`, `set_group`, `set_mascot`, `edit_persona`, `set_playback_speed`.
 
 ## Steps
 
@@ -35,6 +35,10 @@ Requires the `codescroll` MCP server (tools named `mcp__codescroll__*`). If thos
 4. Always pass the user's own words as `reason`.
 5. Call `add_rule`. Check `list_rules` first if the user may already have a rule for the same value. Remove or keep the old one as the user wants.
 6. Confirm in plain words: what rule you added (type, target, size, expiry), its id, and how to undo it: "Say 'undo rule 4' and I will call `remove_rule` with id 4."
+
+### B2. The user says cards play too fast or too slow
+
+Beat cards (group chats, icebergs, threads, tier lists, flags, text memes) play piece by piece. Call `set_playback_speed(speed)`: 1.0 is normal. "A bit faster" is about 1.25, "much faster" 1.5 to 2, "a bit slower" 0.8, "much slower" 0.6. Read the current value from the last call's result if you have it, and change it relative to that. Say the new value and that the phone picks it up on its next refresh.
 
 ### C. Reset
 

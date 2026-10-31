@@ -28,6 +28,7 @@ from codescroll import (
     signals,
     social,
     srs,
+    steering,
 )
 from codescroll import feed as feedmod
 from codescroll.config import Config, load_config
@@ -275,11 +276,19 @@ class SPAStaticFiles(StaticFiles):
 
     async def get_response(self, path, scope):
         try:
-            return await super().get_response(path, scope)
+            res = await super().get_response(path, scope)
         except StarletteHTTPException as e:
             if e.status_code == 404 and not path.startswith("api/"):
-                return await super().get_response("index.html", scope)
-            raise
+                res = await super().get_response("index.html", scope)
+            else:
+                raise
+        # Hashed build files never change; everything else (index.html above all) must be
+        # checked each time, or a phone keeps loading old JavaScript after a rebuild.
+        immutable = path.startswith("_app/immutable/")
+        res.headers["Cache-Control"] = (
+            "public, max-age=31536000, immutable" if immutable else "no-cache"
+        )
+        return res
 
 
 def create_app(
@@ -474,6 +483,11 @@ def create_app(
         persona = cfg.personas.get(handle)
         svg = avatars.avatar_svg(handle, persona.name if persona else None)
         return Response(svg, media_type="image/svg+xml", headers={"Cache-Control": "no-cache"})
+
+    @app.get("/api/prefs")
+    def prefs():
+        with conn() as c:
+            return steering.get_prefs(c)
 
     @app.get("/healthz")
     def healthz():

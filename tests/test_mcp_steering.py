@@ -25,6 +25,7 @@ STEERING_TOOLS = {
     "recent_cards",
     "card_stats",
     "coverage",
+    "set_playback_speed",
 }
 
 
@@ -190,3 +191,14 @@ async def test_brief_skips_formats_whose_renderer_is_unavailable(
         brief = data(await client.call_tool("get_brief", {"count": 20}))
         assert "Skipping mascot_scene, comic" in brief["summary_markdown"]
         assert "meme" in {f for pk in brief["packets"] for f in pk["formats"]}
+
+
+async def test_set_playback_speed_changes_the_prefs_the_client_reads(server, fixture_repo, tmp_path):
+    from codescroll import db, steering
+
+    async with Client(server) as client:
+        res = data(await client.call_tool("set_playback_speed", {"speed": 1.5}))
+    assert res == {"playback_speed": 1.5}
+    cfg = make_config(fixture_repo, tmp_path)
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+        assert steering.get_prefs(conn) == {"playback_speed": 1.5}

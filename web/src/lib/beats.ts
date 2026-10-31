@@ -5,10 +5,21 @@ import type { Visual } from './types.ts';
 
 export type Beat = { shown: number; ms: number };
 
-const MIN_MS = 700;
-const MAX_MS = 2500;
-const BASE_MS = 400;
-const MS_PER_CHAR = 22;
+const MIN_MS = 600;
+const MAX_MS = 2000;
+const BASE_MS = 320;
+const MS_PER_CHAR = 18;
+
+// The viewer's playback speed (GET /api/prefs, set through the set_playback_speed MCP tool).
+let speed = 1;
+
+export function playbackSpeed(): number {
+	return speed;
+}
+
+export function setPlaybackSpeed(s: number): void {
+	if (Number.isFinite(s) && s > 0) speed = s;
+}
 
 // Each part in reveal order: a `key` the component uses to know which parts are shown, and
 // the `text` that sets how long its beat waits. A component given `shown` displays the first
@@ -66,7 +77,7 @@ function readMs(text: string): number {
 }
 
 export function beatsFor(visual: Visual): Beat[] {
-	return partsFor(visual).map((p, i) => ({ shown: i + 1, ms: readMs(p.text) }));
+	return partsFor(visual).map((p, i) => ({ shown: i + 1, ms: Math.round(readMs(p.text) / speed) }));
 }
 
 export function totalMs(beats: Beat[]): number {

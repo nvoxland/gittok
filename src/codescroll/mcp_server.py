@@ -408,6 +408,17 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
         return steering.add_repo(cfg, name, path, ref=ref, group=group, mascot=mascot)
 
     @tool
+    def set_playback_speed(cfg: Config, speed: float) -> dict:
+        """Set how fast beat cards (group chats, icebergs, threads...) play in the feed.
+
+        1.0 is normal; 1.5 is 50% faster; 0.75 is slower; allowed 0.25 to 4. The phone picks
+        it up on its next refresh. Use it when the user says cards play too fast or too slow.
+        Example: set_playback_speed(speed=1.3).
+        """
+        with _db(cfg) as conn:
+            return steering.set_playback_speed(conn, cfg, speed)
+
+    @tool
     def set_group(cfg: Config, repo: str, group: str | None) -> dict:
         """Put a repo in a group (created if new). group=null removes it from all groups.
 

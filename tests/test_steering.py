@@ -723,3 +723,14 @@ def test_config_edits_are_audited(ycfg):
     assert rows[0]["created_by"] == "tester"
     assert rows[0]["args"]["voice"] == "Bright."
     assert rows[1]["created_by"] == "agent" and rows[1]["timestamp"]
+
+
+def test_playback_speed_defaults_to_1_and_is_validated_and_audited(cfg, conn):
+    assert steering.get_prefs(conn) == {"playback_speed": 1.0}
+    assert steering.set_playback_speed(conn, cfg, 1.25) == {"playback_speed": 1.25}
+    assert steering.get_prefs(conn) == {"playback_speed": 1.25}
+    for bad in (0, 0.1, 5, "fast", True):
+        with pytest.raises(steering.SteeringError):
+            steering.set_playback_speed(conn, cfg, bad)
+    log = (cfg.settings.data_dir / "config_audit.log").read_text()
+    assert '"set_playback_speed"' in log

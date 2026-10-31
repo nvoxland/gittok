@@ -71,6 +71,25 @@ describe('feed page', () => {
 		expect(app.style.getPropertyValue('--chrome-h')).toMatch(/^\d+px$/);
 	});
 
+	it('applies the playback speed from /api/prefs before showing cards', async () => {
+		const beats = await import('#lib/beats.ts');
+		route({ '/api/feed': feed, '/api/prefs': { playback_speed: 1.5 } });
+		render(Page);
+		await screen.findByText('A hook');
+		expect(beats.playbackSpeed()).toBe(1.5);
+		beats.setPlaybackSpeed(1);
+	});
+
+	it('still shows the feed when /api/prefs fails', async () => {
+		fetchMock.mockImplementation(async (url: string) =>
+			url.startsWith('/api/prefs')
+				? { ok: false, status: 500, json: async () => ({}) }
+				: { ok: true, headers: { get: () => null }, json: async () => structuredClone(feed) }
+		);
+		render(Page);
+		expect(await screen.findByText('A hook')).toBeInTheDocument();
+	});
+
 	it('shows no stories row when there are no stories', async () => {
 		route({ '/api/feed': feed, '/api/stories': { stories: [] } });
 		render(Page);

@@ -948,3 +948,33 @@ def edit_persona(
     _edit_files(cfg, {"personas.yaml": lambda lines: _set_fields(lines, "personas", handle, final)})
     _audit(cfg, "edit_persona", {"handle": handle, **final}, created_by)
     return {"handle": handle, **final}
+
+
+# Viewer preferences (prefs table): read by the client at GET /api/prefs.
+PREF_DEFAULTS: dict[str, float] = {"playback_speed": 1.0}
+MIN_SPEED, MAX_SPEED = 0.25, 4.0
+
+
+def get_prefs(conn) -> dict:
+    prefs = dict(PREF_DEFAULTS)
+    for row in conn.execute("SELECT key, value FROM prefs"):
+        if row["key"] in prefs:
+            prefs[row["key"]] = json.loads(row["value"])
+    return prefs
+
+
+def set_playback_speed(conn, cfg, speed, created_by: str = "agent") -> dict:
+    """How fast beat cards play: 1.0 normal, 1.5 is 50% faster, 0.75 slower."""
+    if isinstance(speed, bool) or not isinstance(speed, int | float):
+        raise SteeringError("speed must be a number, for example 1.0 (normal) or 1.5 (faster).")
+    if not MIN_SPEED <= speed <= MAX_SPEED:
+        raise SteeringError(f"speed must be between {MIN_SPEED} and {MAX_SPEED}; 1.0 is normal.")
+    speed = round(float(speed), 2)
+    with conn:
+        conn.execute(
+            "INSERT INTO prefs(key, value, updated_at) VALUES ('playback_speed', ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            (json.dumps(speed), _iso(_now(None))),
+        )
+    _audit(cfg, "set_playback_speed", {"speed": speed}, created_by)
+    return {"playback_speed": speed}

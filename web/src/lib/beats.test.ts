@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { beatsFor, revealOrder, shownKeys, totalMs } from './beats.ts';
+import { afterEach, describe, expect, it } from 'vitest';
+import { beatsFor, revealOrder, setPlaybackSpeed, shownKeys, totalMs } from './beats.ts';
 import type { Visual } from './types.ts';
 import { templateFixtures, textMemeVisual as textMeme } from './components/fixtures.ts';
 
@@ -45,18 +45,18 @@ describe('beatsFor', () => {
 		expect(beatsFor(take)).toEqual([]);
 	});
 
-	it('keeps every beat between 0.7 and 2.5 seconds', () => {
+	it('keeps every beat between 0.6 and 2 seconds', () => {
 		const long = structuredClone(chat) as typeof chat & { data: { messages: { text: string }[] } };
 		long.data.messages[0].text = 'x'.repeat(500);
 		long.data.messages[1].text = 'x';
 		const ms = beatsFor(long).map((b) => b.ms);
-		expect(ms).toEqual([2500, 700]);
+		expect(ms).toEqual([2000, 600]);
 	});
 
-	it('gives a 55-character line about 1.6 seconds', () => {
+	it('gives a 55-character line about 1.3 seconds', () => {
 		const one = structuredClone(chat) as typeof chat & { data: { messages: { text: string }[] } };
 		one.data.messages[0].text = 'x'.repeat(55);
-		expect(beatsFor(one)[0].ms).toBe(1610);
+		expect(beatsFor(one)[0].ms).toBe(1310);
 	});
 
 
@@ -92,5 +92,22 @@ describe('shownKeys', () => {
 		const tl = templateFixtures.tier_list as { data: unknown };
 		expect([...shownKeys('tier_list', tl.data, 1)]).toEqual(['F']);
 		expect([...shownKeys('tier_list', tl.data, Infinity)]).toEqual(['F', 'S']);
+	});
+});
+
+describe('playback speed', () => {
+	afterEach(() => setPlaybackSpeed(1));
+
+	it('divides every beat by the speed the viewer chose', () => {
+		const normal = beatsFor(chat).map((b) => b.ms);
+		setPlaybackSpeed(2);
+		expect(beatsFor(chat).map((b) => b.ms)).toEqual(normal.map((ms) => Math.round(ms / 2)));
+	});
+
+	it('ignores nonsense speeds', () => {
+		const normal = beatsFor(chat).map((b) => b.ms);
+		setPlaybackSpeed(0);
+		setPlaybackSpeed(Number.NaN);
+		expect(beatsFor(chat).map((b) => b.ms)).toEqual(normal);
 	});
 });
