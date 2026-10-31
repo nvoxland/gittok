@@ -1,4 +1,7 @@
 import json
+import os
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -449,35 +452,33 @@ def test_install_apply_and_uninstall(cfg, tmp_path, monkeypatch, capsys):
 
 def _mcp_ui(cfg, monkeypatch, free=True):
     seen = {"order": []}
-    monkeypatch.setattr(cli, "create_app", lambda get, **kw: seen.update(app_kw=kw) or "app")
     monkeypatch.setattr(cli, "_port_free", lambda host, port: free)
     monkeypatch.setattr(
-        cli, "_start_ui", lambda app, host, port: seen["order"].append(("ui", app, host, port))
+        cli, "_spawn_ui", lambda cmd, env: seen["order"].append(("ui", cmd, env)) or "proc"
     )
+    monkeypatch.setattr(cli, "_stop_at_exit", lambda proc: seen.update(stopped=proc))
     monkeypatch.setattr(cli.mcp_server, "main", lambda: seen["order"].append("mcp"))
-    monkeypatch.setattr(cli.social, "lan_addresses", lambda: ["192.168.1.5"])
     return seen
 
 
-def test_mcp_ui_starts_the_feed_before_stdio_and_keeps_stdout_clean(cfg, monkeypatch, capsys):
+def test_mcp_ui_runs_a_reloading_feed_child_before_stdio(cfg, monkeypatch, capsys):
     seen = _mcp_ui(cfg, monkeypatch)
     assert cli.main(["mcp", "--ui"]) == 0
-    assert seen["order"] == [("ui", "app", "127.0.0.1", 8008), "mcp"]
-    assert seen["app_kw"]["render_worker"] is True
-    out, err = capsys.readouterr()
-    assert out == ""  # stdout carries the MCP protocol
-    assert "feed: http://127.0.0.1:8008" in err
+    ((tag, cmd, env), mcp) = seen["order"]
+    assert (tag, mcp) == ("ui", "mcp")
+    assert cmd[1:] == [
+        "-m", "codescroll", "serve", "--reload", "--host", "127.0.0.1", "--port", "8008",
+    ]  # fmt: skip
+    assert env["CODESCROLL_PARENT_PID"] == str(os.getpid())
+    assert seen["stopped"] == "proc"
+    assert capsys.readouterr().out == ""  # stdout carries the MCP protocol
 
 
-def test_mcp_ui_lan_binds_all_interfaces_and_prints_pairing_to_stderr(cfg, monkeypatch, capsys):
+def test_mcp_ui_lan_passes_lan_to_the_child(cfg, monkeypatch):
     seen = _mcp_ui(cfg, monkeypatch)
     assert cli.main(["mcp", "--ui", "--lan"]) == 0
-    assert seen["order"][0][2] == "0.0.0.0"
-    tok = (cfg.settings.data_dir / "lan_token").read_text().strip()
-    assert seen["app_kw"]["lan_token"] == tok
-    out, err = capsys.readouterr()
-    assert out == ""
-    assert f"http://192.168.1.5:8008/pair?t={tok}" in err
+    cmd = seen["order"][0][1]
+    assert cmd[-1] == "--lan" and "0.0.0.0" in cmd
 
 
 def test_mcp_ui_skips_the_feed_when_the_port_is_taken(cfg, monkeypatch, capsys):
@@ -485,6 +486,50 @@ def test_mcp_ui_skips_the_feed_when_the_port_is_taken(cfg, monkeypatch, capsys):
     assert cli.main(["mcp", "--ui"]) == 0
     assert seen["order"] == ["mcp"]
     assert "8008 is in use" in capsys.readouterr().err
+
+
+def test_serve_reload_runs_the_app_factory_with_reload(cfg, monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(cli.uvicorn, "run", lambda app, **kw: calls.append((app, kw)))
+    monkeypatch.setattr(cli.social, "lan_addresses", lambda: ["192.168.1.5"])
+    monkeypatch.delenv("CODESCROLL_LAN_TOKEN", raising=False)
+    assert cli.main(["serve", "--reload", "--lan"]) == 0
+    ((app, kw),) = calls
+    assert app == "codescroll.cli:reload_app"
+    assert kw["factory"] is True and kw["reload"] is True
+    assert kw["reload_dirs"] == [str(Path(cli.__file__).parent)]
+    assert kw["host"] == "0.0.0.0"
+    tok = (cfg.settings.data_dir / "lan_token").read_text().strip()
+    assert os.environ["CODESCROLL_LAN_TOKEN"] == tok  # the reloaded worker reads it
+    assert "pair:" in capsys.readouterr().out
+
+
+def test_reload_app_builds_the_feed_app_from_the_environment(cfg, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(cli, "create_app", lambda get, **kw: seen.update(kw) or "app")
+    monkeypatch.setenv("CODESCROLL_LAN_TOKEN", "tok")
+    monkeypatch.delenv("CODESCROLL_PARENT_PID", raising=False)
+    assert cli.reload_app() == "app"
+    assert seen["lan_token"] == "tok" and seen["render_worker"] is True
+
+
+def test_watch_parent_calls_back_once_the_parent_is_gone():
+    import subprocess
+    import threading
+
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    proc.wait()
+    gone = threading.Event()
+    cli._watch_parent(proc.pid, gone.set, interval=0.01)
+    assert gone.wait(2)
+
+
+def test_watch_parent_stays_quiet_while_the_parent_lives():
+    import threading
+
+    gone = threading.Event()
+    cli._watch_parent(os.getpid(), gone.set, interval=0.01)
+    assert not gone.wait(0.1)
 
 
 def test_port_free_sees_a_listening_socket():

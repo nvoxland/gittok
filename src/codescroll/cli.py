@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import os
+import signal
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -145,8 +148,53 @@ def _bind(args) -> tuple[str, int]:
 def _serve(args) -> int:
     host, port = _bind(args)
     lan_token = _banner(port, host, args.lan, sys.stdout)
-    uvicorn.run(_feed_app(lan_token), host=host, port=port)
+    if not args.reload:
+        uvicorn.run(_feed_app(lan_token), host=host, port=port)
+        return 0
+    # The reloaded worker is a fresh process: it gets the token through the environment.
+    if lan_token:
+        os.environ["CODESCROLL_LAN_TOKEN"] = lan_token
+    else:
+        os.environ.pop("CODESCROLL_LAN_TOKEN", None)
+    uvicorn.run(
+        "codescroll.cli:reload_app",
+        factory=True,
+        reload=True,
+        reload_dirs=[str(Path(__file__).parent)],
+        host=host,
+        port=port,
+    )
     return 0
+
+
+def reload_app():
+    """App factory for `serve --reload`; stops the server when the MCP parent is gone."""
+    parent = os.environ.get("CODESCROLL_PARENT_PID")
+    if parent:
+        _watch_parent(int(parent), _stop_reloader)
+    return _feed_app(os.environ.get("CODESCROLL_LAN_TOKEN"))
+
+
+def _stop_reloader() -> None:
+    os.kill(os.getppid(), signal.SIGTERM)  # the uvicorn reloader, which started this worker
+    os._exit(0)
+
+
+def _watch_parent(pid: int, on_gone, interval: float = 1.0) -> None:
+    """Call `on_gone` from a daemon thread once process `pid` no longer exists."""
+
+    def loop():
+        while True:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                on_gone()
+                return
+            except PermissionError:
+                pass  # exists, owned by someone else
+            time.sleep(interval)
+
+    threading.Thread(target=loop, name="codescroll-parent-watch", daemon=True).start()
 
 
 def _notify(args) -> int:
@@ -384,18 +432,25 @@ def _port_free(host: str, port: int) -> bool:
         return s.connect_ex(("127.0.0.1" if host == "0.0.0.0" else host, port)) != 0
 
 
-def _start_ui(app, host: str, port: int) -> None:
-    """Serve `app` from a daemon thread; it stops when the stdio MCP session ends."""
-    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="warning"))
-    threading.Thread(target=server.run, name="codescroll-ui", daemon=True).start()
+def _spawn_ui(cmd: list[str], env: dict) -> subprocess.Popen:
+    # stdout carries the MCP protocol, so the child writes everything to stderr.
+    err = sys.stderr.fileno()
+    return subprocess.Popen(cmd, env=env, stdin=subprocess.DEVNULL, stdout=err, stderr=err)
+
+
+def _stop_at_exit(proc: subprocess.Popen) -> None:
+    atexit.register(proc.terminate)  # a hard kill is covered by the child's parent watch
 
 
 def _mcp(args) -> int:
     if args.ui:
         host, port = _bind(args)
         if _port_free(host, port):
-            # stdout carries the MCP protocol, so everything else goes to stderr.
-            _start_ui(_feed_app(_banner(port, host, args.lan, sys.stderr)), host, port)
+            # A child `serve --reload` picks up feed and API code changes on save.
+            cmd = [sys.executable, "-m", "codescroll", "serve", "--reload"]
+            cmd += ["--host", host, "--port", str(port)] + (["--lan"] if args.lan else [])
+            env = {**os.environ, "CODESCROLL_PARENT_PID": str(os.getpid())}
+            _stop_at_exit(_spawn_ui(cmd, env))
         else:
             print(f"port {port} is in use: feed not started, MCP only", file=sys.stderr)
     mcp_server.main()
@@ -437,6 +492,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--host")
     p.add_argument("--port", type=int)
     p.add_argument("--lan", action="store_true", help="bind 0.0.0.0 and print LAN URLs")
+    p.add_argument("--reload", action="store_true", help="restart when src/codescroll changes")
     p.set_defaults(fn=_serve)
     p = sub.add_parser("mcp", help="stdio MCP server; --ui also serves the feed")
     p.add_argument("--ui", action="store_true", help="serve the feed while the session runs")
