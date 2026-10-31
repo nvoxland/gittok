@@ -20,6 +20,7 @@ log = logging.getLogger(__name__)
 DAY_S = 86400
 MAX_STORY_COMMITS = 10
 HOT_FILE_COMMITS = 3
+HOT_FILE_SHOWN = 3
 FMT = "%Y-%m-%dT%H:%M:%SZ"
 
 _CACHE: dict[tuple[str, str], list[dict]] = {}
@@ -123,6 +124,19 @@ def _plural(n: int, one: str, many: str) -> str:
     return f"{n} {one if n == 1 else many}"
 
 
+def _hot_text(repo: str, hot: list[tuple[int, str]]) -> str:
+    def base(path: str) -> str:
+        return path.rsplit("/", 1)[-1]
+
+    if len(hot) == 1:
+        n, path = hot[0]
+        return f"{base(path)} was in {n} commits in the last 24 hours"
+    (n0, p0), *rest = hot[:HOT_FILE_SHOWN]
+    parts = [f"{base(p0)} ({n0} commits)", *(f"{base(p)} ({n})" for n, p in rest)]
+    more = len(hot) - HOT_FILE_SHOWN
+    return f"Busy day in {repo}: " + ", ".join(parts) + (f" and {more} more" if more > 0 else "")
+
+
 def generate_notifications(conn, cfg: Config, now: datetime) -> dict[str, int]:
     """One idempotent pass. Returns how many notifications of each kind were created."""
     made = dict.fromkeys(("new_cards", "srs_due", "hot_file", "new_kind"), 0)
@@ -158,18 +172,19 @@ def generate_notifications(conn, cfg: Config, now: datetime) -> dict[str, int]:
         except gitq.GitError:
             log.warning("hot files: cannot read %s", name)
             continue
-        shas_by_path: dict[str, list[str]] = {}
-        for c in commits:  # newest first
+        counts: dict[str, int] = {}
+        for c in commits:
             for f in set(c["files"]):
-                shas_by_path.setdefault(f, []).append(c["sha"])
-        for path, shas in sorted(shas_by_path.items()):
-            n = len(shas)
-            if n >= HOT_FILE_COMMITS:
-                base = path.rsplit("/", 1)[-1]
-                made["hot_file"] += _add(
-                    conn, "hot_file", f"{base} was in {n} commits in the last 24 hours",
-                    f"hot_file:{name}:{path}:{shas[HOT_FILE_COMMITS - 1]}", now,
-                )  # fmt: skip
+                if not f.startswith("."):  # .beads/, .claude/ and the like change with every commit
+                    counts[f] = counts.get(f, 0) + 1
+        hot = sorted(
+            ((n, path) for path, n in counts.items() if n >= HOT_FILE_COMMITS),
+            key=lambda t: (-t[0], t[1]),
+        )
+        if hot:
+            # One notification per repo per day, however many files or commits follow.
+            key = f"hot_file:{name}:{now.date()}"
+            made["hot_file"] += _add(conn, "hot_file", _hot_text(name, hot), key, now)
 
     for c in conn.execute(
         "SELECT c.id, c.spec, r.name AS repo FROM cards c JOIN repos r ON r.id = c.repo_id "

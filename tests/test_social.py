@@ -1,5 +1,6 @@
 import os
 import subprocess
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -227,7 +228,43 @@ def test_hot_file_for_files_in_three_commits_once_per_day(cfg, conn):
     assert social.generate_notifications(conn, cfg, NOW)["hot_file"] == 0
     assert social.generate_notifications(conn, cfg, NOW + timedelta(minutes=5))["hot_file"] == 0
     key = conn.execute("SELECT dedup_key FROM notifications WHERE kind='hot_file'").fetchone()[0]
-    assert str(NOW.date()) not in key
+    assert str(NOW.date()) in key
+
+
+def _busy_cfg(tmp_path, extra=()):
+    repo = tmp_path / "busy"
+    make_repo(
+        repo,
+        [
+            (6, "Ann", "one", ["brief.py", "cli.py", "api.py", "db.py", ".beads/issues.jsonl"]),
+            (5, "Ann", "two", ["brief.py", "cli.py", "api.py", "db.py", ".beads/issues.jsonl"]),
+            (4, "Ann", "three", ["brief.py", "cli.py", "api.py", "db.py", ".beads/issues.jsonl"]),
+            (3, "Ann", "four", ["brief.py", "cli.py", ".beads/issues.jsonl"]),
+            (2, "Ann", "five", ["brief.py", ".beads/issues.jsonl"]),
+            *extra,
+        ],
+    )
+    return make_config(FixtureRepo(path=repo), tmp_path / "cfg")
+
+
+def test_hot_files_in_one_repo_make_one_digest_without_dot_dirs(tmp_path):
+    cfg = _busy_cfg(tmp_path)
+    with closing(db.open_db(cfg.settings.data_dir / "codescroll.db")) as conn:
+        assert social.generate_notifications(conn, cfg, NOW)["hot_file"] == 1
+        (text,) = texts(conn, "hot_file")
+    assert text.startswith("Busy day in ")
+    assert text.endswith(": brief.py (5 commits), cli.py (4), api.py (3) and 1 more")
+    assert "issues.jsonl" not in text
+
+
+def test_more_commits_to_a_hot_file_the_same_day_do_not_notify_again(tmp_path):
+    cfg = _busy_cfg(tmp_path, extra=[(1, "Ann", "six", ["brief.py", "cli.py"])])
+    with closing(db.open_db(cfg.settings.data_dir / "codescroll.db")) as conn:
+        social.generate_notifications(conn, cfg, NOW - timedelta(minutes=90))
+        social.clear_cache()
+        assert social.generate_notifications(conn, cfg, NOW)["hot_file"] == 0
+        assert social.generate_notifications(conn, cfg, NOW + timedelta(days=1))["hot_file"] == 0
+        assert len(texts(conn, "hot_file")) == 1
 
 
 def test_new_kind_for_spot_the_bug_card(cfg, conn):
