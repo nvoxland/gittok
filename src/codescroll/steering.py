@@ -973,7 +973,8 @@ def set_playback_speed(conn, cfg, speed, created_by: str = "agent") -> dict:
     with conn:
         conn.execute(
             "INSERT INTO prefs(key, value, updated_at) VALUES ('playback_speed', ?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, "
+            "updated_at = excluded.updated_at",
             (json.dumps(speed), _iso(_now(None))),
         )
     _audit(cfg, "set_playback_speed", {"speed": speed}, created_by)

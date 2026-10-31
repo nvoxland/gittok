@@ -193,7 +193,7 @@ async def test_brief_skips_formats_whose_renderer_is_unavailable(
         assert "meme" in {f for pk in brief["packets"] for f in pk["formats"]}
 
 
-async def test_set_playback_speed_changes_the_prefs_the_client_reads(server, fixture_repo, tmp_path):
+async def test_set_playback_speed_changes_client_prefs(server, fixture_repo, tmp_path):
     from codescroll import db, steering
 
     async with Client(server) as client:
