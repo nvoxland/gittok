@@ -28,14 +28,11 @@
 	let row: HTMLElement | undefined = $state();
 	let answered = $state(card.interaction ? getAnswer(card.id) !== undefined : true);
 	let liked = $state(getFlags(card.id).liked ?? false);
-	let saved = $state(getFlags(card.id).saved ?? false);
 
-	function toggle(flag: 'liked' | 'saved') {
-		const on = flag === 'liked' ? !liked : !saved;
-		if (flag === 'liked') liked = on;
-		else saved = on;
-		setFlag(card.id, flag, on);
-		onAction?.(flag === 'liked' ? 'like' : 'save', { on });
+	function toggleLike() {
+		liked = !liked;
+		setFlag(card.id, 'liked', liked);
+		onAction?.('like', { on: liked });
 	}
 
 	let panel = $state(0);
@@ -142,11 +139,8 @@
 		{/if}
 	</div>
 	<div class="actions">
-		<button type="button" aria-pressed={liked} aria-label="Like" onclick={() => toggle('liked')}>
+		<button type="button" aria-pressed={liked} aria-label="Like" onclick={toggleLike}>
 			{liked ? '♥' : '♡'}
-		</button>
-		<button type="button" aria-pressed={saved} aria-label="Save" onclick={() => toggle('saved')}>
-			{saved ? '★' : '☆'}
 		</button>
 		{#if showComments}
 			<!-- Jumps to the comments panel; the panel change itself is the depth_open signal. -->
@@ -247,7 +241,7 @@
 	h2 {
 		flex: none;
 		margin: 0;
-		padding-right: 52px; /* clear of the like/save/explain buttons */
+		padding-right: 52px; /* clear of the like and comments buttons */
 		font-size: 1.25rem;
 		display: -webkit-box;
 		-webkit-box-orient: vertical;

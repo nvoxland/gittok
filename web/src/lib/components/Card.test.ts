@@ -187,14 +187,9 @@ describe('Card actions', () => {
 		expect(screen.getByRole('button', { name: /like/i })).toHaveAttribute('aria-pressed', 'true');
 	});
 
-	it('save toggles and emits {on}', async () => {
-		const calls: [string, Record<string, unknown> | undefined][] = [];
-		render(Card, { card: fakeCard({ id: 'c_save' }), onAction: (t: string, d?: Record<string, unknown>) => calls.push([t, d]) });
-		const btn = screen.getByRole('button', { name: /save/i });
-		await fireEvent.click(btn);
-		expect(btn).toHaveAttribute('aria-pressed', 'true');
-		expect(calls).toEqual([['save', { on: true }]]);
-		expect(JSON.parse(localStorage.getItem('codescroll.card-state')!).c_save.saved).toBe(true);
+	it('has no save button: Like is the only reaction', () => {
+		render(Card, { card: fakeCard() });
+		expect(screen.queryByRole('button', { name: /save/i })).toBeNull();
 	});
 
 	it('a comments button with the count jumps to the comments panel', async () => {

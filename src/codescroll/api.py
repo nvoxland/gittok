@@ -389,24 +389,6 @@ def create_app(
             )
         return result
 
-    @app.get("/api/saved")
-    def saved():
-        with conn() as c:
-            latest: dict[str, tuple[int, bool]] = {}
-            for e in c.execute(
-                "SELECT card_id, ts, data FROM events WHERE type = 'save' "
-                "AND card_id IS NOT NULL ORDER BY ts, id"
-            ):
-                latest[e["card_id"]] = (e["ts"], bool((db.loads(e["data"]) or {}).get("on", True)))
-            ids = sorted((k for k, (_, on) in latest.items() if on), key=lambda k: -latest[k][0])
-            rows = {
-                r["id"]: r
-                for r in c.execute(
-                    f"SELECT * FROM cards WHERE id IN ({','.join('?' * len(ids))})", ids
-                )
-            }
-        return {"cards": [public_card(rows[i]) for i in ids if i in rows]}
-
     @app.get("/api/stories")
     def stories():
         with closing(conn()) as c:

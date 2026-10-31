@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchCard, fetchFeed, fetchStories, fetchNotifications, markNotificationsRead, markStoriesSeen, fetchRepo, fetchSaved, postAnswer, postEvents } from './api';
+import { fetchCard, fetchFeed, fetchStories, fetchNotifications, markNotificationsRead, markStoriesSeen, fetchRepo, postAnswer, postEvents } from './api';
 
 const fetchMock = vi.fn();
 
@@ -81,14 +81,6 @@ describe('postAnswer', () => {
 	it('throws on non-ok', async () => {
 		fetchMock.mockResolvedValue({ ok: false, status: 404 });
 		await expect(postAnswer('c_1', 0)).rejects.toThrow('404');
-	});
-});
-
-describe('fetchSaved', () => {
-	it('gets /api/saved and returns the cards', async () => {
-		fetchMock.mockResolvedValue({ ok: true, json: async () => ({ cards: [{ id: 'c_1' }] }) });
-		expect(await fetchSaved()).toEqual([{ id: 'c_1' }]);
-		expect(fetchMock.mock.calls[0][0]).toBe('/api/saved');
 	});
 });
 

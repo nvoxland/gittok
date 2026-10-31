@@ -51,12 +51,6 @@ export async function postAnswer(card_id: string, choice: number): Promise<Answe
 	return (await res.json()) as AnswerResponse;
 }
 
-export async function fetchSaved(): Promise<Card[]> {
-	const res = await fetch('/api/saved');
-	if (!res.ok) throw new Error(`GET /api/saved failed: ${res.status}`);
-	return ((await res.json()) as { cards: Card[] }).cards;
-}
-
 export async function fetchStories(): Promise<Story[]> {
 	const res = await fetch('/api/stories');
 	if (!res.ok) throw new Error(`GET /api/stories failed: ${res.status}`);

@@ -11,14 +11,14 @@ afterEach(() => {
 });
 
 describe('feed page', () => {
-	it('has a Saved link in the top bar', async () => {
+	it('has no Saved link in the top bar', async () => {
 		fetchMock.mockResolvedValue({
 			ok: true,
 			json: async () => ({ cards: [fakeCard({ hook: 'A hook' })], next_cursor: null })
 		});
 		render(Page);
 		expect(await screen.findByText('A hook')).toBeInTheDocument();
-		expect(screen.getByRole('link', { name: 'Saved' })).toHaveAttribute('href', '/saved');
+		expect(screen.queryByRole('link', { name: 'Saved' })).toBeNull();
 	});
 
 	function route(map: Record<string, unknown>, feedHeaders: Record<string, string> = {}) {
@@ -51,13 +51,13 @@ describe('feed page', () => {
 		expect(screen.getByRole('link', { name: /Notifications/ })).toHaveAttribute('href', '/notifications');
 	});
 
-	it('puts stories, Saved and the bell in one top bar above the feed, not over it', async () => {
+	it('puts stories and the bell in one top bar above the feed, not over it', async () => {
 		route({ '/api/feed': feed, '/api/stories': stories, '/api/notifications': { notifications: [], unread: 0 } });
 		const { container } = render(Page);
 		await screen.findByText('A hook');
 		const bar = await screen.findByRole('banner', { name: 'Top bar' });
 		expect(bar).toContainElement(await screen.findByRole('list', { name: 'Stories' }));
-		expect(bar).toContainElement(screen.getByRole('link', { name: 'Saved' }));
+		expect(bar).toContainElement(screen.getByRole('link', { name: /Notifications/ }));
 		const feedEl = container.querySelector('.feed')!;
 		expect(bar.compareDocumentPosition(feedEl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 		expect(bar.contains(feedEl)).toBe(false);

@@ -1,9 +1,9 @@
-// Per-card like/save state and per-session quiz answers.
+// Per-card like state and per-session quiz answers.
 // Memory first; localStorage / sessionStorage are best-effort.
 const KEY = 'codescroll.card-state';
 const ANSWER_KEY = 'codescroll.answers';
 
-export type CardFlags = { liked?: boolean; saved?: boolean };
+export type CardFlags = { liked?: boolean };
 
 let flagsCache: Record<string, CardFlags> | undefined;
 let answersCache: Record<string, StoredAnswer> | undefined;
