@@ -39,7 +39,6 @@
 		gap: 12px;
 		overflow-x: auto;
 		padding: 8px 16px;
-		padding-right: 120px;
 		scrollbar-width: none;
 	}
 	.story {

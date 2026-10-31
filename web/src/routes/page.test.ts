@@ -51,6 +51,18 @@ describe('feed page', () => {
 		expect(screen.getByRole('link', { name: /Notifications/ })).toHaveAttribute('href', '/notifications');
 	});
 
+	it('puts stories, Saved and the bell in one top bar above the feed, not over it', async () => {
+		route({ '/api/feed': feed, '/api/stories': stories, '/api/notifications': { notifications: [], unread: 0 } });
+		const { container } = render(Page);
+		await screen.findByText('A hook');
+		const bar = await screen.findByRole('banner', { name: 'Top bar' });
+		expect(bar).toContainElement(await screen.findByRole('list', { name: 'Stories' }));
+		expect(bar).toContainElement(screen.getByRole('link', { name: 'Saved' }));
+		const feedEl = container.querySelector('.feed')!;
+		expect(bar.compareDocumentPosition(feedEl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(bar.contains(feedEl)).toBe(false);
+	});
+
 	it('shows no stories row when there are no stories', async () => {
 		route({ '/api/feed': feed, '/api/stories': { stories: [] } });
 		render(Page);

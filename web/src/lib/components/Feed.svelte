@@ -84,7 +84,7 @@
 
 <style>
 	.feed {
-		height: 100dvh;
+		height: 100%;
 		overflow-y: auto;
 		scroll-snap-type: y mandatory;
 	}

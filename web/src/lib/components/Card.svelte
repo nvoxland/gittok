@@ -132,7 +132,7 @@
 <style>
 	article {
 		position: relative;
-		height: 100dvh;
+		height: 100%;
 		scroll-snap-align: start;
 		display: flex;
 		flex-direction: column;
@@ -140,7 +140,6 @@
 	}
 	header {
 		display: flex;
-		padding-right: 4.5rem; /* room for the feed top bar link */
 		gap: 0.5rem;
 		align-items: center;
 		font-size: 0.85rem;
@@ -148,8 +147,14 @@
 	.persona {
 		color: var(--muted);
 		min-width: 0;
+		display: flex;
 	}
 	.repo {
+		flex: 0 1 auto;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 		color: inherit;
 		font-weight: 600;
 		text-decoration: none;
@@ -158,7 +163,9 @@
 		text-decoration: underline;
 	}
 	.tone {
+		flex: none;
 		margin-left: auto;
+		white-space: nowrap;
 		border: 1px solid var(--border);
 		border-radius: 999px;
 		padding: 0.1rem 0.6rem;
@@ -174,7 +181,9 @@
 	section {
 		flex: 0 0 100%;
 		scroll-snap-align: start;
+		min-width: 0;
 		overflow-y: auto;
+		overflow-wrap: anywhere; /* long paths and identifiers wrap instead of widening the card */
 		padding: 1rem 0;
 	}
 	h2 {

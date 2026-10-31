@@ -66,16 +66,18 @@
 	}
 </script>
 
-<nav class="topbar">
-	<a href="/saved">Saved</a>
-	<NotificationBell />
-</nav>
+<div class="app">
+<header class="chrome" aria-label="Top bar">
+	<div class="stories-slot"><StoriesRow {stories} onOpen={(i) => (openStory = i)} /></div>
+	<nav class="links">
+		<a href="/saved">Saved</a>
+		<NotificationBell />
+	</nav>
+</header>
 
 {#if fromCache}
 	<p class="offline" role="status">Offline &mdash; showing your last batch</p>
 {/if}
-
-<div class="storiesbar"><StoriesRow {stories} onOpen={(i) => (openStory = i)} /></div>
 
 {#if openStory !== null && stories[openStory]}
 	{@const active = stories[openStory]}
@@ -84,44 +86,55 @@
 	{/key}
 {/if}
 
-{#if error}
-	<p class="status error" role="alert">Failed to load feed: {error}</p>
-{:else if loading}
-	<p class="status">Loading...</p>
-{:else if cards.length === 0}
-	<p class="status">No cards yet</p>
-{:else}
-	<Feed {cards} onEvent={(e) => batcher.push(e)} />
-{/if}
+<main>
+	{#if error}
+		<p class="status error" role="alert">Failed to load feed: {error}</p>
+	{:else if loading}
+		<p class="status">Loading...</p>
+	{:else if cards.length === 0}
+		<p class="status">No cards yet</p>
+	{:else}
+		<Feed {cards} onEvent={(e) => batcher.push(e)} />
+	{/if}
+</main>
+</div>
 
 <style>
-	.topbar {
-		position: fixed;
-		top: 0;
-		right: 0;
-		z-index: 10;
+	/* The top bar takes its own row, so it never covers a card's header. */
+	.app {
+		height: 100dvh;
+		display: flex;
+		flex-direction: column;
+	}
+	.chrome {
+		flex: none;
 		display: flex;
 		align-items: center;
-		padding: 0.5rem 16px;
+		border-bottom: 1px solid var(--border);
 	}
-	.topbar a {
+	.stories-slot {
+		flex: 1;
+		min-width: 0;
+	}
+	.links {
+		flex: none;
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin-left: auto;
+		padding: 0 16px 0 8px;
+	}
+	main {
+		flex: 1;
+		min-height: 0;
+	}
+	.links a {
 		display: inline-flex;
 		align-items: center;
 		min-height: 44px;
 		color: var(--muted);
 		text-decoration: none;
 		font-size: 0.85rem;
-	}
-	.storiesbar {
-		position: fixed;
-		top: 0;
-		left: 0;
-		right: 0;
-		z-index: 9;
-		pointer-events: none;
-	}
-	.storiesbar :global(.stories) {
-		pointer-events: auto;
 	}
 	.offline {
 		position: fixed;
@@ -140,7 +153,7 @@
 	.status {
 		display: grid;
 		place-items: center;
-		height: 100dvh;
+		height: 100%;
 		margin: 0;
 		color: var(--muted);
 	}
