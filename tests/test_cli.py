@@ -541,3 +541,19 @@ def test_port_free_sees_a_listening_socket():
         port = s.getsockname()[1]
         assert cli._port_free("127.0.0.1", port) is False
     assert cli._port_free("127.0.0.1", port) is True
+
+
+def test_refit_export_and_apply_call_the_refit_module(cfg, monkeypatch, capsys, tmp_path):
+    seen = []
+    bad = {"card_id": "c2", "reason": "too_long", "detail": "x"}
+    monkeypatch.setattr(cli.refit, "export", lambda conn, d: seen.append(("export", d)) or ["c1"])
+    monkeypatch.setattr(
+        cli.refit, "apply",
+        lambda conn, c, d: seen.append(("apply", d)) or {"replaced": ["c1"], "rejected": [bad]},
+    )  # fmt: skip
+    assert cli.main(["refit", "--export", str(tmp_path)]) == 0
+    assert "1 card" in capsys.readouterr().out
+    assert cli.main(["refit", "--apply", str(tmp_path)]) == 1
+    out = capsys.readouterr().out
+    assert "replaced 1" in out and "c2 too_long: x" in out
+    assert seen == [("export", tmp_path), ("apply", tmp_path)]

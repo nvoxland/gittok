@@ -25,6 +25,7 @@ from codescroll import (
     learning,
     mcp_server,
     profile,
+    refit,
     render,
     signals,
     social,
@@ -442,6 +443,20 @@ def _stop_at_exit(proc: subprocess.Popen) -> None:
     atexit.register(proc.terminate)  # a hard kill is covered by the child's parent watch
 
 
+def _refit(args) -> int:
+    cfg = load_config()
+    with closing(db.open_db(_db_path(cfg))) as conn:
+        if args.export:
+            ids = refit.export(conn, Path(args.export))
+            print(f"exported {len(ids)} card(s) that do not fit to {args.export}")
+            return 0
+        res = refit.apply(conn, cfg, Path(args.apply))
+    print(f"replaced {len(res['replaced'])}")
+    for r in res["rejected"]:
+        print(f"{r['card_id']} {r['reason']}: {r['detail']}")
+    return 1 if res["rejected"] else 0
+
+
 def _mcp(args) -> int:
     if args.ui:
         host, port = _bind(args)
@@ -500,6 +515,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--port", type=int)
     p.add_argument("--lan", action="store_true", help="with --ui: bind 0.0.0.0, print LAN URLs")
     p.set_defaults(fn=_mcp)
+    p = sub.add_parser("refit", help="rewrite stored cards that do not fit the card front")
+    g = p.add_mutually_exclusive_group(required=True)
+    g.add_argument("--export", metavar="DIR", help="write cards that do not fit as JSON files")
+    g.add_argument("--apply", metavar="DIR", help="validate rewritten files and replace cards")
+    p.set_defaults(fn=_refit)
     p = sub.add_parser("notify", help="generate notifications once")
     p.set_defaults(fn=_notify)
     p = sub.add_parser("learn", help="turn new impressions into rewards and update weights once")
