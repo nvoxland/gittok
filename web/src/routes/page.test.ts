@@ -63,12 +63,12 @@ describe('feed page', () => {
 		expect(bar.contains(feedEl)).toBe(false);
 	});
 
-	it('gives the feed an exact height below the top bar, not a percentage', async () => {
+	it('tells the first card how tall the top bar is', async () => {
 		route({ '/api/feed': feed, '/api/stories': { stories: [] } });
 		const { container } = render(Page);
 		await screen.findByText('A hook');
 		const app = container.querySelector('.app') as HTMLElement;
-		expect(app.style.getPropertyValue('--feed-h')).toMatch(/^calc\(100dvh - \d+px\)$/);
+		expect(app.style.getPropertyValue('--chrome-h')).toMatch(/^\d+px$/);
 	});
 
 	it('shows no stories row when there are no stories', async () => {

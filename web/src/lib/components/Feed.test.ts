@@ -64,6 +64,18 @@ describe('Feed', () => {
 			observers = [];
 		});
 
+		it('watches cards against the viewport, because the page itself scrolls', () => {
+			const { io } = setup();
+			expect(io.options?.root ?? null).toBeNull();
+		});
+
+		it('marks only the first card as first (it shares the screen with the top bar)', () => {
+			const { container } = setup();
+			const articles = container.querySelectorAll('article');
+			expect(articles[0]).toHaveClass('first');
+			expect(articles[1]).not.toHaveClass('first');
+		});
+
 		function setup() {
 			vi.stubGlobal('IntersectionObserver', FakeIO);
 			const events: FeedEvent[] = [];

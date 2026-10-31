@@ -38,19 +38,19 @@
 `visual`: `{"kind": "diagram", "title": "Request flow", "mermaid": "flowchart LR\n  A[api] --> B[store]"}`. `mermaid`: at most 2000 characters, valid Mermaid. Good: 4 to 8 nodes that are real modules or functions.
 
 ### Format: `iceberg`
-`visual`: `{"kind": "template", "template": "iceberg", "data": {"title", "layers": [{"label", "items": [str, 1 to 5]}]}}`. 3 to 6 layers, surface first, deepest last. Strings at most 200 characters. Good: each layer is more obscure than the one above.
+`visual`: `{"kind": "template", "template": "iceberg", "data": {"title", "layers": [{"label", "items": [str, 1 to 5]}]}}`. 3 or 4 layers, surface first, deepest last, 1 or 2 items each, each under 60 characters (the front budget). Good: each layer is more obscure than the one above.
 
 ### Format: `tier_list`
-`visual`: `{"kind": "template", "template": "tier_list", "data": {"title", "rows": [{"tier": "S", "items": [{"name", "why"}]}]}}`. 2 to 6 rows; `tier` is `S`, `A`, `B`, `C`, `D` or `F`; 1 to 4 items per row. Good: real files or functions, and a one-line reason for each rank.
+`visual`: `{"kind": "template", "template": "tier_list", "data": {"title", "rows": [{"tier": "S", "items": [{"name", "why"}]}]}}`. 2 to 4 rows; `tier` is `S`, `A`, `B`, `C`, `D` or `F`; 1 or 2 items per row, `why` under 50 characters. Good: real files or functions, and a one-line reason for each rank.
 
 ### Format: `group_chat`
-`visual`: `{"kind": "template", "template": "group_chat", "data": {"title", "messages": [{"from": account, "text"}]}}`. 2 to 10 messages. `from` is a persona handle (`greybeard`) or a code account `repo:path`. Good: files "talk" like their role in the code.
+`visual`: `{"kind": "template", "template": "group_chat", "data": {"title", "messages": [{"from": account, "text"}]}}`. 3 to 6 messages, each under 80 characters. `from` is a persona handle (`greybeard`) or a code account `repo:path`. Good: files "talk" like their role in the code.
 
 ### Format: `flags`
-`visual`: `{"kind": "template", "template": "flags", "data": {"subject", "red": [str], "green": [str]}}`. 0 to 5 of each, at least one flag in total. Good: every flag is a checkable fact about the subject.
+`visual`: `{"kind": "template", "template": "flags", "data": {"subject", "red": [str], "green": [str]}}`. 2 or 3 of each is best, each under 60 characters; at least one flag in total. Good: every flag is a checkable fact about the subject.
 
 ### Format: `dating_profile`
-`visual`: `{"kind": "template", "template": "dating_profile", "data": {"name": account, "age", "bio", "likes": [str], "dealbreakers": [str]}}`. 1 to 5 likes and dealbreakers. `name` is a persona handle or a code account `repo:path`. Good: `age` is the real age of the file; likes and dealbreakers come from its real dependencies and tests.
+`visual`: `{"kind": "template", "template": "dating_profile", "data": {"name": account, "age", "bio", "likes": [str], "dealbreakers": [str]}}`. 2 or 3 likes and dealbreakers, short. `name` is a persona handle or a code account `repo:path`. Good: `age` is the real age of the file; likes and dealbreakers come from its real dependencies and tests.
 
 ### Format: `glow_up`
 `visual`: `{"kind": "template", "template": "glow_up", "data": {"subject", "before": {"label", "text"}, "after": {"label", "text"}}}`. Good: before and after are both real, short, and show one clear change.
@@ -59,13 +59,13 @@
 `visual`: `{"kind": "template", "template": "breaking_news", "data": {"headline", "subhead", "ticker": [str]}}`. `subhead` is optional; `ticker` has 0 to 5 items. Good: a serious headline for a small, true event.
 
 ### Format: `horoscope`
-`visual`: `{"kind": "template", "template": "horoscope", "data": {"subject": account, "sign", "forecast", "lucky"}}`. `forecast` at most 400 characters; `lucky` is optional. `subject` is a persona handle or a code account `repo:path`. Good: the forecast follows the file's real history.
+`visual`: `{"kind": "template", "template": "horoscope", "data": {"subject": account, "sign", "forecast", "lucky"}}`. `forecast` under 220 characters; `lucky` is optional. `subject` is a persona handle or a code account `repo:path`. Good: the forecast follows the file's real history.
 
 ### Format: `thread`
-`visual`: `{"kind": "template", "template": "thread", "data": {"posts": [str]}}`. 2 to 8 posts, at most 280 characters each. Good: the first post is the hook; each post adds one fact.
+`visual`: `{"kind": "template", "template": "thread", "data": {"posts": [str]}}`. 3 or 4 posts, each under 70 characters. Good: the first post is the hook; each post adds one fact.
 
 ### Format: `day_in_life`
-`visual`: `{"kind": "template", "template": "day_in_life", "data": {"subject": account, "steps": [{"time", "text"}]}}`. 3 to 8 steps. `subject` is a persona handle or a code account `repo:path`. Good: the steps follow the real call or data path.
+`visual`: `{"kind": "template", "template": "day_in_life", "data": {"subject": account, "steps": [{"time", "text"}]}}`. 3 to 5 steps, each `text` under 50 characters. `subject` is a persona handle or a code account `repo:path`. Good: the steps follow the real call or data path.
 
 ### Format: `hot_take`
 `visual`: `{"kind": "template", "template": "hot_take", "data": {"take"}}`. `take` at most 280 characters. Put the pushback in `comments`. Good: a bold opinion about the code that the `depth` backs up with facts.

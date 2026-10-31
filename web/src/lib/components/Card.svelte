@@ -12,9 +12,11 @@
 	let {
 		card,
 		onPanelChange,
-		onAction
+		onAction,
+		first = false
 	}: {
 		card: Card;
+		first?: boolean;
 		onPanelChange?: (panel: number) => void;
 		onAction?: (type: FeedEventType, data?: Record<string, unknown>) => void;
 	} = $props();
@@ -48,10 +50,16 @@
 	}
 
 	const Visual = $derived(visuals[card.visual.kind]);
-	const count = $derived(1 + card.depth.length);
+	// Comments wait for a quiz answer: they can give it away.
+	const showComments = $derived(!!card.comments?.length && answered);
+	const count = $derived(1 + card.depth.length + (showComments ? 1 : 0));
+
+	function openComments() {
+		row?.scrollTo({ left: (card.depth.length + 1) * row.clientWidth, behavior: 'smooth' });
+	}
 </script>
 
-<article data-card-id={card.id}>
+<article data-card-id={card.id} class:first>
 	<header>
 		<a class="repo" href="/repo/{encodeURIComponent(card.repo)}">{card.repo}</a>
 		<span class="persona">
@@ -83,12 +91,11 @@
 				/>
 			{/if}
 			<h2>{card.hook}</h2>
-			{#if card.comments?.length && answered}
-				<ul class="comments">
-					{#each card.comments as c, i (i)}
-						<li><Avatar handle={c.persona} size={20} /><span class="handle">@{c.persona}</span>: {c.text}</li>
-					{/each}
-				</ul>
+			{#if showComments}
+				{@const c = card.comments[0]}
+				<button type="button" class="comment-preview" onclick={openComments}>
+					<span class="handle">@{c.persona}</span>: {c.text}{#if card.comments.length > 1}{` · ${card.comments.length} comments`}{/if}
+				</button>
 			{/if}
 		</section>
 		{#each card.depth as d, i (i)}
@@ -114,6 +121,15 @@
 				{/if}
 			</section>
 		{/each}
+		{#if showComments}
+			<section data-panel={card.depth.length + 1} class="comments-panel">
+				<ul class="comments">
+					{#each card.comments as c, i (i)}
+						<li><Avatar handle={c.persona} size={20} /><span class="handle">@{c.persona}</span>: {c.text}</li>
+					{/each}
+				</ul>
+			</section>
+		{/if}
 	</div>
 	<div class="actions">
 		<button type="button" aria-pressed={liked} aria-label="Like" onclick={() => toggle('liked')}>
@@ -134,11 +150,17 @@
 <style>
 	article {
 		position: relative;
-		height: var(--feed-h, 100dvh);
+		height: 100dvh;
 		scroll-snap-align: start;
 		display: flex;
 		flex-direction: column;
 		padding: 0.75rem 16px;
+	}
+	/* The first card shares the screen with the top bar and snaps by its bottom edge, so
+	   scrolling back to it shows the bar again. */
+	article.first {
+		height: calc(100dvh - var(--chrome-h, 0px));
+		scroll-snap-align: end;
 	}
 	header {
 		display: flex;
@@ -220,11 +242,23 @@
 		color: var(--muted);
 		font-size: 0.85rem;
 	}
-	.comments {
-		flex: 0 1 auto;
-		min-height: 0;
+	.comment-preview {
+		flex: none;
+		display: block;
+		width: 100%;
+		padding: 0 52px 0 0;
+		border: 0;
+		background: none;
+		color: var(--muted);
+		font: inherit;
+		font-size: 0.85rem;
+		text-align: left;
+		white-space: nowrap;
 		overflow: hidden;
-		padding-right: 52px;
+		text-overflow: ellipsis;
+		cursor: pointer;
+	}
+	.comments {
 		list-style: none;
 		margin: 1rem 0 0;
 		padding: 0;

@@ -36,17 +36,17 @@
 <style>
 	.stories {
 		display: flex;
-		gap: 12px;
+		gap: 10px;
 		overflow-x: auto;
-		padding: 8px 16px;
+		padding: 6px 16px;
 		scrollbar-width: none;
 	}
 	.story {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 4px;
-		width: 64px;
+		gap: 2px;
+		width: 52px;
 		min-height: 44px;
 		padding: 0;
 		border: 0;
@@ -57,8 +57,8 @@
 	.ring {
 		display: grid;
 		place-items: center;
-		width: 56px;
-		height: 56px;
+		width: 40px;
+		height: 40px;
 		border-radius: 50%;
 		padding: 3px;
 		background: var(--border);
@@ -82,11 +82,11 @@
 		font-weight: 700;
 	}
 	.name {
-		max-width: 64px;
+		max-width: 52px;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-		font-size: 0.7rem;
+		font-size: 0.65rem;
 		color: var(--muted);
 	}
 </style>

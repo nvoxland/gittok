@@ -25,14 +25,20 @@ Every card has: `story_type`, `format`, `persona`, `tone`, `repos` (repo names),
 
 - `format`: use the format the packet suggests for that card. Each format allows one `visual.kind`; the exact `visual` JSON for your formats is in the format sections below.
 - `account`: `"repo:path"` (a file or directory that exists at the repo ref). The card is then shown as posted by that file (`@shipping.clj`). `persona` is still required and sets the voice of the comments. Use it when the code itself would "say" the card. Real people are never accounts.
-- `hook`: one line, at most 200 characters. This is what makes someone stop scrolling. Be specific: names, numbers, dates.
+- **The front must fit one phone screen** (the `hook` plus the `visual`). It never scrolls, so the server rejects cards that would not fit (`too_long`):
+  - `hook`: at most 140 characters.
+  - Visual text costs its characters plus 25 for each list item (bullet, layer, item, message, post, step). The budget is 360. For example: an iceberg with 4 layers of one short item each, a group chat of 5 short messages, or a text post of about 250 characters.
+  - A code visual shows at most 12 lines.
+  - Images, charts, and diagrams have a fixed size; only their captions and callouts count.
+  - Short beats long. Put the detail in `depth` panels: they scroll.
+- `hook`: one line. This is what makes someone stop scrolling. Be specific: names, numbers, dates.
 - `visual` is one of the kinds below, or one of the kinds in the format sections:
-  - `{"kind": "code", "repo", "path", "commit", "lines": [a, b], "callouts": [{"line", "text"}]}`: 1 to 40 lines from that file at that commit, up to 3 callouts on lines inside the range; or
-  - `{"kind": "text", "title", "body", "bullets"}`: body at most 1200 characters, at most 7 bullets.
+  - `{"kind": "code", "repo", "path", "commit", "lines": [a, b], "callouts": [{"line", "text"}]}`: 1 to 12 lines from that file at that commit (a code depth panel may show up to 40), up to 3 callouts on lines inside the range; or
+  - `{"kind": "text", "title", "body", "bullets"}`: within the front budget above.
   - Other kinds (`meme`, `text_meme`, `illustration`, `comic`, `chart`, `diagram`, `template`) are described in the format sections.
 - `depth`: 1 to 4 panels. **At least one must be `{"kind": "explain", "text"}`**: the plain-language truth behind the joke. Others may be `{"kind": "code", "repo", "path", "commit", "lines"}` or `{"kind": "code_diff", "repo", "commit", "path"}` (the file must have changed in that commit).
 - `sources`: 1 to 8 of `{"repo", "commit"}` or `{"repo", "path", "lines"?}`.
-- `comments`: 0 to 5 of `{"persona", "text"}`, at most 280 characters each. Personas reply, correct, joke, or debate.
+- `comments`: 0 to 5 of `{"persona", "text"}`, at most 280 characters each. Personas reply, correct, joke, or debate. The front shows only the first comment, on one line, so make the first one short and good; the rest are on their own panel.
 
 ## Citations are checked
 

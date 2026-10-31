@@ -931,3 +931,53 @@ def test_group_chat_with_code_accounts_from_both_repos(pair):
 def test_non_cross_story_with_two_repos_is_unaffected(pair):
     _, rejected = check([ripple(pair, story_type="what_it_does")], pair_repos(pair, None, None))
     assert rejected == []
+
+
+# The card front must fit one phone screen without scrolling (docs/formats.md, "Fit").
+
+
+def test_rejects_a_hook_too_long_for_the_front(fixture_repo, repos):
+    card = text_card(fixture_repo, hook="x" * (validator.MAX_HOOK + 1))
+    _, rejected = check([card], repos)
+    assert reasons(rejected) == ["too_long"]
+    assert "hook" in rejected[0].detail
+
+
+def test_rejects_front_text_over_the_budget_and_says_by_how_much(fixture_repo, repos):
+    card = text_card(fixture_repo)
+    card["visual"] = {"kind": "text", "title": "T", "body": "word " * 100}
+    _, rejected = check([card], repos)
+    assert reasons(rejected) == ["too_long"]
+    assert str(validator.FRONT_BUDGET) in rejected[0].detail
+
+
+def test_each_list_item_costs_extra_because_of_its_padding(fixture_repo, repos):
+    from tests.cards import template_card
+
+    few = {"title": "Ice", "layers": [{"label": f"L{i}", "items": ["short"]} for i in range(4)]}
+    many = {
+        "title": "Ice",
+        "layers": [{"label": f"L{i}", "items": ["a", "b", "c", "d"]} for i in range(6)],
+    }
+    accepted, _ = check([template_card(fixture_repo, "iceberg", few)], repos)
+    assert len(accepted) == 1
+    _, rejected = check([template_card(fixture_repo, "iceberg", many)], repos)
+    assert reasons(rejected) == ["too_long"]
+
+
+def test_rejects_front_code_longer_than_fits(fixture_repo, repos, monkeypatch):
+    monkeypatch.setattr(validator, "MAX_FRONT_CODE_LINES", 3)  # the fixture file has 5 lines
+    card = example_card(fixture_repo)
+    card["visual"]["lines"] = [1, 4]
+    card["visual"].pop("excerpt", None)
+    card["visual"]["callouts"] = []
+    _, rejected = check([card], repos)
+    assert reasons(rejected) == ["too_long"]
+
+
+def test_all_example_template_cards_fit(fixture_repo, repos):
+    from tests.cards import TEMPLATE_DATA, template_card
+
+    cards = [template_card(fixture_repo, t) for t in TEMPLATE_DATA]
+    _, rejected = check(cards, repos)
+    assert [r for r in rejected if r.reason == "too_long"] == []

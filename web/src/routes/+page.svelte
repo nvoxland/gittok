@@ -67,9 +67,8 @@
 	}
 </script>
 
-<!-- An exact feed height: WebKit does not resolve percentage heights inside flex items, so
-     the feed grew to fit every card and the page scrolled instead of snapping. -->
-<div class="app" style="--feed-h: calc(100dvh - {chromeH}px)">
+<!-- The page scrolls; the top bar scrolls away with the first card. -->
+<div class="app" style="--chrome-h: {chromeH}px">
 <header class="chrome" aria-label="Top bar" bind:offsetHeight={chromeH}>
 	<div class="stories-slot"><StoriesRow {stories} onOpen={(i) => (openStory = i)} /></div>
 	<nav class="links">
@@ -104,13 +103,7 @@
 
 <style>
 	/* The top bar takes its own row, so it never covers a card's header. */
-	.app {
-		height: 100dvh;
-		display: flex;
-		flex-direction: column;
-	}
 	.chrome {
-		flex: none;
 		display: flex;
 		align-items: center;
 		border-bottom: 1px solid var(--border);
@@ -126,10 +119,6 @@
 		gap: 0.5rem;
 		margin-left: auto;
 		padding: 0 16px 0 8px;
-	}
-	main {
-		flex: 1;
-		min-height: 0;
 	}
 	.links a {
 		display: inline-flex;
@@ -156,7 +145,7 @@
 	.status {
 		display: grid;
 		place-items: center;
-		height: var(--feed-h, 100dvh);
+		height: calc(100dvh - var(--chrome-h, 0px));
 		margin: 0;
 		color: var(--muted);
 	}

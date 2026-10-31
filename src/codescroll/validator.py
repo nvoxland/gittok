@@ -59,6 +59,14 @@ from pathlib import PurePosixPath  # noqa: E402
 from codescroll import gitq  # noqa: E402
 
 MAX_SPAN = 40
+# The card front must fit one phone screen without scrolling: on iOS a scrolling front takes
+# the vertical swipe and the feed never flips. Text is counted in characters, plus a fixed
+# cost per list item for its padding. Images and charts have a fixed size and are not counted.
+MAX_HOOK = 140
+FRONT_BUDGET = 360
+ITEM_COST = 25
+MAX_FRONT_CODE_LINES = 12
+_NOT_SHOWN = {"kind", "template", "repo", "path", "commit", "from", "tier", "prompt", "excerpt"}
 
 LANGUAGES = {
     ".py": "python",
@@ -623,6 +631,35 @@ def _check_mascots(card: dict, ctx: _Ctx, gc: _GitCache) -> None:
         )
 
 
+def _front_cost(value, key: str | None = None) -> int:
+    if key in _NOT_SHOWN:
+        return 0
+    if isinstance(value, str):
+        return len(value)
+    if isinstance(value, dict):
+        return sum(_front_cost(v, k) for k, v in value.items())
+    if isinstance(value, list):
+        return sum(_front_cost(v) + ITEM_COST for v in value)
+    return 0
+
+
+def _check_fit(card: dict) -> None:
+    hook = card["hook"]
+    if len(hook) > MAX_HOOK:
+        raise _Reject("too_long", f"hook is {len(hook)} chars; max {MAX_HOOK}")
+    v = card["visual"]
+    if v["kind"] in ("meme", "illustration", "comic", "chart", "code"):
+        cost = _front_cost(v.get("callouts", [])) + _front_cost(v.get("caption", ""))
+    else:
+        cost = _front_cost(v)
+    if cost > FRONT_BUDGET:
+        raise _Reject(
+            "too_long",
+            f"front text costs {cost}; budget {FRONT_BUDGET} (characters, plus {ITEM_COST} "
+            "per list item). Cut items or shorten them; detail belongs in depth panels",
+        )
+
+
 def _validate_one(card: dict, gc: _GitCache, ctx: _Ctx) -> tuple[dict, dict, str]:
     personas = ctx.personas
     ctx.card_repos = tuple(card.get("repos", ())) if isinstance(card, dict) else ()
@@ -631,6 +668,7 @@ def _validate_one(card: dict, gc: _GitCache, ctx: _Ctx) -> tuple[dict, dict, str
         raise _Reject("schema", "; ".join(errs[:3]))
     card = copy.deepcopy(card)
     _check_format(card)
+    _check_fit(card)
     _check_interaction_shape(card)
     visual = card["visual"]
     if visual["kind"] == "template" and visual["template"] == "breaking_news":
@@ -658,6 +696,13 @@ def _validate_one(card: dict, gc: _GitCache, ctx: _Ctx) -> tuple[dict, dict, str
         resolved["visual"] = _build_chart(visual, ctx)
     if visual["kind"] == "code":
         resolved["visual"] = _resolve_code(gc, visual, excerpt=visual.get("excerpt"))
+        a, b = visual["lines"]  # checked after git, so range errors keep their own reasons
+        if b - a + 1 > MAX_FRONT_CODE_LINES:
+            raise _Reject(
+                "too_long",
+                f"front code spans {b - a + 1} lines; max {MAX_FRONT_CODE_LINES}. "
+                "Show the key lines; put the rest in a code depth panel",
+            )
         a, b = visual["lines"]
         for c in visual.get("callouts", []):
             if not a <= c["line"] <= b:

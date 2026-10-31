@@ -66,16 +66,17 @@
 	$effect(() => {
 		void cards;
 		if (!root || typeof IntersectionObserver === 'undefined') return;
-		const io = new IntersectionObserver(onIntersect, { root, threshold: 0.6 });
+		const io = new IntersectionObserver(onIntersect, { threshold: 0.6 });
 		root.querySelectorAll('[data-card-id]').forEach((el) => io.observe(el));
 		return () => io.disconnect();
 	});
 </script>
 
 <div class="feed" bind:this={root}>
-	{#each cards as card (card.id)}
+	{#each cards as card, i (card.id)}
 		<CardView
 			{card}
+			first={i === 0}
 			onPanelChange={(panel) => emit(card.id, 'depth_open', { panel })}
 			onAction={(type, data) => emit(card.id, type, data)}
 		/>
@@ -83,9 +84,8 @@
 </div>
 
 <style>
-	.feed {
-		height: var(--feed-h, 100dvh);
-		overflow-y: auto;
+	/* The page itself scrolls (not this box), so mobile browsers collapse their toolbars. */
+	:global(html) {
 		scroll-snap-type: y mandatory;
 	}
 </style>

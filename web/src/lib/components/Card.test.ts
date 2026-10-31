@@ -93,17 +93,26 @@ describe('Card', () => {
 		expect(container.querySelector('section[data-panel="2"] .codeblock')).not.toHaveClass('wrap');
 	});
 
-	it('renders comments with @handles', () => {
+	it('shows one comment line on the front and all comments on a last panel', () => {
 		const card = fakeCard({
+			depth: [{ kind: 'explain', text: 'Why.' }],
 			comments: [
 				{ persona: 'penny_learns', text: 'Wait, why?' },
 				{ persona: 'archivist', text: 'Since 2019.' }
 			]
 		});
 		const { container } = render(Card, { card });
-		const items = [...container.querySelectorAll('.comments li')].map((li) => li.textContent?.trim());
+		const front = container.querySelector('section.front')!;
+		expect(front.querySelector('.comment-preview')?.textContent?.trim()).toBe(
+			'@penny_learns: Wait, why? · 2 comments'
+		);
+		const panel = container.querySelector('section.comments-panel')!;
+		expect(panel.getAttribute('data-panel')).toBe('2');
+		const items = [...panel.querySelectorAll('.comments li')].map((li) => li.textContent?.trim());
 		expect(items).toEqual(['@penny_learns: Wait, why?', '@archivist: Since 2019.']);
+		expect(container.querySelectorAll('.dot')).toHaveLength(3);
 	});
+
 
 	it('renders fallback for unknown visual kind', () => {
 		const card = fakeCard({ visual: { kind: 'hologram' } as unknown as CardT['visual'] });
@@ -269,7 +278,7 @@ describe('Card quiz', () => {
 		expect(screen.getByRole('button', { name: 'Beta' })).toHaveClass('correct');
 		for (const n of ['Alpha', 'Beta', 'Gamma'])
 			expect(screen.getByRole('button', { name: n })).toBeDisabled();
-		expect(screen.getByText(/Told you so/)).toBeInTheDocument();
+		expect(screen.getAllByText(/Told you so/).length).toBeGreaterThan(0);
 		expect(screen.getByText('Correct')).toBeInTheDocument();
 	});
 
@@ -304,7 +313,7 @@ describe('Card quiz', () => {
 		).toBeInTheDocument();
 		// The server records the answer event (POST /api/answer); the card must not emit a second one.
 		expect(calls.filter(([t]) => t === 'answer')).toEqual([]);
-		expect(screen.getByText(/Told you so/)).toBeInTheDocument();
+		expect(screen.getAllByText(/Told you so/).length).toBeGreaterThan(0);
 		expect(screen.getByRole('button', { name: 'Tabs' })).toBeDisabled();
 	});
 

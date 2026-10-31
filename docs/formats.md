@@ -87,6 +87,10 @@ A format/kind mismatch is rejected with reason `format_kind_mismatch`.
 
 **Accounts** (`from`, `name`, `subject` where marked `account`): a persona handle (`greybeard`) or a code account `repo:path` (e.g. `storefront:src/storefront/shipping.clj` or a directory). Code accounts must exist at the repo ref → else `unknown_account`. Real people are never accounts.
 
+## Fit
+
+The card front (hook + visual) must fit one phone screen and never scrolls; on iOS a scrolling front takes the vertical swipe and the feed never flips. The validator rejects a card with `too_long` when the hook is over 140 characters, a front code visual spans over 12 lines, or the visual text costs over 360: characters plus 25 per list item, for the padding. Images, charts, and diagrams count only their caption and callouts. Limits live in `validator.py` (`MAX_HOOK`, `FRONT_BUDGET`, `ITEM_COST`, `MAX_FRONT_CODE_LINES`). The client shows the first comment as one line on the front and all comments on a last panel.
+
 ## Code-as-accounts posts
 
 A card may set `"account": "repo:path"`. The card is then shown as posted by that file or directory (`@shipping.clj`). `persona` is still required and is used for the persona's comment voice.
