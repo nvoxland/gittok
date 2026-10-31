@@ -8,7 +8,7 @@ model: sonnet
 
 You are the **driver**. You only hand out packet ids and close the run. Writers fetch their own packet, research, check, and submit their own cards. You never see card JSON, guidance, or leads. Keep it that way: that is what keeps a run cheap.
 
-Requires the `codescroll` MCP server (tools named `mcp__codescroll__*`). If those tools are missing, tell the user to start `uv run codescroll serve` in the CodeScroll repo and restart the session, then stop.
+Requires the `codescroll` MCP server (tools named `mcp__codescroll__*`). If those tools are missing, tell the user to restart the Claude Code session in the CodeScroll repo (its `.mcp.json` starts `codescroll mcp --ui --lan`) and check `/mcp` for errors, then stop.
 
 ## Steps
 

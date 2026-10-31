@@ -445,3 +445,54 @@ def test_install_apply_and_uninstall(cfg, tmp_path, monkeypatch, capsys):
     assert plist.exists()
     assert cli.main(["install", "--uninstall", "--launchd", "--apply"]) == 0
     assert not plist.exists()
+
+
+def _mcp_ui(cfg, monkeypatch, free=True):
+    seen = {"order": []}
+    monkeypatch.setattr(cli, "create_app", lambda get, **kw: seen.update(app_kw=kw) or "app")
+    monkeypatch.setattr(cli, "_port_free", lambda host, port: free)
+    monkeypatch.setattr(
+        cli, "_start_ui", lambda app, host, port: seen["order"].append(("ui", app, host, port))
+    )
+    monkeypatch.setattr(cli.mcp_server, "main", lambda: seen["order"].append("mcp"))
+    monkeypatch.setattr(cli.social, "lan_addresses", lambda: ["192.168.1.5"])
+    return seen
+
+
+def test_mcp_ui_starts_the_feed_before_stdio_and_keeps_stdout_clean(cfg, monkeypatch, capsys):
+    seen = _mcp_ui(cfg, monkeypatch)
+    assert cli.main(["mcp", "--ui"]) == 0
+    assert seen["order"] == [("ui", "app", "127.0.0.1", 8008), "mcp"]
+    assert seen["app_kw"]["render_worker"] is True
+    out, err = capsys.readouterr()
+    assert out == ""  # stdout carries the MCP protocol
+    assert "feed: http://127.0.0.1:8008" in err
+
+
+def test_mcp_ui_lan_binds_all_interfaces_and_prints_pairing_to_stderr(cfg, monkeypatch, capsys):
+    seen = _mcp_ui(cfg, monkeypatch)
+    assert cli.main(["mcp", "--ui", "--lan"]) == 0
+    assert seen["order"][0][2] == "0.0.0.0"
+    tok = (cfg.settings.data_dir / "lan_token").read_text().strip()
+    assert seen["app_kw"]["lan_token"] == tok
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert f"http://192.168.1.5:8008/pair?t={tok}" in err
+
+
+def test_mcp_ui_skips_the_feed_when_the_port_is_taken(cfg, monkeypatch, capsys):
+    seen = _mcp_ui(cfg, monkeypatch, free=False)
+    assert cli.main(["mcp", "--ui"]) == 0
+    assert seen["order"] == ["mcp"]
+    assert "8008 is in use" in capsys.readouterr().err
+
+
+def test_port_free_sees_a_listening_socket():
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        s.listen()
+        port = s.getsockname()[1]
+        assert cli._port_free("127.0.0.1", port) is False
+    assert cli._port_free("127.0.0.1", port) is True

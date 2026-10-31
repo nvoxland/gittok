@@ -83,9 +83,9 @@ uv run ruff check                # lint
 npm --prefix web install
 npm --prefix web test            # vitest component tests
 npm --prefix web run build       # static build into web/build
-uv run codescroll serve          # feed at http://127.0.0.1:8008 and MCP at /mcp
+uv run codescroll mcp --ui --lan # what .mcp.json runs: stdio MCP, plus the feed on :8008 while the session lasts
+uv run codescroll serve          # standalone feed at http://127.0.0.1:8008 and MCP at /mcp (no Claude session)
 uv run codescroll install        # dry run: MCP + skills + LaunchAgent (--apply to do it; see docs/install.md)
-uv run codescroll mcp            # stdio MCP fallback; normally MCP is served by `serve` at /mcp
 uv sync --group images           # optional: mflux for mascot illustrations, comics, avatars
 uv run codescroll render         # one render pass (serve also renders in the background)
 uv run codescroll avatars        # generate persona avatar PNGs (needs the images group)
@@ -98,7 +98,7 @@ Red/green TDD is required: write the failing test first.
 CodeScroll (working name; see `SPEC.md`) is a personal TikTok-style feed of cards about your own codebases.
 
 - `src/codescroll/` is a Python package. It analyzes git history into signals, builds a brief, validates card specs against git, stores cards in SQLite, and serves the feed API.
-- **One server process.** `codescroll serve` runs a FastAPI app that serves the feed API, the web build, and the MCP endpoint at `/mcp`. The project `.mcp.json` points Claude Code at `http://127.0.0.1:8008/mcp`, so the server must be running before a generation session. `codescroll mcp` (stdio) is a fallback.
+- **The session owns the server.** The project `.mcp.json` makes Claude Code start `codescroll mcp --ui --lan`. That process talks MCP over stdio and, in a background thread, serves the feed API, the web build, and the render/learning workers on port 8008 for the LAN (pairing token; `/mcp` over HTTP stays loopback-only). The feed stops when the session ends. If 8008 is already taken, it runs MCP only. To pick up server code changes, restart the session. `codescroll serve` runs the same app without a session.
 - Card generation does **not** shell out to `claude -p`. A Claude Code session runs the `codescroll-generate` skill (`.claude/skills/`). The skill calls `get_brief` and gives each packet id to a `codescroll-writer` subagent (`.claude/agents/`) on haiku or sonnet. The writer calls `get_packet`, researches through the read-only MCP tools, dry-runs `check_cards`, and submits its own cards with `submit_cards(packet_id)`. The driver never handles card JSON.
 - `web/` is a SvelteKit static app: vertical snap-scroll feed, horizontal depth panels.
 - Card formats, visual kinds, and the `resolved` shapes the client renders are specified in `docs/formats.md`. Meme, illustration, and comic cards are stored `pending_render` and appear in the feed after the render worker draws them (memegen for memes, mflux for illustrations).

@@ -8,7 +8,7 @@ model: sonnet
 
 You change what the feed shows through **rules**, and you explain what the feed has learned. You do not generate cards here (that is the `codescroll-generate` skill). Do the work yourself. Do not launch subagents.
 
-Requires the `codescroll` MCP server (tools named `mcp__codescroll__*`). If those tools are missing, tell the user to start `uv run codescroll serve` in the CodeScroll repo and restart the session, then stop.
+Requires the `codescroll` MCP server (tools named `mcp__codescroll__*`). If those tools are missing, tell the user to restart the Claude Code session in the CodeScroll repo (its `.mcp.json` starts `codescroll mcp --ui --lan`) and check `/mcp` for errors, then stop.
 
 ## Tools
 

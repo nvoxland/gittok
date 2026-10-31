@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import socket
 import sys
+import threading
 import time
 from contextlib import closing
 from datetime import UTC, datetime
@@ -103,26 +105,28 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _serve(args) -> int:
-    server = load_config().settings.server
-    port = args.port or server.port
-    host = "0.0.0.0" if args.lan else (args.host or server.host)
-    shown = "127.0.0.1" if args.lan else host
-    lan_token = None
-    print(f"feed: http://{shown}:{port}")
-    print(f"mcp:  http://{shown}:{port}/mcp")
-    if args.lan:
-        for url in social.lan_urls(port):
-            print(f"lan:  {url}")
-        lan_token = social.ensure_lan_token(load_config().settings.data_dir)
-        for a in social.lan_addresses():
-            print(f"pair: http://{a}:{port}/pair?t={lan_token}")
-        print("The feed is token-protected: open a pairing URL once on each device.")
-        print("MCP (/mcp) is loopback-only and is never reachable from the LAN.")
-        print("PWA install and offline mode need HTTPS: service workers do not register")
-        print("on plain-HTTP LAN origins. The feed still works in the browser over HTTP.")
-        print("Tailscale is the planned HTTPS path (M6).")
-    app = create_app(
+def _banner(port: int, host: str, lan: bool, out) -> str | None:
+    """Print the feed URLs to `out`; with `lan`, also the pairing URLs. Returns the LAN token."""
+    shown = "127.0.0.1" if lan else host
+    print(f"feed: http://{shown}:{port}", file=out)
+    print(f"mcp:  http://{shown}:{port}/mcp", file=out)
+    if not lan:
+        return None
+    for url in social.lan_urls(port):
+        print(f"lan:  {url}", file=out)
+    lan_token = social.ensure_lan_token(load_config().settings.data_dir)
+    for a in social.lan_addresses():
+        print(f"pair: http://{a}:{port}/pair?t={lan_token}", file=out)
+    print("The feed is token-protected: open a pairing URL once on each device.", file=out)
+    print("MCP (/mcp) is loopback-only and is never reachable from the LAN.", file=out)
+    print("PWA install and offline mode need HTTPS: service workers do not register", file=out)
+    print("on plain-HTTP LAN origins. The feed still works in the browser over HTTP.", file=out)
+    print("Tailscale is the planned HTTPS path (M6).", file=out)
+    return lan_token
+
+
+def _feed_app(lan_token: str | None):
+    return create_app(
         load_config,
         render_worker=True,
         learning_worker=True,
@@ -130,7 +134,18 @@ def _serve(args) -> int:
         notify_worker=True,
         lan_token=lan_token,
     )
-    uvicorn.run(app, host=host, port=port)
+
+
+def _bind(args) -> tuple[str, int]:
+    server = load_config().settings.server
+    host = "0.0.0.0" if args.lan else (args.host or server.host)
+    return host, args.port or server.port
+
+
+def _serve(args) -> int:
+    host, port = _bind(args)
+    lan_token = _banner(port, host, args.lan, sys.stdout)
+    uvicorn.run(_feed_app(lan_token), host=host, port=port)
     return 0
 
 
@@ -362,7 +377,27 @@ def _install(args) -> int:
     return 0
 
 
+def _port_free(host: str, port: int) -> bool:
+    """True when nothing accepts connections on `port` (checked on loopback for 0.0.0.0)."""
+    with socket.socket() as s:
+        s.settimeout(0.5)
+        return s.connect_ex(("127.0.0.1" if host == "0.0.0.0" else host, port)) != 0
+
+
+def _start_ui(app, host: str, port: int) -> None:
+    """Serve `app` from a daemon thread; it stops when the stdio MCP session ends."""
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="warning"))
+    threading.Thread(target=server.run, name="codescroll-ui", daemon=True).start()
+
+
 def _mcp(args) -> int:
+    if args.ui:
+        host, port = _bind(args)
+        if _port_free(host, port):
+            # stdout carries the MCP protocol, so everything else goes to stderr.
+            _start_ui(_feed_app(_banner(port, host, args.lan, sys.stderr)), host, port)
+        else:
+            print(f"port {port} is in use: feed not started, MCP only", file=sys.stderr)
     mcp_server.main()
     return 0
 
@@ -403,6 +438,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--port", type=int)
     p.add_argument("--lan", action="store_true", help="bind 0.0.0.0 and print LAN URLs")
     p.set_defaults(fn=_serve)
+    p = sub.add_parser("mcp", help="stdio MCP server; --ui also serves the feed")
+    p.add_argument("--ui", action="store_true", help="serve the feed while the session runs")
+    p.add_argument("--host")
+    p.add_argument("--port", type=int)
+    p.add_argument("--lan", action="store_true", help="with --ui: bind 0.0.0.0, print LAN URLs")
+    p.set_defaults(fn=_mcp)
     p = sub.add_parser("notify", help="generate notifications once")
     p.set_defaults(fn=_notify)
     p = sub.add_parser("learn", help="turn new impressions into rewards and update weights once")
@@ -479,8 +520,6 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--skills", action="store_true", help="only the skills")
     p.add_argument("--launchd", action="store_true", help="only the LaunchAgent")
     p.set_defaults(fn=_install)
-    p = sub.add_parser("mcp", help="stdio MCP server (fallback; prefer `serve`)")
-    p.set_defaults(fn=_mcp)
     args = parser.parse_args(argv)
     try:
         return args.fn(args)
