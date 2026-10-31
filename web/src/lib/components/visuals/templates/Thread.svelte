@@ -1,10 +1,11 @@
 <script lang="ts">
 	import type { ThreadData } from '#lib/types.ts';
-	let { data }: { data: ThreadData } = $props();
+	// `shown`: how many posts the beats player has revealed (all by default).
+	let { data, shown = Infinity }: { data: ThreadData; shown?: number } = $props();
 </script>
 
 <ol class="thread">
-	{#each data.posts as p, i (i)}
+	{#each data.posts.slice(0, shown) as p, i (i)}
 		<li class="post">
 			<span class="num">{i + 1}/{data.posts.length}</span>
 			<p>{p}</p>
@@ -24,6 +25,20 @@
 		padding: 0.5rem 0.75rem;
 		margin-bottom: 6px;
 		border-radius: 0 8px 8px 0;
+	}
+	.post {
+		animation: slide-in 0.35s ease-out;
+	}
+	@keyframes slide-in {
+		from {
+			opacity: 0;
+			transform: translateX(-14px);
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.post {
+			animation: none;
+		}
 	}
 	.num {
 		font-size: 0.75rem;

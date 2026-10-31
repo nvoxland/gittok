@@ -19,7 +19,7 @@
 {meme_templates}
 
 ### Format: `text_meme`
-`visual`: `{"kind": "text_meme", "style": "nobody_me", "lines": ["nobody:", "billing/invoice.py: fix rounding again"]}`. `style`: `pov`, `nobody_me`, `starter_pack`, `expectation_reality`. `lines`: 1 to 8 strings, at most 140 characters each. Good: the last line lands the punchline with a real path or number.
+`visual`: `{"kind": "text_meme", "style": "nobody_me", "lines": ["nobody:", "billing/invoice.py: fix rounding again"]}`. `style`: `pov`, `nobody_me`, `starter_pack`, `expectation_reality`. `lines`: 1 to 8 strings, at most 140 characters each. The feed plays the lines one at a time. Good: the last line lands the punchline with a real path or number.
 
 ### Format: `mascot_scene`
 `visual`: `{"kind": "illustration", "prompt": "the mascot carefully stacking fragile crates on a dock at dusk", "caption": "Me, deploying on a Friday", "mascots": ["otter"]}`. `prompt`: describe the scene only, at most 400 characters; no text, letters, or logos in the image. `caption`: at most 140 characters (the app overlays it). `mascots`: optional, 1 to 3 of the names below; default is the mascot of the card's first repo. Good: one clear visual metaphor for a true fact. Mascots:
@@ -41,13 +41,13 @@
 `visual`: `{"kind": "template", "template": "iceberg", "data": {"title", "layers": [{"label", "items": [str, 1 to 5]}]}}`. 3 or 4 layers, surface first, deepest last, 1 or 2 items each, each under 60 characters (the front budget). The feed reveals one layer at a time, so the deepest layer is the punchline. Good: each layer is more obscure than the one above.
 
 ### Format: `tier_list`
-`visual`: `{"kind": "template", "template": "tier_list", "data": {"title", "rows": [{"tier": "S", "items": [{"name", "why"}]}]}}`. 2 to 4 rows; `tier` is `S`, `A`, `B`, `C`, `D` or `F`; 1 or 2 items per row, `why` under 50 characters. Good: real files or functions, and a one-line reason for each rank.
+`visual`: `{"kind": "template", "template": "tier_list", "data": {"title", "rows": [{"tier": "S", "items": [{"name", "why"}]}]}}`. 2 to 4 rows; `tier` is `S`, `A`, `B`, `C`, `D` or `F`; 1 or 2 items per row, `why` under 50 characters. The feed reveals the worst tier first and S last, so S is the payoff. Good: real files or functions, and a one-line reason for each rank.
 
 ### Format: `group_chat`
 `visual`: `{"kind": "template", "template": "group_chat", "data": {"title", "messages": [{"from": account, "text"}]}}`. 3 to 6 messages, each under 80 characters. The feed plays them one at a time with typing dots, so the last message is the punchline. `from` is a persona handle (`greybeard`) or a code account `repo:path`. Good: files "talk" like their role in the code.
 
 ### Format: `flags`
-`visual`: `{"kind": "template", "template": "flags", "data": {"subject", "red": [str], "green": [str]}}`. 2 or 3 of each is best, each under 60 characters; at least one flag in total. Good: every flag is a checkable fact about the subject.
+`visual`: `{"kind": "template", "template": "flags", "data": {"subject", "red": [str], "green": [str]}}`. 2 or 3 of each is best, each under 60 characters. The feed reveals red and green alternately; at least one flag in total. Good: every flag is a checkable fact about the subject.
 
 ### Format: `dating_profile`
 `visual`: `{"kind": "template", "template": "dating_profile", "data": {"name": account, "age", "bio", "likes": [str], "dealbreakers": [str]}}`. 2 or 3 likes and dealbreakers, short. `name` is a persona handle or a code account `repo:path`. Good: `age` is the real age of the file; likes and dealbreakers come from its real dependencies and tests.
@@ -62,10 +62,10 @@
 `visual`: `{"kind": "template", "template": "horoscope", "data": {"subject": account, "sign", "forecast", "lucky"}}`. `forecast` under 220 characters; `lucky` is optional. `subject` is a persona handle or a code account `repo:path`. Good: the forecast follows the file's real history.
 
 ### Format: `thread`
-`visual`: `{"kind": "template", "template": "thread", "data": {"posts": [str]}}`. 3 or 4 posts, each under 70 characters. Good: the first post is the hook; each post adds one fact.
+`visual`: `{"kind": "template", "template": "thread", "data": {"posts": [str]}}`. 3 or 4 posts, each under 70 characters. The feed plays them one at a time, so end on the punchline. Good: the first post is the hook; each post adds one fact.
 
 ### Format: `day_in_life`
-`visual`: `{"kind": "template", "template": "day_in_life", "data": {"subject": account, "steps": [{"time", "text"}]}}`. 3 to 5 steps, each `text` under 50 characters. `subject` is a persona handle or a code account `repo:path`. Good: the steps follow the real call or data path.
+`visual`: `{"kind": "template", "template": "day_in_life", "data": {"subject": account, "steps": [{"time", "text"}]}}`. 3 to 5 steps, each `text` under 50 characters. The feed plays them one at a time; the last step is the punchline. `subject` is a persona handle or a code account `repo:path`. Good: the steps follow the real call or data path.
 
 ### Format: `hot_take`
 `visual`: `{"kind": "template", "template": "hot_take", "data": {"take"}}`. `take` at most 280 characters. Put the pushback in `comments`. Good: a bold opinion about the code that the `depth` backs up with facts.

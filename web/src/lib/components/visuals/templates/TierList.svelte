@@ -1,11 +1,15 @@
 <script lang="ts">
 	import type { TierListData } from '#lib/types.ts';
-	let { data }: { data: TierListData } = $props();
+	import { shownKeys } from '#lib/beats.ts';
+	// `shown`: how many tiers the beats player has revealed, worst first (all by default).
+	let { data, shown = Infinity }: { data: TierListData; shown?: number } = $props();
+	const visible = $derived(shownKeys('tier_list', data, shown));
 </script>
 
 <div class="tiers">
 	<h3>{data.title}</h3>
 	{#each data.rows as row, i (i)}
+		{#if visible.has(row.tier)}
 		<div class="row">
 			<div class="tier" data-tier={row.tier}>{row.tier}</div>
 			<ul>
@@ -14,6 +18,7 @@
 				{/each}
 			</ul>
 		</div>
+		{/if}
 	{/each}
 </div>
 
@@ -28,6 +33,30 @@
 		overflow: hidden;
 		margin-bottom: 4px;
 		background: var(--surface);
+	}
+	.row {
+		animation: drop-in 0.35s ease-out;
+	}
+	.row:has([data-tier='S']) {
+		animation: s-reveal 0.6s cubic-bezier(0.2, 1.4, 0.4, 1);
+	}
+	@keyframes drop-in {
+		from {
+			opacity: 0;
+			transform: translateY(-14px);
+		}
+	}
+	@keyframes s-reveal {
+		from {
+			opacity: 0;
+			transform: scale(0.85);
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.row,
+		.row:has([data-tier='S']) {
+			animation: none;
+		}
 	}
 	.tier {
 		flex: none;

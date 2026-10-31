@@ -1,7 +1,11 @@
 <script lang="ts">
 	import type { TextMemeVisual } from '#lib/types.ts';
-	let { visual }: { visual: TextMemeVisual; resolved?: unknown } = $props();
-	const lines = $derived(visual.lines);
+	// `shown`: how many lines the beats player has revealed (all by default).
+	let {
+		visual,
+		shown = Infinity
+	}: { visual: TextMemeVisual; resolved?: unknown; shown?: number } = $props();
+	const lines = $derived(visual.lines.slice(0, shown));
 	const isNobody = (l: string) => /^nobody\s*:?\s*$/i.test(l.trim());
 </script>
 
@@ -52,6 +56,26 @@
 		margin: 0 0 0.5rem;
 		font-size: 1.2rem;
 		line-height: 1.35;
+	}
+	p,
+	.tile {
+		animation: line-in 0.3s ease-out;
+	}
+	@keyframes line-in {
+		from {
+			opacity: 0;
+			transform: translateY(8px);
+		}
+		to {
+			opacity: 1;
+			transform: none;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		p,
+		.tile {
+			animation: none;
+		}
 	}
 	.muted {
 		color: var(--muted);
