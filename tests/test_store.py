@@ -13,7 +13,7 @@ from codescroll.config import (
     ServerSettings,
     Settings,
 )
-from tests.cards import example_card, guess_who_card, text_card
+from tests.cards import example_card, explain, guess_who_card, text_card
 
 PERSONAS = ["greybeard", "penny_learns", "archivist", "meme_compiler", "paranoid_sec", "shipit_sam"]
 
@@ -307,6 +307,7 @@ def test_predicted_story_key_matches_the_validators(cfg, fixture_repo):
     sha = card["sources"][0]["commit"]
     assert storykey.story_key("rip", "fixture", commit=sha) == _accept(cfg, card).story_key
     card["sources"] = [{"repo": "fixture", "path": "billing/invoice.py", "lines": [1, 3]}]
+    card["depth"][0]["text"] = explain("billing/invoice.py")
     assert (
         storykey.story_key("rip", "fixture", path="billing/invoice.py", lines=(1, 3))
         == _accept(cfg, card).story_key
