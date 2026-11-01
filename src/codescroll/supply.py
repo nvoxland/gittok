@@ -80,7 +80,9 @@ def feed_health(conn, cfg, now: datetime) -> dict:
     agent = cfg.settings.agent
     backlog = len(unseen_ready(conn, learning.load_reward_config(cfg), now))
     burn = max(burn_per_day(conn, now), agent.min_burn_per_day)
-    want = min(max(math.ceil(agent.target_runway_days * burn) - backlog, 0), agent.max_count)
+    short = math.ceil(agent.target_runway_days * burn) - backlog
+    # A run has a fixed start-up cost: when one is needed, make at least min_run_count cards.
+    want = min(max(short, agent.min_run_count), agent.max_count) if short > 0 else 0
     since_ms = int((now - timedelta(days=7)).timestamp() * 1000)
     status = dict(conn.execute("SELECT status, COUNT(*) FROM cards GROUP BY status").fetchall())
     db_file = conn.execute("PRAGMA database_list").fetchone()["file"]

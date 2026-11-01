@@ -55,8 +55,14 @@ def test_burn_uses_min_floor(conn, cfg):
 def test_want_clamps_to_max_count(conn, cfg):
     h = supply.feed_health(conn, cfg, NOW)  # empty: ceil(3 * 10) = 30, max_count is 20
     assert h["want"] == cfg.settings.agent.max_count == 20
-    fill(conn, cfg, 25)
-    assert supply.feed_health(conn, cfg, NOW)["want"] == 5
+    fill(conn, cfg, 18)
+    assert supply.feed_health(conn, cfg, NOW)["want"] == 12
+
+
+def test_small_shortfall_still_makes_a_full_run(conn, cfg):
+    """A run has a fixed start-up cost, so a short feed gets min_run_count cards, not 1 or 2."""
+    fill(conn, cfg, 28)  # 2 short of 30
+    assert supply.feed_health(conn, cfg, NOW)["want"] == cfg.settings.agent.min_run_count == 8
 
 
 def test_unseen_ready_excludes_recent_impressions(conn, cfg):

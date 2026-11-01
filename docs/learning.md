@@ -125,7 +125,8 @@ How many cards a run makes (`src/codescroll/supply.py`): `get_brief` without `co
 
 - `backlog` = ready cards not shown in the last `repeat_days`.
 - `burn` = max(distinct cards shown per day, 7-day mean; `agent.min_burn_per_day`).
-- `want` = `ceil(agent.target_runway_days * burn) - backlog`, clamped to 0 to `agent.max_count`.
+- `short` = `ceil(agent.target_runway_days * burn) - backlog`.
+- `want` = 0 when `short` is 0 or less. Otherwise `want` is `short`, but at least `agent.min_run_count` (8) and at most `agent.max_count`. A run has a fixed start-up cost, so a small shortfall still gets a full run.
 
 When `want` is 0, `get_brief` returns `nothing_to_do` and opens no run. An explicit `count` skips this.
 

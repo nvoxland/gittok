@@ -81,7 +81,7 @@ Not an HTTP route. A writer subagent calls it for one work packet. Fields:
 
 - `backlog`: ready cards with no impression in the last `repeat_days`.
 - `burn_per_day`: distinct cards shown per day, mean of 7 days, never below `agent.min_burn_per_day`.
-- `want`: how many cards to make so the backlog lasts `agent.target_runway_days` (0 to `agent.max_count`).
+- `want`: how many cards to make so the backlog lasts `agent.target_runway_days`. It is 0, or between `agent.min_run_count` and `agent.max_count`.
 - `image_share`: share of cards with a meme, illustration, comic, chart, or diagram visual.
 
 `get_brief(repo=None, count=None)`: without `count`, it makes `want` cards. When `want` is 0, it returns `{"run_id": null, "nothing_to_do": true, "health": {...}}`. It opens no run, analyzes no repo, and does not count toward `per_day_runs`. An explicit `count` always opens a run.

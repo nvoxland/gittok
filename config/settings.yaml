@@ -9,6 +9,7 @@ agent:
   packet_size: 2               # cards per work packet (1-5)
   target_runway_days: 3        # get_brief makes cards until the unseen backlog lasts this long
   min_burn_per_day: 10         # cards per day assumed at least, so a quiet week does not starve
+  min_run_count: 8             # a run that is needed makes at least this many (start-up cost)
 analysis:
   history_window_days: 720     # relative to the ref's last commit date
   churn_windows_days: [30, 90, 365]
