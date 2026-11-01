@@ -16,8 +16,7 @@ Existing types keep their meaning. Data per type:
 | `beat_tap` | a tap that skipped to the next beat (recorded, not rewarded yet) | `{"beat": int}` |
 | `scroll_back` | a card already seen this session becomes visible again | `{}` |
 | `depth_open` | horizontal panel changes | `{"panel": int}` |
-| `like` | toggle button | `{"on": bool}` |
-| `save` | retired with the Saved page: Like is the only reaction. Old events still count. | `{"on": bool}` |
+| `like` / `save` | toggle buttons | `{"on": bool}` |
 | `explain_more` | retired: the "?" button is now a comments button whose jump to the comments panel is a `depth_open`. Old events still count. | `{}` |
 | `answer` | a choice is picked on an interactive card | `{"choice": int, "correct": bool \| null}` |
 | `source_tap` | a file/commit link in a depth panel is tapped | `{"panel": int}` |
@@ -146,7 +145,7 @@ A format without evidence has no factor (1). `mix_inputs` passes the factors to 
 
 ## 8. Saved cards
 
-Retired. There is no Save button, no `/saved` page, and no `GET /api/saved`.
+`GET /api/saved` → `{"cards": [Card]}` for cards whose latest `save` event has `on: true`. Web route `/saved`.
 
 ## 9. Reset
 

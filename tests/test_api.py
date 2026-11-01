@@ -452,8 +452,37 @@ def test_answer_on_deleted_card_is_404(cfg, client, fixture_repo):
     assert answer_events(cfg) == []
 
 
-def test_no_saved_endpoint(client):
-    assert client.get("/api/saved").status_code == 404
+
+def save_event(client, card_id, on, ts):
+    body = {"events": [{"card_id": card_id, "type": "save", "ts": ts, "data": {"on": on}}]}
+    client.post("/api/events", json=body)
+
+
+def test_saved_lists_cards_whose_latest_save_is_on(cfg, client, fixture_repo):
+    a, b, c, q = seed(
+        cfg,
+        fixture_repo,
+        [
+            example_card(fixture_repo),
+            text_card(fixture_repo),
+            text_card(
+                fixture_repo,
+                hook="Another card.",
+                sources=[{"repo": "fixture", "commit": fixture_repo.shas["fix1"]}],
+            ),
+            quiz_card(fixture_repo),
+        ],
+    )
+    assert client.get("/api/saved").json() == {"cards": []}
+    save_event(client, a, True, 1000)
+    save_event(client, b, True, 2000)
+    save_event(client, b, False, 3000)
+    save_event(client, q, True, 4000)
+    save_event(client, "c_gone", True, 5000)
+    body = client.get("/api/saved").json()
+    assert [card["id"] for card in body["cards"]] == [q, a]  # most recent save first
+    assert "answer_index" not in body["cards"][0]["interaction"]
+    assert c not in {card["id"] for card in body["cards"]}
 
 
 def test_lifespan_runs_profile_worker_and_stops_it(cfg):

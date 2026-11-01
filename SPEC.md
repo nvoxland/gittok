@@ -372,8 +372,8 @@ Full JSON Schema lives in `schema/card.schema.json` and is validated strictly.
 ## 11. Feed app (PWA)
 
 - Full-screen vertical snap-scroll; horizontal swipe for depth panels.
-- Stories row, notifications, repo profile pages. (Saved cards were dropped: Like is the only reaction.)
-- Actions per card: like, comments, answer (interactive). No save or share: the network is not real.
+- Stories row, notifications, repo profile pages, saved cards.
+- Actions per card: like, save, "explain more", answer (interactive).
 - Offline cache of the current feed batch.
 - Event capture:
 

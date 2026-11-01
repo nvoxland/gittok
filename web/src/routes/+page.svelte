@@ -75,6 +75,7 @@
 <header class="chrome" aria-label="Top bar" bind:offsetHeight={chromeH}>
 	<div class="stories-slot"><StoriesRow {stories} onOpen={(i) => (openStory = i)} /></div>
 	<nav class="links">
+		<a href="/saved">Saved</a>
 		<NotificationBell />
 	</nav>
 </header>
@@ -121,6 +122,14 @@
 		gap: 0.5rem;
 		margin-left: auto;
 		padding: 0 16px 0 8px;
+	}
+	.links a {
+		display: inline-flex;
+		align-items: center;
+		min-height: 44px;
+		color: var(--muted);
+		text-decoration: none;
+		font-size: 0.85rem;
 	}
 	.offline {
 		position: fixed;

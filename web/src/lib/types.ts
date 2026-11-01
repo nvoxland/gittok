@@ -180,6 +180,7 @@ export type FeedEventType =
 	| 'scroll_back'
 	| 'depth_open'
 	| 'like'
+	| 'save'
 	| 'answer'
 	| 'source_tap'
 	| 'beats_done'
