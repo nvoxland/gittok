@@ -106,6 +106,7 @@ def _brief(args) -> int:
             unavailable_formats=mcp_server.unavailable_formats(cfg),
             max_illustrations=cfg.settings.render.max_illustrations_per_run,
             ledger=ledger.for_brief(conn, cfg, sorted(repo_signals), datetime.now(UTC)),
+            lead_ok=ledger.offerable(conn, cfg, datetime.now(UTC)),
             variants=ledger.variants(conn, cfg, datetime.now(UTC)),
             variant_max_share=cfg.settings.agent.variant_max_share,
             **mcp_server.mix_inputs(conn, cfg),

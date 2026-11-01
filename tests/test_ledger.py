@@ -41,10 +41,11 @@ def rows(conn, path=None):
     return conn.execute(sql + " ORDER BY id", args).fetchall()
 
 
-def test_refresh_upserts_leads_and_new_blob_is_new_row(conn):
+def test_refresh_upserts_leads_and_edited_file_keeps_its_row(conn, cfg):
     refresh(conn, sig("src/a.py", "lib/b.py"))
     a, b = rows(conn)
     assert (a["path"], a["kind"], a["blob_sha"]) == ("src/a.py", "path", "a" * 40)
+    assert a["lead_key"] == "p:src/a.py"
     assert a["strength"] == 1.0 and b["strength"] == 0.5
     assert a["head_sha"] == "h1" and a["first_seen_at"] == a["last_seen_at"]
 
@@ -55,17 +56,27 @@ def test_refresh_upserts_leads_and_new_blob_is_new_row(conn):
     assert (a["head_sha"], a["last_seen_at"]) == ("h2", ledger.iso(later))
     assert a["first_seen_at"] == ledger.iso(NOW)
 
+    ledger.mark_covered(conn, a["id"], later)
     changed = {**BLOBS, "src/a.py": "d" * 40}
     last = later + timedelta(days=1)
     refresh(conn, sig("src/a.py", "lib/b.py"), now=last, head="h3", blobs=changed)
-    old, new = rows(conn, "src/a.py")
-    assert (old["blob_sha"], new["blob_sha"]) == ("a" * 40, "d" * 40)
-    assert old["last_seen_at"] == ledger.iso(later)  # the old row stays, no longer current
+    (a,) = rows(conn, "src/a.py")  # an edit does not make a fresh lead
+    assert a["blob_sha"] == "d" * 40 and a["id"] == rows(conn)[0]["id"]
+    assert (a["times_covered"], a["last_covered_at"]) == (1, ledger.iso(later))
+    got = ledger.ranked(conn, cfg, "r", "hot_spot", last, 10)
+    assert [x.path for x in got] == ["lib/b.py"]  # still in its cooldown
 
 
-def test_refresh_skips_kind_none_leads(conn):
+def test_refresh_stores_kind_none_leads_with_synthetic_keys(conn):
     refresh(conn, {"churn": {"dirs": {"90": [{"path": "src", "commits": 5}]}}})
-    assert conn.execute("SELECT COUNT(*) FROM leads WHERE kind = 'none'").fetchone()[0] == 0
+    (r,) = conn.execute("SELECT * FROM leads WHERE kind = 'none'").fetchall()
+    assert (r["lead_key"], r["path"], r["commit_sha"]) == ("dir:src", "", "")
+    pair = {"co_change": [{"a": "x.py", "b": "y.py", "count": 3, "jaccard": 0.5}]}
+    ledger.refresh(conn, "r", pair, 0, "h1", {}, NOW)
+    keys = {
+        x[0] for x in conn.execute("SELECT lead_key FROM leads WHERE story_type = 'secret_couples'")
+    }
+    assert keys == {"pair:x.py|y.py"}
 
 
 def seed_dir_interest(conn, **means):
@@ -200,3 +211,135 @@ def test_variants_lists_good_old_stories_best_first_with_newest_hook(conn, cfg):
     assert (best["repo"], best["story_type"]) == ("r", "hot_spot")
     assert best["sources"] == [{"repo": "r", "commit": "abc"}] and best["best_reward"] == 0.9
     assert got[0]["hook"] is None  # its card was deleted by gc: story type and sources only
+
+
+# --- story blocks and cooldown share one clock ---------------------------------------
+
+
+def add_story(conn, key, stype, sources, reward=None, liked=0, formats=("meme",), age=3):
+    conn.execute(
+        "INSERT INTO stories(story_key, repo, story_type, sources, first_card_at, last_card_at,"
+        " best_reward, liked, formats) VALUES (?, 'r', ?, ?, ?, ?, ?, ?, ?)",
+        (
+            key,
+            stype,
+            db.dumps(sources),
+            iso_days(age),
+            iso_days(age),
+            reward,
+            liked,
+            db.dumps(list(formats)),
+        ),
+    )
+
+
+def test_for_brief_drops_leads_whose_story_is_blocked(conn, cfg):
+    refresh(conn, sig("src/a.py", "lib/b.py", "docs/c.py"))
+    add_story(
+        conn, "k1", "hot_spot", [{"repo": "r", "path": "src/a.py", "lines": [1, 4]}], reward=0.1
+    )
+    add_story(conn, "k2", "hot_spot", [{"repo": "r", "path": "lib/b.py"}], reward=0.9, age=40)
+    got = [x.path for x in ledger.for_brief(conn, cfg, ["r"], NOW)[("r", "hot_spot")]]
+    assert got == ["lib/b.py", "docs/c.py"]  # a.py: weak story is blocked; b.py: may be retold
+
+
+def test_blocked_story_outlasts_the_cooldown(conn, cfg):
+    refresh(conn, sig("src/a.py"))
+    add_story(conn, "k1", "hot_spot", [{"repo": "r", "path": "src/a.py"}], reward=0.1, age=60)
+    conn.execute("UPDATE leads SET last_covered_at = ?", (iso_days(45),))  # cooldown is over
+    assert ledger.for_brief(conn, cfg, ["r"], NOW)[("r", "hot_spot")] == []
+
+
+def test_commit_lead_blocked_by_story_with_that_commit(conn, cfg):
+    sha = "ab" * 20
+    s = {"reverts": [{"sha": sha, "ts": 1, "author": "x", "reverted_sha": "cd" * 20}]}
+    refresh(conn, s)
+    ledger.refresh(conn, "r", s, 0, "h1", {}, NOW)
+    add_story(conn, "k1", "commit_drama", [{"repo": "r", "commit": sha[:10]}], reward=0.0)
+    assert ledger.for_brief(conn, cfg, ["r"], NOW)[("r", "commit_drama")] == []
+
+
+def test_dir_lead_gets_cooldown(conn, cfg):
+    s = {"author_shares": {"by_dir": {"src": [{"author": "a", "share": 0.9}]}}}
+    ledger.refresh(conn, "r", s, 0, "h1", {}, NOW)
+    (lead,) = ledger.for_brief(conn, cfg, ["r"], NOW)[("r", "whose_code")]
+    assert lead.key == "dir:src" and lead.kind == "none"
+    ledger.mark_covered(conn, lead.id, NOW)
+    assert ledger.for_brief(conn, cfg, ["r"], NOW + timedelta(days=2))[("r", "whose_code")] == []
+    again = ledger.for_brief(conn, cfg, ["r"], NOW + timedelta(days=31))[("r", "whose_code")]
+    assert [x.key for x in again] == ["dir:src"]
+
+
+def test_offerable_covers_leads_computed_without_a_ledger(conn, cfg):
+    s = {"author_shares": {"by_dir": {"src": [{"author": "a", "share": 0.9}]}}}
+    ledger.refresh(conn, "r", s, 0, "h1", {}, NOW)
+    ok = ledger.offerable(conn, cfg, NOW)
+    from codescroll import brief
+
+    (lead,) = brief.lead_refs_for("whose_code", s, 0, 5, repo="r")
+    assert ok(lead)
+    conn.execute("UPDATE leads SET last_covered_at = ?", (iso_days(2),))
+    assert not ledger.offerable(conn, cfg, NOW)(lead)
+    path_lead = brief.Lead("hot_spot", "r", "path", path="q.py", text="t")
+    add_story(conn, "k", "hot_spot", [{"repo": "r", "path": "q.py"}], reward=0.0)
+    assert not ledger.offerable(conn, cfg, NOW)(path_lead)
+
+
+def test_match_lead_requires_same_story_type_and_matches_dirs_and_other_line_ranges():
+    refs = [lead(path="x.py", id=1, key="p:x.py", lines=[3, 9])]
+    other_lines = {**card(paths=["x.py"]), "story_type": "hot_spot"}
+    other_lines["sources"][0]["lines"] = [40, 50]
+    assert ledger.match_lead(other_lines, refs)["id"] == 1
+    assert ledger.match_lead({**card(paths=["x.py"]), "story_type": "rip"}, refs) is None
+    d = [lead(kind="none", id=5, key="dir:src", story_type="whose_code")]
+    hit = {**card(), "story_type": "whose_code", "dirs": ["src"]}
+    assert ledger.match_lead(hit, d)["id"] == 5
+    assert ledger.match_lead({**hit, "dirs": ["lib"]}, d) is None
+
+
+def test_rekey_migration_merges_path_rows_that_differ_by_blob():
+    import sqlite3
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    files = db._migration_files()
+    last = next(f for f in files if f.name.startswith("0013"))
+    for f in files:
+        if f.name < last.name:
+            conn.executescript(f.read_text(encoding="utf-8"))
+
+    def ins(blob, seen, cov, at, reward=None, n=0, path="a.py", kind="path", sha=""):
+        return conn.execute(
+            "INSERT INTO leads(repo, story_type, kind, path, commit_sha, blob_sha, text, strength,"
+            " head_sha, first_seen_at, last_seen_at, times_covered, last_covered_at, mean_reward,"
+            " rewards_n) VALUES ('r', 'hot_spot', ?, ?, ?, ?, ?, 1.0, 'h', ?, ?, ?, ?, ?, ?)",
+            (kind, path, sha, blob, f"t{blob}", seen, seen, cov, at, reward, n),
+        ).lastrowid
+
+    old = ins("b1", "2026-01-01", 2, "2026-02-01", 0.2, 1)
+    new = ins("b2", "2026-03-01", 1, "2026-01-15", 0.8, 3)
+    other = ins("b1", "2026-03-01", 0, None, path="z.py")
+    commit = ins("", "2026-03-01", 1, "2026-03-02", kind="commit", sha="c" * 40, path="")
+    conn.execute("INSERT INTO runs(id, status, started_at) VALUES ('r1','finished','t')")
+    conn.execute("INSERT INTO repos(name, path) VALUES ('r', '/r')")
+    conn.execute(
+        "INSERT INTO cards(id, run_id, repo_id, story_type, format, persona, tone, spec,"
+        " story_key, created_at, lead_id) VALUES ('c1','r1',1,'hot_spot','meme','p','t','{}',"
+        "'k','t',?)",
+        (old,),
+    )
+    conn.executescript(last.read_text(encoding="utf-8"))
+    got = conn.execute("SELECT * FROM leads WHERE path = 'a.py'").fetchall()
+    assert len(got) == 1
+    (m,) = got
+    assert m["id"] == new and m["lead_key"] == "p:a.py" and m["blob_sha"] == "b2"
+    assert (m["times_covered"], m["last_covered_at"]) == (3, "2026-02-01")
+    assert m["first_seen_at"] == "2026-01-01" and m["rewards_n"] == 4
+    assert m["mean_reward"] == pytest.approx((0.2 * 1 + 0.8 * 3) / 4)
+    assert conn.execute("SELECT lead_id FROM cards").fetchone()[0] == new
+    assert (
+        conn.execute("SELECT lead_key FROM leads WHERE id = ?", (other,)).fetchone()[0] == "p:z.py"
+    )
+    assert conn.execute("SELECT lead_key FROM leads WHERE id = ?", (commit,)).fetchone()[0] == (
+        "c:" + "c" * 40 + ":"
+    )

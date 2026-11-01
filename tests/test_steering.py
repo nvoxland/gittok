@@ -747,10 +747,10 @@ def test_coverage_rows_carry_depth_and_prefixes_do_not_double_count(conn, cfg):
 def test_coverage_rows_count_current_leads_and_covered_leads(conn, cfg):
     def lead(path, seen, covered=0, story="hot_spot"):
         conn.execute(
-            "INSERT INTO leads(repo, story_type, kind, path, text, strength, head_sha, "
+            "INSERT INTO leads(repo, story_type, kind, path, lead_key, text, strength, head_sha, "
             "first_seen_at, last_seen_at, times_covered) "
-            "VALUES ('fixture', ?, 'path', ?, 't', 1.0, 'h', 'a', ?, ?)",
-            (story, path, seen, covered),
+            "VALUES ('fixture', ?, 'path', ?, 'p:' || ?, 't', 1.0, 'h', 'a', ?, ?)",
+            (story, path, path, seen, covered),
         )
 
     lead("src/a.py", "2026-06-01T00:00:00Z", covered=1)

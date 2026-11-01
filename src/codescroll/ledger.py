@@ -1,15 +1,18 @@
 """The lead ledger: every lead the analysis offered, keyed by git identity.
 
-A commit lead is keyed by its sha. A path lead is keyed by path and blob sha, so a changed
-file is a new row. Coverage and reward live on the row. See docs/learning.md, "Lead ledger".
+A commit lead is keyed by sha and path, a path lead by its path (an edit to the file keeps its
+row and its cooldown), and a lead with no git identity by a synthetic key ("dir:src",
+"pair:a|b"). Coverage and reward live on the row. A lead also stays out of the brief while its
+story is blocked (`offerable`). See docs/learning.md, "Lead ledger".
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
-from codescroll import brief, db, learning
+from codescroll import brief, db, learning, store, storykey
 
 WIDE_LIMIT = 50  # leads kept per story type per refresh
 UNKNOWN_INTEREST = 0.5
@@ -19,19 +22,28 @@ def iso(dt: datetime) -> str:
     return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def lead_key(ld: brief.Lead) -> str:
+    """The ledger identity of a lead (the `lead_key` column)."""
+    if ld.key:
+        return ld.key
+    if ld.kind == "commit":
+        return f"c:{ld.commit or ''}:{ld.path or ''}"
+    if ld.kind == "path":
+        return f"p:{ld.path or ''}"
+    return f"n:{ld.text}"
+
+
 def refresh(conn, repo_name: str, sig: dict, t0, head_sha: str, blobs: dict, now: datetime) -> int:
     """Upsert every commit and path lead of every story type. Returns the rows touched.
 
     `blobs` maps path -> blob sha at the analyzed ref. `strength` is 1 / (1 + rank) within
-    the story type. Leads of kind "none" have no git identity and are not stored.
+    the story type. Leads of kind "none" are stored under their synthetic key.
     """
     stamp = iso(now)
     types = dict.fromkeys(t for ts in brief.CATEGORY_STORIES.values() for t in ts)
     rows = []
     for t in types:
         for rank, ld in enumerate(brief.lead_refs_for(t, sig, t0, WIDE_LIMIT, repo=repo_name)):
-            if ld.kind == "none":
-                continue
             rows.append(
                 (
                     repo_name,
@@ -40,6 +52,7 @@ def refresh(conn, repo_name: str, sig: dict, t0, head_sha: str, blobs: dict, now
                     ld.path or "",
                     ld.commit or "",
                     blobs.get(ld.path or "", "") if ld.kind == "path" else "",
+                    lead_key(ld),
                     db.dumps(list(ld.lines)) if ld.lines else None,
                     ld.text,
                     1 / (1 + rank),
@@ -50,11 +63,12 @@ def refresh(conn, repo_name: str, sig: dict, t0, head_sha: str, blobs: dict, now
             )
     with db.immediate(conn):
         conn.executemany(
-            "INSERT INTO leads(repo, story_type, kind, path, commit_sha, blob_sha, lines, text, "
-            "strength, head_sha, first_seen_at, last_seen_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(repo, story_type, kind, path, commit_sha, blob_sha) DO UPDATE SET "
-            "lines = excluded.lines, text = excluded.text, strength = excluded.strength, "
+            "INSERT INTO leads(repo, story_type, kind, path, commit_sha, blob_sha, lead_key, "
+            "lines, text, strength, head_sha, first_seen_at, last_seen_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(repo, story_type, lead_key) DO UPDATE SET "
+            "blob_sha = excluded.blob_sha, lines = excluded.lines, text = excluded.text, "
+            "strength = excluded.strength, "
             "head_sha = excluded.head_sha, last_seen_at = excluded.last_seen_at",
             rows,
         )
@@ -89,23 +103,99 @@ def _lead(r) -> brief.Lead:
         lines=tuple(json.loads(r["lines"])) if r["lines"] else None,
         text=r["text"],
         id=r["id"],
+        key=r["lead_key"],
     )
 
 
+def _blocked_stories(conn, cfg, now: datetime) -> list:
+    """Stories no card of any format may join now (`store.variant_blocker` rejects every format)."""
+    formats = dict.fromkeys([*brief.CATEGORY_FORMATS_FLAT, *brief.CROSS_FORMATS])
+    agent = cfg.settings.agent
+    return [
+        r
+        for r in conn.execute("SELECT * FROM stories")
+        if all(store.variant_blocker(r, f, agent, now) for f in formats)
+    ]
+
+
+class _StoryBlocks:
+    """Blocked stories indexed by (repo, story type): their keys, commits, and paths."""
+
+    def __init__(self, stories: list):
+        self.by_type: dict[tuple[str, str], dict] = {}
+        for r in stories:
+            e = self.by_type.setdefault(
+                (r["repo"], r["story_type"]), {"keys": set(), "commits": [], "paths": []}
+            )
+            e["keys"].add(r["story_key"])
+            srcs = [x for x in db.loads(r["sources"]) if x.get("repo", r["repo"]) == r["repo"]]
+            e["commits"] += [x["commit"] for x in srcs if x.get("commit")]
+            e["paths"].append({x["path"] for x in srcs if x.get("path")})
+
+    def blocks(self, ld: brief.Lead) -> bool:
+        """True if a blocked story of the lead's type has its exact key, or cites its place.
+
+        A lead cannot always predict the key (a card may cite another line range, or a second
+        source), so a commit lead matches any source with that commit, and a path lead any
+        source with that path. A file-pair lead needs both files.
+        """
+        e = self.by_type.get((ld.repo, ld.story_type))
+        if not e:
+            return False
+        if ld.kind == "commit" and ld.commit:
+            key = storykey.story_key(ld.story_type, ld.repo, commit=ld.commit)
+            return key in e["keys"] or any(_sha_match(ld.commit, c) for c in e["commits"])
+        if ld.kind == "path" and ld.path:
+            want = {ld.path}
+            if ld.key and ld.key.startswith("pair:"):
+                want |= set(ld.key[5:].split("|"))
+            return any(want <= paths for paths in e["paths"])
+        return False
+
+
+def offerable(conn, cfg, now: datetime) -> Callable[[brief.Lead], bool]:
+    """Predicate for leads that did not come from the ledger (or came without a check).
+
+    A lead is not offerable while it is in its cooldown, or while its story is blocked.
+    """
+    cutoff = iso(now - timedelta(days=cfg.settings.agent.lead_cooldown_days))
+    covered = {
+        (r["repo"], r["story_type"], r["lead_key"]): r["last_covered_at"]
+        for r in conn.execute("SELECT * FROM leads WHERE last_covered_at >= ?", (cutoff,))
+    }
+    blocks = _StoryBlocks(_blocked_stories(conn, cfg, now))
+
+    def ok(ld: brief.Lead) -> bool:
+        return (ld.repo, ld.story_type, lead_key(ld)) not in covered and not blocks.blocks(ld)
+
+    return ok
+
+
 def ranked(
-    conn, cfg, repo: str, story_type: str, now: datetime, limit: int, dir_means: dict | None = None
+    conn,
+    cfg,
+    repo: str,
+    story_type: str,
+    now: datetime,
+    limit: int,
+    dir_means: dict | None = None,
+    blocks: _StoryBlocks | None = None,
 ) -> list[brief.Lead]:
-    """Current leads for one story type, best first, without leads still in their cooldown.
+    """Current leads for one story type, best first, without leads still in their cooldown
+    or whose story is blocked.
 
     score = interest x strength x 0.5 ** times_covered.
     """
     cutoff = iso(now - timedelta(days=cfg.settings.agent.lead_cooldown_days))
     if dir_means is None:
         dir_means = learning.posterior_means(conn, cfg, "dir", now)
+    if blocks is None:
+        blocks = _StoryBlocks(_blocked_stories(conn, cfg, now))
     rows = [
         r
         for r in _current(conn, repo, story_type)
-        if r["last_covered_at"] is None or r["last_covered_at"] < cutoff
+        if (r["last_covered_at"] is None or r["last_covered_at"] < cutoff)
+        and not blocks.blocks(_lead(r))
     ]
 
     def score(r) -> float:
@@ -123,12 +213,13 @@ def for_brief(conn, cfg, repos, now: datetime, limit: int = WIDE_LIMIT) -> dict:
     computing leads from signals.
     """
     dir_means = learning.posterior_means(conn, cfg, "dir", now)
+    blocks = _StoryBlocks(_blocked_stories(conn, cfg, now))
     types = dict.fromkeys(t for ts in brief.CATEGORY_STORIES.values() for t in ts)
     out = {}
     for repo in repos:
         for t in types:
             if _current(conn, repo, t):
-                out[(repo, t)] = ranked(conn, cfg, repo, t, now, limit, dir_means)
+                out[(repo, t)] = ranked(conn, cfg, repo, t, now, limit, dir_means, blocks)
     return out
 
 
@@ -181,15 +272,30 @@ def _cited(card: dict) -> tuple[list[str], list[str]]:
 
 
 def match_lead(card: dict, lead_refs: list[dict]) -> dict | None:
-    """The packet lead (with a ledger id) a card used: by cited commit first, else by path."""
+    """The packet lead (with a ledger id) a card used.
+
+    Only leads of the card's story type count. A commit lead matches by a cited commit, a path
+    lead by a cited path (any line range), and a dir lead by a dir the card lists. Commits go
+    first, then paths, then dirs.
+    """
     commits, paths = _cited(card)
-    leads = [x for x in lead_refs if x.get("id") is not None]
+    stype = card.get("story_type")
+    leads = [
+        x
+        for x in lead_refs
+        if x.get("id") is not None and (stype is None or x.get("story_type") in (None, stype))
+    ]
     for x in leads:
         if x.get("commit") and any(_sha_match(x["commit"], c) for c in commits):
             return x
     for x in leads:
         if x.get("path") and x["path"] in paths:
             return x
+    dirs = card.get("dirs") or []
+    for x in leads:
+        if x.get("kind") == "none" and (x.get("key") or "").startswith("dir:"):
+            if x["key"][4:] in dirs:
+                return x
     return None
 
 

@@ -393,10 +393,10 @@ def test_vacuum_runs(conn, cfg):
 
 def add_lead(conn, path, seen_days_ago, covered=0):
     conn.execute(
-        "INSERT INTO leads(repo, story_type, kind, path, text, strength, head_sha, "
+        "INSERT INTO leads(repo, story_type, kind, path, lead_key, text, strength, head_sha, "
         "first_seen_at, last_seen_at, times_covered) "
-        "VALUES ('r', 'hot_spot', 'path', ?, 't', 1.0, 'h', ?, ?, ?)",
-        (path, iso(400), iso(seen_days_ago), covered),
+        "VALUES ('r', 'hot_spot', 'path', ?, 'p:' || ?, 't', 1.0, 'h', ?, ?, ?)",
+        (path, path, iso(400), iso(seen_days_ago), covered),
     )
     conn.commit()
 

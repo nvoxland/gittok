@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 
 from codescroll import validator
@@ -166,6 +167,7 @@ class Lead:
     lines: tuple[int, int] | None = None
     text: str = ""
     id: int | None = None  # ledger row id, when the lead came from the ledger
+    key: str | None = None  # synthetic ledger key for leads with no single identity in history
 
 
 def leads_for(
@@ -194,8 +196,8 @@ def lead_refs_for(
     def at_commit(text, sha, path=None) -> Lead:
         return lead(text, "commit", commit=sha, path=path)
 
-    def at_path(text, path, line=None) -> Lead:
-        return lead(text, "path", path=path, lines=(line, line) if line else None)
+    def at_path(text, path, line=None, key=None) -> Lead:
+        return lead(text, "path", path=path, lines=(line, line) if line else None, key=key)
 
     churn_files = sig.get("churn", {}).get("files", {})
     hot = [f for f in churn_files.get("90") or churn_files.get("365") or [] if _useful(f["path"])]
@@ -213,7 +215,10 @@ def lead_refs_for(
             for f in hot
         ]
         dirs = sig.get("churn", {}).get("dirs", {}).get("90", [])
-        out += [lead(f"dir {d['path']}/: {d['commits']} commits (90d)") for d in dirs[:2]]
+        out += [
+            lead(f"dir {d['path']}/: {d['commits']} commits (90d)", key=f"dir:{d['path']}")
+            for d in dirs[:2]
+        ]
     elif story_type == "commit_drama":
         for r in sig.get("reverts", []):
             out.append(
@@ -288,13 +293,14 @@ def lead_refs_for(
                 f"{c['a']} + {c['b']}: changed together {c['count']} times "
                 f"(jaccard {c['jaccard']})",
                 c["a"],
+                key=f"pair:{c['a']}|{c['b']}",
             )
             for c in pairs
         ]
     elif story_type == "whose_code":
         for d, authors in sig.get("author_shares", {}).get("by_dir", {}).items():
             top = ", ".join(f"{a['author']} {round(a['share'] * 100)}%" for a in authors[:3])
-            out.append(lead(f"dir {d}/: {top}"))
+            out.append(lead(f"dir {d}/: {top}", key=f"dir:{d}"))
     elif story_type == "new_arrival":
         out += [
             at_commit(
@@ -916,6 +922,7 @@ def build_brief(
     groups: dict[str, list[str]] | None = None,
     format_weights: dict[str, float] | None = None,
     ledger: dict[tuple[str, str], list[Lead]] | None = None,
+    lead_ok: Callable[[Lead], bool] | None = None,
     variants: list[dict] | None = None,
     variant_max_share: float = 0.2,
     meme_templates: dict | None = None,
@@ -1143,6 +1150,8 @@ def build_brief(
                             limit=1000 if prefer_dirs or ban_dirs else MAX_LEADS_PER_TYPE,
                             repo=repo,
                         )
+                        if lead_ok:  # no ledger rows: still honor cooldown and story blocks
+                            wide = [x for x in wide if lead_ok(x)]
                     ref_by[(repo, t)] = {x.text: x for x in wide}
                     wide_text = [x.text for x in wide]
                     leads_by[(repo, t)] = focused_first(wide_text)[:MAX_LEADS_PER_TYPE]

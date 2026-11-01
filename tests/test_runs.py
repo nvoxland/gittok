@@ -463,10 +463,16 @@ def test_seconds_per_card_rounds_and_is_none_without_cards(conn, cfg, fixture_re
 def _lead_row(conn, **kw) -> int:
     row = {"kind": "path", "path": "", "commit_sha": "", "blob_sha": ""} | kw
     cur = conn.execute(
-        "INSERT INTO leads(repo, story_type, kind, path, commit_sha, blob_sha, text, strength, "
-        "head_sha, first_seen_at, last_seen_at) "
-        "VALUES ('fixture', 'commit_drama', ?, ?, ?, ?, 't', 1.0, 'h', 'x', 'x')",
-        (row["kind"], row["path"], row["commit_sha"], row["blob_sha"]),
+        "INSERT INTO leads(repo, story_type, kind, path, commit_sha, blob_sha, lead_key, text, "
+        "strength, head_sha, first_seen_at, last_seen_at) "
+        "VALUES ('fixture', 'commit_drama', ?, ?, ?, ?, ?, 't', 1.0, 'h', 'x', 'x')",
+        (
+            row["kind"],
+            row["path"],
+            row["commit_sha"],
+            row["blob_sha"],
+            f"{row['kind']}:{row['path']}:{row['commit_sha']}",
+        ),
     )
     return cur.lastrowid
 
