@@ -76,6 +76,13 @@ MUTATIONS = {
     # src/app.py did not change in the commit that deleted legacy.py
     "empty_diff": lambda c, s: c["depth"][1].update(commit=s["delete_legacy"], path="src/app.py"),
     "missing_explain_panel": lambda c, s: c.update(depth=c["depth"][1:]),
+    "explain_too_thin": lambda c, s: c["depth"][0].update(text="The code rounds `round(t)`."),
+    "identifier_not_found": lambda c, s: c["depth"][0].update(
+        text=c["depth"][0]["text"].replace("round(t)", "no_such_function")
+    ),
+    "untraced": lambda c, s: c["depth"][0].update(
+        text=c["depth"][0]["text"] + "\n\nI did not trace why it was written this way."
+    ),
     "excerpt_mismatch": lambda c, s: c["visual"].update(excerpt="def total(items):\n    pass"),
 }
 
@@ -771,6 +778,7 @@ def test_guess_when_year_uses_the_author_timezone(tmp_path):
     card = _cards.guess_when_card(fr)
     card["visual"].update(path="src/a.py", commit=sha, lines=[1, 2])
     card["dirs"] = ["src"]
+    card["depth"][0]["text"] = _cards.explain("x = 1")
     card["sources"] = [{"repo": "fixture", "path": "src/a.py", "lines": [1, 2]}]
     card["interaction"]["choices"] = ["2024", "2025", "2026"]
     card["interaction"]["answer_index"] = 2
@@ -981,3 +989,31 @@ def test_all_example_template_cards_fit(fixture_repo, repos):
     cards = [template_card(fixture_repo, t) for t in TEMPLATE_DATA]
     _, rejected = check(cards, repos)
     assert [r for r in rejected if r.reason == "too_long"] == []
+
+
+def test_explain_floor_counts_only_the_first_explain_panel_for_identifiers(fixture_repo, repos):
+    card = example_card(fixture_repo)
+    card["depth"].append({"kind": "explain", "text": "A short extra note."})
+    accepted, rejected = check([card], repos)
+    assert rejected == [] and len(accepted) == 1
+
+
+def test_identifier_may_come_from_a_cited_diff_or_commit(fixture_repo, repos):
+    card = text_card(fixture_repo)  # only a commit source; `old()` is in that commit's patch
+    accepted, rejected = check([card], repos)
+    assert rejected == [] and len(accepted) == 1
+
+
+def test_identifier_may_be_a_cited_path(fixture_repo, repos):
+    card = example_card(fixture_repo)
+    card["depth"][0]["text"] = card["depth"][0]["text"].replace("round(t)", "billing/invoice.py")
+    accepted, rejected = check([card], repos)
+    assert rejected == [] and len(accepted) == 1
+
+
+def test_untraced_detail_says_what_to_do(fixture_repo, repos):
+    card = example_card(fixture_repo)
+    card["depth"][0]["text"] += "\n\nNot sure why."
+    _, rejected = check([card], repos)
+    assert reasons(rejected) == ["untraced"]
+    assert "commit message" in rejected[0].detail

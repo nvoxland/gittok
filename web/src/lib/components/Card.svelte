@@ -52,6 +52,7 @@
 	const Visual = $derived(visuals[card.visual.kind]);
 	const beats = $derived(active === undefined ? [] : beatsFor(card.visual));
 	// Comments wait for a quiz answer: they can give it away.
+	const firstExplain = $derived(card.depth.findIndex((d) => d.kind === 'explain'));
 	const showComments = $derived(!!card.comments?.length && answered);
 	const count = $derived(1 + card.depth.length + (showComments ? 1 : 0));
 
@@ -111,7 +112,11 @@
 		{#each card.depth as d, i (i)}
 			<section data-panel={i + 1}>
 				{#if d.kind === 'explain'}
-					<ExplainPanel text={d.text} sources={card.links?.sources ?? []} />
+					<ExplainPanel
+						text={d.text}
+						sources={card.links?.sources ?? []}
+						learn={i === firstExplain ? card.learn : undefined}
+					/>
 				{:else if d.kind === 'code'}
 					<CodePanel
 						repo={d.repo}

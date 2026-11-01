@@ -2,7 +2,11 @@
 	import { parseMarkdown, type Inline } from '#lib/miniMarkdown.ts';
 	import type { CardLink } from '#lib/types.ts';
 
-	let { text, sources = [] }: { text: string; sources?: CardLink[] } = $props();
+	let {
+		text,
+		sources = [],
+		learn
+	}: { text: string; sources?: CardLink[]; learn?: string } = $props();
 	const blocks = $derived(parseMarkdown(text));
 	const linked = $derived(sources.filter((s) => s.url));
 </script>
@@ -15,6 +19,9 @@
 {/snippet}
 
 <div class="explain">
+	{#if learn}
+		<p class="learn"><strong>You'll learn:</strong> {learn}</p>
+	{/if}
 	{#each blocks as b, i (i)}
 		{#if b.type === 'p'}
 			<p>{@render inline(b.inline)}</p>
@@ -47,6 +54,13 @@
 	}
 	p {
 		margin: 0 0 1em;
+	}
+	.learn {
+		padding: 0.5rem 0.75rem;
+		border-left: 3px solid var(--accent);
+		background: var(--surface);
+		border-radius: 4px;
+		font-size: 0.95rem;
 	}
 	ul {
 		margin: 0 0 1em;
