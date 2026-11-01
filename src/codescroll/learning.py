@@ -14,7 +14,7 @@ from typing import Any
 
 import yaml
 
-from codescroll import db, knowledge
+from codescroll import db, knowledge, requests
 
 log = logging.getLogger(__name__)
 
@@ -281,6 +281,7 @@ def process_events(conn, cfg, now: datetime | None = None) -> dict:
                 _update_weight(conn, cfg, rc, feature, value, r, now)
                 touched.add((feature, value))
         knowledge.update_in_tx(conn)
+        requests.sync_in_tx(conn)
     stats["weights"] = len(touched)
     return stats
 

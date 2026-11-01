@@ -197,6 +197,8 @@ export type FeedEventType =
 	| 'depth_open'
 	| 'like'
 	| 'save'
+	| 'knew_it'
+	| 'teach_more'
 	| 'answer'
 	| 'source_tap'
 	| 'beats_done'

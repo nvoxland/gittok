@@ -38,6 +38,18 @@
 		onAction?.(flag === 'liked' ? 'like' : 'save', { on });
 	}
 
+	let knewIt = $state(getFlags(card.id).knewIt ?? false);
+	let teachMore = $state(getFlags(card.id).teachMore ?? false);
+
+	// One-shot signals: the first tap fills the button and emits; later taps do nothing.
+	function signal(flag: 'knewIt' | 'teachMore') {
+		if (flag === 'knewIt' ? knewIt : teachMore) return;
+		if (flag === 'knewIt') knewIt = true;
+		else teachMore = true;
+		setFlag(card.id, flag, true);
+		onAction?.(flag === 'knewIt' ? 'knew_it' : 'teach_more', { on: true });
+	}
+
 	let panel = $state(0);
 
 	function onScroll(e: Event) {
@@ -150,10 +162,25 @@
 	</div>
 	<div class="actions">
 		<button type="button" aria-pressed={liked} aria-label="Like" onclick={() => toggle('liked')}>
-			{liked ? '♥' : '♡'}
+			<span class="icon" aria-hidden="true">{liked ? '♥' : '♡'}</span>
+			<span class="label" aria-hidden="true">Like</span>
 		</button>
 		<button type="button" aria-pressed={saved} aria-label="Save" onclick={() => toggle('saved')}>
-			{saved ? '★' : '☆'}
+			<span class="icon" aria-hidden="true">{saved ? '★' : '☆'}</span>
+			<span class="label" aria-hidden="true">Save</span>
+		</button>
+		<button type="button" aria-pressed={knewIt} aria-label="Knew it" onclick={() => signal('knewIt')}>
+			<span class="icon" aria-hidden="true">{knewIt ? '✔' : '✓'}</span>
+			<span class="label" aria-hidden="true">Knew it</span>
+		</button>
+		<button
+			type="button"
+			aria-pressed={teachMore}
+			aria-label="Teach me more"
+			onclick={() => signal('teachMore')}
+		>
+			<span class="icon" aria-hidden="true">{teachMore ? '⊕' : '＋'}</span>
+			<span class="label" aria-hidden="true">More</span>
 		</button>
 		{#if showComments}
 			<!-- Jumps to the comments panel; the panel change itself is the depth_open signal. -->
@@ -254,7 +281,7 @@
 	h2 {
 		flex: none;
 		margin: 0;
-		padding-right: 52px; /* clear of the like/save/explain buttons */
+		padding-right: 60px; /* clear of the like/save/explain buttons */
 		font-size: 1.25rem;
 		display: -webkit-box;
 		-webkit-box-orient: vertical;
@@ -273,7 +300,7 @@
 		flex: none;
 		display: block;
 		width: 100%;
-		padding: 0 52px 0 0;
+		padding: 0 60px 0 0;
 		border: 0;
 		background: none;
 		color: var(--muted);
@@ -307,20 +334,37 @@
 	.actions {
 		position: absolute;
 		right: 12px;
-		bottom: 3.5rem;
+		bottom: 2.5rem;
 		display: flex;
 		flex-direction: column;
 		gap: 0.5rem;
 	}
 	.actions button {
-		width: 44px;
-		height: 44px;
-		border-radius: 50%;
+		width: 52px;
+		min-height: 52px;
+		padding: 2px 0;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 1px;
+		line-height: 1;
+		border-radius: 14px;
 		border: 1px solid var(--border);
 		background: var(--surface);
 		color: inherit;
 		font-size: 1.2rem;
 		cursor: pointer;
+	}
+	.actions .icon {
+		font-size: 1.2rem;
+	}
+	.actions .label {
+		font-size: 0.6rem;
+		color: var(--muted);
+	}
+	.actions button[aria-pressed='true'] {
+		background: color-mix(in srgb, var(--accent) 18%, var(--surface));
 	}
 	.comments-btn {
 		display: grid;
