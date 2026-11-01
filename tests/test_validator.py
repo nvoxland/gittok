@@ -1019,3 +1019,36 @@ def test_untraced_detail_says_what_to_do(fixture_repo, repos):
     _, rejected = check([card], repos)
     assert reasons(rejected) == ["untraced"]
     assert "commit message" in rejected[0].detail
+
+
+_DEFENCE = "It looks odd, but the float math predates the decimal migration and callers rely on it."
+
+
+@pytest.mark.parametrize("verdict", ["bad", "cursed"])
+@pytest.mark.parametrize(
+    "comments, ok",
+    [
+        (None, False),
+        ([{"persona": "greybeard", "text": "Ugh."}], False),  # too short
+        ([{"persona": "paranoid_sec", "text": _DEFENCE}], False),  # the poster, not a reply
+        ([{"persona": "greybeard", "text": _DEFENCE}], True),
+    ],
+)
+def test_bad_or_cursed_verdict_needs_a_defence(fixture_repo, repos, verdict, comments, ok):
+    card = _cards.example_card(fixture_repo, verdict=verdict)
+    if comments is None:
+        del card["comments"]
+    else:
+        card["comments"] = comments
+    if ok:
+        accepted, rejected = check([card], repos)
+        assert rejected == [] and len(accepted) == 1
+    else:
+        assert _one(card, repos) == ["needs_defence"]
+
+
+def test_good_verdict_needs_no_defence(fixture_repo, repos):
+    card = _cards.example_card(fixture_repo, verdict="clever")
+    del card["comments"]
+    accepted, rejected = check([card], repos)
+    assert rejected == [] and len(accepted) == 1

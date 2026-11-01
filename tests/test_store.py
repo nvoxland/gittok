@@ -319,3 +319,17 @@ def test_predicted_story_key_matches_the_validators(cfg, fixture_repo):
         storykey.story_key("rip", "fixture", path="billing/invoice.py")
         == _accept(cfg, card).story_key
     )
+
+
+def test_verdict_becomes_a_feature(conn, cfg, fixture_repo):
+    _insert_run(conn)
+    card = example_card(fixture_repo, verdict="cursed")
+    card["comments"] = [
+        {"persona": "greybeard", "text": "Legacy float math that callers still depend on, sadly."}
+    ]
+    card_id = store.store_card(conn, cfg, "r_1", _accept(cfg, card))
+    feats = {
+        (r["feature"], r["value"])
+        for r in conn.execute("SELECT * FROM card_features WHERE card_id = ?", (card_id,))
+    }
+    assert ("verdict", "cursed") in feats

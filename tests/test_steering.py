@@ -763,3 +763,11 @@ def test_coverage_rows_count_current_leads_and_covered_leads(conn, cfg):
     assert (by_dir["src"]["leads"], by_dir["src"]["leads_covered"]) == (2, 1)
     assert (by_dir["data"]["leads"], by_dir["data"]["leads_covered"]) == (0, 0)
     assert "billing" not in by_dir or by_dir["billing"]["leads"] == 0
+
+
+def test_add_rule_verdict(conn, cfg):
+    r = steering.add_rule(conn, cfg, type="ban", feature="verdict", value="cursed")
+    assert (r["feature"], r["value"]) == ("verdict", "cursed")
+    with pytest.raises(steering.SteeringError, match="verdict"):
+        steering.add_rule(conn, cfg, type="ban", feature="verdict", value="meh")
+    steering.explain_weights(conn, cfg, feature="verdict")

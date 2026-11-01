@@ -30,6 +30,25 @@ const profile = (over: Partial<Profile> = {}): Profile => ({
 });
 
 describe('RepoProfile', () => {
+	it('shows verdict counts per top dir', () => {
+		render(RepoProfile, {
+			profile: profile({
+				verdicts: [
+					{ dir: 'billing', counts: { cursed: 2, core: 1 } },
+					{ dir: 'api', counts: { clever: 3 } }
+				]
+			})
+		});
+		const row = screen.getByTestId('verdicts-billing');
+		expect(row).toHaveTextContent('billing');
+		expect(row).toHaveTextContent('cursed 2');
+		expect(row).toHaveTextContent('core 1');
+		expect(screen.getByTestId('verdicts-api')).toHaveTextContent('clever 3');
+	});
+	it('hides the verdict section when there are none', () => {
+		render(RepoProfile, { profile: profile({ verdicts: [] }) });
+		expect(screen.queryByRole('heading', { name: 'Verdicts' })).toBeNull();
+	});
 	it('renders name, group, mascot and stats', () => {
 		const { container } = render(RepoProfile, { profile: profile() });
 		expect(screen.getByRole('heading', { name: 'storefront' })).toBeInTheDocument();

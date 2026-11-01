@@ -267,6 +267,7 @@
         "repos": {"type": "array", "minItems": 1, "maxItems": 4, "items": {"type": "string"}},
         "dirs": {"type": "array", "maxItems": 6, "items": {"type": "string", "maxLength": 400}},
         "difficulty": {"type": "integer", "minimum": 1, "maximum": 3},
+        "verdict": {"enum": ["good", "bad", "clever", "cursed", "core"]},
         "hook": {"type": "string", "minLength": 1, "maxLength": 200},
         "learn": {"type": "string", "minLength": 20, "maxLength": 140},
         "visual": {"oneOf": [

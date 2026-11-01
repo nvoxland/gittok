@@ -225,6 +225,7 @@ export type RepoProfile = {
 	mascot_image: string | null;
 	group: string | null;
 	stats: RepoStats;
+	verdicts?: { dir: string; counts: Record<string, number> }[];
 	cards: Card[];
 };
 

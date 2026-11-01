@@ -186,3 +186,11 @@ def test_cross_repo_story_types_pass_schema():
 
     for t in ("weekly_recap", "drift_alert", "ripple"):
         assert errors(cross_card("a" * 40, "b" * 40, story_type=t)) == [], t
+
+
+def test_verdict_is_optional_and_limited_to_scout_verdicts(fixture_repo):
+    from codescroll.scout import VERDICTS
+
+    for v in VERDICTS:
+        assert errors(example_card(fixture_repo, verdict=v)) == []
+    assert errors(example_card(fixture_repo, verdict="meh"))
