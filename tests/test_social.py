@@ -290,7 +290,9 @@ def test_list_and_mark_read(cfg, conn):
     out = social.list_notifications(conn, unread_only=True)
     assert out["unread"] == 2  # new_cards + hot_file
     first = out["notifications"][0]
-    assert set(first) == {"id", "kind", "text", "card_id", "created_at", "read"}
+    assert set(first) == {"id", "kind", "text", "card_id", "created_at", "read", "repo"}
+    hot = next(n for n in out["notifications"] if n["kind"] == "hot_file")
+    assert hot["repo"] == "fixture"
     social.mark_read(conn, ids=[first["id"]], now=NOW)
     assert social.list_notifications(conn, unread_only=True)["unread"] == 1
     assert len(social.list_notifications(conn)["notifications"]) == 2
@@ -308,3 +310,77 @@ def test_lan_addresses_are_non_loopback_ipv4():
     addrs = social.lan_addresses()
     assert all(a.count(".") == 3 and not a.startswith("127.") for a in addrs)
     assert len(addrs) == len(set(addrs))
+
+
+# --- hot file notifications link to cards -------------------------------
+
+
+def _notif(conn, kind="hot_file"):
+    return conn.execute("SELECT * FROM notifications WHERE kind = ?", (kind,)).fetchone()
+
+
+def _notif_leads(conn):
+    return conn.execute("SELECT COUNT(*) FROM leads WHERE lead_key LIKE 'notif:%'").fetchone()[0]
+
+
+def _add_card_row(conn, cfg, card_id, path, created_at, lead_id=None):
+    from codescroll import store
+
+    repo_id = store.ensure_repo(conn, cfg.repos["fixture"])
+    conn.execute("INSERT INTO runs(id, status, started_at) VALUES ('rx', 'finished', 'x')")
+    spec = {"repos": ["fixture"], "sources": [{"repo": "fixture", "path": path, "lines": [1, 2]}]}
+    conn.execute(
+        "INSERT INTO cards(id, run_id, repo_id, story_type, format, persona, tone, spec, resolved, "
+        "status, story_key, created_at, lead_id) VALUES (?, 'rx', ?, 'before_after', 'text', 'p', "
+        "'t', ?, '{}', 'ready', ?, ?, ?)",
+        (card_id, repo_id, db.dumps(spec), f"k{card_id}", created_at, lead_id),
+    )
+    conn.commit()
+
+
+def test_hot_file_without_card_makes_a_notif_lead_and_submit_links_it(cfg, conn):
+    from codescroll import ledger
+
+    social.generate_notifications(conn, cfg, NOW)
+    n = _notif(conn)
+    assert n["card_id"] is None
+    lead = conn.execute("SELECT * FROM leads WHERE lead_key = ?", (f"notif:{n['id']}",)).fetchone()
+    assert (lead["story_type"], lead["kind"], lead["path"], lead["strength"]) == (
+        "before_after", "commit", "auth.py", 2.0,
+    )  # fmt: skip
+    since = int((NOW - timedelta(hours=24)).timestamp())
+    head = gitq.recent_commits(cfg.repos["fixture"].path, "main", since)[0]["sha"]
+    assert lead["commit_sha"] == head
+    assert lead["text"] == (
+        "today's hot file: auth.py was in 3 commits in the last 24 hours. "
+        "Explain what changed and why it matters."
+    )
+    social.generate_notifications(conn, cfg, NOW + timedelta(minutes=5))  # no second lead
+    assert _notif_leads(conn) == 1
+    _add_card_row(conn, cfg, "c_new", "auth.py", "2026-10-30T12:30:00Z", lead_id=lead["id"])
+    with db.immediate(conn):
+        ledger.mark_covered(conn, lead["id"], NOW)
+    assert _notif(conn)["card_id"] == "c_new"
+    assert _notif(conn)["read_at"] is None
+
+
+def test_notif_lead_is_offered_first(cfg, conn):
+    from codescroll import ledger
+
+    social.generate_notifications(conn, cfg, NOW)
+    out = ledger.for_brief(conn, cfg, ["fixture"], NOW)
+    assert out[("fixture", "before_after")][0].key.startswith("notif:")
+
+
+def test_hot_file_with_a_recent_card_links_directly_without_a_lead(cfg, conn):
+    _add_card_row(conn, cfg, "c_old", "auth.py", "2026-10-30T02:00:00Z")
+    social.generate_notifications(conn, cfg, NOW)
+    assert _notif(conn)["card_id"] == "c_old"
+    assert _notif_leads(conn) == 0
+
+
+def test_hot_file_ignores_cards_older_than_a_day(cfg, conn):
+    _add_card_row(conn, cfg, "c_old", "auth.py", "2026-10-28T02:00:00Z")
+    social.generate_notifications(conn, cfg, NOW)
+    assert _notif(conn)["card_id"] is None
+    assert _notif_leads(conn) == 1

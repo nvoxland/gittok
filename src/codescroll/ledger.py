@@ -12,7 +12,7 @@ import json
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
-from codescroll import brief, db, knowledge, learning, requests, store, storykey
+from codescroll import brief, db, knowledge, learning, requests, social, store, storykey
 
 WIDE_LIMIT = 50  # leads kept per story type per refresh
 UNKNOWN_INTEREST = 0.5
@@ -82,8 +82,9 @@ def _current(conn, repo: str, story_type: str) -> list:
     """
     return conn.execute(
         "SELECT * FROM leads WHERE repo = ? AND story_type = ? AND (last_seen_at = "
-        "(SELECT MAX(last_seen_at) FROM leads WHERE repo = ? AND lead_key NOT LIKE 'req:%') "
-        "OR (lead_key LIKE 'req:%' AND last_covered_at IS NULL)) ORDER BY id",
+        "(SELECT MAX(last_seen_at) FROM leads WHERE repo = ? AND lead_key NOT LIKE 'req:%' "
+        "AND lead_key NOT LIKE 'notif:%') OR ((lead_key LIKE 'req:%' OR lead_key LIKE 'notif:%') "
+        "AND last_covered_at IS NULL)) ORDER BY id",
         (repo, story_type, repo),
     ).fetchall()
 
@@ -95,6 +96,11 @@ def _interest(path: str, means: dict[str, tuple[float, float]]) -> float:
         return UNKNOWN_INTEREST
     prefixes = ["/".join(parts[: i + 1]) for i in range(len(parts))]
     return sum(means[p][0] if p in means else UNKNOWN_INTEREST for p in prefixes) / len(prefixes)
+
+
+def _pinned(r) -> bool:
+    """Server-made leads (follow-up requests, hot-file notifications) skip filters and go first."""
+    return r["lead_key"].startswith((requests.KEY_PREFIX, social.NOTIF_PREFIX))
 
 
 def _lead(r) -> brief.Lead:
@@ -205,7 +211,7 @@ def ranked(
         r
         for r in _current(conn, repo, story_type)
         if (r["last_covered_at"] is None or r["last_covered_at"] < cutoff)
-        and (r["lead_key"].startswith(requests.KEY_PREFIX) or not blocks.blocks(_lead(r)))
+        and (_pinned(r) or not blocks.blocks(_lead(r)))
     ]
 
     if nmap is None:
@@ -217,7 +223,7 @@ def ranked(
         return interest * r["strength"] * nov * 0.5 ** r["times_covered"]
 
     # Follow-up requests go first: the reader asked for them.
-    rows.sort(key=lambda r: (not r["lead_key"].startswith(requests.KEY_PREFIX), -score(r), r["id"]))
+    rows.sort(key=lambda r: (not _pinned(r), -score(r), r["id"]))
     return [_lead(r) for r in rows[:limit]]
 
 
@@ -326,3 +332,4 @@ def mark_covered(conn, lead_id: int, now: datetime) -> None:
         (iso(now), lead_id),
     )
     requests.mark_served(conn, lead_id, iso(now))
+    social.mark_served(conn, lead_id)

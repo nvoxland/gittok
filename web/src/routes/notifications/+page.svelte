@@ -8,6 +8,11 @@
 		items = data.notifications.map((n: AppNotification) => ({ ...n }));
 	});
 
+	function hrefFor(n: AppNotification): string {
+		if (n.card_id) return `/card/${encodeURIComponent(n.card_id)}`;
+		if (n.kind === 'hot_file' && n.repo) return `/repo/${encodeURIComponent(n.repo)}`;
+		return '/';
+	}
 	function markRead(n: AppNotification) {
 		if (n.read) return;
 		n.read = true;
@@ -37,11 +42,7 @@
 	<ul>
 		{#each items as n (n.id)}
 			<li data-unread={!n.read}>
-				{#if n.card_id}
-					<a href="/card/{encodeURIComponent(n.card_id)}" onclick={() => markRead(n)}>{n.text}</a>
-				{:else}
-					<button type="button" onclick={() => markRead(n)}>{n.text}</button>
-				{/if}
+				<a href={hrefFor(n)} onclick={() => markRead(n)}>{n.text}</a>
 			</li>
 		{/each}
 	</ul>
@@ -88,8 +89,7 @@
 	li[data-unread='true'] {
 		font-weight: 700;
 	}
-	li a,
-	li button {
+	li a {
 		display: block;
 		width: 100%;
 		min-height: 44px;

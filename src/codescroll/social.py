@@ -137,6 +137,63 @@ def _hot_text(repo: str, hot: list[tuple[int, str]]) -> str:
     return f"Busy day in {repo}: " + ", ".join(parts) + (f" and {more} more" if more > 0 else "")
 
 
+NOTIF_PREFIX = "notif:"
+NOTIF_STRENGTH = 2.0
+
+
+def _recent_card_about(conn, repo: str, path: str, now: datetime) -> str | None:
+    """Newest ready card from the last 24 hours that cites `path` in its sources."""
+    for c in conn.execute(
+        "SELECT c.id, c.spec FROM cards c JOIN repos r ON r.id = c.repo_id "
+        "WHERE r.name = ? AND c.status = 'ready' AND c.created_at >= ? "
+        "ORDER BY c.created_at DESC, c.id DESC",
+        (repo, (now - timedelta(seconds=DAY_S)).strftime(FMT)),
+    ):
+        spec = db.loads(c["spec"]) or {}
+        if any(s.get("path") == path for s in spec.get("sources", [])):
+            return c["id"]
+    return None
+
+
+def _link_hot_file(conn, repo: str, top: tuple[int, str], commits, key: str, now: datetime) -> None:
+    """Give a new hot_file notification a card: an existing recent one, else a ledger lead."""
+    n, path = top
+    nid = conn.execute("SELECT id FROM notifications WHERE dedup_key = ?", (key,)).fetchone()["id"]
+    if card_id := _recent_card_about(conn, repo, path, now):
+        conn.execute("UPDATE notifications SET card_id = ? WHERE id = ?", (card_id, nid))
+        return
+    sha = next(c["sha"] for c in commits if path in c["files"])  # commits are newest first
+    stamp = now.strftime(FMT)
+    text = (
+        f"today's hot file: {path} was in {n} commits in the last 24 hours. "
+        "Explain what changed and why it matters."
+    )
+    conn.execute(
+        "INSERT INTO leads(repo, story_type, kind, path, commit_sha, lead_key, text, strength, "
+        "head_sha, first_seen_at, last_seen_at) "
+        "VALUES (?, 'before_after', 'commit', ?, ?, ?, ?, ?, '', ?, ?) "
+        "ON CONFLICT(repo, story_type, lead_key) DO NOTHING",
+        (repo, path, sha, f"{NOTIF_PREFIX}{nid}", text, NOTIF_STRENGTH, stamp, stamp),
+    )
+
+
+def mark_served(conn, lead_id: int) -> None:
+    """If the lead is a "notif:" lead, point its notification at the card that covers it.
+
+    The caller owns the transaction. Read state is left as it is.
+    """
+    row = conn.execute(
+        "SELECT l.lead_key, (SELECT c.id FROM cards c WHERE c.lead_id = l.id "
+        "ORDER BY c.created_at DESC, c.id DESC LIMIT 1) AS card_id FROM leads l WHERE l.id = ?",
+        (lead_id,),
+    ).fetchone()
+    if row and row["card_id"] and row["lead_key"].startswith(NOTIF_PREFIX):
+        conn.execute(
+            "UPDATE notifications SET card_id = ? WHERE id = ?",
+            (row["card_id"], int(row["lead_key"][len(NOTIF_PREFIX) :])),
+        )
+
+
 def generate_notifications(conn, cfg: Config, now: datetime) -> dict[str, int]:
     """One idempotent pass. Returns how many notifications of each kind were created."""
     made = dict.fromkeys(("new_cards", "srs_due", "hot_file", "new_kind"), 0)
@@ -184,7 +241,9 @@ def generate_notifications(conn, cfg: Config, now: datetime) -> dict[str, int]:
         if hot:
             # One notification per repo per day, however many files or commits follow.
             key = f"hot_file:{name}:{now.date()}"
-            made["hot_file"] += _add(conn, "hot_file", _hot_text(name, hot), key, now)
+            if _add(conn, "hot_file", _hot_text(name, hot), key, now):
+                made["hot_file"] += 1
+                _link_hot_file(conn, name, hot[0], commits, key, now)
 
     for c in conn.execute(
         "SELECT c.id, c.spec, r.name AS repo FROM cards c JOIN repos r ON r.id = c.repo_id "
@@ -203,6 +262,10 @@ def generate_notifications(conn, cfg: Config, now: datetime) -> dict[str, int]:
     return made
 
 
+def _hot_repo(r) -> str:
+    return r["dedup_key"].split(":", 1)[1].rsplit(":", 1)[0]
+
+
 def list_notifications(conn, unread_only: bool = False) -> dict[str, Any]:
     where = " WHERE read_at IS NULL" if unread_only else ""
     rows = conn.execute(f"SELECT * FROM notifications{where} ORDER BY created_at DESC, id DESC")
@@ -216,6 +279,8 @@ def list_notifications(conn, unread_only: bool = False) -> dict[str, Any]:
                 "card_id": r["card_id"],
                 "created_at": r["created_at"],
                 "read": r["read_at"] is not None,
+                # hot_file keys are "hot_file:<repo>:<date>"; the UI links it to /repo/<name>
+                "repo": _hot_repo(r) if r["kind"] == "hot_file" else None,
             }
             for r in rows
         ],
