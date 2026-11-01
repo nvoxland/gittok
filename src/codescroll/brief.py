@@ -60,6 +60,39 @@ CATEGORY_FORMATS: dict[str, tuple[str, ...]] = {
     "interactive": ("quiz",),
 }
 
+# Formats that suit each story type (docs/formats.md), 2 to 4 each. The writer picks one; the
+# packet lists them best first. A card whose format is not in its story type's list is
+# rejected (`format_not_allowed`), unless the packet named it for a variant. `chart` appears
+# only where a server chart kind shows the story's data: hot_spot (top_churn_files),
+# secret_couples (co_change), whose_code (author_shares).
+STORY_FORMATS: dict[str, tuple[str, ...]] = {
+    "rip": ("text_post", "breaking_news", "comic", "meme"),
+    "hot_spot": ("chart", "hot_take", "text_meme"),
+    "commit_drama": ("breaking_news", "group_chat", "text_meme", "meme"),
+    "archaeology": ("code_card", "iceberg", "thread"),
+    "ancient_todo": ("code_card", "horoscope", "meme"),
+    "secret_couples": ("group_chat", "chart", "text_meme"),
+    "whose_code": ("chart", "tier_list", "text_post"),
+    "what_it_does": ("code_card", "dating_profile", "eli5", "thread"),
+    "journey": ("day_in_life", "thread", "comic", "diagram"),
+    "analogy": ("mascot_scene", "comic", "eli5"),
+    "snippet_callouts": ("code_card", "flags", "eli5"),
+    "cursed_clever_line": ("code_card", "hot_take", "meme"),
+    "before_after": ("glow_up", "code_card", "breaking_news"),
+    "new_arrival": ("breaking_news", "dating_profile", "code_card"),
+    "spot_the_bug": ("quiz",),
+    "guess_who": ("quiz",),
+    "guess_when": ("quiz",),
+    "quiz": ("quiz",),
+    "this_or_that": ("quiz",),
+    "ripple": ("breaking_news", "text_post", "thread", "group_chat"),
+    "drift_alert": ("breaking_news", "text_post", "listicle"),
+    "weekly_recap": ("listicle", "thread", "text_post", "iceberg"),
+}
+
+# A slot's category still leans its format list: its own formats count as this much less used.
+HOME_FACTOR = 2.0
+
 CATEGORY_FORMATS_FLAT = tuple(dict.fromkeys(f for fs in CATEGORY_FORMATS.values() for f in fs))
 
 # Illustrations each format costs against settings.render.max_illustrations_per_run.
@@ -630,7 +663,10 @@ class Packet:
     personas: list[str]
     leads: list[str]
     lead_refs: list[dict] = field(default_factory=list)  # Lead coordinates, same order as leads
-    formats: list[str] = field(default_factory=list)
+    formats: list[str] = field(default_factory=list)  # per card: the preferred format
+    card_stories: list[str] = field(default_factory=list)  # per card: its story type
+    allowed: list[list[str]] = field(default_factory=list)  # per card: formats to pick from
+    images: int = 0  # cards that should use an image format, where their lists have one
     # Per card: a menu of candidate meme templates (best first), or None for other formats.
     templates: list[list[str] | None] = field(default_factory=list)
     repos: list[str] = field(default_factory=list)  # all repos the packet covers; [0] is `repo`
@@ -712,11 +748,24 @@ class Brief:
             f"- suggested model: {pk.suggested_model}",
             f"- categories: {', '.join(pk.categories)}",
             f"- story types: {', '.join(pk.story_types)}",
-            f"- formats, one per card: {', '.join(pk.formats)}",
             f"- tones, one per card: {', '.join(pk.tones)}",
             f"- personas, one per card: {', '.join(pk.personas)}",
             "- leads:",
         ]
+        if pk.allowed:
+            out.insert(-1, "- cards (story type, then the formats to pick from):")
+            for n, (story, fs) in enumerate(zip(pk.card_stories, pk.allowed, strict=True), 1):
+                if len(fs) == 1:
+                    out.insert(-1, f"  {n}. {story}: use `{fs[0]}`")
+                else:
+                    shown = ", ".join(f"{f} (preferred)" if i == 0 else f for i, f in enumerate(fs))
+                    out.insert(-1, f"  {n}. {story}: pick one: {shown}")
+        if pk.images:
+            out.insert(
+                -1,
+                f"- images: at least {pk.images} of the cards should use an image format "
+                f"({', '.join(sorted(IMAGE_FORMATS))}) where their list has one",
+            )
         if pk.intro:
             out.insert(
                 -1,
@@ -916,7 +965,13 @@ def _variant_pair(v: dict, fmt: str) -> tuple[str, dict]:
         f"{', '.join(v['formats_used'])}) in format `{fmt}`; cite the same sources: "
         f"{', '.join(_source_ref(x) for x in v['sources'])}"
     )
-    return line, {"kind": "variant", "story_key": v["story_key"], "sources": v["sources"]}
+    return line, {
+        "kind": "variant",
+        "story_key": v["story_key"],
+        "sources": v["sources"],
+        "story_type": v["story_type"],
+        "format": fmt,
+    }
 
 
 def build_brief(
@@ -1028,6 +1083,38 @@ def build_brief(
     fmt_caps = _caps(rules, "format", count)
     story_caps = _caps(rules, "story_type", count)
     repo_caps = _caps(rules, "repo", count)
+    weights = format_weights or {}
+
+    def allowed_for(story, category, used, spent, fallback=()):
+        """Formats a card of this story type may use, best first; never empty.
+
+        Banned and unavailable formats are dropped; formats at their cap or past the
+        illustration budget drop too while others remain. Order: formats of the slot's
+        category first, then least used (divided by rule boost x learned weight), then least
+        used in recent cards, then list order. With nothing left, the best format of
+        `fallback` (the category's) stands in.
+        """
+        pool = [f for f in STORY_FORMATS.get(story, ()) if f not in gone_formats]
+        if not pool:
+            return [_pick_format(fallback, used, spent, max_illustrations, fmt_boost, fmt_caps,
+                                 recent_fmt, weights)]  # fmt: skip
+        pool = [f for f in pool if used.get(f, 0) < fmt_caps.get(f, 1 << 30)] or pool
+        pool = (
+            [f for f in pool if spent + ILLUSTRATION_COST.get(f, 0) <= max_illustrations]
+            or [f for f in pool if f not in ILLUSTRATION_COST]
+            or pool
+        )
+        home = set(CATEGORY_FORMATS.get(category, ()))
+        return sorted(
+            pool,
+            key=lambda f: (
+                (used.get(f, 0) + 1)
+                / (fmt_boost.get(f, 1.0) * weights.get(f, 1.0) * (HOME_FACTOR if f in home else 1)),
+                recent_fmt.get(f, 0),
+                STORY_FORMATS[story].index(f),
+            ),
+        )
+
     focus = []
     for r in rules:
         if r["type"] == "focus" and r["feature"] in ("repo", "dir"):
@@ -1086,6 +1173,7 @@ def build_brief(
     # 1. Allocate every card slot to (repo, category, story_type, format, group).
     # `group` is None except for cross-repo slots, whose repo is the group's first repo.
     slots: list[tuple[str, str, str, str, str | None]] = []
+    slot_allowed: list[list[str]] = []  # per slot: the formats its writer may pick from
     used: dict[str, int] = {}
     spent = 0
     leads_by: dict[tuple[str, str], list[str]] = {}
@@ -1127,16 +1215,9 @@ def build_brief(
                         ),
                     )
                     combos.remove((g, t))
-                    fmt = _pick_format(
-                        cross_fmts,
-                        used,
-                        spent,
-                        max_illustrations,
-                        fmt_boost,
-                        fmt_caps,
-                        recent_fmt,
-                        format_weights,
-                    )
+                    allowed = allowed_for(t, category, used, spent, cross_fmts)
+                    fmt = allowed[0]
+                    slot_allowed.append(allowed)
                     used[fmt] = used.get(fmt, 0) + 1
                     spent += ILLUSTRATION_COST.get(fmt, 0)
                     story_used[t] = story_used.get(t, 0) + 1
@@ -1178,18 +1259,6 @@ def build_brief(
                 stories_in[category]
             )
             for _ in range(per_repo[repo]):
-                fmt = _pick_format(
-                    formats_in[category],
-                    used,
-                    spent,
-                    max_illustrations,
-                    fmt_boost,
-                    fmt_caps,
-                    recent_fmt,
-                    format_weights,
-                )
-                used[fmt] = used.get(fmt, 0) + 1
-                spent += ILLUSTRATION_COST.get(fmt, 0)
                 open_t = [
                     t for t in usable if story_used.get(t, 0) < story_caps.get(t, 1 << 30)
                 ] or usable
@@ -1202,6 +1271,11 @@ def build_brief(
                     ),
                 )
                 story_used[story] = story_used.get(story, 0) + 1
+                allowed = allowed_for(story, category, used, spent, formats_in[category])
+                fmt = allowed[0]
+                used[fmt] = used.get(fmt, 0) + 1
+                spent += ILLUSTRATION_COST.get(fmt, 0)
+                slot_allowed.append(allowed)
                 slots.append((repo, category, story, fmt, None))
 
     # 1a. Variants: a slot with no fresh lead may retell a good old story in a new format.
@@ -1219,10 +1293,17 @@ def build_brief(
             break
         for i in needy:
             repo, category, story, fmt, _ = slots[i]
-            options = [f for f in formats_in[category] if f not in v["formats_used"]]
-            if repo != v["repo"] or v["story_type"] not in stories_in[category] or not options:
+            if repo != v["repo"] or v["story_type"] not in stories_in[category]:
                 continue
             room = spent - ILLUSTRATION_COST.get(fmt, 0)
+            # Formats that suit the variant's story first, then any of the category's.
+            options = [
+                f
+                for f in allowed_for(v["story_type"], category, used, room, formats_in[category])
+                if f not in v["formats_used"]
+            ] or [f for f in formats_in[category] if f not in v["formats_used"]]
+            if not options:
+                continue
             new = _pick_format(
                 options,
                 used,
@@ -1239,48 +1320,16 @@ def build_brief(
             story_used[story] -= 1
             story_used[v["story_type"]] = story_used.get(v["story_type"], 0) + 1
             slots[i] = (repo, category, v["story_type"], new, None)
+            slot_allowed[i] = [new]
             variant_at[i] = v
             needy.remove(i)
             break
 
-    # 1b. Image share: swap text formats for image formats of the same category.
-    target = float((defaults.get("visual_mix") or {}).get("image_min_share") or 0)
-    image_n = sum(s[3] in IMAGE_FORMATS for s in slots)
-    while slots and image_n < target * len(slots):
-        for i, (repo, category, story, fmt, grp) in enumerate(slots):
-            if grp is not None or i in variant_at or fmt in IMAGE_FORMATS or fmt == "quiz":
-                continue
-            room = spent - ILLUSTRATION_COST.get(fmt, 0)
-            options = [
-                f
-                for f in formats_in[category]
-                if f in IMAGE_FORMATS
-                and used.get(f, 0) < fmt_caps.get(f, 1 << 30)
-                and room + ILLUSTRATION_COST.get(f, 0) <= max_illustrations
-            ]
-            if not options:
-                continue
-            new = _pick_format(
-                options,
-                used,
-                room,
-                max_illustrations,
-                fmt_boost,
-                fmt_caps,
-                recent_fmt,
-                format_weights,
-            )
-            used[fmt] -= 1
-            used[new] = used.get(new, 0) + 1
-            spent = room + ILLUSTRATION_COST.get(new, 0)
-            slots[i] = (repo, category, story, new, None)
-            image_n += 1
-            break
-        else:
-            break  # no legal swap remains
-
     # 1c. Intro slots: reserve a share of the cards for leads from the least-known dirs.
     intro_at = _assign_intro(slots, variant_at, ref_by, novelty, intro_share, count)
+
+    # The image share is a soft target the packet states; no format is forced.
+    image_share = float((defaults.get("visual_mix") or {}).get("image_min_share") or 0)
 
     # 2. Pack slots into as few packets as possible per (repo or group, model tier).
     packets: list[Packet] = []
@@ -1295,7 +1344,9 @@ def build_brief(
                 for i, s in enumerate(slots)
                 if s[0] == repo
                 and s[4] == grp
-                and (s[2] in CONCRETE_TYPES and s[3] in HAIKU_FORMATS) == cheap
+                # The writer may pick any allowed format, so a haiku needs all of them to be easy.
+                and (s[2] in CONCRETE_TYPES and all(f in HAIKU_FORMATS for f in slot_allowed[i]))
+                == cheap
             ]
             for start in range(0, len(group), packet_size):
                 chunk_ix = group[start : start + packet_size]
@@ -1350,6 +1401,12 @@ def build_brief(
                         leads=[line for line, _ in pairs],
                         lead_refs=[r if isinstance(r, dict) else asdict(r) for _, r in pairs],
                         formats=[f for _, _, _, f, _ in chunk],
+                        card_stories=[t for _, _, t, _, _ in chunk],
+                        allowed=[slot_allowed[i] for i in chunk_ix],
+                        images=min(
+                            math.ceil(image_share * len(chunk) - 1e-9),
+                            sum(bool(IMAGE_FORMATS & set(slot_allowed[i])) for i in chunk_ix),
+                        ),
                         templates=[template_menu(f, t) for _, _, t, f, _ in chunk],
                         repos=list(unit_repos),
                         intro=sum(i in intro_at for i in chunk_ix),

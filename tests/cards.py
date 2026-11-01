@@ -21,7 +21,7 @@ def explain(ident: str | None = None) -> str:
 def example_card(fixture_repo, **overrides) -> dict:
     s = fixture_repo.shas
     card = {
-        "story_type": "commit_drama",
+        "story_type": "what_it_does",
         "format": "code_card",
         "persona": "paranoid_sec",
         "tone": "dry-deadpan",
@@ -82,10 +82,32 @@ def text_card(fixture_repo, **overrides) -> dict:
     return card
 
 
+# A story type whose allowed formats (brief.STORY_FORMATS) include each fixture format.
+STORY_FOR_FORMAT = {
+    "meme": "rip",
+    "text_meme": "hot_spot",
+    "mascot_scene": "analogy",
+    "comic": "analogy",
+    "chart": "hot_spot",
+    "diagram": "journey",
+    "tier_list": "whose_code",
+    "iceberg": "archaeology",
+    "group_chat": "commit_drama",
+    "flags": "snippet_callouts",
+    "dating_profile": "what_it_does",
+    "glow_up": "before_after",
+    "breaking_news": "rip",
+    "horoscope": "ancient_todo",
+    "thread": "what_it_does",
+    "day_in_life": "journey",
+    "hot_take": "hot_spot",
+}
+
+
 def _base(fixture_repo, fmt: str, base_visual: dict, /, **overrides) -> dict:
     visual = overrides.pop("visual", base_visual)
     card = {
-        "story_type": "what_it_does",
+        "story_type": STORY_FOR_FORMAT.get(fmt, "what_it_does"),
         "format": fmt,
         "persona": "meme_compiler",
         "tone": "chaotic-absurd",

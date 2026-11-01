@@ -107,6 +107,13 @@ def _card_list(cards: list | dict) -> list:
 
 def _validate(conn, cfg, run: dict, cards: list):
     max_images = cfg.settings.render.max_illustrations_per_run
+    # A variant retells a story in a format its packet named, even one the story type's list lacks.
+    variants = {
+        (r["story_type"], r["format"])
+        for pk in run["meta"].get("packets") or []
+        for r in pk.get("lead_refs") or []
+        if r.get("kind") == "variant" and r.get("format") and r.get("story_type")
+    }
     return validator.validate_cards(
         cards,
         cfg.repos,
@@ -115,6 +122,7 @@ def _validate(conn, cfg, run: dict, cards: list):
         mascots=cfg.mascots,
         signals_for=lambda name: signals.load_signals(conn, name),
         illustration_budget=max(0, max_images - run["meta"].get("illustrations", 0)),
+        variant_formats=variants,
     )
 
 

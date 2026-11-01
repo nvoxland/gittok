@@ -214,8 +214,15 @@ def test_bump_call_counts_per_tool(conn, cfg):
 
 def _variants(fixture_repo, n):
     """n cards with different story_keys (story_type is part of the key)."""
-    types = ["rip", "archaeology", "hot_spot", "ancient_todo", "secret_couples", "whose_code"]
-    return [text_card(fixture_repo, story_type=types[i]) for i in range(n)]
+    # Each story type here allows the text format it is paired with (brief.STORY_FORMATS).
+    types = [
+        ("rip", "text_post"),
+        ("whose_code", "text_post"),
+        ("what_it_does", "eli5"),
+        ("analogy", "eli5"),
+        ("snippet_callouts", "eli5"),
+    ]
+    return [text_card(fixture_repo, story_type=t, format=f) for t, f in types[:n]]
 
 
 def _threaded_submit(cfg, run_id, payloads):
@@ -262,7 +269,10 @@ def test_submit_accepts_variant_of_a_good_old_story_in_a_new_format(conn, cfg, f
     runs.finish_run(conn, first, now=NOW)
     variant = text_card(fixture_repo, format="fun_fact", hook="Legacy.py, retold.")
 
-    second = runs.open_run(conn, cfg, repo=None, brief="b", requested=3, now=NOW)
+    # The variant lead in the packet names the format, so the validator allows it for `rip`.
+    ref = {"kind": "variant", "story_type": "rip", "format": "fun_fact", "story_key": "k"}
+    packets = [{"id": "p1", "repo": "fixture", "count": 1, "lead_refs": [ref]}]
+    second = runs.open_run(conn, cfg, repo=None, brief="b", requested=3, packets=packets, now=NOW)
     res = runs.submit(conn, cfg, second, [variant])  # too soon, no reward yet
     assert "reward" in res["rejected"][0]["detail"]
     conn.execute("UPDATE stories SET best_reward = 0.9")
@@ -320,7 +330,9 @@ def test_submit_over_quota_cards_rejected_keeping_first(conn, cfg, fixture_repo)
         (3, "over_quota"),
     ]
     assert res["totals"] == {"accepted": 2, "rejected": 2, "requested": 2, "remaining": 0}
-    again = runs.submit(conn, cfg, run_id, [text_card(fixture_repo, story_type="whose_code")])
+    again = runs.submit(
+        conn, cfg, run_id, [text_card(fixture_repo, story_type="snippet_callouts", format="eli5")]
+    )
     assert [r["reason"] for r in again["rejected"]] == ["over_quota"]
     assert runs.get_run(conn, run_id)["accepted"] == 2
 
@@ -482,9 +494,9 @@ def test_submit_marks_lead_covered(conn, cfg, fixture_repo):
     by_commit = _lead_row(conn, kind="commit", commit_sha=fix1, path="billing/invoice.py")
     other = _lead_row(conn, path="src/other.py")
     refs = [
-        {"story_type": "commit_drama", "repo": "fixture", "kind": "path", "path": "src/other.py",
+        {"story_type": "what_it_does", "repo": "fixture", "kind": "path", "path": "src/other.py",
          "id": other},
-        {"story_type": "commit_drama", "repo": "fixture", "kind": "commit", "commit": fix1,
+        {"story_type": "what_it_does", "repo": "fixture", "kind": "commit", "commit": fix1,
          "path": "billing/invoice.py", "id": by_commit},
     ]  # fmt: skip
     packets = [{"id": "p1", "repo": "fixture", "count": 2, "lead_refs": refs}]

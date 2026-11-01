@@ -937,7 +937,9 @@ def test_group_chat_with_code_accounts_from_both_repos(pair):
 
 
 def test_non_cross_story_with_two_repos_is_unaffected(pair):
-    _, rejected = check([ripple(pair, story_type="what_it_does")], pair_repos(pair, None, None))
+    _, rejected = check(
+        [ripple(pair, story_type="what_it_does", format="eli5")], pair_repos(pair, None, None)
+    )
     assert rejected == []
 
 

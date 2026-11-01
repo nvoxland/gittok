@@ -286,13 +286,16 @@ def test_variant_slot_only_when_leads_run_out():
     assert sum(p.count for p in bare.packets) == 10
     pk = next(p for p in bare.packets if any(x.startswith("[variant]") for x in p.leads))
     i = next(i for i, x in enumerate(pk.leads) if x.startswith("[variant]"))
+    fmt = line.split("in format `")[1].split("`")[0]
+    # The ref also names the story type and exact format, so the validator can allow it.
     assert pk.lead_refs[i] == {
         "kind": "variant",
         "story_key": "key0",
         "sources": [{"repo": "fixture", "commit": "a" * 40}],
+        "story_type": "commit_drama",
+        "format": fmt,
     }
     # The packet slot for the variant has a format the story has not used, from its category.
-    fmt = line.split("in format `")[1].split("`")[0]
     assert fmt in pk.formats and fmt != "code_card"
     assert fmt in brief.CATEGORY_FORMATS["git_drama"]
     assert "commit_drama" in pk.story_types
@@ -507,12 +510,12 @@ def test_before_after_skips_noise_fix_chains():
     assert not any(".beads" in x for x in brief.leads_for("before_after", sig, T0))
 
 
-def test_packets_carry_one_allowed_format_per_card():
+def test_packets_carry_a_preferred_format_per_card_from_its_story_types_list():
     b = build(count=20)
     for p in b.packets:
         assert len(p.formats) == p.count == len(p.tones) == len(p.personas)
-        allowed = {f for c in p.categories for f in brief.CATEGORY_FORMATS[c]}
-        assert set(p.formats) <= allowed, p
+        for story, fmt in zip(p.card_stories, p.formats, strict=True):
+            assert fmt in brief.STORY_FORMATS[story], p
 
 
 def test_formats_rotate_in_a_ten_card_brief():
@@ -561,14 +564,20 @@ def test_cheap_formats_on_concrete_stories_use_haiku():
         packet_size=7,
         recent=[],
     )
-    models = {p.suggested_model for p in b.packets if set(p.story_types) <= brief.CONCRETE_TYPES}
-    assert models <= {"haiku"} and models
-    assert all(set(p.formats) <= {"meme", "text_meme"} for p in b.packets)
+    # A haiku writes a packet only when every allowed format of every card is a cheap one.
+    cheap = [p for p in b.packets if p.suggested_model == "haiku"]
+    assert cheap
+    for p in b.packets:
+        easy = all(f in brief.HAIKU_FORMATS for fs in p.allowed for f in fs)
+        assert (p.suggested_model == "haiku") == (
+            easy and set(p.story_types) <= brief.CONCRETE_TYPES
+        )
 
 
-def test_markdown_lists_formats_per_packet():
+def test_markdown_lists_story_and_allowed_formats_per_packet():
     md = build(count=10).to_markdown()
-    assert "- formats, one per card: " in md
+    assert "- cards (story type, then the formats to pick from):" in md
+    assert ": pick one: " in md
 
 
 def _personas():
@@ -1340,31 +1349,37 @@ def test_no_format_evidence_keeps_rotation():
     assert _fmts(build(count=20, format_weights=None)) == base
 
 
-def test_image_share_target_swaps_within_category():
-    low = build(count=8, defaults=_explainers())
-    assert _image_share(low) < 0.5
+def _allowed(b):
+    return [a for p in b.packets for a in p.allowed]
+
+
+def test_image_share_target_is_soft_and_stated_in_the_packet():
+    # The target no longer swaps formats (it did before 2g0.4); it only goes in the packet.
+    assert _fmts(build(count=8, defaults=_explainers(0.5))) == _fmts(
+        build(count=8, defaults=_explainers())
+    )
     b = build(count=8, defaults=_explainers(0.5))
-    assert _image_share(b) >= 0.5
-    assert _illustration_cost(b) <= 4
-    assert set(_fmts(b)) <= set(brief.CATEGORY_FORMATS["illustrated_explainers"])
+    assert sum(p.images for p in b.packets) > 0
+    assert all(p.images <= p.count for p in b.packets)
     assert sum(p.count for p in b.packets) == 8
+    assert sum(p.images for p in build(count=8, defaults=_explainers()).packets) == 0
 
 
-def test_image_share_respects_budget_bans_and_unavailable():
-    # Budget 0: no illustrations, so only diagram can be swapped in.
+def test_allowed_lists_respect_budget_bans_unavailable_and_caps():
+    # Budget 0: no illustration format is offered while another one fits.
     b = build(count=8, defaults=_explainers(0.9), max_illustrations=0)
     assert _illustration_cost(b) == 0
-    assert set(_fmts(b)) & {"mascot_scene", "comic"} == set()
-    # Banned and unavailable formats are never swapped in; the target is best effort.
+    assert not {f for a in _allowed(b) for f in a} & {"mascot_scene", "comic"}
+    # Banned and unavailable formats are never offered.
     b = build(
         count=8,
         defaults=_explainers(0.9),
         rules=[rule("ban", "format", "diagram")],
         unavailable_formats={"comic"},
     )
-    assert not set(_fmts(b)) & {"diagram", "comic"}
+    assert not {f for a in _allowed(b) for f in a} & {"diagram", "comic"}
     assert _illustration_cost(b) <= 4
-    # A format cap is respected.
+    # A format cap keeps it from being the preferred format more than allowed.
     b = build(
         count=8,
         defaults=_explainers(0.9),
