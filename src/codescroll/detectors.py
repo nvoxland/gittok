@@ -49,6 +49,18 @@ def _ast_language_ok(language: str) -> bool:
     return True
 
 
+@cache
+def ast_grep_languages() -> tuple[str, ...]:
+    """Languages from a fixed probe list that ast-grep accepts. Empty without ast-grep-py."""
+    if not ast_grep_available():
+        return ()
+    probe = (
+        "python typescript tsx javascript java go rust ruby kotlin c cpp csharp swift php "
+        "html css json yaml bash lua scala elixir haskell"
+    ).split()
+    return tuple(x for x in probe if _ast_language_ok(x))
+
+
 def _clip(text: str, n: int = 70) -> str:
     text = " ".join(text.split())
     return text if len(text) <= n else text[: n - 1] + "…"
@@ -85,7 +97,7 @@ def _applies(d: Detector, sf, include, exclude) -> bool:
     return any(m(sf.path) for m in include) and not any(m(sf.path) for m in exclude)
 
 
-def _regex_hits(d: Detector, rx, sf) -> list[dict]:
+def _regex_hits(d: Detector, rx, sf, stats: dict | None = None) -> list[dict]:
     out = []
     try:
         for i, line in enumerate(sf.lines):
@@ -98,6 +110,8 @@ def _regex_hits(d: Detector, rx, sf) -> list[dict]:
                 )
     except TimeoutError:
         log.warning("rule '%s' timed out on %s; the file is skipped for this rule", d.id, sf.path)
+        if stats is not None:
+            stats.setdefault("timed_out", []).append({"rule_id": d.id, "path": sf.path})
         return []
     return out
 
@@ -122,8 +136,10 @@ def _ast_hits(d: Detector, sf) -> list[dict]:
     return out
 
 
-def run(profile: Profile, files) -> list[dict]:
-    """Hits of every detector of `profile` over `files`. Never raises on a bad file or rule."""
+def run(profile: Profile, files, stats: dict | None = None) -> list[dict]:
+    """Hits of every detector of `profile` over `files`. Never raises on a bad file or rule.
+
+    `stats`, when given, collects `timed_out`: [{rule_id, path}] for regex timeouts."""
     rules = list(profile.detectors)
     if not rules:
         return []
@@ -151,5 +167,5 @@ def run(profile: Profile, files) -> list[dict]:
         for sf in files:
             if not _applies(d, sf, include, exclude):
                 continue
-            out += _regex_hits(d, rx, sf) if rx else _ast_hits(d, sf)
+            out += _regex_hits(d, rx, sf, stats) if rx else _ast_hits(d, sf)
     return out

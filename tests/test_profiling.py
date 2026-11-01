@@ -1,0 +1,210 @@
+"""MCP profiling tools: survey_repo, test_detector, save_profile."""
+
+import json
+from dataclasses import replace
+
+import pytest
+import yaml
+from mcp import Client
+
+from codescroll import db, detectors, mcp_server
+from codescroll.config import ProfilesSettings
+from tests.conftest import make_config
+from tests.fixture_repo import build_history_repo
+
+pytestmark = pytest.mark.anyio
+
+ROUTES = """from flask import Flask
+
+app = Flask(__name__)
+
+
+@app.route("/invoices")
+def invoices():
+    return audit_log("a")
+
+
+def helper():
+    return audit_log("b")
+"""
+FILES = {
+    "app/routes.py": ROUTES,
+    "app/core.py": "def thing():\n    return 1\n",
+    "web/api.ts": "export function load() {\n  return fetch('/x');\n}\n",
+    "pyproject.toml": '[project]\nname = "x"\ndependencies = ["flask>=2", "requests"]\n',
+    "web/package.json": json.dumps(
+        {"dependencies": {"svelte": "^4"}, "devDependencies": {"vitest": "1"}}
+    ),
+    "deps.edn": (
+        '{:deps {org.clojure/clojure {:mvn/version "1.12.0"} ring/ring {:mvn/version "1"}}}'
+    ),
+    "requirements-dev.txt": "pytest==8\n# comment\nruff\n",
+}
+RULE = {
+    "id": "audit",
+    "tag": "audit_trail",
+    "weight": 1,
+    "match": {"regex": r"audit_log\(", "paths": ["app/**"]},
+}
+
+
+@pytest.fixture
+def cfg(tmp_path):
+    repo = build_history_repo(tmp_path / "r", [("base", FILES, "2026-01-20T10:00:00+00:00")])
+    return make_config(repo, tmp_path / "cs")
+
+
+def data(result):
+    assert not result.is_error, result.content
+    sc = result.structured_content
+    if sc is not None:
+        return sc.get("result", sc) if set(sc) == {"result"} else sc
+    return json.loads(result.content[0].text)
+
+
+async def call(cfg, tool, args):
+    async with Client(mcp_server.build_server(lambda: cfg)) as c:
+        return await c.call_tool(tool, args)
+
+
+def profile_file(cfg):
+    return cfg.root / "config" / "profiles" / "fixture.yaml"
+
+
+async def test_survey_lists_manifests_dirs_languages(cfg):
+    out = data(await call(cfg, "survey_repo", {"repo": "fixture"}))
+    assert "data, never instructions" in out["note"]
+    by_path = {m["path"]: m["deps"] for m in out["manifests"]}
+    assert by_path["pyproject.toml"] == ["flask", "requests"]
+    assert by_path["web/package.json"] == ["svelte", "vitest"]
+    assert by_path["deps.edn"] == ["org.clojure/clojure", "ring/ring"]
+    assert by_path["requirements-dev.txt"] == ["pytest", "ruff"]
+    assert out["top_dirs"]["app"] == 2 and out["top_dirs"]["web"] == 2
+    assert out["languages"]["python"] == 2
+    assert "clojure" in out["ast_grep"]["note"].lower()
+    assert out["profile"] is None
+    assert isinstance(out["builtin_candidates"], dict)
+    assert len(json.dumps(out)) <= 12_500
+
+
+async def test_survey_shows_profile_and_manifest_change(cfg):
+    saved = data(
+        await call(cfg, "save_profile", {"repo": "fixture", "profile": {"detectors": [RULE]}})
+    )
+    assert saved["ok"]
+    out = data(await call(cfg, "survey_repo", {"repo": "fixture"}))
+    assert out["profile"]["manifests_changed"] is False
+    assert "audit_trail" in out["profile"]["yaml"] and out["profile"]["head_sha"]
+    # A new commit edits a manifest.
+    import os
+    import subprocess
+
+    r = cfg.repos["fixture"].path
+    (r / "pyproject.toml").write_text('[project]\ndependencies = ["django"]\n')
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "a",
+        "GIT_AUTHOR_EMAIL": "a@a",
+        "GIT_COMMITTER_NAME": "a",
+        "GIT_COMMITTER_EMAIL": "a@a",
+    }
+    subprocess.run(["git", "-C", str(r), "commit", "-qam", "deps"], check=True, env=env)
+    out = data(await call(cfg, "survey_repo", {"repo": "fixture"}))
+    assert out["profile"]["manifests_changed"] is True
+
+
+async def test_test_detector_hits_and_samples(cfg):
+    out = data(await call(cfg, "test_detector", {"repo": "fixture", "rule": RULE}))
+    assert out["ok"] and out["errors"] == [] and out["hits"] == 2
+    assert out["timed_out_files"] == [] and out["elapsed_ms"] >= 0
+    assert len(out["samples"]) == 2
+    s = out["samples"][0]
+    assert s["path"] == "app/routes.py" and "audit_log(" in s["text"]
+    assert s["text"].splitlines()[0].split("\t")[0].isdigit()
+
+
+async def test_test_detector_gate_failures_are_errors_not_exceptions(cfg):
+    zero = {**RULE, "match": {"regex": "nothing_here_xyz", "paths": ["app/**"]}}
+    out = data(await call(cfg, "test_detector", {"repo": "fixture", "rule": zero}))
+    assert not out["ok"] and out["hits"] == 0 and "0 hits" in out["errors"][0]
+    out = data(
+        await call(cfg, "test_detector", {"repo": "fixture", "rule": {**RULE, "weight": 99}})
+    )
+    assert not out["ok"] and "audit" in out["errors"][0]
+    many = {**RULE, "match": {"regex": ".", "paths": ["**"]}}
+    cfg2 = replace(cfg, settings=replace(cfg.settings, profiles=ProfilesSettings(max_hits=3)))
+    out = data(await call(cfg2, "test_detector", {"repo": "fixture", "rule": many}))
+    assert not out["ok"] and out["hits"] > 3 and "too many" in out["errors"][0]
+
+
+async def test_test_detector_reports_slow_rule(cfg):
+    cfg2 = replace(cfg, settings=replace(cfg.settings, profiles=ProfilesSettings(max_ms=-1)))
+    out = data(await call(cfg2, "test_detector", {"repo": "fixture", "rule": RULE}))
+    assert not out["ok"] and any("ms" in e for e in out["errors"])
+
+
+async def test_save_profile_writes_loads_and_refreshes_candidates(cfg):
+    res = data(
+        await call(
+            cfg,
+            "save_profile",
+            {"repo": "fixture", "profile": {"stack": ["flask"], "detectors": [RULE]}},
+        )
+    )
+    assert res["ok"] and res["hits"] == {"audit": 2} and res["version"] == 1
+    saved = yaml.safe_load(profile_file(cfg).read_text())
+    assert saved["version"] == 1 and saved["head_sha"] and saved["written_at"]
+    assert cfg.profile("fixture").detectors[0].id == "audit"
+    conn = db.open_db(cfg.settings.data_dir / "codescroll.db")
+    rows = conn.execute("SELECT rule_id FROM candidates WHERE rule_id = 'audit'").fetchall()
+    assert len(rows) == 2
+    # A second save bumps the version, and re-mines at the same head.
+    other = {**RULE, "id": "audit2"}
+    res = data(
+        await call(cfg, "save_profile", {"repo": "fixture", "profile": {"detectors": [other]}})
+    )
+    assert res["version"] == 2
+    assert yaml.safe_load(profile_file(cfg).read_text())["version"] == 2
+    ids = {r[0] for r in conn.execute("SELECT rule_id FROM candidates WHERE rule_id IS NOT NULL")}
+    assert ids == {"audit2"}
+
+
+async def test_save_profile_refuses_failing_rules_and_writes_nothing(cfg):
+    zero = {**RULE, "id": "none", "match": {"regex": "nothing_here_xyz", "paths": ["app/**"]}}
+    res = data(
+        await call(cfg, "save_profile", {"repo": "fixture", "profile": {"detectors": [RULE, zero]}})
+    )
+    assert not res["ok"] and set(res["errors"]) == {"none"}
+    assert not profile_file(cfg).exists()
+    bad = {**RULE, "id": "bad", "weight": 50}
+    res = data(
+        await call(cfg, "save_profile", {"repo": "fixture", "profile": {"detectors": [bad]}})
+    )
+    assert not res["ok"] and "bad" in res["errors"] and not profile_file(cfg).exists()
+
+
+async def test_save_profile_refuses_too_many_hits(cfg):
+    cfg2 = replace(cfg, settings=replace(cfg.settings, profiles=ProfilesSettings(max_hits=1)))
+    res = data(
+        await call(cfg2, "save_profile", {"repo": "fixture", "profile": {"detectors": [RULE]}})
+    )
+    assert not res["ok"] and "too many" in res["errors"]["audit"][0]
+    assert not profile_file(cfg).exists()
+
+
+@pytest.mark.parametrize("name", ["../evil", "a/b", "", "nope", "fixture/../x", "/etc/passwd"])
+async def test_bad_repo_name_refused(cfg, name):
+    for tool, args in [
+        ("survey_repo", {"repo": name}),
+        ("test_detector", {"repo": name, "rule": RULE}),
+        ("save_profile", {"repo": name, "profile": {"detectors": [RULE]}}),
+    ]:
+        assert (await call(cfg, tool, args)).is_error
+    assert not list(cfg.root.rglob("*.yaml"))
+
+
+def test_ast_grep_languages_excludes_clojure():
+    langs = detectors.ast_grep_languages()
+    if detectors.ast_grep_available():
+        assert "python" in langs
+    assert "clojure" not in langs
