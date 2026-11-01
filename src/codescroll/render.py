@@ -190,15 +190,23 @@ class IllustrationRenderer:
     def generate(self, base: list[str], cfg, style: str, scene: str, seed: int) -> RenderedImage:
         r = cfg.settings.render
         prompt = ", ".join(p for p in (style, scene) if p) + ", no text, no letters"
+        # A saved folder is already quantized: name it as the model and skip -q. Loading the
+        # bf16 weights and quantizing on every run swaps a 36 GB Mac (docs/install.md).
+        saved = str(Path(r.mflux_path).expanduser()) if r.mflux_path else ""
+        model = saved or r.mflux_model
+        model_args = (
+            ["--model", saved, "--base-model", r.mflux_model]
+            if saved
+            else ["--model", r.mflux_model, "-q", str(r.mflux_quantize)]
+        )
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "out.png"
             cmd = [
                 *base,
-                "--model", r.mflux_model,
+                *model_args,
                 "--prompt", prompt,
                 "--seed", str(seed),
                 "--steps", str(r.mflux_steps),
-                "-q", str(r.mflux_quantize),
                 "--width", str(r.image_width),
                 "--height", str(r.image_height),
                 "--output", str(out),
@@ -215,7 +223,7 @@ class IllustrationRenderer:
                 raise RenderError("mflux produced no image")
             data = out.read_bytes()
         w, h = png_size(data)
-        meta = {"width": w, "height": h, "model": r.mflux_model, "seed": seed, "prompt": prompt}
+        meta = {"width": w, "height": h, "model": model, "seed": seed, "prompt": prompt}
         return RenderedImage(data, w, h, meta)
 
 

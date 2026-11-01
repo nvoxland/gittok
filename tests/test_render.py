@@ -142,6 +142,20 @@ def test_illustration_renderer_builds_mflux_command(fixture_repo, tmp_path):
     assert img.meta["prompt"].endswith("no text, no letters")
 
 
+def test_illustration_renderer_uses_saved_model_path(fixture_repo, tmp_path):
+    """A pre-quantized folder (mflux-save) replaces the built-in name; no -q at run time."""
+    cfg = render_cfg(fixture_repo, tmp_path, mflux_path="~/models/z-image-turbo-q4")
+    runner = FakeRunner()
+    r = render.IllustrationRenderer(runner=runner, command=["mflux-generate-z-image"])
+    (img,) = r.render({"kind": "illustration", "prompt": "crates"}, cfg, {"repos": ["fixture"]})
+    cmd, _ = runner.calls[0]
+    expanded = str(Path.home() / "models/z-image-turbo-q4")  # mflux gets no shell: expand ~ here
+    assert arg(cmd, "--model") == expanded
+    assert arg(cmd, "--base-model") == "z-image-turbo"
+    assert "-q" not in cmd and "--quantize" not in cmd
+    assert img.meta["model"] == expanded
+
+
 def test_illustration_default_mascot_is_first_repos(fixture_repo, tmp_path):
     cfg = render_cfg(fixture_repo, tmp_path)
     runner = FakeRunner()

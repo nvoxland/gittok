@@ -16,6 +16,13 @@ analysis:
 research:
   max_output_bytes: 200000
   max_read_lines: 300
+render:
+  # Illustrations need mflux (uv sync --group images). Save a quantized copy once with
+  # `mflux-save --model z-image-turbo --quantize 4 --path ~/.cache/mflux/z-image-turbo-q4`
+  # and name that folder here; without it every render loads 25 GB and swaps (docs/install.md).
+  mflux_path: ""
+  mflux_model: z-image-turbo
+  max_illustrations_per_run: 4
 repos:
   # add_repo (the MCP tool and CLI) only accepts a git repo root inside one of these directories.
   # Empty = the parent directories of the repos in config/repos.yaml. To allow a new place,

@@ -65,6 +65,7 @@ class RenderSettings:
     max_illustrations_per_run: int = 4
     memegen_url: str = "http://127.0.0.1:5001"
     mflux_model: str = "z-image-turbo"
+    mflux_path: str = ""  # folder from `mflux-save -q N`; empty = quantize mflux_model per run
     mflux_steps: int = 8
     mflux_quantize: int = 8
     image_width: int = 768

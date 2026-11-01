@@ -48,6 +48,36 @@ curl -s http://127.0.0.1:5001/templates/ | head -c 200   # JSON means it works
 
 Restart `codescroll serve` afterwards. Until memegen answers, the brief skips the `meme` format and meme cards stay `pending_render`.
 
+## Illustration renderer (mflux)
+
+Illustration and comic cards, and the persona avatars, are drawn by [mflux](https://github.com/filipstrand/mflux) on Apple Silicon. Install it into the project venv:
+
+```bash
+uv sync --group images
+```
+
+**Save a quantized copy of the model first.** The default model, `z-image-turbo`, is 25 GB of bf16 weights. Without a saved copy, every render reads all 25 GB and quantizes it in memory, which swaps a 36 GB Mac and times out after 300 s. Save it once (this downloads the weights on the first run; close memory-hungry apps while it runs):
+
+```bash
+uv run mflux-save --model z-image-turbo --quantize 4 --path ~/.cache/mflux/z-image-turbo-q4
+```
+
+Then point the renderer at the folder in `config/settings.yaml`:
+
+```yaml
+render:
+  mflux_path: ~/.cache/mflux/z-image-turbo-q4   # what mflux-save wrote
+  mflux_model: z-image-turbo                    # the family it is based on
+```
+
+With `mflux_path` set, a render loads about 7 GB (q4) or 14 GB (q8) and takes 10 to 20 s per image at 8 steps. Use `--quantize 6` or `8` if the flat-vector mascots look rough at 4. Restart `codescroll serve` (or `/mcp` → codescroll → Reconnect) after installing, then check with:
+
+```bash
+uv run codescroll avatars      # draws the persona avatars; the first image also warms the Metal cache
+```
+
+Until mflux is importable, the brief skips `mascot_scene` and `comic` and those cards stay `pending_render`.
+
 ## Using Codex
 
 The MCP server also works with Codex. Add this to `~/.codex/config.toml`:
