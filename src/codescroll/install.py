@@ -15,7 +15,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 SKILL_NAMES = ("codescroll-generate", "codescroll-steer")
-AGENT_FILES = ("codescroll-writer.md",)  # subagent types the generate skill uses
+AGENT_FILES = (
+    "codescroll-writer.md",
+    "codescroll-scout.md",
+)  # subagent types the generate skill uses
 LABEL = "dev.codescroll.serve"
 
 Runner = Callable[[list[str]], tuple[int, str]]

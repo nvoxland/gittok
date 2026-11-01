@@ -12,6 +12,15 @@ Requires the `codescroll` MCP server (tools named `mcp__codescroll__*`). If thos
 
 ## Steps
 
+0. **Scout.** Call `scout_status` (with `repo` only if the user gave one). If `batches` is empty, go to step 1. Otherwise launch one scout per batch, all as parallel Agent calls in one message:
+   - `subagent_type`: `codescroll-scout`
+   - `model`: `haiku`
+   - `prompt`: exactly `batch_id: <id>` and nothing else.
+
+   If the `codescroll-scout` type is not available, use `general-purpose` with `model: haiku` and this prompt: `Read .claude/agents/codescroll-scout.md and follow it. batch_id: <id>`.
+
+   Wait for every scout to reply with its one-line result. Do not redo or fix ratings yourself, and do not call `get_candidates` or `rate_candidates`: you never see candidate content. Then continue to step 1.
+
 1. **Get the brief.** Call `get_brief` with `repo` and `count` only if the user gave them (without `count`, the server makes as many cards as the feed needs; never ask for more than 20 unless the user explicitly asks). If the result has `nothing_to_do`, report the `health` numbers (backlog, runway_days, burn_per_day) in one line and stop. Do not launch writers. Otherwise it returns `run_id`, a short `summary_markdown`, and `packets` (id, repo, count, suggested_model). Do not call `get_brief` again in this run.
 
    For a long-lived session, run `/loop 4h /codescroll-generate`. Most ticks cost one MCP call, because they end at `nothing_to_do`.

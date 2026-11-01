@@ -14,6 +14,8 @@ agent:
   variant_min_reward: 0.6      # a story is retold in a new format only if its best reward is this high (or liked)
   variant_after_days: 14       # ...and its last card is at least this old
   variant_max_share: 0.2       # at most this share of a brief's cards are variants
+  scout_max: 60                # unrated candidates one scout_status call hands out
+  scout_batch: 15              # candidates per scout subagent (haiku rates them)
 analysis:
   history_window_days: 720     # relative to the ref's last commit date
   churn_windows_days: [30, 90, 365]

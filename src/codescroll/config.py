@@ -51,6 +51,8 @@ class AgentSettings:
     variant_min_reward: float = 0.6
     variant_after_days: int = 14
     variant_max_share: float = 0.2
+    scout_max: int = 60  # unrated candidates one scout_status call hands out
+    scout_batch: int = 15  # candidates per scout subagent
 
 
 @dataclass(frozen=True)
