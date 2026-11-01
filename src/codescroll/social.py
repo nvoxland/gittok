@@ -12,7 +12,7 @@ from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from codescroll import db, gitq, srs
+from codescroll import db, gitq, links, srs
 from codescroll.config import Config
 
 log = logging.getLogger(__name__)
@@ -62,6 +62,42 @@ def recent_commits(cfg: Config, name: str, now: datetime) -> list[dict]:
     return [c for c in cached if c["ts"] >= since]
 
 
+def _commit_card(conn, repo: str, sha: str, skip: str | None) -> str | None:
+    """Newest ready card of the repo whose sources, visual or depth cite the commit."""
+    for c in conn.execute(
+        "SELECT c.id, c.spec FROM cards c JOIN repos r ON r.id = c.repo_id "
+        "WHERE r.name = ? AND c.status = 'ready' AND c.spec LIKE ? "
+        "ORDER BY c.created_at DESC, c.id DESC",
+        (repo, f"%{sha[:7]}%"),
+    ):
+        if c["id"] == skip:
+            continue
+        spec = db.loads(c["spec"]) or {}
+        parts = [*spec.get("sources", []), spec.get("visual") or {}, *spec.get("depth", [])]
+        for p in parts:
+            cited = (p.get("commit") or "").lower()
+            if len(cited) >= 7 and (sha.startswith(cited) or cited.startswith(sha)):
+                return c["id"]
+    return None
+
+
+def _digest(conn, repo: str, now: datetime) -> dict | None:
+    row = conn.execute(
+        "SELECT d.day, d.card_id, c.spec FROM digests d JOIN cards c ON c.id = d.card_id "
+        "WHERE d.repo = ? AND d.day = ? AND c.status = 'ready'",
+        (repo, str(now.date())),
+    ).fetchone()
+    if not row:
+        return None
+    spec = db.loads(row["spec"]) or {}
+    return {
+        "card_id": row["card_id"],
+        "day": row["day"],
+        "hook": spec.get("hook", ""),
+        "learn": spec.get("learn", ""),
+    }
+
+
 def stories(conn, cfg: Config, now: datetime) -> list[dict]:
     out = []
     for name in cfg.repos:
@@ -76,6 +112,8 @@ def stories(conn, cfg: Config, now: datetime) -> list[dict]:
             r["sha"] for r in conn.execute("SELECT sha FROM story_views WHERE repo = ?", (name,))
         }
         mascot, image = mascot_info(cfg, name)
+        digest = _digest(conn, name, now)
+        base = links.repo_url(cfg, name)
         out.append(
             {
                 "repo": name,
@@ -89,9 +127,15 @@ def stories(conn, cfg: Config, now: datetime) -> list[dict]:
                         "author": c["author"],
                         "subject": c["subject"],
                         "files": len(c["files"]),
+                        "seen": c["sha"] in seen,
+                        "card_id": (
+                            cid := _commit_card(conn, name, c["sha"], digest and digest["card_id"])
+                        ),
+                        "url": None if cid or not base else f"{base}/commit/{c['sha']}",
                     }
                     for c in shown
                 ],
+                "digest": digest,
                 "seen": all(c["sha"] in seen for c in shown),
             }
         )
@@ -177,8 +221,59 @@ def _link_hot_file(conn, repo: str, top: tuple[int, str], commits, key: str, now
     )
 
 
+DIGEST_PREFIX = "digest:"
+DIGEST_STRENGTH = 2.0
+
+
+def generate_digests(conn, cfg: Config, now: datetime) -> int:
+    """One digest lead per repo per UTC day, for repos with commits in the last 24 hours.
+
+    Idempotent. Unserved leads of earlier days are dropped. Returns the new leads.
+    """
+    day = str(now.date())
+    stamp = now.strftime(FMT)
+    made = 0
+    for name in cfg.repos:
+        conn.execute(
+            "DELETE FROM leads WHERE repo = ? AND lead_key LIKE 'digest:%' AND lead_key != ? "
+            "AND last_covered_at IS NULL",
+            (name, f"{DIGEST_PREFIX}{name}:{day}"),
+        )
+        conn.execute(
+            "DELETE FROM digests WHERE repo = ? AND day != ? AND card_id IS NULL", (name, day)
+        )
+        try:
+            commits = recent_commits(cfg, name, now)
+        except gitq.GitError:
+            log.warning("digest: cannot read %s", name)
+            continue
+        if not commits:
+            continue
+        if not conn.execute(
+            "INSERT OR IGNORE INTO digests(repo, day, created_at) VALUES (?, ?, ?)",
+            (name, day, stamp),
+        ).rowcount:
+            continue
+        text = (
+            f"daily digest for {name} {day}: {_plural(len(commits), 'commit', 'commits')}. "
+            "Write one card that says what landed today, grouped by area, why it matters "
+            "(use the 'why it changed' material), and who was busy. Cite the newest commit."
+        )
+        conn.execute(
+            "INSERT INTO leads(repo, story_type, kind, path, commit_sha, lead_key, text, strength, "
+            "head_sha, first_seen_at, last_seen_at) "
+            "VALUES (?, 'before_after', 'commit', '', ?, ?, ?, ?, '', ?, ?) "
+            "ON CONFLICT(repo, story_type, lead_key) DO NOTHING",
+            (name, commits[0]["sha"], f"{DIGEST_PREFIX}{name}:{day}", text, DIGEST_STRENGTH,
+             stamp, stamp),
+        )  # fmt: skip
+        made += 1
+    conn.commit()
+    return made
+
+
 def mark_served(conn, lead_id: int) -> None:
-    """If the lead is a "notif:" lead, point its notification at the card that covers it.
+    """If the lead is a "notif:" or "digest:" lead, point its record at the card that covers it.
 
     The caller owns the transaction. Read state is left as it is.
     """
@@ -187,6 +282,13 @@ def mark_served(conn, lead_id: int) -> None:
         "ORDER BY c.created_at DESC, c.id DESC LIMIT 1) AS card_id FROM leads l WHERE l.id = ?",
         (lead_id,),
     ).fetchone()
+    if row and row["card_id"] and row["lead_key"].startswith(DIGEST_PREFIX):
+        repo_day = row["lead_key"][len(DIGEST_PREFIX) :]
+        repo, _, day = repo_day.rpartition(":")
+        conn.execute(
+            "UPDATE digests SET card_id = ? WHERE repo = ? AND day = ?",
+            (row["card_id"], repo, day),
+        )
     if row and row["card_id"] and row["lead_key"].startswith(NOTIF_PREFIX):
         conn.execute(
             "UPDATE notifications SET card_id = ? WHERE id = ?",
@@ -330,6 +432,7 @@ class NotifyWorker:
                 with closing(db.open_db(cfg.settings.data_dir / "codescroll.db")) as conn:
                     now = self._clock()
                     generate_notifications(conn, cfg, now)
+                    generate_digests(conn, cfg, now)
                     supply.notify_low_runway(conn, cfg, now)
             except Exception:
                 log.exception("notification pass failed")

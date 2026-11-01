@@ -221,7 +221,9 @@ def _watch_parent(pid: int, on_gone, interval: float = 1.0) -> None:
 def _notify(args) -> int:
     cfg = load_config()
     with closing(db.open_db(_db_path(cfg))) as conn:
-        made = social.generate_notifications(conn, cfg, _now())
+        now = _now()
+        made = social.generate_notifications(conn, cfg, now)
+        social.generate_digests(conn, cfg, now)
     print(" ".join(f"{k}={v}" for k, v in made.items()))
     return 0
 

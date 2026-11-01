@@ -39,4 +39,18 @@ describe('StoriesRow', () => {
 		await fireEvent.click(screen.getByRole('button', { name: /^b/ }));
 		expect(onOpen).toHaveBeenCalledWith(1);
 	});
+
+	it('Catch me up shows only with unseen stories and calls onCatchUp', async () => {
+		const onCatchUp = vi.fn();
+		const { unmount } = render(StoriesRow, {
+			stories: [story({ seen: true })],
+			onOpen: () => {},
+			onCatchUp
+		});
+		expect(screen.queryByRole('button', { name: /catch me up/i })).toBeNull();
+		unmount();
+		render(StoriesRow, { stories: [story()], onOpen: () => {}, onCatchUp });
+		await fireEvent.click(screen.getByRole('button', { name: /catch me up/i }));
+		expect(onCatchUp).toHaveBeenCalled();
+	});
 });
