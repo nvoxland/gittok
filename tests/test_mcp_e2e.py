@@ -187,10 +187,11 @@ async def test_get_brief_uses_learned_mix_when_rewards_exist(fixture_repo, tmp_p
     assert "Mix: learned from 7 rewards" in learned["summary_markdown"]
 
 
-def test_recent_stories_carry_format(fixture_repo, tmp_path):
+def test_recent_stories_carry_format_and_template(fixture_repo, tmp_path):
     from types import SimpleNamespace
 
     from codescroll import db, store
+    from tests import cards as C
 
     cfg = make_config(fixture_repo, tmp_path)
     with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
@@ -198,9 +199,19 @@ def test_recent_stories_carry_format(fixture_repo, tmp_path):
         spec = text_card(fixture_repo)
         store.insert_card(conn, cfg, "r1", SimpleNamespace(card=spec, resolved={}, story_key="k1"))
         conn.commit()
+        meme = C.meme_card(fixture_repo)
+        store.insert_card(conn, cfg, "r1", SimpleNamespace(card=meme, resolved={}, story_key="k2"))
+        conn.commit()
         got = mcp_server.recent_stories(conn)
+    assert {r["format"]: r["template"] for r in got}[meme["format"]] == "drake"
+    got = [r for r in got if r["format"] == spec["format"]]
     assert got == [
-        {"story_type": spec["story_type"], "hook": spec["hook"], "format": spec["format"]}
+        {
+            "story_type": spec["story_type"],
+            "hook": spec["hook"],
+            "format": spec["format"],
+            "template": None,
+        }
     ]
 
 

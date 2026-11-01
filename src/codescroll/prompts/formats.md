@@ -14,7 +14,7 @@
 `visual`: `{"kind": "code", "repo", "path", "commit", "lines": [a, b], "callouts": [{"line", "text"}]}`. Good: a short snippet (1 to 40 lines) where each callout points at the exact line that is funny or clever.
 
 ### Format: `meme`
-`visual`: `{"kind": "meme", "template": "drake", "lines": ["Reading the docs", "Reading git blame"]}`. `lines`: 1 to 4 strings, at most 80 characters each, in the template's order. Good: the joke is a real fact from the repo, in few words. Use only these template ids (give exactly the listed number of lines):
+`visual`: `{"kind": "meme", "template": "fine", "lines": ["The build has been red for a week", "This is fine"]}`. Pick the template from the card's menu (packet line "meme templates to choose from") that best fits the joke and the facts. If there is no menu, pick one not used in the recently posted list. `lines`: 1 to 4 strings, at most 80 characters each, in the template's order. Good: the joke is a real fact from the repo, in few words. Use only these template ids (give exactly the listed number of lines):
 
 {meme_templates}
 

@@ -25,7 +25,7 @@ A format/kind mismatch is rejected with reason `format_kind_mismatch`.
 ```json
 {"kind": "meme", "template": "drake", "lines": ["Reading the docs", "Reading git blame"]}
 ```
-- `template`: an id from `config/meme_templates.yaml` (memegen ids). Unknown → `unknown_meme_template`.
+- `template`: an id from `config/meme_templates.yaml` (memegen ids). Unknown → `unknown_meme_template`. The brief gives each meme slot a menu of 3 templates (packet line `meme templates to choose from`): templates whose `fits` list has the story type, least used first. The writer picks one. The validator does not enforce the menu.
 - `lines`: 1 to 4 strings, each at most 80 characters. Order follows the memegen template (usually top, bottom).
 
 ### text_meme (no image; rendered by the client)

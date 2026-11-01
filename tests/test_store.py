@@ -202,6 +202,7 @@ def test_render_kinds_are_pending_render(conn, cfg, fixture_repo):
     status, feats = _store_kind(conn, cfg, C.meme_card(fixture_repo))
     assert status == "pending_render"
     assert ("visual_kind", "meme") in feats
+    assert ("meme_template", "drake") in feats
 
 
 @pytest.mark.parametrize("make", ["illustration_card", "comic_card"])

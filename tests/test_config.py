@@ -171,6 +171,18 @@ def test_real_config_has_mascots_meme_templates_and_render_settings():
     assert cfg.settings.render.memegen_url.startswith("http://127.0.0.1")
 
 
+def test_meme_template_fits_is_loaded(tmp_path):
+    write(tmp_path, "repos.yaml", "repos:\n  a:\n    path: /x/a\n")
+    write(
+        tmp_path,
+        "meme_templates.yaml",
+        "templates:\n  a: {lines: 2, fits: [commit_drama]}\n  b: {lines: 1}\n",
+    )
+    cfg = load_config(tmp_path)
+    assert cfg.meme_templates["a"].fits == ("commit_drama",)
+    assert cfg.meme_templates["b"].fits == ()
+
+
 def test_mascot_with_unknown_key_is_an_error(tmp_path):
     import pytest
 

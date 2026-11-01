@@ -607,6 +607,9 @@ def cross_leads(members: dict[str, dict]) -> dict[str, list[str]]:
     return {k: v[:MAX_LEADS_PER_TYPE] for k, v in out.items() if v}
 
 
+MENU_SIZE = 3  # meme templates offered per meme card
+
+
 @dataclass
 class Packet:
     id: str
@@ -620,6 +623,8 @@ class Packet:
     leads: list[str]
     lead_refs: list[dict] = field(default_factory=list)  # Lead coordinates, same order as leads
     formats: list[str] = field(default_factory=list)
+    # Per card: a menu of candidate meme templates (best first), or None for other formats.
+    templates: list[list[str] | None] = field(default_factory=list)
     repos: list[str] = field(default_factory=list)  # all repos the packet covers; [0] is `repo`
 
 
@@ -699,6 +704,9 @@ class Brief:
             f"- personas, one per card: {', '.join(pk.personas)}",
             "- leads:",
         ]
+        if any(pk.templates):
+            menus = "; ".join("|".join(m) for m in pk.templates if m)
+            out.insert(-1, f"- meme templates to choose from (one menu per meme card): {menus}")
         return out + [f"  - {line}" for line in pk.leads]
 
     def packet_markdown(self, packet_id: str) -> str:
@@ -910,12 +918,17 @@ def build_brief(
     ledger: dict[tuple[str, str], list[Lead]] | None = None,
     variants: list[dict] | None = None,
     variant_max_share: float = 0.2,
+    meme_templates: dict | None = None,
+    template_weights: dict[str, float] | None = None,
 ) -> Brief:
     """Build the brief.
 
     `variants` lists stories that may be retold in a new format (story_key, story_type, repo,
     sources, hook, formats_used), best first. They fill slots that have no fresh lead, at most
-    `variant_max_share` x `count` of them.
+    `variant_max_share` x `count` of them. `meme_templates` (id -> MemeTemplate) gives each
+    meme slot a menu of 3 candidates: templates that fit its story type, least used first
+    (recent cards, plus the first pick of earlier menus in this brief), then higher
+    `template_weights`, then list order.
     """
     if not repo_signals:
         raise ValueError("no repos to build a brief from")
@@ -923,6 +936,28 @@ def build_brief(
     # Recent cards break ties, so successive runs rotate through formats and story types.
     recent_fmt = Counter(r.get("format") for r in recent if r.get("format"))
     recent_story = Counter(r.get("story_type") for r in recent if r.get("story_type"))
+    template_use = Counter(r.get("template") for r in recent if r.get("template"))
+    template_ids = list(meme_templates or {})
+    t_weight = template_weights or {}
+
+    def template_menu(fmt, story_type):
+        if fmt != "meme" or not template_ids:
+            return None
+        fit = [
+            t
+            for t in template_ids
+            if not meme_templates[t].fits or story_type in meme_templates[t].fits
+        ]
+        rest = [t for t in template_ids if t not in fit]
+        menu: list[str] = []
+        for pool in (fit, rest):
+            ranked = sorted(
+                pool, key=lambda t: (template_use[t], -t_weight.get(t, 0.0), template_ids.index(t))
+            )
+            menu += ranked[: MENU_SIZE - len(menu)]
+        template_use[menu[0]] += 1
+        return menu
+
     # Cross-repo groups: >= 2 repos of one group in this brief. `groups` (name -> repos)
     # overrides the group each analysis carries.
     if groups is None:
@@ -1269,6 +1304,7 @@ def build_brief(
                         leads=[line for line, _ in pairs],
                         lead_refs=[r if isinstance(r, dict) else asdict(r) for _, r in pairs],
                         formats=[f for _, _, _, f, _ in chunk],
+                        templates=[template_menu(f, t) for _, _, t, f, _ in chunk],
                         repos=list(unit_repos),
                     )
                 )
@@ -1301,11 +1337,16 @@ def _format_sections() -> dict[str, str]:
 
 
 def guidance_markdown(
-    personas: dict, formats=None, meme_templates: dict | None = None, mascots: dict | None = None
+    personas: dict,
+    formats=None,
+    meme_templates: dict | None = None,
+    mascots: dict | None = None,
+    menus: list | None = None,
 ) -> str:
     """Card-writing rules for a packet subagent: base guidance plus the format sections.
 
     `formats=None` includes every format section; a list includes only those (`[]` is base only).
+    `menus` (a packet's meme menus) limits the meme template list to the templates in them.
     """
     from importlib.resources import files
 
@@ -1317,9 +1358,11 @@ def guidance_markdown(
     chosen = [sections[f].strip() for f in wanted if f in sections]
     if not chosen:
         return out
-    tpl = "\n".join(
-        f"- `{t.id}` ({t.lines} lines): {t.hint}" for t in (meme_templates or {}).values()
-    )
+    shown = dict(meme_templates or {})
+    menu_ids = [t for m in menus or [] for t in m or []]
+    if menu_ids:
+        shown = {t: shown[t] for t in dict.fromkeys(menu_ids) if t in shown}
+    tpl = "\n".join(f"- `{t.id}` ({t.lines} lines): {t.hint}" for t in shown.values())
     masc = "\n".join(f"- `{m.name}` (repo {m.repo or 'none'})" for m in (mascots or {}).values())
     body = "\n\n".join(chosen).replace("{meme_templates}", tpl or "(none configured)")
     body = body.replace("{mascots}", masc or "(none configured)")

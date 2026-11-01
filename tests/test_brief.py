@@ -1444,3 +1444,78 @@ def test_ledger_leads_still_honor_ban_dir_rules():
     )
     ids = {r["id"] for p in b.packets for r in p.lead_refs if r["story_type"] == "hot_spot"}
     assert ids == {1}
+
+
+def tpls(*ids, fits=None):
+    from codescroll.config import MemeTemplate
+
+    fits = fits or {}
+    return {i: MemeTemplate(i, 2, f"hint {i}", tuple(fits.get(i, ()))) for i in ids}
+
+
+def menus(b):
+    return [
+        m for pk in b.packets for f, m in zip(pk.formats, pk.templates, strict=True) if f == "meme"
+    ]
+
+
+def test_meme_slots_get_menus_of_least_used_templates():
+    recent = [
+        {"story_type": "x", "hook": "h", "format": "meme", "template": t}
+        for t in ("t1", "t1", "t2")
+    ]
+    b = build(count=40, recent=recent, meme_templates=tpls("t1", "t2", "t3", "t4", "t5"))
+    got = menus(b)
+    assert len(got) >= 2
+    assert got[0] == ["t3", "t4", "t5"]
+    # The first pick of the earlier menu counts as one use: t3 now ties with t2.
+    assert got[1] == ["t4", "t5", "t2"]
+    for pk in b.packets:
+        assert len(pk.templates) == len(pk.formats)
+        assert all(
+            (m is None) == (f != "meme") for f, m in zip(pk.formats, pk.templates, strict=True)
+        )
+
+
+def test_menu_prefers_templates_that_fit_the_story_type():
+    ts = tpls("a", "b", "c", "d", "e", fits={"a": ["no_such_type"], "b": ["no_such_type"]})
+    got = menus(build(count=40, meme_templates=ts))[0]
+    assert got == ["c", "d", "e"]
+
+
+def test_menu_fills_from_the_rest_when_few_fit():
+    ts = tpls("a", "b", "c", "d", fits={"a": ["no_such_type"], "b": ["no_such_type"]})
+    assert menus(build(count=40, meme_templates=ts))[0] == ["c", "d", "a"]
+
+
+def test_menu_ties_go_to_the_better_learned_template():
+    ts = tpls("a", "b", "c", "d")
+    got = menus(build(count=40, meme_templates=ts, template_weights={"d": 0.9, "c": 0.7}))[0]
+    assert got == ["d", "c", "a"]
+
+
+def test_no_templates_without_config():
+    b = build(count=40)
+    assert any("meme" in pk.formats for pk in b.packets)
+    assert all(m is None for pk in b.packets for m in pk.templates)
+    assert "meme templates" not in b.to_markdown()
+
+
+def test_packet_markdown_shows_meme_menus():
+    b = build(count=40, meme_templates=tpls("a", "b", "c", "d"))
+    pk = next(p for p in b.packets if "meme" in p.formats)
+    line = "; ".join("|".join(m) for m in pk.templates if m)
+    assert f"- meme templates to choose from (one menu per meme card): {line}" in b.packet_markdown(
+        pk.id
+    )
+    other = next((p for p in b.packets if "meme" not in p.formats), None)
+    if other:
+        assert "meme templates" not in b.packet_markdown(other.id)
+
+
+def test_guidance_lists_only_menu_templates():
+    ts = tpls("a", "b", "c", "d")
+    md = brief.guidance_markdown(
+        _personas(), formats=["meme"], meme_templates=ts, menus=[["b", "d"]]
+    )
+    assert "`b`" in md and "`d`" in md and "`a`" not in md.split("Use only these")[1]

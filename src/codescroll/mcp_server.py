@@ -64,9 +64,14 @@ def mix_inputs(conn, cfg) -> dict:
     }
 
 
+def template_weights(conn, cfg) -> dict[str, float]:
+    """Learned mean reward per meme template: breaks ties when the brief ranks a menu."""
+    return {t: m for t, (m, _) in learning.posterior_means(conn, cfg, "meme_template").items()}
+
+
 def recent_stories(conn, days: int = 30, limit: int = 30) -> list[dict]:
-    """Story type, hook, and format of recent cards: the brief's do-not-repeat list and
-    the history it rotates formats and story types against."""
+    """Story type, hook, format, and meme template of recent cards: the brief's do-not-repeat
+    list and the history it rotates formats, story types, and templates against."""
     since = (datetime.now(UTC) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
     rows = conn.execute(
         "SELECT story_type, spec FROM cards WHERE created_at >= ? ORDER BY created_at DESC LIMIT ?",
@@ -75,7 +80,14 @@ def recent_stories(conn, days: int = 30, limit: int = 30) -> list[dict]:
     out = []
     for r in rows:
         spec = db.loads(r["spec"])
-        out.append({"story_type": r["story_type"], "hook": spec["hook"], "format": spec["format"]})
+        out.append(
+            {
+                "story_type": r["story_type"],
+                "hook": spec["hook"],
+                "format": spec["format"],
+                "template": (spec.get("visual") or {}).get("template"),
+            }
+        )
     return out
 
 
@@ -179,6 +191,8 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
                 count=count,
                 packet_size=cfg.settings.agent.packet_size,
                 recent=recent_stories(conn),
+                meme_templates=cfg.meme_templates,
+                template_weights=template_weights(conn, cfg),
                 rules=steering.list_rules(conn),
                 unavailable_formats=unavailable_formats(cfg),
                 max_illustrations=cfg.settings.render.max_illustrations_per_run,
@@ -228,7 +242,7 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
             **pk,
             "materials_markdown": materials.packet_materials(cfg, pk.get("lead_refs") or []),
             "guidance_markdown": brief_mod.guidance_markdown(
-                cfg.personas, pk["formats"], cfg.meme_templates, cfg.mascots
+                cfg.personas, pk["formats"], cfg.meme_templates, cfg.mascots, pk.get("templates")
             ),
         }
 

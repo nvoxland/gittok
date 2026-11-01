@@ -108,6 +108,7 @@ class MemeTemplate:
     id: str
     lines: int
     hint: str = ""
+    fits: tuple[str, ...] = ()  # story types it suits; empty means any
 
 
 @dataclass(frozen=True)
@@ -342,8 +343,13 @@ def _load_meme_templates(root: Path) -> dict[str, MemeTemplate]:
         _mapping(data.get("templates"), "templates", file), "meme template", file
     ).items():
         raw = _mapping(raw, f"meme template '{tid}'", file)
-        _check_keys(raw, {"lines", "hint"}, f"meme template '{tid}'", file)
-        out[tid] = MemeTemplate(tid, int(raw.get("lines", 2)), str(raw.get("hint", "")))
+        _check_keys(raw, {"lines", "hint", "fits"}, f"meme template '{tid}'", file)
+        out[tid] = MemeTemplate(
+            tid,
+            int(raw.get("lines", 2)),
+            str(raw.get("hint", "")),
+            tuple(str(t) for t in raw.get("fits") or ()),
+        )
     return out
 
 

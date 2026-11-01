@@ -56,6 +56,8 @@ def _features(card: dict) -> set[tuple[str, str]]:
     feats.add(("visual_kind", card["visual"]["kind"]))
     if card["visual"]["kind"] == "template":
         feats.add(("template", card["visual"]["template"]))
+    if card["visual"]["kind"] == "meme":
+        feats.add(("meme_template", card["visual"]["template"]))
     return feats
 
 

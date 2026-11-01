@@ -66,6 +66,7 @@ class RewardConfig:
             "dir": 0.6,
             "visual_kind": 0.5,
             "template": 0.5,
+            "meme_template": 0.4,
             "recency": 0.6,
             "difficulty": 0.3,
             "has_comments": 0.2,
