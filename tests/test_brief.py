@@ -1519,3 +1519,29 @@ def test_guidance_lists_only_menu_templates():
         _personas(), formats=["meme"], meme_templates=ts, menus=[["b", "d"]]
     )
     assert "`b`" in md and "`d`" in md and "`a`" not in md.split("Use only these")[1]
+
+
+def test_lead_ok_filters_computed_fallback_leads():
+    d = {"categories": {"git_drama": 1.0}, "tones": DEFAULTS["tones"]}
+    seen = []
+
+    def ok(lead):
+        seen.append(lead)
+        return lead.path != "src/app.py"
+
+    b = build(count=10, packet_size=5, defaults=d, lead_ok=ok)
+    refs = [r for p in b.packets for r in p.lead_refs if r["story_type"] == "hot_spot"]
+    assert seen and all(r["path"] != "src/app.py" for r in refs)
+
+
+def test_ledger_leads_are_not_filtered_again_by_lead_ok():
+    mine = brief.Lead("hot_spot", "fixture", "path", path="src/app.py", text="x", id=1)
+    d = {"categories": {"git_drama": 1.0}, "tones": DEFAULTS["tones"]}
+    b = build(
+        count=10,
+        packet_size=5,
+        defaults=d,
+        ledger={("fixture", "hot_spot"): [mine]},
+        lead_ok=lambda lead: False,
+    )
+    assert any(r["id"] == 1 for p in b.packets for r in p.lead_refs)

@@ -550,8 +550,9 @@ def test_reward_updates_every_prefix(conn, cfg):
 
 def test_lead_mean_reward_updates(conn, cfg):
     conn.execute(
-        "INSERT INTO leads(id, repo, story_type, kind, text, strength, head_sha, first_seen_at, "
-        "last_seen_at) VALUES (1, 'fixture', 'rip', 'path', 't', 1.0, 'h', 'x', 'x')"
+        "INSERT INTO leads(id, repo, story_type, kind, lead_key, text, strength, head_sha, "
+        "first_seen_at, last_seen_at) VALUES (1, 'fixture', 'rip', 'path', 'p:x', 't', 1.0, 'h', "
+        "'x', 'x')"
     )
     a, b, plain = add_card(conn, cfg), add_card(conn, cfg), add_card(conn, cfg)
     conn.execute("UPDATE cards SET lead_id = 1 WHERE id IN (?, ?)", (a, b))

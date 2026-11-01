@@ -114,18 +114,6 @@ def test_plain_card_has_no_interactive_feature(conn, cfg, fixture_repo):
     ).fetchone()
 
 
-def test_story_key_exists_respects_window(conn, cfg, fixture_repo):
-    _insert_run(conn)
-    acc = _accept(cfg, example_card(fixture_repo))
-    now = datetime(2026, 3, 1, tzinfo=UTC)
-    created = (now - timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    store.store_card(conn, cfg, "r_1", acc, now=created)
-
-    assert store.story_key_exists(conn, acc.story_key, now=now)
-    assert not store.story_key_exists(conn, "other", now=now)
-    assert not store.story_key_exists(conn, acc.story_key, since_days=5, now=now)
-
-
 def test_insert_card_upserts_story(conn, cfg, fixture_repo):
     _insert_run(conn)
     acc = _accept(cfg, example_card(fixture_repo))
@@ -145,19 +133,6 @@ def test_insert_card_upserts_story(conn, cfg, fixture_repo):
         "2026-02-01T00:00:00Z",
         "2026-02-05T00:00:00Z",
     )
-
-
-def test_duplicate_story_detected_after_card_deleted(conn, cfg, fixture_repo):
-    _insert_run(conn)
-    acc = _accept(cfg, example_card(fixture_repo))
-    now = datetime(2026, 3, 1, tzinfo=UTC)
-    created = (now - timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    store.store_card(conn, cfg, "r_1", acc, now=created)
-    conn.execute("DELETE FROM cards")
-    conn.commit()
-
-    assert store.story_key_exists(conn, acc.story_key, now=now)
-    assert not store.story_key_exists(conn, acc.story_key, since_days=5, now=now)
 
 
 def test_ensure_repo_upserts_by_name(conn, tmp_path):
@@ -323,3 +298,21 @@ def test_variant_rejected_low_reward_unless_liked(conn, cfg, fixture_repo):
     assert "reward" in _decide(cfg, row, "meme")
     row = _story_row(conn, acc.story_key, liked=1)
     assert _decide(cfg, row, "meme") is None
+
+
+def test_predicted_story_key_matches_the_validators(cfg, fixture_repo):
+    from codescroll import storykey
+
+    card = text_card(fixture_repo)
+    sha = card["sources"][0]["commit"]
+    assert storykey.story_key("rip", "fixture", commit=sha) == _accept(cfg, card).story_key
+    card["sources"] = [{"repo": "fixture", "path": "billing/invoice.py", "lines": [1, 3]}]
+    assert (
+        storykey.story_key("rip", "fixture", path="billing/invoice.py", lines=(1, 3))
+        == _accept(cfg, card).story_key
+    )
+    card["sources"] = [{"repo": "fixture", "path": "billing/invoice.py"}]
+    assert (
+        storykey.story_key("rip", "fixture", path="billing/invoice.py")
+        == _accept(cfg, card).story_key
+    )

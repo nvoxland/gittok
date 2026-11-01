@@ -143,16 +143,6 @@ def insert_card(conn, cfg, run_id: str, acc, now: str | None = None) -> str:
     return card_id
 
 
-def story_key_exists(conn, key: str, since_days: int = 30, now: datetime | None = None) -> bool:
-    """True if a card for this story was made within the window, even if gc deleted it since."""
-    cutoff = (now or datetime.now(UTC)) - timedelta(days=since_days)
-    row = conn.execute(
-        "SELECT 1 FROM stories WHERE story_key = ? AND last_card_at >= ? LIMIT 1",
-        (key, cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")),
-    ).fetchone()
-    return row is not None
-
-
 def variant_blocker(story, fmt: str, agent, now: datetime) -> str | None:
     """Why a card of format `fmt` may not join an existing story; None if it may.
 
