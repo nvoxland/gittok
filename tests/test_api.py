@@ -704,3 +704,17 @@ def test_feed_returns_resume_card_id(cfg, client, fixture_repo):
         )
     body = client.get("/api/feed").json()
     assert body["resume_card_id"] == ids[1] and body["cards"][0]["id"] == ids[1]
+
+
+def test_public_cards_carry_github_links_only_with_a_url(cfg, fixture_repo):
+    from dataclasses import replace
+
+    (cid,) = seed(cfg, fixture_repo, [example_card(fixture_repo)])
+    assert TestClient(api.create_app(lambda: cfg)).get(f"/api/cards/{cid}").json()["links"] is None
+    repo = replace(cfg.repos["fixture"], url="https://github.com/acme/fixture")
+    linked = replace(cfg, repos={"fixture": repo})
+    card = TestClient(api.create_app(lambda: linked)).get(f"/api/cards/{cid}").json()
+    sha = fixture_repo.shas["fix1"]
+    assert card["links"]["panels"][1] == f"https://github.com/acme/fixture/commit/{sha}"
+    feed = TestClient(api.create_app(lambda: linked)).get("/api/feed").json()
+    assert feed["cards"][0]["links"]["repo_url"] == "https://github.com/acme/fixture"

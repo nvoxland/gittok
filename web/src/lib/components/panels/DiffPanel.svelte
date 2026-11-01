@@ -5,12 +5,14 @@
 		repo,
 		path,
 		commit,
+		url,
 		diff,
 		onSourceTap
 	}: {
 		repo: string;
 		path: string;
 		commit: string;
+		url?: string | null;
 		diff: string;
 		onSourceTap?: () => void;
 	} = $props();
@@ -27,7 +29,7 @@
 </script>
 
 <div class="diff-panel">
-	<SourceLine {repo} {path} {commit} onTap={onSourceTap} />
+	<SourceLine {repo} {path} {commit} {url} onTap={onSourceTap} />
 	<pre class="diff"><code
 			>{#each lines as line, i (i)}<span class="dl {cls(line)}">{line}</span>{/each}</code
 		></pre>

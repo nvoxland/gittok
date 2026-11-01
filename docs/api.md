@@ -33,9 +33,16 @@ All endpoints are served by `codescroll serve` (default `http://127.0.0.1:8008`)
   "resolved": {
     "visual": { "code": "line10\nline11\n...", "language": "python", "start_line": 10 },
     "depth": [ null, { "code": "...", "language": "python", "start_line": 1 } ]
+  },
+  "links": {
+    "repo_url": "https://github.com/org/gittok",
+    "panels": [ null, "https://github.com/org/gittok/blob/<sha>/src/x.py#L1-L5" ],
+    "sources": [ { "label": "abc1234", "url": "https://github.com/org/gittok/commit/<sha>" } ]
   }
 }
 ```
+
+`links` is `null` when the repo has no GitHub URL (see `docs/formats.md`).
 
 `resolved` holds text the server read from git. The client renders code only from `resolved`, never from model output. For `code_diff` depth panels, `resolved.depth[i]` is `{ "diff": "<unified diff>" }`. For `text` visuals, `resolved.visual` is `null` and the client uses `visual.title`, `visual.body`, `visual.bullets`.
 

@@ -7,19 +7,21 @@
 		repo,
 		path,
 		commit,
+		url,
 		resolved,
 		onSourceTap
 	}: {
 		repo: string;
 		path: string;
 		commit: string;
+		url?: string | null;
 		resolved: ResolvedCode | null;
 		onSourceTap?: () => void;
 	} = $props();
 </script>
 
 <div class="code-panel">
-	<SourceLine {repo} {path} {commit} onTap={onSourceTap} />
+	<SourceLine {repo} {path} {commit} {url} onTap={onSourceTap} />
 	{#if resolved}
 		<CodeBlock code={resolved.code} language={resolved.language} startLine={resolved.start_line} />
 	{:else}

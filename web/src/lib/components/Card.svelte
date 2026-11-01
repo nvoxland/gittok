@@ -111,12 +111,13 @@
 		{#each card.depth as d, i (i)}
 			<section data-panel={i + 1}>
 				{#if d.kind === 'explain'}
-					<ExplainPanel text={d.text} />
+					<ExplainPanel text={d.text} sources={card.links?.sources ?? []} />
 				{:else if d.kind === 'code'}
 					<CodePanel
 						repo={d.repo}
 						path={d.path}
 						commit={d.commit}
+						url={card.links?.panels[i] ?? null}
 						resolved={(card.resolved.depth[i] as ResolvedCode | null) ?? null}
 						onSourceTap={() => onAction?.('source_tap', { panel: i + 1 })}
 					/>
@@ -125,6 +126,7 @@
 						repo={d.repo}
 						path={d.path}
 						commit={d.commit}
+						url={card.links?.panels[i] ?? null}
 						diff={(card.resolved.depth[i] as ResolvedDiff | null)?.diff ?? ''}
 						onSourceTap={() => onAction?.('source_tap', { panel: i + 1 })}
 					/>

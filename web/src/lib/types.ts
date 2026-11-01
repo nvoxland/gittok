@@ -28,11 +28,7 @@ export type IllustrationVisual = {
 export type ComicPanelSpec = { prompt: string; caption: string };
 export type ComicVisual = { kind: 'comic'; panels: ComicPanelSpec[]; mascots?: string[] };
 export type ChartName =
-	| 'top_churn_files'
-	| 'top_churn_dirs'
-	| 'commit_hours'
-	| 'author_shares'
-	| 'co_change';
+	'top_churn_files' | 'top_churn_dirs' | 'commit_hours' | 'author_shares' | 'co_change';
 export type ChartVisual = {
 	kind: 'chart';
 	chart: ChartName;
@@ -44,7 +40,10 @@ export type ChartVisual = {
 export type DiagramVisual = { kind: 'diagram'; title?: string; mermaid: string };
 
 export type IcebergData = { title: string; layers: { label: string; items: string[] }[] };
-export type TierRow = { tier: 'S' | 'A' | 'B' | 'C' | 'D' | 'F'; items: { name: string; why: string }[] };
+export type TierRow = {
+	tier: 'S' | 'A' | 'B' | 'C' | 'D' | 'F';
+	items: { name: string; why: string }[];
+};
 export type TierListData = { title: string; rows: TierRow[] };
 export type GroupChatData = { title: string; messages: { from: string; text: string }[] };
 export type FlagsData = { subject: string; red: string[]; green: string[] };
@@ -153,6 +152,13 @@ export type AnswerResponse = {
 	explanation: string;
 };
 
+export type CardLink = { label: string; url: string | null };
+export type CardLinks = {
+	repo_url: string;
+	panels: (string | null)[];
+	sources: CardLink[];
+};
+
 export type Card = {
 	id: string;
 	created_at: string;
@@ -169,6 +175,8 @@ export type Card = {
 	comments: Comment[];
 	sources: Source[];
 	resolved: Resolved;
+	// GitHub URLs; null when the repo has no GitHub URL.
+	links?: CardLinks | null;
 };
 
 export type FeedResponse = {

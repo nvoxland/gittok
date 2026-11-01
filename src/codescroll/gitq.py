@@ -172,6 +172,13 @@ def commit_time(repo: Path | str, rev: str) -> int:
     return int(run(repo, "log", "-1", "--format=%ct", sha).strip())
 
 
+def remote_url(repo: Path | str) -> str | None:
+    """The `origin` remote URL as configured, or None when there is no origin."""
+    code, out = run_bytes(repo, "remote", "get-url", "origin", ok_codes=(0, 2, 128))
+    url = out.decode(errors="replace").strip()
+    return url if code == 0 and url else None
+
+
 def object_type(repo: Path | str, rev: str, path: str) -> str | None:
     """'blob', 'tree', etc. for `rev:path`, or None if it does not exist."""
     _check_rev(rev)

@@ -37,6 +37,7 @@ Every card has: `story_type`, `format`, `persona`, `tone`, `repos` (repo names),
   - `{"kind": "text", "title", "body", "bullets"}`: within the front budget above.
   - Other kinds (`meme`, `text_meme`, `illustration`, `comic`, `chart`, `diagram`, `template`) are described in the format sections.
 - `depth`: 1 to 4 panels. **At least one must be `{"kind": "explain", "text"}`**: the plain-language truth behind the joke. Others may be `{"kind": "code", "repo", "path", "commit", "lines"}` or `{"kind": "code_diff", "repo", "commit", "path"}` (the file must have changed in that commit).
+  - Write the `explain` text for reading on a phone: 2 to 4 short paragraphs (blank line between them) or a short `- ` list. Put file names, functions, and identifiers in backticks. Bold at most one key phrase with `**`. No other markup. The 2000 character limit stays.
 - `sources`: 1 to 8 of `{"repo", "commit"}` or `{"repo", "path", "lines"?}`.
 - `comments`: 0 to 5 of `{"persona", "text"}`, at most 280 characters each. Personas reply, correct, joke, or debate. The front shows only the first comment, on one line, so make the first one short and good; the rest are on their own panel.
 

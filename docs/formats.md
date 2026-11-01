@@ -105,6 +105,19 @@ A card may set `"account": "repo:path"`. The card is then shown as posted by tha
 - The render worker (in `codescroll serve`, plus `codescroll render`) claims a pending card by setting the transient status `rendering`, so two passes never render the same card. It then sets `ready`, or `render_failed` with the error text in `cards.resolved.render_error`. If the renderer is unavailable, the card goes back to `pending_render`. A card stuck in `rendering` for more than 30 minutes is reset to `pending_render` at the start of the next pass.
 - The feed and `/api/repos/{name}` return only `ready` cards.
 
+## Explain panel text
+
+The client shows `explain` text as a small markdown subset: paragraphs (blank line), `- ` lists, `` `code` ``, and `**bold**`. Nothing else is parsed, and HTML stays text. A long text with no blank lines is split into paragraphs of 2 to 3 sentences.
+
+## `links` (GitHub links on a public card)
+
+Each card from the feed, `/api/cards/{id}`, `/api/saved`, and the repo profile has `links`: `{"repo_url", "panels": [url | null], "sources": [{"label", "url"}]}`, or `null`.
+
+- `links` is `null` when the card's repo has no GitHub URL. Set `url:` on the repo in `config/repos.yaml`, or let CodeScroll read it from `git remote get-url origin`. Only github.com URLs make links.
+- `panels` has one entry per `depth` panel. A `code` panel links to `{repo_url}/blob/{commit}/{path}#L{a}-L{b}`. A `code_diff` panel links to `{repo_url}/commit/{commit}`. An `explain` panel is `null`.
+- `sources` has one entry per card source, each with its own repo's URL. A commit source links to `/commit/{sha}`. A path source links to `/blob/{rev}/{path}`, where `rev` is the commit the card cites for that file, else the repo `ref` if it is a branch name (`origin/master` gives `master`). Otherwise `url` is `null`.
+- The client opens these links in a new tab (`target="_blank"`, `rel="noopener noreferrer"`). The source line on a code or diff panel uses the panel URL. The explain panel ends with a Sources list.
+
 ## `resolved.visual` shapes (what the client renders)
 
 | kind | `resolved.visual` |

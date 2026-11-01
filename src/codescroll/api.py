@@ -321,7 +321,7 @@ def repo_profile(conn, cfg: Config, name: str) -> dict:
         "mascot_image": image,
         "group": repo.group,
         "stats": stats,
-        "cards": [public_card(r) for r in rows],
+        "cards": [public_card(r, cfg) for r in rows],
     }
 
 
@@ -438,7 +438,7 @@ def create_app(
             row = c.execute("SELECT * FROM cards WHERE id = ?", (card_id,)).fetchone()
         if row is None:
             raise HTTPException(404, f"unknown card {card_id}")
-        return public_card(row)
+        return public_card(row, get_config())
 
     @app.post("/api/answer")
     def answer(body: Answer):
@@ -469,7 +469,8 @@ def create_app(
                 "SELECT c.* FROM saved_cards s JOIN cards c ON c.id = s.card_id "
                 "ORDER BY s.saved_ts DESC, s.card_id"
             ).fetchall()
-        return {"cards": [public_card(r) for r in rows]}
+        cfg = get_config()
+        return {"cards": [public_card(r, cfg) for r in rows]}
 
     @app.get("/api/stories")
     def stories():

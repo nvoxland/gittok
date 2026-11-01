@@ -194,3 +194,18 @@ def test_ls_tree_blobs_maps_paths_to_blob_shas(fixture_repo):
 def test_ls_tree_blobs_rejects_option_injection(fixture_repo):
     with pytest.raises(gitq.GitError):
         gitq.ls_tree_blobs(fixture_repo.path, "--output=/tmp/x")
+
+
+def test_remote_url_is_none_without_origin(fixture_repo):
+    assert gitq.remote_url(fixture_repo.path) is None
+
+
+def test_remote_url_reads_origin(tmp_path):
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "remote", "add", "origin", "git@github.com:org/name.git"],
+        check=True,
+    )
+    assert gitq.remote_url(tmp_path) == "git@github.com:org/name.git"

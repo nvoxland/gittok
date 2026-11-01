@@ -7,7 +7,7 @@ import copy
 import json
 from datetime import datetime
 
-from codescroll import db, slotter
+from codescroll import db, links, slotter
 
 
 def card_json(row) -> dict:
@@ -34,8 +34,12 @@ def strip_answers(card: dict) -> dict:
     return card
 
 
-def public_card(row) -> dict:
-    return strip_answers(card_json(row))
+def public_card(row, cfg=None) -> dict:
+    """The card for the client. With `cfg`, `links` holds GitHub URLs (None when there are none)."""
+    card = strip_answers(card_json(row))
+    if cfg is not None:
+        card["links"] = links.card_links(cfg, card)
+    return card
 
 
 class InvalidCursor(ValueError):
@@ -117,7 +121,7 @@ def page(
         r["id"]: r
         for r in conn.execute(f"SELECT * FROM cards WHERE id IN ({','.join('?' * len(ids))})", ids)
     }
-    cards = [public_card(rows[i]) for i in ids]
+    cards = [public_card(rows[i], cfg) for i in ids]
     next_cursor = (
         encode_cursor(([token(t) for t in served] + [token(i) for i in ids])[-MAX_SERVED:], seed)
         if len(ids) >= limit

@@ -21,6 +21,7 @@ class Repo:
     ref: str = "HEAD"
     mascot: str | None = None
     group: str | None = None
+    url: str | None = None  # web URL of the repo (GitHub); None means derive it from `origin`
 
 
 @dataclass(frozen=True)
@@ -277,7 +278,7 @@ def _load_repos(root: Path) -> tuple[dict[str, Repo], dict[str, Group]]:
     repos: dict[str, Repo] = {}
     for rname, raw in raw_repos.items():
         raw = _mapping(raw, f"repo '{rname}'", file)
-        _check_keys(raw, {"path", "ref", "mascot", "group"}, f"repo '{rname}'", file)
+        _check_keys(raw, {"path", "ref", "mascot", "group", "url"}, f"repo '{rname}'", file)
         if not raw.get("path"):
             raise ConfigError(f"repo '{rname}' is missing 'path' ({file})")
         if raw.get("group") is not None:
@@ -291,6 +292,7 @@ def _load_repos(root: Path) -> tuple[dict[str, Repo], dict[str, Group]]:
             ref=raw.get("ref", "HEAD"),
             mascot=raw.get("mascot"),
             group=assigned.get(rname),
+            url=raw.get("url"),
         )
 
     # repo-level group: keys add membership to the group

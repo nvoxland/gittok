@@ -3,14 +3,27 @@
 		repo,
 		path,
 		commit,
+		url,
 		onTap
-	}: { repo: string; path: string; commit: string; onTap?: () => void } = $props();
+	}: {
+		repo: string;
+		path: string;
+		commit: string;
+		url?: string | null;
+		onTap?: () => void;
+	} = $props();
 </script>
 
 <p class="source">
-	<a href="/repo/{encodeURIComponent(repo)}" onclick={() => onTap?.()}
-		>{repo} · {path} · {commit.slice(0, 7)}</a
-	>
+	{#if url}
+		<a href={url} target="_blank" rel="noopener noreferrer" onclick={() => onTap?.()}
+			>{repo} · {path} · {commit.slice(0, 7)}</a
+		>
+	{:else}
+		<a href="/repo/{encodeURIComponent(repo)}" onclick={() => onTap?.()}
+			>{repo} · {path} · {commit.slice(0, 7)}</a
+		>
+	{/if}
 </p>
 
 <style>
