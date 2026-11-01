@@ -14,7 +14,8 @@ const body = {
 	notifications: [
 		{ id: 3, kind: 'new_kind', text: 'A new Spot the Bug', card_id: 'c_9', created_at: 300, read: false },
 		{ id: 2, kind: 'new_cards', text: '12 new cards', card_id: null, created_at: 200, read: false },
-		{ id: 1, kind: 'hot_file', text: 'auth.py was hot', card_id: null, created_at: 100, read: true }
+		{ id: 1, kind: 'hot_file', text: 'auth.py was hot', card_id: null, created_at: 100, read: true, repo: 'storefront' },
+		{ id: 0, kind: 'srs_due', text: '2 quiz cards back', card_id: null, created_at: 50, read: true }
 	],
 	unread: 2
 };
@@ -37,7 +38,8 @@ describe('/notifications', () => {
 		expect(items.map((i) => i.textContent)).toEqual([
 			expect.stringContaining('A new Spot the Bug'),
 			expect.stringContaining('12 new cards'),
-			expect.stringContaining('auth.py was hot')
+			expect.stringContaining('auth.py was hot'),
+			expect.stringContaining('2 quiz cards back')
 		]);
 		expect(items[0]).toHaveAttribute('data-unread', 'true');
 		expect(items[2]).toHaveAttribute('data-unread', 'false');
@@ -60,12 +62,24 @@ describe('/notifications', () => {
 		expect(JSON.parse(init.body)).toEqual({ ids: [3] });
 	});
 
+	it('every notification is a link: card, repo page, or feed', async () => {
+		await setup();
+		const href = (re: RegExp) => screen.getByRole('link', { name: re }).getAttribute('href');
+		expect(href(/Spot the Bug/)).toBe('/card/c_9');
+		expect(href(/auth.py was hot/)).toBe('/repo/storefront');
+		expect(href(/12 new cards/)).toBe('/');
+		expect(href(/quiz cards/)).toBe('/');
+		expect(screen.queryAllByRole('button', { name: /new cards|hot|quiz/ })).toHaveLength(0);
+	});
+
 	it('tapping a notification without a card marks it read', async () => {
 		await setup();
-		await fireEvent.click(screen.getByRole('button', { name: /12 new cards/ }));
+		const link = screen.getByRole('link', { name: /12 new cards/ });
+		link.addEventListener('click', (e) => e.preventDefault());
+		await fireEvent.click(link);
 		expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ ids: [2] });
 		await waitFor(() =>
-			expect(screen.getByRole('button', { name: /12 new cards/ }).closest('li')).toHaveAttribute('data-unread', 'false')
+			expect(screen.getByRole('link', { name: /12 new cards/ }).closest('li')).toHaveAttribute('data-unread', 'false')
 		);
 	});
 

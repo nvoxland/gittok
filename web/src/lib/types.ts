@@ -251,5 +251,6 @@ export type AppNotification = {
 	card_id: string | null;
 	created_at: number | string;
 	read: boolean;
+	repo?: string | null;
 };
 export type NotificationsResponse = { notifications: AppNotification[]; unread: number };
