@@ -67,6 +67,14 @@
          "properties": {"repo": {"type": "string"}, "path": {"$ref": "#/$defs/relpath"}, "lines": {"$ref": "#/$defs/lines"}}}
       ]
     },
+    "series": {
+      "type": "object", "additionalProperties": false, "required": ["key", "part", "of"],
+      "properties": {
+        "key": {"type": "string", "minLength": 1, "maxLength": 60},
+        "part": {"type": "integer", "minimum": 1, "maximum": 5},
+        "of": {"type": "integer", "minimum": 1, "maximum": 5}
+      }
+    },
     "str200": {"type": "string", "minLength": 1, "maxLength": 200},
     "account": {"type": "string", "minLength": 1, "maxLength": 450},
     "strs5": {"type": "array", "maxItems": 5, "items": {"$ref": "#/$defs/str200"}},
@@ -282,10 +290,10 @@
         "comments": {
           "type": "array", "maxItems": 5,
           "items": {"type": "object", "additionalProperties": false, "required": ["persona", "text"],
-                    "properties": {"persona": {"$ref": "#/$defs/persona"}, "text": {"type": "string", "minLength": 1, "maxLength": 280}}}
+                    "properties": {"persona": {"$ref": "#/$defs/persona"}, "text": {"type": "string", "minLength": 1, "maxLength": 280}, "spoiler": {"type": "boolean"}}}
         },
         "interaction": {"$ref": "#/$defs/interaction"},
-        "series": {"type": "null"},
+        "series": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/series"}]},
         "sources": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"$ref": "#/$defs/source"}}
       }
     }

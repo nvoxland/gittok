@@ -65,7 +65,11 @@
 	const beats = $derived(active === undefined ? [] : beatsFor(card.visual));
 	// Comments wait for a quiz answer: they can give it away.
 	const firstExplain = $derived(card.depth.findIndex((d) => d.kind === 'explain'));
-	const showComments = $derived(!!card.comments?.length && answered);
+	// A comment is a spoiler unless it says otherwise on a quiz card; other cards show them all.
+	const visibleComments = $derived(
+		(card.comments ?? []).filter((c) => answered || !(c.spoiler ?? !!card.interaction))
+	);
+	const showComments = $derived(visibleComments.length > 0);
 	const count = $derived(1 + card.depth.length + (showComments ? 1 : 0));
 
 	function openComments() {
@@ -83,6 +87,9 @@
 				<Poster account={card.persona} />
 			{/if}
 		</span>
+		{#if card.series}
+			<span class="series">Part {card.series.part}/{card.series.of}</span>
+		{/if}
 		<span class="tone">{card.tone}</span>
 	</header>
 	<div class="panels" bind:this={row} onscroll={onScroll}>
@@ -115,10 +122,19 @@
 			{/if}
 			<h2>{card.hook}</h2>
 			{#if showComments}
-				{@const c = card.comments[0]}
-				<button type="button" class="comment-preview" onclick={openComments}>
-					<span class="handle">@{c.persona}</span>: {c.text}{#if card.comments.length > 1}{` · ${card.comments.length} comments`}{/if}
-				</button>
+				<ul class="face-comments">
+					{#each visibleComments.slice(0, 2) as c, i (i)}
+						<li>
+							<Avatar handle={c.persona} size={20} />
+							<span><a class="handle" href="/persona/{encodeURIComponent(c.persona)}">@{c.persona}</a>: {c.text}</span>
+						</li>
+					{/each}
+				</ul>
+				{#if visibleComments.length > 2}
+					<button type="button" class="comment-preview" onclick={openComments}>
+						All {visibleComments.length} comments
+					</button>
+				{/if}
 			{/if}
 		</section>
 		{#each card.depth as d, i (i)}
@@ -153,8 +169,8 @@
 		{#if showComments}
 			<section data-panel={card.depth.length + 1} class="comments-panel">
 				<ul class="comments">
-					{#each card.comments as c, i (i)}
-						<li><Avatar handle={c.persona} size={20} /><span class="handle">@{c.persona}</span>: {c.text}</li>
+					{#each visibleComments as c, i (i)}
+						<li><Avatar handle={c.persona} size={20} /><span><a class="handle" href="/persona/{encodeURIComponent(c.persona)}">@{c.persona}</a>: {c.text}</span></li>
 					{/each}
 				</ul>
 			</section>
@@ -187,10 +203,10 @@
 			<button
 				type="button"
 				class="comments-btn"
-				aria-label="Comments ({card.comments.length})"
+				aria-label="Comments ({visibleComments.length})"
 				onclick={openComments}
 			>
-				<span aria-hidden="true">💬</span><span class="count">{card.comments.length}</span>
+				<span aria-hidden="true">💬</span><span class="count">{visibleComments.length}</span>
 			</button>
 		{/if}
 	</div>
@@ -299,18 +315,45 @@
 	.comment-preview {
 		flex: none;
 		display: block;
-		width: 100%;
-		padding: 0 60px 0 0;
+		padding: 0;
 		border: 0;
 		background: none;
 		color: var(--muted);
 		font: inherit;
-		font-size: 0.85rem;
+		font-size: 0.8rem;
 		text-align: left;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
 		cursor: pointer;
+	}
+	.face-comments {
+		flex: none;
+		list-style: none;
+		margin: 0;
+		padding: 0 60px 0 0;
+		font-size: 0.85rem;
+		color: var(--muted);
+	}
+	.face-comments li {
+		display: flex;
+		gap: 0.4rem;
+		align-items: flex-start;
+		margin-bottom: 0.3rem;
+		min-width: 0;
+	}
+	.face-comments li > span {
+		display: -webkit-box;
+		-webkit-box-orient: vertical;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		overflow: hidden;
+	}
+	.series {
+		flex: none;
+		border-radius: 999px;
+		padding: 0.1rem 0.5rem;
+		background: color-mix(in srgb, var(--accent) 18%, var(--surface));
+		color: var(--accent);
+		font-size: 0.75rem;
+		white-space: nowrap;
 	}
 	.comments {
 		list-style: none;
@@ -330,6 +373,10 @@
 	}
 	.handle {
 		color: var(--muted);
+		text-decoration: none;
+	}
+	.handle:hover {
+		text-decoration: underline;
 	}
 	.actions {
 		position: absolute;

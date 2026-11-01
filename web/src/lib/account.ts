@@ -9,6 +9,19 @@ export function accountHandle(account: string): string {
 	return `@${path.split('/').pop() || path}`;
 }
 
+/** Encode each segment of a repo-relative path; the slashes stay. */
+export function encodePath(path: string): string {
+	return path.split('/').map(encodeURIComponent).join('/');
+}
+
+/** Where a poster links: a persona page, or the page of a code account's file or dir. */
+export function accountHref(account: string): string {
+	if (!isCodeAccount(account)) return `/persona/${encodeURIComponent(account)}`;
+	const i = account.indexOf(':');
+	const path = account.slice(i + 1).replace(/\/+$/, '');
+	return `/file/${encodeURIComponent(account.slice(0, i))}/${encodePath(path)}`;
+}
+
 export function initials(handle: string): string {
 	const parts = handle.replace(/^@/, '').split(/[^A-Za-z0-9]+/).filter(Boolean);
 	if (parts.length === 0) return '?';

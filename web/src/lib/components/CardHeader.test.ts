@@ -90,3 +90,42 @@ describe('Card visual dispatch', () => {
 		}
 	});
 });
+
+describe('Card header links and series', () => {
+	it('links the persona handle to its profile', () => {
+		render(Card, { card: fakeCard() });
+		expect(screen.getByRole('link', { name: /@greybeard/ })).toHaveAttribute(
+			'href',
+			'/persona/greybeard'
+		);
+	});
+	it('links a code account to its file page', () => {
+		const card = fakeCard({
+			account: 'gittok:src/sub scriptions.clj',
+			resolved: {
+				visual: null,
+				depth: [],
+				account: {
+					handle: '@sub scriptions.clj',
+					repo: 'gittok',
+					path: 'src/sub scriptions.clj',
+					kind: 'file'
+				}
+			}
+		});
+		render(Card, { card });
+		expect(screen.getByRole('link', { name: /@sub scriptions.clj/ })).toHaveAttribute(
+			'href',
+			'/file/gittok/src/sub%20scriptions.clj'
+		);
+	});
+	it('shows a Part n/of chip for a series card and none otherwise', () => {
+		const { unmount } = render(Card, {
+			card: fakeCard({ series: { key: 'saga', part: 2, of: 3 } })
+		});
+		expect(screen.getByText('Part 2/3')).toBeInTheDocument();
+		unmount();
+		render(Card, { card: fakeCard({ series: null }) });
+		expect(screen.queryByText(/^Part /)).toBeNull();
+	});
+});

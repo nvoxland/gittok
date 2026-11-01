@@ -74,8 +74,27 @@ def test_commit_must_look_like_sha(fixture_repo):
     assert errors(card)
 
 
-def test_series_must_be_null_in_m1(fixture_repo):
-    assert errors(example_card(fixture_repo, series={"id": "x", "part": 1, "of": 2}))
+def test_series_is_null_or_key_part_of(fixture_repo):
+    assert errors(example_card(fixture_repo, series=None)) == []
+    ok = {"key": "retry-saga", "part": 2, "of": 3}
+    assert errors(example_card(fixture_repo, series=ok)) == []
+    bad = [
+        {"key": "x", "part": 3, "of": 2},
+        {"key": "x", "part": 0, "of": 2},
+        {"key": "x", "part": 1, "of": 6},
+        {"key": "x", "part": 1},
+        {"key": "", "part": 1, "of": 2},
+        {"key": "x", "part": 1, "of": 2, "extra": 1},
+    ]
+    for s in bad:
+        assert errors(example_card(fixture_repo, series=s)), s
+
+
+def test_comment_spoiler_flag_is_optional_boolean(fixture_repo):
+    good = [{"persona": "greybeard", "text": "hi", "spoiler": False}]
+    assert errors(example_card(fixture_repo, comments=good)) == []
+    bad = [{"persona": "greybeard", "text": "hi", "spoiler": "no"}]
+    assert errors(example_card(fixture_repo, comments=bad))
 
 
 def test_schema_document_wraps_cards(fixture_repo):

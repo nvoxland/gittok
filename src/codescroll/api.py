@@ -22,6 +22,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from codescroll import (
     avatars,
+    characters,
     db,
     gc,
     gitq,
@@ -68,6 +69,12 @@ PAIR_HTML = (
     "<title>CodeScroll</title><h1>Pair this device</h1>"
     "<p>Open the pairing URL printed by <code>codescroll serve --lan</code>.</p>"
 )
+
+
+class FollowBody(BaseModel):
+    repo: str
+    path: str = Field(min_length=1, max_length=400)
+    on: bool = True
 
 
 def _sync_saved(c, card_id: str) -> None:
@@ -534,6 +541,29 @@ def create_app(
             raise HTTPException(404, f"unknown repo {name}")
         with conn() as c:
             return repo_profile(c, cfg, name)
+
+    @app.get("/api/personas/{handle}")
+    def persona_detail(handle: str):
+        with conn() as c:
+            page = characters.persona_page(c, get_config(), handle)
+        if page is None:
+            raise HTTPException(404, f"unknown persona {handle}")
+        return page
+
+    @app.get("/api/files/{repo}/{path:path}")
+    def file_detail(repo: str, path: str):
+        with conn() as c:
+            page = characters.file_page(c, get_config(), repo, path)
+        if page is None:
+            raise HTTPException(404, f"unknown repo {repo}")
+        return page
+
+    @app.post("/api/follows")
+    def follow(body: FollowBody):
+        if body.repo not in get_config().repos:
+            raise HTTPException(404, f"unknown repo {body.repo}")
+        with conn() as c:
+            return {"followed": characters.set_follow(c, body.repo, body.path, body.on)}
 
     @app.post("/api/events")
     def events(batch: EventBatch):

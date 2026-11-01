@@ -1,10 +1,13 @@
+import { encodePath } from './account.ts';
 import { getSessionId } from './session.ts';
 import type {
 	AnswerResponse,
 	Card,
 	FeedEvent,
 	FeedResponse,
+	FileProfile,
 	NotificationsResponse,
+	PersonaProfile,
 	RepoProfile,
 	Story
 } from './types';
@@ -42,6 +45,28 @@ export async function fetchRepo(name: string): Promise<RepoProfile> {
 	const res = await fetch(`/api/repos/${encodeURIComponent(name)}`);
 	if (!res.ok) throw new Error(`GET /api/repos/${name} failed: ${res.status}`);
 	return (await res.json()) as RepoProfile;
+}
+
+export async function fetchPersona(handle: string): Promise<PersonaProfile> {
+	const res = await fetch(`/api/personas/${encodeURIComponent(handle)}`);
+	if (!res.ok) throw new Error(`GET /api/personas/${handle} failed: ${res.status}`);
+	return (await res.json()) as PersonaProfile;
+}
+
+export async function fetchFile(repo: string, path: string): Promise<FileProfile> {
+	const res = await fetch(`/api/files/${encodeURIComponent(repo)}/${encodePath(path)}`);
+	if (!res.ok) throw new Error(`GET /api/files/${repo}/${path} failed: ${res.status}`);
+	return (await res.json()) as FileProfile;
+}
+
+export async function postFollow(repo: string, path: string, on: boolean): Promise<boolean> {
+	const res = await fetch('/api/follows', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ repo, path, on })
+	});
+	if (!res.ok) throw new Error(`POST /api/follows failed: ${res.status}`);
+	return ((await res.json()) as { followed: boolean }).followed;
 }
 
 export async function fetchCard(id: string): Promise<Card> {

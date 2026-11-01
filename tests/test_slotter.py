@@ -317,3 +317,44 @@ def test_dir_rule_accepts_repo_prefix(conn, cfg):
     ).fetchone()[0]
     add_rule(conn, "ban", "dir", f"{repo}/src")
     assert batch(conn, cfg) == []
+
+
+def series(key, part, of=3):
+    return {"key": key, "part": part, "of": of}
+
+
+def test_series_parts_stay_in_order_with_a_gap(conn, cfg, monkeypatch):
+    p2 = add_card(conn, cfg, series=series("saga", 2), hook="part two")
+    p1 = add_card(conn, cfg, series=series("saga", 1), hook="part one")
+    others = [add_card(conn, cfg, hook=f"other {i}") for i in range(4)]
+    fix_scores(monkeypatch, {p2: 9.0, p1: 5.0, **{o: 1.0 for o in others}})
+    out = batch(conn, cfg, 6)
+    assert out.index(p1) < out.index(p2)
+    assert out.index(p2) - out.index(p1) >= slotter.SERIES_GAP
+
+
+def test_series_part_waits_for_an_unseen_earlier_part(conn, cfg):
+    p1 = add_card(conn, cfg, series=series("saga", 1), dirs=["hidden"], hook="part one")
+    p2 = add_card(conn, cfg, series=series("saga", 2), hook="part two")
+    other = add_card(conn, cfg, hook="other")
+    add_rule(conn, "ban", "dir", "hidden")  # part 1 cannot go out, so part 2 waits
+    out = batch(conn, cfg, 5)
+    assert p2 not in out and other in out
+    conn.execute("DELETE FROM rules")
+    impress(conn, p1, NOW - timedelta(hours=1))  # now part 1 is seen
+    assert p2 in batch(conn, cfg, 5)
+    # A part served on an earlier page counts as seen, even before its impression lands.
+    assert p2 in batch(conn, cfg, 5, served={p1})
+
+
+def test_followed_path_dir_boosts_its_cards(conn, cfg, monkeypatch):
+    from codescroll import characters
+
+    a = add_card(conn, cfg, dirs=["billing"], hook="billing card")
+    b = add_card(conn, cfg, dirs=["other"], hook="other card")
+    fix_scores(monkeypatch, {a: 1.0, b: 1.05})
+    assert batch(conn, cfg, 2)[0] == b
+    characters.set_follow(conn, "fixture", "billing/invoice.py", True)
+    assert batch(conn, cfg, 2)[0] == a
+    characters.set_follow(conn, "fixture", "billing/invoice.py", False)
+    assert batch(conn, cfg, 2)[0] == b

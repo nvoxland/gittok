@@ -39,3 +39,20 @@ Table `notifications(id, kind, text, card_id, created_at, read_at)` (exists). Ge
 - Request bodies are limited to 1 MB (413). `POST /api/stories/seen` takes at most 100 shas, each 7-40 hex characters. `POST /api/events` takes at most 500 events, and each event `data` must be 4 KB or less as JSON.
 - PWA install and offline mode need HTTPS: service workers do not register on plain-HTTP LAN origins. The feed still works in the browser over HTTP. Tailscale is the planned HTTPS path (M6).
 - `settings.server.host` stays `127.0.0.1` by default; `--lan` is opt-in per run.
+
+## Characters that carry
+
+- Pages: `/persona/<handle>` (avatar, name, `bio` from personas.yaml or the voice, recent posts,
+  recent comments) and `/file/<repo>/<path>` (commit count, last touched, top authors, cards
+  that cite the path in sources, visual, depth panels or `account`). API: `GET /api/personas/{handle}`,
+  `GET /api/files/{repo}/{path}`.
+- Card headers and comment names link to those pages; a code-account poster links to its file page.
+- Follow: `POST /api/follows {repo, path, on}`. Follows are stored in the `prefs` table under
+  `followed_paths`. In the slotter, a card whose repo and dir match the dir of a followed path
+  (the path itself if it has no file extension) has its score multiplied by `FOLLOW_BOOST` (1.5).
+- Comments: the card face shows two comments with avatars. On quiz cards a comment is a spoiler
+  (hidden until answered) unless it sets `spoiler: false`.
+- Cast notes: `get_packet` returns `cast_markdown`, each packet persona's last 3 hooks or
+  comments (trimmed), at most 800 bytes. Writers call back to running jokes.
+- Series: `series` is `null` or `{key, part, of}`. The face shows a "Part n/of" chip. The slotter
+  holds a part back while an earlier part is unseen, orders parts, and spaces them `SERIES_GAP` (3).
