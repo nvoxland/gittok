@@ -54,3 +54,6 @@ gc:
   log_max_kb: 1024             # a data/logs/*.log file over this size keeps its newest half
   leads_after_days: 180        # delete leads not seen at HEAD this long that no card ever covered
   interval_s: 3600             # how often the server runs a pass
+profiles:
+  max_hits: 200                # save_profile refuses a rule with more hits than this
+  max_ms: 5000                 # ...or one that runs longer than this

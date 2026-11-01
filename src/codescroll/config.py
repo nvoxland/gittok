@@ -151,6 +151,12 @@ class UserSettings:
 
 
 @dataclass(frozen=True)
+class ProfilesSettings:
+    max_hits: int = 200  # a profile rule with more hits than this is refused (too broad)
+    max_ms: int = 5000  # a profile rule that runs longer than this is refused
+
+
+@dataclass(frozen=True)
 class Settings:
     data_dir: Path
     server: ServerSettings
@@ -161,6 +167,7 @@ class Settings:
     repos: ReposSettings = field(default_factory=ReposSettings)
     gc: GcSettings = field(default_factory=GcSettings)
     user: UserSettings = field(default_factory=UserSettings)
+    profiles: ProfilesSettings = field(default_factory=ProfilesSettings)
 
 
 @dataclass(frozen=True)
@@ -272,7 +279,18 @@ def _load_settings(root: Path) -> Settings:
     data = _mapping(_read(file), "settings", file)
     _check_keys(
         data,
-        {"data_dir", "server", "agent", "analysis", "research", "render", "repos", "gc", "user"},
+        {
+            "data_dir",
+            "server",
+            "agent",
+            "analysis",
+            "research",
+            "render",
+            "repos",
+            "gc",
+            "user",
+            "profiles",
+        },
         "settings",
         file,
     )
@@ -289,6 +307,7 @@ def _load_settings(root: Path) -> Settings:
         repos=_repos_settings(data.get("repos"), root, file),
         gc=_section(GcSettings, data.get("gc"), "settings.gc", file),
         user=_section(UserSettings, data.get("user"), "settings.user", file),
+        profiles=_section(ProfilesSettings, data.get("profiles"), "settings.profiles", file),
     )
 
 
