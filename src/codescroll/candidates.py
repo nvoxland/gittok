@@ -2,7 +2,13 @@
 
 `mine` reads the files at a ref (one `git ls-tree -r -l`, then batched blob reads through
 gitq) and returns candidates: {path, start, end, tag, why, score}. `refresh` stores them;
-`load_candidates` reads them back. Patterns per language live in config/languages.yaml.
+`load_candidates` reads them back.
+
+Three layers, best first. (1) The structure layer (structure.py, optional group `structure`):
+definitions, imports and comments from tree-sitter, for any language with a query in
+config/queries. (2) Regex patterns per language in config/languages.yaml. (3) Plain text rules
+for a file with neither: lines, indentation and comment-like lines. A file uses the first layer
+that can read it.
 
 Tags: entry_point, core, god_file, public_api (structure); long_function, deep_nesting,
 many_params, many_branches, long_line, big_literal (shape); smell, commented_out,
@@ -20,7 +26,7 @@ from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
 
-from . import config, db, detectors, gitq
+from . import config, db, detectors, gitq, structure
 from .config import AnalysisSettings
 from .profiles import FileSet, Profile, fileset_for
 
@@ -78,6 +84,23 @@ class SourceFile:
     lines: list[str]
     is_test: bool
     meta: dict = field(default_factory=dict)
+    facts: structure.FileFacts | None = None  # set when the structure layer read the file
+    kind: str | None = None  # test, docs, ... (see profiles.FileSet.kind)
+
+    @property
+    def th(self) -> dict:
+        """Thresholds: the language's, with the structure layer's own where it read the file."""
+        return {**self.lang.th, **self.facts.thresholds} if self.facts else self.lang.th
+
+    @property
+    def comment_lines(self) -> set[int]:
+        """1-based lines that hold only a comment, from the comment nodes (structure layer)."""
+        got = self.meta.get("_comment_lines")
+        if got is None:
+            got = self.meta["_comment_lines"] = (
+                self.facts.comment_only_lines(self.lines) if self.facts else set()
+            )
+        return got
 
 
 def _re(pat: str | None) -> re.Pattern | None:
@@ -165,7 +188,11 @@ def _cand(path, span, tag, why, score=1.0) -> dict:
     return {"path": path, "start": span[0], "end": span[1], "tag": tag, "why": why, "score": score}
 
 
-def _is_comment(sf: SourceFile, line: str) -> bool:
+def _is_comment(sf: SourceFile, line: str, i: int | None = None) -> bool:
+    """True when `line` (0-based index `i`) is only a comment. Comment nodes decide when the
+    structure layer read the file; otherwise the language's comment prefix does."""
+    if sf.facts is not None and i is not None:
+        return i + 1 in sf.comment_lines
     s = line.strip()
     if s.startswith(sf.lang.comment):
         return True
@@ -184,36 +211,71 @@ def _first_group(m: re.Match) -> str | None:
 # ---------- reading files ----------
 
 
+def _structure_lang(name: str, base: dict, grammar: str | None = None) -> Lang:
+    """A `Lang` for a language that has a tree-sitter query but no regex patterns. Its regex
+    fields are empty: the structure layer supplies definitions, imports and comments."""
+    raw = structure.spec()["languages"].get(name) or {}
+    generic = structure.spec()["generic"]
+    return _compile(
+        name,
+        {
+            "extensions": structure.extensions(name),
+            "comment": raw.get("comment") or generic.get("comment", "#"),
+            "import_style": "module",
+            "import_unit": raw.get("import_unit", "file"),
+        },
+        base,
+    )
+
+
 def _read_files(
     path,
     ref,
     settings: AnalysisSettings,
     langs: dict[str, Lang],
     files: FileSet | None = None,
+    queries: dict | None = None,
 ) -> list[SourceFile]:
     """Files at `ref` that the file set reads (scan minus ignore). Generated, vendored and
-    fixture files and files with a generated header are left out. A file with no known
-    language gets the `text` language. `files` defaults to the bootstrap file set."""
+    fixture files and files with a generated header are left out. The structure layer reads a
+    file when it can (`queries` are the profile's own tags queries). A file it cannot read
+    keeps its regex language, or gets the `text` language when it has none. `files` defaults
+    to the bootstrap file set."""
     fs = files or fileset_for(None)
+    base = next(iter(langs.values())).th if langs else {}
     by_ext = {ext: lang for lang in langs.values() for ext in lang.raw["extensions"]}
-    plain = text_lang(next(iter(langs.values())).th if langs else {})
+    plain = text_lang(base)
+    made: dict[str, Lang] = {}
+
+    def structure_only(name: str) -> Lang:
+        if name not in made:
+            made[name] = _structure_lang(name, base)
+        return made[name]
+
     picked = []
     for p, sha, size in gitq.ls_tree_files(path, ref):
         if not 0 < size <= settings.candidate_max_file_bytes or not fs.reads(p) or not fs.mined(p):
             continue
-        picked.append((p, sha, by_ext.get(posixpath.splitext(p)[1]) or plain))
+        picked.append((p, sha))
     picked.sort(key=lambda t: t[0])
     picked = picked[: settings.candidate_max_files]
-    blobs = gitq.read_blobs(path, list({sha for _, sha, _ in picked}))
+    blobs = gitq.read_blobs(path, list({sha for _, sha in picked}))
     out = []
-    for p, sha, lang in picked:
+    for p, sha in picked:
         data = blobs.get(sha)
         if data is None or b"\0" in data[:8000]:
             continue
-        lines = data.decode("utf-8", errors="replace").splitlines()
+        text = data.decode("utf-8", errors="replace")
+        lines = text.splitlines()
         if fs.has_generated_marker(lines) or any(len(ln) > 2000 for ln in lines):
             continue
-        out.append(SourceFile(p, lang, lines, fs.is_test(p)))
+        ext = posixpath.splitext(p)[1]
+        lang = by_ext.get(ext)
+        facts = structure.parse(p, "\n".join(lines), queries) if structure.available() else None
+        if facts is not None and lang is None:
+            lang = structure_only(facts.lang)
+        sf = SourceFile(p, lang or plain, lines, fs.is_test(p), facts=facts, kind=fs.kind(p))
+        out.append(sf)
     return out
 
 
@@ -230,9 +292,17 @@ class _Index:
     def __init__(self, files: list[SourceFile]):
         self.full: dict[tuple[str, str], str] = {}
         self.suffix: dict[tuple[str, str], set[str]] = {}
+        self.dirs: dict[tuple[str, str], dict[str, SourceFile]] = {}
+        self.ns: dict[str, str] = {}  # Clojure namespace -> path
         for sf in files:
             if sf.is_test:
                 continue
+            if sf.facts is not None and sf.facts.namespace:
+                self.ns.setdefault(sf.facts.namespace, sf.path)
+            if sf.lang.raw.get("import_unit") == "dir":
+                parts = posixpath.dirname(sf.path).split("/") if "/" in sf.path else []
+                for i in range(len(parts)):
+                    self.dirs.setdefault((sf.lang.name, "/".join(parts[i:])), {})[sf.path] = sf
             stem = _norm(posixpath.splitext(sf.path)[0])
             parts = stem.split("/")
             variants = [parts]
@@ -243,6 +313,20 @@ class _Index:
                 for i in range(len(v)):
                     self.suffix.setdefault((sf.lang.name, "/".join(v[i:])), set()).add(sf.path)
 
+    def package(self, lang: str, key: str) -> str | None:
+        """The file that stands for the directory `key` (a Go package): the one named like the
+        directory, else the longest."""
+        members = self.dirs.get((lang, _norm(key.strip("/"))))
+        if not members:
+            return None
+        leaf = posixpath.basename(key.strip("/"))
+        named = [
+            p for p in members if _norm(posixpath.splitext(posixpath.basename(p))[0]) == _norm(leaf)
+        ]
+        if named:
+            return sorted(named)[0]
+        return max(members.values(), key=lambda f: (len(f.lines), f.path)).path
+
     def lookup(self, lang: str, key: str, exact: bool) -> str | None:
         key = _norm(key.strip("/"))
         hit = self.full.get((lang, key))
@@ -252,18 +336,37 @@ class _Index:
         return next(iter(found)) if len(found) == 1 else None
 
 
+_PAREN = re.compile(r"[()]")
+
+
 def _specs(sf: SourceFile) -> list[tuple[str, list[str]]]:
-    """(module spec, imported names) for every import line."""
+    """(module spec, imported names) for every import. The structure layer gives import nodes
+    (so imports in comments and strings are not seen); otherwise the language's import
+    regexes run over the lines."""
     out = []
-    for line in sf.lines:
-        if _is_comment(sf, line):
+    if sf.facts is not None:
+        for imp in sf.facts.imports:
+            if imp.spec is not None:
+                out.append((imp.spec, []))
+                continue
+            text = _PAREN.sub(" ", " ".join(imp.text.split()))
+            out += _regex_specs(sf, text)
+        return out
+    for i, line in enumerate(sf.lines):
+        if _is_comment(sf, line, i):
             continue
-        for rx in sf.lang.imports:
-            for m in rx.finditer(line):
-                names = []
-                if m.lastindex and m.lastindex >= 2 and m.group(2):
-                    names = [n.strip() for n in m.group(2).split(",") if n.strip()]
-                out.append((m.group(1), names))
+        out += _regex_specs(sf, line)
+    return out
+
+
+def _regex_specs(sf: SourceFile, text: str) -> list[tuple[str, list[str]]]:
+    out = []
+    for rx in sf.lang.imports:
+        for m in rx.finditer(text):
+            names = []
+            if m.lastindex and m.lastindex >= 2 and m.group(2):
+                names = [n.strip() for n in m.group(2).split(",") if n.strip()]
+            out.append((m.group(1), names))
     return out
 
 
@@ -274,6 +377,10 @@ def _resolve(sf: SourceFile, spec: str, names: list[str], idx: _Index) -> set[st
     style = sf.lang.raw.get("import_style", "dotted")
     named: list[tuple[str, bool]] = []  # (key, exact)
     whole: list[tuple[str, bool]] = []
+    if style == "module":
+        hit = _resolve_module(sf, spec, idx)
+        hit.discard(sf.path)
+        return hit
     if style == "path":
         spec = re.sub(r"\.(?:[cm]?[jt]sx?|svelte)$", "", spec)
         if spec.startswith("."):
@@ -302,6 +409,58 @@ def _resolve(sf: SourceFile, spec: str, names: list[str], idx: _Index) -> set[st
     return found
 
 
+def _resolve_module(sf: SourceFile, spec: str, idx: _Index) -> set[str]:
+    """A module spec of a language that has no regex patterns (Go, Ruby, Java, Rust, ...).
+
+    Relative specs ("./lib/util") are exact. Others are matched by the end of the path: segments
+    are trimmed from the front (a Go module prefix, a Java root) and then from the back (a Rust
+    item, a Java member), longest first. The first unique file wins; a Go import names a package
+    directory. Nothing is matched by a bare short name that is defined in several files."""
+    lang = sf.lang.name
+    if spec.startswith("."):
+        key = posixpath.normpath(posixpath.join(posixpath.dirname(sf.path), spec))
+        hit = idx.lookup(lang, key, True)
+        return {hit} if hit else set()
+    segs = [s for s in re.split(r"[/.]|::", spec) if s]
+    while segs and segs[0] in ("crate", "self", "super"):
+        segs.pop(0)
+    by_dir = sf.lang.raw.get("import_unit") == "dir"
+    for cut in range(len(segs)):
+        head = segs[: len(segs) - cut]
+        for j in range(len(head)):
+            key = "/".join(head[j:])
+            hit = idx.package(lang, key) if by_dir else idx.lookup(lang, key, False)
+            if hit:
+                return {hit}
+        if by_dir:
+            break  # an import names the whole directory: do not trim the back
+    return set()
+
+
+def _clojure_edges(sf: SourceFile, idx: _Index) -> set[str]:
+    """Files a Clojure file requires AND uses: `alias/name`, a referred name, `ns/name`, or a
+    plain require with no alias or refer (loaded for effect). An alias that is never used does
+    not count."""
+    facts = sf.facts
+    names = {n for n, _ in facts.refs}
+    prefixes = {n.split("/", 1)[0] for n in names if "/" in n and not n.startswith("/")}
+    out = set()
+    for req in facts.requires:
+        used = (
+            req.refer_all
+            or req.ns in prefixes
+            or (req.alias is not None and req.alias in prefixes)
+            or any(r in names for r in req.refers)
+            or (req.alias is None and not req.refers)
+        )
+        if not used:
+            continue
+        target = idx.ns.get(req.ns) or idx.lookup(sf.lang.name, req.ns.replace(".", "/"), False)
+        if target and target != sf.path:
+            out.add(target)
+    return out
+
+
 def _fan(files: list[SourceFile]) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
     """(fan_in: target -> importers, fan_out: importer -> targets), tests excluded."""
     idx = _Index(files)
@@ -310,14 +469,25 @@ def _fan(files: list[SourceFile]) -> tuple[dict[str, set[str]], dict[str, set[st
     for sf in files:
         if sf.is_test:
             continue
-        for spec, names in _specs(sf):
-            for target in _resolve(sf, spec, names, idx):
-                fan_in.setdefault(target, set()).add(sf.path)
-                fan_out.setdefault(sf.path, set()).add(target)
+        if sf.facts is not None and sf.lang.name == "clojure" and sf.facts.namespace:
+            targets = _clojure_edges(sf, idx)
+        else:
+            targets = {t for spec, names in _specs(sf) for t in _resolve(sf, spec, names, idx)}
+        for target in targets:
+            fan_in.setdefault(target, set()).add(sf.path)
+            fan_out.setdefault(sf.path, set()).add(target)
     return fan_in, fan_out
 
 
 # ---------- structure ----------
+
+
+def _public_names(sf: SourceFile) -> list[str]:
+    if sf.facts is not None:
+        return [d.name for d in sf.facts.defs if d.public]
+    if not sf.lang.public:
+        return []
+    return [m.group(1) for ln in sf.lines if (m := sf.lang.public.match(ln))]
 
 
 def _structure(files, fan_in, fan_out) -> list[dict]:
@@ -330,7 +500,7 @@ def _structure(files, fan_in, fan_out) -> list[dict]:
         hits = [
             (i + 1, ln)
             for i, ln in enumerate(sf.lines)
-            if not _is_comment(sf, ln) and any(rx.search(ln) for rx in sf.lang.entry)
+            if not _is_comment(sf, ln, i) and any(rx.search(ln) for rx in sf.lang.entry)
         ]
         if hits:
             n, ln = hits[0]
@@ -344,16 +514,11 @@ def _structure(files, fan_in, fan_out) -> list[dict]:
                     why = f"entry point by path ({rx.pattern})"
                     out.append(_cand(sf.path, _span(1, total), "entry_point", why, 0.5))
                     break
-        if sf.lang.public:
-            names = []
-            for ln in sf.lines:
-                m = sf.lang.public.match(ln)
-                if m:
-                    names.append(m.group(1))
-            if names:
-                score = len(names) + 2 * len(fan_in.get(sf.path, ()))
-                why = f"{len(names)} public definitions: {', '.join(names[:5])}"
-                out.append(_cand(sf.path, _span(1, total), "public_api", why, score))
+        names = _public_names(sf)
+        if names:
+            score = len(names) + 2 * len(fan_in.get(sf.path, ()))
+            why = f"{len(names)} public definitions: {', '.join(names[:5])}"
+            out.append(_cand(sf.path, _span(1, total), "public_api", why, score))
     for target, importers in fan_in.items():
         sf = by_path[target]
         if sf.is_test or len(importers) < sf.lang.th["min_fan_in"]:
@@ -475,6 +640,21 @@ def _nesting(lines: list[str], i: int, hdr: int, end: int) -> tuple[int, int]:
 
 
 def _functions(sf: SourceFile) -> list[dict]:
+    if sf.facts is not None:
+        return [
+            {
+                "name": d.name,
+                "start": d.start - 1,
+                "hdr": d.start - 1,
+                "end": d.end - 1,
+                "depth": d.depth,
+                "depth_at": d.depth_at - 1,
+                "params": d.params,
+                "branches": d.branches,
+            }
+            for d in sf.facts.defs
+            if d.kind in ("function", "method")
+        ]
     fs = sf.lang.func_start
     if fs is None:
         return []
@@ -482,7 +662,7 @@ def _functions(sf: SourceFile) -> list[dict]:
     for i, line in enumerate(sf.lines):
         m = fs.match(line)
         name = _first_group(m) if m else None
-        if not name or _is_comment(sf, line):
+        if not name or _is_comment(sf, line, i):
             continue
         if sf.lang.parens:
             end, depth, depth_at = _scan_parens(sf.lines, i)
@@ -499,7 +679,7 @@ def _functions(sf: SourceFile) -> list[dict]:
 
 def _shape(sf: SourceFile) -> list[dict]:
     out = []
-    th, lines, total = sf.lang.th, sf.lines, len(sf.lines)
+    th, lines, total = sf.th, sf.lines, len(sf.lines)
     for f in _functions(sf):
         a, b, name = f["start"], f["end"], f["name"]
         length = b - a + 1
@@ -510,14 +690,18 @@ def _shape(sf: SourceFile) -> list[dict]:
             at = f["depth_at"] + 1
             why = f"nesting depth {f['depth']} at line {at} in {name}()"
             out.append(_cand(sf.path, _around(at, total), "deep_nesting", why, f["depth"]))
-        text = "\n".join(lines[a : min(b + 1, a + 40)])
-        n = _count_params(sf, text, name)
+        if "params" in f:  # counted from the parameter list node: top-level parameters only
+            n = f["params"]
+        else:
+            n = _count_params(sf, "\n".join(lines[a : min(b + 1, a + 40)]), name)
         if n >= th["many_params"]:
             why = f"{name}() takes {n} parameters (line {a + 1})"
             out.append(_cand(sf.path, _span(a + 1, b + 1), "many_params", why, n))
-        if sf.lang.branch:
+        nb = f.get("branches")
+        if nb is None and sf.lang.branch:
             body = lines[a : b + 1] if sf.lang.parens else lines[f["hdr"] + 1 : b + 1]
             nb = sum(len(sf.lang.branch.findall(ln)) for ln in body if not _is_comment(sf, ln))
+        if nb is not None:
             if nb >= th["many_branches"]:
                 why = f"{name}() has {nb} branches (line {a + 1})"
                 out.append(_cand(sf.path, _span(a + 1, b + 1), "many_branches", why, nb))
@@ -530,7 +714,7 @@ def _shape(sf: SourceFile) -> list[dict]:
                 rx = re.compile(rf"(?<![\w.$]){q}\s*\(|\b(?:self|this|cls)\.{q}\s*\(")
                 body_from = f["hdr"] + 1
             for j in range(body_from, b + 1):
-                if not _is_comment(sf, lines[j]) and rx.search(lines[j]):
+                if not _is_comment(sf, lines[j], j) and rx.search(lines[j]):
                     why = f"recursion: {name}() calls itself at line {j + 1}"
                     out.append(_cand(sf.path, _around(j + 1, total), "clever", why, 1))
                     break
@@ -544,7 +728,7 @@ def _shape(sf: SourceFile) -> list[dict]:
 
 def _big_literals(sf: SourceFile) -> list[dict]:
     out = []
-    lines, th = sf.lines, sf.lang.th
+    lines, th = sf.lines, sf.th
     rx = BIG_LITERAL_PARENS if sf.lang.parens else BIG_LITERAL_INDENT
     skip_to = -1
     for i, ln in enumerate(lines):
@@ -566,17 +750,33 @@ def _strip_strings(line: str) -> str:
     return STRING.sub('""', line)
 
 
+def _comment_smells(sf: SourceFile) -> dict[int, re.Match]:
+    """Line number -> first SMELL match, found only in the text of comment nodes."""
+    out: dict[int, re.Match] = {}
+    for c in sf.facts.comments:
+        for k, part in enumerate(c.text.split("\n")):
+            m = SMELL.search(part)
+            if m:
+                out.setdefault(c.line + k, m)
+    return out
+
+
 def _markers(sf: SourceFile) -> list[dict]:
     out = []
-    lines, total, lang, th = sf.lines, len(sf.lines), sf.lang, sf.lang.th
+    lines, total, lang, th = sf.lines, len(sf.lines), sf.lang, sf.th
     magic: list[tuple[int, str]] = []
+    in_comments = _comment_smells(sf) if sf.facts is not None else None
     for i, ln in enumerate(lines):
         n = i + 1
         s = ln.strip()
         if not s:
             continue
-        m = SMELL.search(ln)
-        if m and _in_comment(sf, ln, m.start()):
+        if in_comments is not None:  # only inside comment nodes: strings never count
+            m = in_comments.get(n)
+        else:
+            m = SMELL.search(ln)
+            m = m if m and _in_comment(sf, ln, m.start()) else None
+        if m:
             kw = m.group(0).upper()
             why = f"{kw} comment at line {n}: '{_clip(s.lstrip('#/;* '))}'"
             score = 2 if kw in ("HACK", "XXX") else 1
@@ -586,7 +786,7 @@ def _markers(sf: SourceFile) -> list[dict]:
                 why = f"skipped test at line {n}: '{_clip(s)}'"
                 out.append(_cand(sf.path, _around(n, total), "skipped_test", why))
             continue
-        if _is_comment(sf, ln):
+        if _is_comment(sf, ln, i):
             continue
         if any(rx.search(ln) for rx in lang.catch_all):
             why = f"catch-all handler at line {n}: '{_clip(s)}'"
@@ -638,12 +838,73 @@ def _commented_out(sf: SourceFile) -> list[dict]:
 
     for i, ln in enumerate(sf.lines):
         s = ln.strip()
-        if s.startswith(lang.comment) and not s.startswith(("#!", "#:", "#[")):
+        is_c = i + 1 in sf.comment_lines if sf.facts is not None else s.startswith(lang.comment)
+        if is_c and not s.startswith(("#!", "#:", "#[")):
             run.append((i + 1, s.lstrip(lang.comment[0] + " ").rstrip()))
         else:
             flush()
     flush()
     return out
+
+
+# ---------- text fallback: files with neither a query nor patterns ----------
+
+
+def _text_candidates(sf: SourceFile) -> list[dict]:
+    """Markers in comment-like lines, long lines and deep indentation for a file in a language
+    we know nothing about. Data files and docs are skipped. Rules and prefixes are in
+    config/queries/languages.yaml (`text_fallback`)."""
+    rules = structure.spec().get("text_fallback") or {}
+    skip = rules.get("skip_extensions") or ()
+    if sf.kind == "docs" or posixpath.splitext(sf.path)[1].lower() in skip:
+        return []
+    prefixes = tuple(rules.get("comment_prefixes") or ())
+    th, lines, total = sf.lang.th, sf.lines, len(sf.lines)
+    out = []
+    for i, ln in enumerate(lines):
+        s = ln.strip()
+        m = SMELL.search(ln)
+        if (
+            m
+            and prefixes
+            and (s.startswith(prefixes) or _trailing_comment(ln, m.start(), prefixes))
+        ):
+            kw = m.group(0).upper()
+            why = f"{kw} comment at line {i + 1}: '{_clip(s.lstrip('#/;*-% '))}'"
+            score = 2 if kw in ("HACK", "XXX") else 1
+            out.append(_cand(sf.path, _around(i + 1, total), "smell", why, score))
+    if sf.is_test:
+        return out
+    for i, ln in enumerate(lines):
+        if len(ln) > th["long_line"] and "http" not in ln:
+            why = f"line {i + 1} is {len(ln)} characters long"
+            out.append(_cand(sf.path, _around(i + 1, total), "long_line", why, len(ln)))
+    depth, at = _indent_depth(lines, prefixes, int(rules.get("indent_unit_max", 8)))
+    if depth >= th["deep_nesting"]:
+        why = f"nesting depth {depth} at line {at} (by indentation)"
+        out.append(_cand(sf.path, _around(at, total), "deep_nesting", why, depth))
+    return out
+
+
+def _trailing_comment(line: str, upto: int, prefixes) -> bool:
+    return any(re.search(r"\s" + re.escape(p), line[:upto]) for p in prefixes if not p.isalnum())
+
+
+def _indent_depth(lines: list[str], prefixes, unit_max: int) -> tuple[int, int]:
+    """(deepest indentation level, its 1-based line). A tab is one level; for spaces the unit is
+    the smallest indent in the file."""
+    code = [
+        (i, ln) for i, ln in enumerate(lines) if ln.strip() and not ln.lstrip().startswith(prefixes)
+    ]
+    spaces = [len(ln) - len(ln.lstrip(" ")) for _, ln in code if not ln.startswith("\t")]
+    unit = max(1, min(min((w for w in spaces if w), default=4), unit_max))
+    best, at = 0, 1
+    for i, ln in code:
+        tabs = len(ln) - len(ln.lstrip("\t"))
+        level = tabs if tabs else (len(ln) - len(ln.lstrip(" "))) // unit
+        if level >= best:
+            best, at = level, i + 1
+    return best, at
 
 
 # ---------- quality ----------
@@ -773,7 +1034,8 @@ def mine(
     spec = languages or _default_languages()
     base = spec.get("thresholds") or {}
     langs = {n: _compile(n, raw, base) for n, raw in (spec.get("languages") or {}).items()}
-    all_files = _read_files(path, ref, settings, langs, fileset_for(profile))
+    queries = profile.queries if profile is not None else None
+    all_files = _read_files(path, ref, settings, langs, fileset_for(profile), queries)
     files = [sf for sf in all_files if sf.lang.name != "text"]
     fan_in, fan_out = _fan(files)
     out = _structure(files, fan_in, fan_out)
@@ -782,6 +1044,9 @@ def mine(
             out += _shape(sf)
         out += _markers(sf)
     out += _quality(files, fan_in, sig, t0, path, ref)
+    for sf in all_files:
+        if sf.lang.name == "text":
+            out += _text_candidates(sf)
     if profile is not None:
         out += detectors.run(profile, all_files)
     _rescore(out, all_files, fan_in, sig, t0, path, ref)

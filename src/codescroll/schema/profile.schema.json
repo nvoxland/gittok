@@ -33,6 +33,13 @@
       "items": {"type": "string", "minLength": 1, "maxLength": 200},
       "maxItems": 10
     },
+    "queries": {
+      "type": "object",
+      "description": "Tree-sitter tags query text per grammar name (config/queries/*.scm format)",
+      "propertyNames": {"pattern": "^[a-z][a-z0-9_]{0,30}$"},
+      "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 6000},
+      "maxProperties": 8
+    },
     "detectors": {"type": "array", "items": {"$ref": "#/$defs/detector"}, "maxItems": 60}
   },
   "$defs": {

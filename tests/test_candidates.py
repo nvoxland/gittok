@@ -83,7 +83,9 @@ def repo_path(tmp_path_factory):
         "app/models.py": "from app import core\n",
         "app/auth.py": "import app.core\n",
         "my/app/core.clj": "(ns my.app.core)\n(defn thing [] 1)\n(defn- hidden [] 2)\n",
-        "my/app/util.clj": "(ns my.app.util\n  (:require [my.app.core :as core]))\n",
+        "my/app/util.clj": (  # uses the alias: fan-in counts a require that is used
+            "(ns my.app.util\n  (:require [my.app.core :as core]))\n(defn go [] (core/thing))\n"
+        ),
         "web/lib/core.ts": "export function thing() { return 1 }\n",
     }
     steps = [("old base", base, old)]

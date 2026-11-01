@@ -87,6 +87,8 @@ uv run codescroll mcp --ui --lan # what .mcp.json runs: stdio MCP, plus an auto-
 uv run codescroll serve          # standalone feed at http://127.0.0.1:8008 and MCP at /mcp (no Claude session)
 uv run codescroll install        # dry run: MCP + skills + LaunchAgent (--apply to do it; see docs/install.md)
 uv sync --group images           # optional: mflux for mascot illustrations, comics, avatars
+uv sync --group structure        # optional: tree-sitter structure layer for the miners (docs/install.md)
+uv run codescroll structure --prefetch   # download its grammars (once, needs network)
 uv run codescroll render         # one render pass (serve also renders in the background)
 uv run codescroll avatars        # generate persona avatar PNGs (needs the images group)
 ```

@@ -6,7 +6,7 @@
 # control. A key the profile leaves out falls back to the value here. Globs: "*" stays inside
 # one path part, "**" crosses parts, a glob with no "/" matches the file name at any depth.
 
-# Files that are read. Derived from the extensions in languages.yaml.
+# Files that are read: the extensions in languages.yaml and config/queries/languages.yaml.
 scan:
   - '*.py'
   - '*.clj'
@@ -20,6 +20,10 @@ scan:
   - '*.mjs'
   - '*.cjs'
   - '*.svelte'
+  - '*.go'
+  - '*.rb'
+  - '*.java'
+  - '*.rs'
 
 # Files never read: hidden dirs, dependency and build dirs, lockfiles, minified and
 # machine-generated suffixes.

@@ -21,7 +21,7 @@ from pathlib import Path
 
 import yaml
 
-from . import candidates, detectors, gitq, profiles, signals
+from . import candidates, detectors, gitq, profiles, signals, structure
 from .config import ConfigError
 from .profiles import FileSet, Profile, fileset_for
 
@@ -170,6 +170,42 @@ def _manifests_changed(path, old_head: str | None, now: dict[str, str]) -> bool 
         return None
 
 
+def needed_grammars(cfg) -> list[str]:
+    """Grammars the structure layer needs for the files of the configured repos (and the
+    grammars of their profile queries). Svelte also needs typescript."""
+    wanted: set[str] = set()
+    for name, repo in cfg.repos.items():
+        prof = cfg.profile(name)
+        fs = cfg.fileset(name)
+        try:
+            listing = gitq.ls_tree_files(repo.path, repo.ref)
+        except gitq.GitError:
+            continue
+        for p, _, _ in listing:
+            if fs.reads(p) and fs.mined(p):
+                g = structure.grammar_of_path(p, prof.queries)
+                if g:
+                    wanted.add(g)
+        wanted.update(prof.queries)
+    if "svelte" in wanted:
+        wanted.add("typescript")
+    return sorted(wanted)
+
+
+def structure_hint(cfg) -> str | None:
+    """One line for the SessionStart hook: the structure group is installed but a grammar that
+    the configured repos need is not downloaded. None otherwise."""
+    if not structure.available():
+        return None
+    missing = structure.missing(needed_grammars(cfg))
+    if not missing:
+        return None
+    return (
+        f"Structure grammars missing ({', '.join(missing)}): "
+        "run `uv run codescroll structure --prefetch`. Until then CodeScroll uses regex patterns."
+    )
+
+
 def profile_hint(cfg) -> str | None:
     """One line for the SessionStart hook: repos with no profile, or whose manifests changed
     since their profile was written. None when nothing is needed."""
@@ -297,6 +333,8 @@ def survey(cfg, conn, repo_name: str) -> dict:
     files = gitq.ls_tree_files(repo.path, head)
     langs = candidates.compiled_languages()
     by_ext = {ext: n for n, lang in langs.items() for ext in lang.raw["extensions"]}
+    for ext in structure.spec()["languages"]:  # languages that have a query but no patterns
+        by_ext.update({e: ext for e in structure.extensions(ext)})
     lang_counts = Counter(by_ext.get(posixpath.splitext(p)[1], "other") for p, _, _ in files)
     shas = _manifest_shas(repo.path, head)
     manifest_paths = sorted(shas, key=lambda p: (p.count("/"), p))[:MAX_MANIFESTS]
@@ -330,6 +368,7 @@ def survey(cfg, conn, repo_name: str) -> dict:
         "top_dirs": _top_dirs([p for p, _, _ in files]),
         "builtin_candidates": {r["tag"]: r["n"] for r in rows},
         "ast_grep": _ast_grep_info(),
+        "structure": _structure_info(files, by_ext),
         "profile": None,
     }
     file = profile_path(cfg, repo_name)
@@ -343,6 +382,30 @@ def survey(cfg, conn, repo_name: str) -> dict:
             "yaml": text if len(text) <= PROFILE_YAML_CAP else text[:PROFILE_YAML_CAP] + "\n# …cut",
         }
     return _cap(out)
+
+
+def _structure_info(files, by_ext: dict) -> dict:
+    """What the structure layer covers, and the file types it does not (a profile `queries`
+    entry can cover them: see docs/learning.md)."""
+    skip = set((structure.spec().get("text_fallback") or {}).get("skip_extensions") or ())
+    uncovered: Counter = Counter(
+        posixpath.splitext(p)[1].lower()
+        for p, _, _ in files
+        if posixpath.splitext(p)[1] and posixpath.splitext(p)[1] not in by_ext
+    )
+    rows = []
+    for ext, n in uncovered.most_common():
+        grammar = structure.grammar_of_extension(ext) if ext not in skip else None
+        if grammar:
+            rows.append({"extension": ext, "files": n, "grammar": grammar})
+    return {
+        "installed": structure.available(),
+        "note": "Shipped queries cover: "
+        + ", ".join(sorted(structure.spec()["languages"]))
+        + ". For a file type below, write a minimal tags query in the profile's `queries` "
+        "(key = grammar) and test it with save_profile.",
+        "uncovered": rows[:10],
+    }
 
 
 def _cap(out: dict, limit: int = SURVEY_CAP) -> dict:
@@ -373,14 +436,16 @@ def _cap(out: dict, limit: int = SURVEY_CAP) -> dict:
 # ---------- detector gates ----------
 
 
-def _load_files(cfg, repo, head: str, fs: FileSet | None = None):
-    """The files of the repo's file set (scan minus ignore) at `head`."""
+def _load_files(cfg, repo, head: str, fs: FileSet | None = None, queries: dict | None = None):
+    """The files of the repo's file set (scan minus ignore) at `head`. `queries` are the
+    profile's tags queries (default: the saved profile's)."""
     return candidates._read_files(
         repo.path,
         head,
         cfg.settings.analysis,
         candidates.compiled_languages(),
         fs or cfg.fileset(repo.name),
+        cfg.profile(repo.name).queries if queries is None else queries,
     )
 
 
@@ -523,10 +588,36 @@ def _rule_errors(profile, repo_name: str) -> dict[str, list[str]]:
             errors.setdefault(key or f"#{i + 1}", []).append(err)
     if not errors:
         try:
-            profiles.parse({"version": 1, **profile}, repo_name)
+            parsed = profiles.parse({"version": 1, **profile}, repo_name)
         except ConfigError as e:
             errors["profile"] = [str(e)]
+        else:
+            for grammar, text in parsed.queries.items():
+                err = structure.check_query(grammar, text)
+                if err:
+                    errors.setdefault(f"queries.{grammar}", []).append(err)
     return errors
+
+
+def _query_gate(parsed: Profile, files) -> tuple[dict[str, dict], dict[str, list[str]]]:
+    """Run each profile query over the files it applies to: ({grammar: {files, defs}}, errors).
+    A query must read at least one file and find something in it."""
+    stats: dict[str, dict] = {}
+    errors: dict[str, list[str]] = {}
+    for grammar in parsed.queries:
+        read = [sf.facts for sf in files if sf.facts is not None and sf.facts.grammar == grammar]
+        defs = sum(len(f.defs) for f in read)
+        stats[grammar] = {"files": len(read), "defs": defs}
+        if not read:
+            errors[f"queries.{grammar}"] = [
+                f"query for '{grammar}' read no file; no file in the file set uses it "
+                "(or the grammar is not downloaded: codescroll structure --prefetch)"
+            ]
+        elif not (defs or any(f.refs or f.imports or f.comments for f in read)):
+            errors[f"queries.{grammar}"] = [
+                f"query for '{grammar}' finds nothing in {len(read)} files"
+            ]
+    return stats, errors
 
 
 def save_profile(cfg, conn, repo_name: str, profile) -> dict:
@@ -537,13 +628,17 @@ def save_profile(cfg, conn, repo_name: str, profile) -> dict:
         return {"note": DATA_NOTE, "ok": False, "errors": errors}
     parsed = profiles.parse({"version": 1, **profile}, repo_name)
     head = gitq.rev_parse(repo.path, repo.ref)
-    files = _load_files(cfg, repo, head, fileset_for(parsed, cfg.scan_defaults or None))
+    files = _load_files(
+        cfg, repo, head, fileset_for(parsed, cfg.scan_defaults or None), parsed.queries
+    )
     counts: dict[str, int] = {}
     for d in parsed.detectors:
         g = _gate(cfg, d, files)
         counts[d.id] = g["hits"]
         if g["errors"]:
             errors[d.id] = g["errors"]
+    query_stats, query_errors = _query_gate(parsed, files)
+    errors.update(query_errors)
     if errors:
         return {"note": DATA_NOTE, "ok": False, "errors": errors, "hits": counts}
 
@@ -583,5 +678,6 @@ def save_profile(cfg, conn, repo_name: str, profile) -> dict:
         "version": version,
         "head_sha": head,
         "hits": counts,
+        **({"queries": query_stats} if query_stats else {}),
         "path": f"config/profiles/{repo_name}.yaml",
     }

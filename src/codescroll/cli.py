@@ -36,6 +36,7 @@ from codescroll import (
     social,
     steering,
     store,
+    structure,
     supply,
     validator,
 )
@@ -262,6 +263,37 @@ def _health(args) -> int:
         line = profiling.profile_hint(cfg)
         if line:
             print(line)
+        line = profiling.structure_hint(cfg)
+        if line:
+            print(line)
+    return 0
+
+
+def _structure(args) -> int:
+    cfg = load_config()
+    needed = profiling.needed_grammars(cfg)
+    missing = structure.missing(needed) if structure.available() else needed
+    status = {
+        "installed": structure.available(),
+        "needed": needed,
+        "missing": missing,
+        "languages": sorted(structure.spec()["languages"]),
+    }
+    if not args.prefetch:
+        print(json.dumps(status, indent=2))
+        return 0
+    if not structure.available():
+        print(f"{structure.INSTALL_HINT}. Then run this command again.")
+        return 1
+    if not missing:
+        print("All grammars are in the local cache: " + ", ".join(needed or ["(none needed)"]))
+        return 0
+    try:
+        structure.download(missing)
+    except Exception as e:  # network errors, a bad grammar name
+        print(f"Download failed: {e}")
+        return 1
+    print("Downloaded grammars: " + ", ".join(missing))
     return 0
 
 
@@ -598,6 +630,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--hint", action="store_true", help="one reminder line if cards are wanted")
     p.set_defaults(fn=_health)
+    p = sub.add_parser(
+        "structure", help="tree-sitter structure layer: status, and --prefetch for its grammars"
+    )
+    p.add_argument(
+        "--prefetch",
+        action="store_true",
+        help="download the grammars for the languages in the configured repos (needs network)",
+    )
+    p.set_defaults(fn=_structure)
     p = sub.add_parser("gc", help="delete old cards, events, and files (prints counts as JSON)")
     p.add_argument("--dry-run", action="store_true", help="count what would go; change nothing")
     p.add_argument("--vacuum", action="store_true", help="shrink the database file afterwards")
