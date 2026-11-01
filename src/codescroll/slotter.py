@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from codescroll import characters, db, srs, supply
 
 SRS_MIN_POSITION = 3
+QUIZ_WINDOW = 8  # each window of this many cards holds an unseen quiz card when one exists
 SERIES_GAP = 3  # parts of one series sit at least this many positions apart
 DEFAULT_KNOBS = {
     "repeat_days": 7,
@@ -136,6 +137,37 @@ def _order_series(order: list[str], series: dict[str, tuple]) -> list[str]:
             last[series[pick][:2]] = len(out)
         rest.remove(pick)
         out.append(pick)
+    return out
+
+
+def _quiz_ids(conn, ids: list[str]) -> list[str]:
+    """The quiz-format cards among `ids`, in their order."""
+    if not ids:
+        return []
+    marks = ",".join("?" * len(ids))
+    quiz = {
+        r[0]
+        for r in conn.execute(
+            f"SELECT id FROM cards WHERE format = 'quiz' AND id IN ({marks})", ids
+        )
+    }
+    return [i for i in ids if i in quiz]
+
+
+def _place_quizzes(order: list[str], quizzes: set[str], due: set[str]) -> list[str]:
+    """Make sure each full window of QUIZ_WINDOW cards has an unseen quiz card, if one is later on.
+
+    A quiz from further down moves to the last place of the window. Due (SRS) cards stay put.
+    """
+    out = list(order)
+    for w in range(len(out) // QUIZ_WINDOW):
+        lo, hi = w * QUIZ_WINDOW, (w + 1) * QUIZ_WINDOW
+        if any(i in quizzes for i in out[lo:hi]):
+            continue
+        later = next((j for j in range(hi, len(out)) if out[j] in quizzes), None)
+        slot = next((j for j in range(hi - 1, lo - 1, -1) if out[j] not in due), None)
+        if later is not None and slot is not None:
+            out.insert(slot, out.pop(later))
     return out
 
 
@@ -319,6 +351,11 @@ def build_batch(conn, cfg, limit: int, served: set[str], seed: int, now: datetim
                 if rule_matches(f, v, feats[i]) and take(i):
                     have += 1
 
+    # An unseen quiz card for each window of QUIZ_WINDOW cards, best scored first.
+    quizzes = _quiz_ids(conn, ids)
+    for i in quizzes[: limit // QUIZ_WINDOW]:
+        take(i)
+
     share = float(cfg.defaults.get("exploration_share", 0.18))
     lower = ids[(len(ids) + 1) // 2 :]
     rng.shuffle(lower)
@@ -356,4 +393,4 @@ def build_batch(conn, cfg, limit: int, served: set[str], seed: int, now: datetim
     }
     ordered = _rhythm(picked, formats, knobs)
     ordered = _order_series(ordered, _series_of(conn, picked) if picked else {})
-    return _insert_srs(ordered, due, limit)
+    return _place_quizzes(_insert_srs(ordered, due, limit), set(quizzes) - set(due), set(due))

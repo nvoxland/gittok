@@ -453,7 +453,7 @@ def coverage(conn, cfg, repo: str | None = None) -> list[dict]:
         for lead in conn.execute(
             "SELECT path, MAX(times_covered) AS covered FROM leads WHERE repo = ? AND path != '' "
             "AND last_seen_at = (SELECT MAX(last_seen_at) FROM leads WHERE repo = ?) "
-            "GROUP BY path, commit_sha, blob_sha",
+            "GROUP BY path",
             (name, name),
         ):
             top = _top_level(lead["path"]) if "/" in lead["path"] else None

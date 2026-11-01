@@ -128,6 +128,19 @@ def _validate(conn, cfg, run: dict, cards: list, lead_refs: list[dict] | None = 
     )
 
 
+_NOT_THE_CARDS_FAULT = frozenset({"over_quota", "illustration_budget"})
+
+
+def _cited_lead(card, lead_refs: list[dict]) -> dict | None:
+    """The packet lead a (possibly malformed) submitted card cited."""
+    if not isinstance(card, dict):
+        return None
+    try:
+        return ledger.match_lead(card, lead_refs)
+    except (TypeError, AttributeError):
+        return None
+
+
 def _duplicate_why(conn, cfg, a, seen: set[str]) -> str | None:
     """Why an accepted card is a duplicate story; None if it is new or an allowed variant."""
     if a.story_key in seen:
@@ -203,6 +216,12 @@ def submit(conn, cfg, run_id: str, cards: list | dict, packet_id: str | None = N
                     ledger.mark_covered(conn, used_lead["id"], datetime.now(UTC))
                 stored.append({"index": a.index, "card_id": card_id})
         rejected.sort(key=lambda r: r.index)
+        # A card rejected for its own fault counts against the lead it cited.
+        for r in rejected:
+            if r.reason not in _NOT_THE_CARDS_FAULT and (
+                lead := _cited_lead(cards[r.index], lead_refs)
+            ):
+                ledger.mark_rejected(conn, lead["id"], datetime.now(UTC))
         rej = [r.as_dict() for r in rejected]
         reasons = run["reject_reasons"] + [
             {**r, "submission": n, **({"packet": packet_id} if packet_id else {})} for r in rej

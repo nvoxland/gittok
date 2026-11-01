@@ -90,6 +90,8 @@ STORY_FORMATS: dict[str, tuple[str, ...]] = {
     "weekly_recap": ("listicle", "thread", "text_post", "iceberg"),
 }
 
+SPOT = "spot_the_bug"
+
 # A slot's category still leans its format list: its own formats count as this much less used.
 HOME_FACTOR = 2.0
 
@@ -1035,6 +1037,7 @@ def build_brief(
     novelty: dict[str, dict[str, float]] | None = None,
     intro_share: float = 0.0,
     intro_prefer: dict[str, set[str]] | None = None,
+    min_spot_the_bug: float = 0.0,
 ) -> Brief:
     """Build the brief.
 
@@ -1048,6 +1051,10 @@ def build_brief(
     `novelty` (repo -> dir -> novelty, see knowledge.novelty_map) and `intro_share` reserve
     ceil(count x intro_share) cards for leads from the dirs the reader knows least (novelty at
     least INTRO_MIN_NOVELTY). Those leads are flagged `intro` and go first in their packet.
+
+    `min_spot_the_bug` (a share of `count`) reserves that many spot_the_bug slots before the
+    category quotas are used, when some repo has a lead for it. The quota of the interactive
+    category grows to hold them.
     """
     if not repo_signals:
         raise ValueError("no repos to build a brief from")
@@ -1218,6 +1225,18 @@ def build_brief(
             donor = max(quotas, key=lambda c: (quotas[c], c))
             quotas[donor] -= 1
             quotas[k] = 1
+    spot_min = 0
+    if min_spot_the_bug > 0 and SPOT in stories_in.get("interactive", ()) and "interactive" in cats:
+        for r in repo_signals:
+            fill_leads(r, SPOT)
+        if any(leads_by[(r, SPOT)] for r in repo_signals):
+            spot_min = min(math.ceil(count * min_spot_the_bug - 1e-9), story_caps.get(SPOT, count))
+            for _ in range(max(0, spot_min - quotas["interactive"])):
+                donors = [c for c in quotas if c != "interactive" and quotas[c] > 0]
+                if not donors:
+                    break
+                quotas[max(donors, key=lambda c: (quotas[c], c))] -= 1
+                quotas["interactive"] += 1
     banned_tones = _banned(rules, "tone") | zero["tone"]
     tone_boost = _factors(rules, "tone")
     tones_in = {
@@ -1332,6 +1351,7 @@ def build_brief(
                 story = min(
                     open_t,
                     key=lambda t: (
+                        not (t == SPOT and story_used.get(t, 0) < spot_min),
                         (story_used.get(t, 0) + 1) / story_boost.get(t, 1.0),
                         recent_story.get(t, 0),
                         usable.index(t),
@@ -1406,6 +1426,7 @@ def build_brief(
     units = [(r, None, [r]) for r in repo_names] + [
         (rs[0], g, rs) for g, rs in cross_groups.items()
     ]
+    plan = []  # (repo, group, cheap, slot indexes) per packet, in packet order
     for repo, grp, unit_repos in units:
         for cheap in (True, False):
             group = [
@@ -1418,70 +1439,89 @@ def build_brief(
                 == cheap
             ]
             for start in range(0, len(group), packet_size):
-                chunk_ix = group[start : start + packet_size]
-                chunk = [slots[i] for i in chunk_ix]
-                types = list(dict.fromkeys(t for _, _, t, _, _ in chunk))
-                if grp:
-                    pairs = [
-                        (f"[{t}] {line}", Lead(t, repo, "none", text=line))
-                        for t in types
-                        for line in cross_by_group[grp][t]
-                    ]
-                else:
-                    pairs = [
-                        (f"[{t}] {line}", ref_by[(repo, t)][line])
-                        for t in types
-                        for line in leads_by[(repo, t)]
-                    ]
-                intro_pairs = []
-                for i in chunk_ix:
-                    if i in intro_at:
-                        d, ld = intro_at[i]
-                        t = slots[i][2]
-                        line = (
-                            f"[{t}] intro: the reader has not seen {d}/ yet; explain what it "
-                            f"is for before the detail. {ld.text}"
-                        )
-                        intro_pairs.append((line, replace(ld, intro=d)))
-                if intro_pairs:
-                    taken = {r.text for _, r in intro_pairs}
-                    pairs = intro_pairs + [
-                        (ln, r) for ln, r in pairs if getattr(r, "text", None) not in taken
-                    ]
-                if not pairs and len(chunk_ix) > sum(i in variant_at for i in chunk_ix):
-                    none = "No precomputed leads: explore with list_dir and git_log."
-                    pairs = [(none, Lead(types[0], repo, "none", text=none))]
-                for i in chunk_ix:
-                    if i in variant_at:
-                        pairs.append(_variant_pair(variant_at[i], slots[i][3]))
-                packets.append(
-                    Packet(
-                        id=f"p{len(packets) + 1}",
-                        categories=list(dict.fromkeys(c for _, c, _, _, _ in chunk)),
-                        repo=repo,
-                        count=len(chunk),
-                        story_types=types,
-                        suggested_model="haiku" if cheap else "sonnet",
-                        tones=tone_pool[slot_no : slot_no + len(chunk)],
-                        personas=[
-                            persona_cycle[(slot_no + i) % len(persona_cycle)]
-                            for i in range(len(chunk))
-                        ],
-                        leads=[line for line, _ in pairs],
-                        lead_refs=[r if isinstance(r, dict) else asdict(r) for _, r in pairs],
-                        formats=[f for _, _, _, f, _ in chunk],
-                        card_stories=[t for _, _, t, _, _ in chunk],
-                        allowed=[slot_allowed[i] for i in chunk_ix],
-                        images=min(
-                            math.ceil(image_share * len(chunk) - 1e-9),
-                            sum(bool(IMAGE_FORMATS & set(slot_allowed[i])) for i in chunk_ix),
-                        ),
-                        templates=[template_menu(f, t) for _, _, t, f, _ in chunk],
-                        repos=list(unit_repos),
-                        intro=sum(i in intro_at for i in chunk_ix),
-                    )
+                plan.append((repo, grp, unit_repos, cheap, group[start : start + packet_size]))
+    # Packets of one repo get disjoint leads: the leads of a (repo, story type) are dealt out
+    # round robin over the packets that hold the type, intro leads belong to their own packet
+    # only, and a commit or path is offered to one packet of the repo.
+    holders: dict[tuple[str, str], list[int]] = {}
+    for pi, (repo, grp, _, _, chunk_ix) in enumerate(plan):
+        if not grp:
+            for t in dict.fromkeys(slots[i][2] for i in chunk_ix):
+                holders.setdefault((repo, t), []).append(pi)
+    intro_texts = {(slots[i][0], slots[i][2], ld.text) for i, (_, ld) in intro_at.items()}
+    claimed: dict[tuple[str, str], int] = {}
+    for pi, (repo, _grp, _, _, chunk_ix) in enumerate(plan):
+        for i in chunk_ix:
+            if i in intro_at and (subject := _subject(intro_at[i][1])):
+                claimed.setdefault((repo, subject), pi)
+    for pi, (repo, grp, unit_repos, cheap, chunk_ix) in enumerate(plan):
+        chunk = [slots[i] for i in chunk_ix]
+        types = list(dict.fromkeys(t for _, _, t, _, _ in chunk))
+        if grp:
+            pairs = [
+                (f"[{t}] {line}", Lead(t, repo, "none", text=line))
+                for t in types
+                for line in cross_by_group[grp][t]
+            ]
+        else:
+            pairs = []
+            for t in types:
+                mine = leads_by[(repo, t)][holders[(repo, t)].index(pi) :: len(holders[(repo, t)])]
+                for line in mine:
+                    ld = ref_by[(repo, t)][line]
+                    if (repo, t, line) in intro_texts:
+                        continue  # an intro slot holds it
+                    if (subject := _subject(ld)) and claimed.setdefault((repo, subject), pi) != pi:
+                        continue
+                    pairs.append((f"[{t}] {line}", ld))
+        intro_pairs = []
+        for i in chunk_ix:
+            if i in intro_at:
+                d, ld = intro_at[i]
+                t = slots[i][2]
+                line = (
+                    f"[{t}] intro: the reader has not seen {d}/ yet; explain what it "
+                    f"is for before the detail. {ld.text}"
                 )
-                slot_no += len(chunk)
+                intro_pairs.append((line, replace(ld, intro=d)))
+        if intro_pairs:
+            taken = {r.text for _, r in intro_pairs}
+            pairs = intro_pairs + [
+                (ln, r) for ln, r in pairs if getattr(r, "text", None) not in taken
+            ]
+        if not pairs and len(chunk_ix) > sum(i in variant_at for i in chunk_ix):
+            none = "No precomputed leads: explore with list_dir and git_log."
+            pairs = [(none, Lead(types[0], repo, "none", text=none))]
+        for i in chunk_ix:
+            if i in variant_at:
+                pairs.append(_variant_pair(variant_at[i], slots[i][3]))
+        packets.append(
+            Packet(
+                id=f"p{len(packets) + 1}",
+                categories=list(dict.fromkeys(c for _, c, _, _, _ in chunk)),
+                repo=repo,
+                count=len(chunk),
+                story_types=types,
+                suggested_model="haiku" if cheap else "sonnet",
+                tones=tone_pool[slot_no : slot_no + len(chunk)],
+                personas=[
+                    persona_cycle[(slot_no + i) % len(persona_cycle)] for i in range(len(chunk))
+                ],
+                leads=[line for line, _ in pairs],
+                lead_refs=[r if isinstance(r, dict) else asdict(r) for _, r in pairs],
+                formats=[f for _, _, _, f, _ in chunk],
+                card_stories=[t for _, _, t, _, _ in chunk],
+                allowed=[slot_allowed[i] for i in chunk_ix],
+                images=min(
+                    math.ceil(image_share * len(chunk) - 1e-9),
+                    sum(bool(IMAGE_FORMATS & set(slot_allowed[i])) for i in chunk_ix),
+                ),
+                templates=[template_menu(f, t) for _, _, t, f, _ in chunk],
+                repos=list(unit_repos),
+                intro=sum(i in intro_at for i in chunk_ix),
+            )
+        )
+        slot_no += len(chunk)
     return Brief(
         count=count,
         quotas=quotas,
@@ -1494,6 +1534,11 @@ def build_brief(
         unavailable=[f for f in CATEGORY_FORMATS_FLAT if f in set(unavailable_formats)],
         intro=_intro_summary(intro_at, slots),
     )
+
+
+def _subject(ld: Lead) -> str | None:
+    """What a lead points at: its commit, else its path (None for a dir or a pair)."""
+    return ld.commit or (ld.path if ld.kind == "path" else None)
 
 
 INTRO_MIN_NOVELTY = 0.5  # a dir this known or better is not "unseen": no intro slot for it

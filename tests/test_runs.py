@@ -525,3 +525,21 @@ def test_submit_without_packet_marks_nothing(conn, cfg, fixture_repo):
     run_id = runs.open_run(conn, cfg, repo="fixture", brief="b", requested=3, now=NOW)
     runs.submit(conn, cfg, run_id, [example_card(fixture_repo)])
     assert conn.execute("SELECT times_covered FROM leads WHERE id = ?", (lead,)).fetchone()[0] == 0
+
+
+def test_rejected_card_penalizes_the_lead_it_cited(conn, cfg, fixture_repo):
+    lead = _lead_row(conn, path="billing/invoice.py")
+    refs = [
+        {"story_type": "what_it_does", "repo": "fixture", "kind": "path",
+         "path": "billing/invoice.py", "id": lead}
+    ]  # fmt: skip
+    packets = [{"id": "p1", "repo": "fixture", "count": 1, "lead_refs": refs}]
+    run_id = runs.open_run(
+        conn, cfg, repo="fixture", brief="b", requested=3, packets=packets, now=NOW
+    )
+    bad = example_card(fixture_repo, dirs=["nope"])
+    res = runs.submit(conn, cfg, run_id, [bad], packet_id="p1")
+    assert [r["reason"] for r in res["rejected"]] == ["unknown_dir"]
+    row = conn.execute("SELECT * FROM leads WHERE id = ?", (lead,)).fetchone()
+    assert row["times_rejected"] == 1 and row["last_rejected_at"] > "2026"
+    assert row["times_covered"] == 0
