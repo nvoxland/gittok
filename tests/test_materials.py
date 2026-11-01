@@ -104,3 +104,49 @@ def test_packet_materials_cover_only_top_leads_per_story_type(fixture_repo, tmp_
         "### [hot_spot] hot_spot lead 11",
     ]
     assert len(out.encode()) <= materials.PACKET_CAP <= 12 * 1024
+
+
+def _callers_repo(tmp_path):
+    files = {
+        "lib/tax.py": "import os\nfrom decimal import Decimal\n\n\ndef compute_tax(x):\n"
+        "    return x * 2\n\n\nclass Taxer:\n    pass\n",
+        "a.py": "from lib.tax import compute_tax\nprint(compute_tax(1))\n",
+        "b.py": "def go():\n    return compute_tax(2)\n",
+        "c.py": "y = compute_tax(3)\n",
+        "tests/test_tax.py": "assert compute_tax(4) == 8\n",
+    }
+    fr = build_history_repo(tmp_path / "r", [("tax", files, "2026-01-05T10:00:00+00:00")])
+    return make_config(fr, tmp_path)
+
+
+def test_explain_lead_lists_defines_callers_and_imports(tmp_path):
+    cfg = _callers_repo(tmp_path)
+    lead = _ref(story_type="what_it_does", kind="path", path="lib/tax.py")
+    text = materials.materials_for(cfg, lead)
+    assert "Defines:" in text and "compute_tax" in text.split("Defines:")[1].split("\n\n")[0]
+    assert "Taxer" in text.split("Defines:")[1].split("\n\n")[0]
+    called = text.split("Called from:")[1].split("\n\n")[0].splitlines()[1:]
+    paths = [ln.split(": ")[0] for ln in called if ln.strip()]
+    assert paths[:3] == ["a.py:1", "a.py:2", "b.py:2"] or {
+        "a.py:2",
+        "b.py:2",
+        "c.py:1",
+    } <= set(paths)
+    assert paths[-1].startswith("tests/")  # test files last
+    assert not any(p.startswith("lib/tax.py") for p in paths)  # own definition skipped
+    assert "Imports:" in text and "import os" in text.split("Imports:")[1]
+    assert text.index("Defines:") < text.index("Called from:") < text.index("Imports:")
+
+
+def test_non_explain_story_type_has_no_called_from(tmp_path):
+    cfg = _callers_repo(tmp_path)
+    text = materials.materials_for(cfg, _ref(story_type="rip", kind="path", path="lib/tax.py"))
+    assert "Called from:" not in text and "Defines:" not in text
+
+
+def test_explain_lead_cap_is_larger_and_respected(tmp_path):
+    cfg = _callers_repo(tmp_path)
+    text = materials.materials_for(
+        cfg, _ref(story_type="what_it_does", kind="path", path="lib/tax.py")
+    )
+    assert len(text.encode()) <= materials.EXPLAIN_LEAD_CAP > materials.LEAD_CAP

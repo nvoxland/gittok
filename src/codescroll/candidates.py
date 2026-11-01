@@ -124,6 +124,18 @@ def _default_languages() -> dict:
         return config.load_languages(Path(__file__).parents[2])
 
 
+def compiled_languages() -> dict[str, Lang]:
+    """The configured languages as compiled `Lang` objects (cached)."""
+    return _compiled_languages()
+
+
+@cache
+def _compiled_languages() -> dict[str, Lang]:
+    spec = _default_languages()
+    base = spec.get("thresholds") or {}
+    return {n: _compile(n, raw, base) for n, raw in (spec.get("languages") or {}).items()}
+
+
 # ---------- small helpers ----------
 
 
