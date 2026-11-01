@@ -67,7 +67,7 @@ def text_card(fixture_repo, **overrides) -> dict:
         "tone": "wholesome-nerdy",
         "repos": ["fixture"],
         "dirs": ["src"],
-        "hook": "RIP legacy.py, 2026-01-05 to 2026-01-25.",
+        "hook": "RIP legacy.py, a short and quiet life.",
         "learn": LEARN,
         "visual": {
             "kind": "text",

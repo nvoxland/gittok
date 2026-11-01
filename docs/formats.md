@@ -117,6 +117,10 @@ The first `explain` panel is the card's main explanation. The validator rejects 
 
 These run after the other checks, so a card with a bad citation still gets that reason first.
 
+## Claim checks (`claim_unverified`)
+
+After the explain floor, `claims.py` checks tokens in the hook, learn, explain, callout, visual text, and comment fields: shas (7-40 hex with a digit) must be commits in a card repo; ISO and "Mon D, YYYY" dates must be within 1 day of a cited commit date, a date of a cited or changed file's history, or a date in the evidence; backticked identifiers and paths must occur in the cited code, diff, or commit, exist as a path at the ref, or occur in the repo; integers of 13 or more next to a count word (commits, lines, files, changed, times, callers, parameters, authors) must appear in the lead text, the commit stat, signals for cited paths, git counts for cited paths, or the cited window; "line N" must not pass the end of the cited code. Code spans, versions, percentages, hedged numbers ("over 100 commits"), and small numbers are skipped. Set `agent.claim_checks: false` in `config/settings.yaml` to turn the pass off.
+
 ## Explain panel text
 
 The client shows `explain` text as a small markdown subset: paragraphs (blank line), `- ` lists, `` `code` ``, and `**bold**`. Nothing else is parsed, and HTML stays text. A long text with no blank lines is split into paragraphs of 2 to 3 sentences.
