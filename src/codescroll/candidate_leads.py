@@ -4,7 +4,8 @@ These nine story types need a window of code worth explaining, not a busy file. 
 (candidates.py) find windows, the scout (scout.py) rates them, and this module maps each
 story type to the tags and verdicts that suit it (table in docs/learning.md, section 12).
 
-Strength of a rated lead is `teachable / 5 x fit`, where fit is 1.0 when tag and verdict both
+Strength of a rated lead is `teachable / 5 x fit x rule factor` (rule_stats: 0.5 to 1.5 from
+the rule's outcomes, 1.0 without data), where fit is 1.0 when tag and verdict both
 suit the story type and less when only one does. Unrated windows count only when no rated
 window fits the type, at `UNRATED_STRENGTH` of the best rated one. The ledger multiplies in
 the reader's novelty and the cooldown brakes when it ranks.
@@ -14,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from codescroll import brief, candidates
+from codescroll import brief, candidates, rule_stats
 
 UNRATED_STRENGTH = 0.1
 PER_FILE = 2  # windows of one file kept per story type
@@ -129,13 +130,16 @@ def leads_for(
     """(lead, strength) pairs for one story type, best first. Empty when no window fits."""
     spec = SPECS[story_type]
     cache: dict = {}
+    factors = rule_stats.factors(conn, repo)  # outcome of each rule, 0.5 to 1.5
     rated_rows = candidates.load_rated(conn, repo, spec.min_teachable)
     scored: list[tuple[float, float, dict]] = []
     for r in rated_rows:
         c = {**r, "reason": r["reason"], "scout_why": r["why"]}
         fit = _eligible(story_type, c, sig, t0, cache)
         if fit is not None:
-            scored.append((r["teachable"] / 5 * fit, r["score"], c))
+            scored.append(
+                (r["teachable"] / 5 * fit * factors.get(rule_stats.rule_key(c), 1.0), r["score"], c)
+            )
     rated = True
     if not scored:  # unrated windows stand in only when nothing rated fits
         rated = False
@@ -151,7 +155,14 @@ def leads_for(
         c_pool = [{**c, "reason": c["why"]} for c in pool]
         elig = [(c, _eligible(story_type, c, sig, t0, cache)) for c in c_pool]
         elig = [(c, f) for c, f in elig if f is not None]
-        scored = [(UNRATED_STRENGTH * f / (1 + i), c["score"], c) for i, (c, f) in enumerate(elig)]
+        scored = [
+            (
+                UNRATED_STRENGTH * f * factors.get(rule_stats.rule_key(c), 1.0) / (1 + i),
+                c["score"],
+                c,
+            )
+            for i, (c, f) in enumerate(elig)
+        ]
     scored.sort(key=lambda t: (-t[0], -t[1], t[2]["path"], t[2]["start"]))
     out: list[tuple[brief.Lead, float]] = []
     per_file: dict[str, int] = {}

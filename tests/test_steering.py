@@ -295,6 +295,7 @@ def test_get_profile_says_when_data_is_thin(conn, cfg):
         "rules": [],
         "evidence": 0,
         "knowledge": [],
+        "rule_outcomes": {},
     }
 
 

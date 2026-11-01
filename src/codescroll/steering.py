@@ -20,7 +20,7 @@ from pathlib import Path
 
 import yaml
 
-from codescroll import brief, gitq, knowledge, learning, signals
+from codescroll import brief, gitq, knowledge, learning, rule_stats, signals
 from codescroll.config import load_config
 
 
@@ -319,6 +319,8 @@ def explain_weights(
 # ---------------------------------------------------------------- profile
 
 MIN_CLAIM_N = 5
+RULE_OUTCOME_ROWS = 5  # per repo, in get_profile
+RULE_OUTCOME_ROWS = 5  # rules per repo in get_profile
 MAX_SENTENCES = 8
 _NOUN = {
     "story_type": "{} cards",
@@ -393,6 +395,11 @@ def get_profile(conn, cfg, now: datetime | None = None) -> dict:
         "rules": list_rules(conn, now=now),
         "evidence": evidence,
         "knowledge": knowledge.knowledge_rows(conn, cfg),
+        "rule_outcomes": {
+            repo: rows[:RULE_OUTCOME_ROWS]
+            for repo in cfg.repos
+            if (rows := rule_stats.rollup(conn, repo))
+        },
     }
 
 

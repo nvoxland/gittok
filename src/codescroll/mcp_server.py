@@ -35,6 +35,9 @@ from codescroll import (
     supply,
     validator,
 )
+from codescroll import (
+    rule_stats as rule_stats_mod,
+)
 from codescroll.config import Config, ConfigError, load_config
 
 INSTRUCTIONS = """\
@@ -615,6 +618,19 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
         """
         with _db(cfg) as conn:
             return profiling.save_profile(cfg, conn, repo, profile)
+
+    @tool
+    def rule_stats(cfg: Config, repo: str) -> list[dict]:
+        """Outcome of each detector rule (and builtin:<tag> miners) for a repo, most useful first.
+
+        Per rule: found, rated, mean_teachable, cards, mean_reward, knew_it, teach_more, and
+        factor (0.5 to 1.5, the scale applied to its weight). Example: rule_stats(repo="harbor")
+        before revising a profile.
+        """
+        if repo not in cfg.repos:
+            raise steering.SteeringError(f"Unknown repo '{repo}'. Known: {', '.join(cfg.repos)}.")
+        with _db(cfg) as conn:
+            return rule_stats_mod.rollup(conn, repo)
 
     return server
 
