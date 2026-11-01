@@ -83,7 +83,13 @@ def _analyze(args) -> int:
     with closing(db.open_db(_db_path(cfg))) as conn:
         for name in names:
             started = time.monotonic()
-            res = signals.analyze(conn, cfg.repos[name], cfg.settings.analysis, force=args.force)
+            res = signals.analyze(
+                conn,
+                cfg.repos[name],
+                cfg.settings.analysis,
+                force=args.force,
+                profile=cfg.profile(name),
+            )
             secs = time.monotonic() - started
             cached = "yes" if res["cached"] else "no"
             print(f"{name} head={res['head_sha']} cached={cached} {secs:.2f}s")
@@ -95,7 +101,8 @@ def _brief(args) -> int:
     names = [cfg.repo(args.repo).name] if args.repo else sorted(cfg.repos)
     with closing(db.open_db(_db_path(cfg))) as conn:
         repo_signals = {
-            n: signals.analyze(conn, cfg.repos[n], cfg.settings.analysis) for n in names
+            n: signals.analyze(conn, cfg.repos[n], cfg.settings.analysis, profile=cfg.profile(n))
+            for n in names
         }
         b = brief_mod.build_brief(
             repo_signals=repo_signals,

@@ -174,12 +174,23 @@ class Config:
     mascots: dict[str, Mascot] = field(default_factory=dict)
     meme_templates: dict[str, MemeTemplate] = field(default_factory=dict)
     languages: dict = field(default_factory=dict)  # config/languages.yaml
+    profiles: dict = field(default_factory=dict)  # repo -> profiles.Profile (config/profiles/)
 
     def repo(self, name: str) -> Repo:
         try:
             return self.repos[name]
         except KeyError:
             raise ConfigError(f"unknown repo: {name}") from None
+
+    def profile(self, repo: str):
+        """The repo's profile; an empty one (built-in detectors only) when it has none."""
+        from .profiles import Profile
+
+        return self.profiles.get(repo) or Profile()
+
+    def role_for(self, repo: str, path: str) -> str | None:
+        """One-line purpose of the dir that holds `path`, from the repo's profile."""
+        return self.profile(repo).role_for(path)
 
 
 def project_root(start: Path | None = None) -> Path:
@@ -428,6 +439,8 @@ def load_languages(root: Path | None = None) -> dict:
 
 def load_config(root: Path | None = None) -> Config:
     root = project_root() if root is None else Path(root).resolve()
+    from .profiles import load_profiles
+
     repos, groups = _load_repos(root)
     defaults_file = root / "config" / "defaults.yaml"
     defaults = _mapping(_read(defaults_file), "defaults.yaml", defaults_file)
@@ -441,4 +454,5 @@ def load_config(root: Path | None = None) -> Config:
         mascots=_load_mascots(root),
         meme_templates=_load_meme_templates(root),
         languages=load_languages(root),
+        profiles=load_profiles(root),
     )

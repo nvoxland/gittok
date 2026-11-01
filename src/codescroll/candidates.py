@@ -13,14 +13,16 @@ recursion, macros); stable_core, well_tested (quality).
 from __future__ import annotations
 
 import hashlib
+import math
 import posixpath
 import re
 from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
 
-from . import config, db, gitq
+from . import config, db, detectors, gitq
 from .config import AnalysisSettings
+from .profiles import Profile
 
 WINDOW = 40
 SKIP_PATH = re.compile(
@@ -673,11 +675,12 @@ def _quality(files, fan_in, sig, t0, path, ref) -> list[dict]:
 
 
 def _bound(cands: list[dict], limit: int, per_file: int = 3) -> list[dict]:
-    by_tag: dict[str, list[dict]] = {}
+    """Keep the best `limit` per tag (per tag and rule for profile rules), `per_file` per file."""
+    groups: dict[tuple, list[dict]] = {}
     for c in cands:
-        by_tag.setdefault(c["tag"], []).append(c)
+        groups.setdefault((c["tag"], c.get("rule_id")), []).append(c)
     out = []
-    for rows in by_tag.values():
+    for rows in groups.values():
         rows.sort(key=lambda c: (-c["score"], c["path"], c["start"]))
         seen: dict[str, int] = {}
         kept = 0
@@ -692,10 +695,70 @@ def _bound(cands: list[dict], limit: int, per_file: int = 3) -> list[dict]:
     return out
 
 
+# ---------- scoring: one formula for every candidate (docs/learning.md section 12) ----------
+#   score = weight x strength x fanin x size x age x churn
+
+
+def fanin_factor(fan_in: int) -> float:
+    """1.0 for a file nobody imports, up to 2.0 for one imported by 15 or more files."""
+    return 1 + 0.25 * min(4.0, math.log2(1 + fan_in))
+
+
+def size_factor(file_lines: int) -> float:
+    """Tiny files make thin cards: 0.7 under 10 lines, 0.85 under 20, else 1."""
+    return 0.7 if file_lines < 10 else 0.85 if file_lines < 20 else 1.0
+
+
+def age_factor(changed_recently: bool) -> float:
+    """Code touched in the last AGE_DAYS before the analyzed commit counts 1.0, cold code 0.85."""
+    return 1.0 if changed_recently else 0.85
+
+
+def churn_factor(share: float | None) -> float:
+    """1 + 0.5 x share, where share is the file's 90-day commit count over the top file's."""
+    return 1.0 if share is None else 1 + 0.5 * min(1.0, share)
+
+
+def strength(raw: float) -> float:
+    """The miner's own count (lines, branches, hits) as log2(1 + raw): keeps the order in a tag."""
+    return math.log2(1 + max(0.0, raw))
+
+
+AGE_DAYS = 90
+
+
+def _rescore(out, files, fan_in, sig, t0, path, ref) -> None:
+    lines = {sf.path: len(sf.lines) for sf in files}
+    recent = gitq.paths_changed_since(path, ref, t0 - AGE_DAYS * 86400) if out else set()
+    top = ((sig or {}).get("churn") or {}).get("files", {}).get(str(AGE_DAYS)) or []
+    most = max((r["commits"] for r in top), default=0)
+    commits = {r["path"]: r["commits"] for r in top}
+    for c in out:
+        p = c["path"]
+        share = commits.get(p, 0) / most if most else None
+        c["score"] = round(
+            c.pop("weight", 1.0)
+            * strength(c["score"])
+            * fanin_factor(len(fan_in.get(p, ())))
+            * size_factor(lines.get(p, 0))
+            * age_factor(p in recent)
+            * churn_factor(share),
+            4,
+        )
+
+
 def mine(
-    path, ref: str, t0: int, sig: dict | None, settings: AnalysisSettings, languages=None
+    path,
+    ref: str,
+    t0: int,
+    sig: dict | None,
+    settings: AnalysisSettings,
+    languages=None,
+    profile: Profile | None = None,
 ) -> list[dict]:
-    """All candidates at `ref`, bounded per tag. Read-only."""
+    """All candidates at `ref`, bounded per tag. Read-only.
+
+    `profile` adds its detector hits and its `ignore` globs (which also drop built-in hits)."""
     spec = languages or _default_languages()
     base = spec.get("thresholds") or {}
     langs = {n: _compile(n, raw, base) for n, raw in (spec.get("languages") or {}).items()}
@@ -707,6 +770,19 @@ def mine(
             out += _shape(sf)
         out += _markers(sf)
     out += _quality(files, fan_in, sig, t0, path, ref)
+    if profile is not None:
+        out += detectors.run(profile, [sf for sf in files if not profile.ignores(sf.path)])
+        out = [c for c in out if not profile.ignores(c["path"])]
+    _rescore(out, files, fan_in, sig, t0, path, ref)
+    # Profile hits keep one row per stored key (path, start, tag); a built-in hit wins a clash.
+    taken = {(c["path"], c["start"], c["tag"]) for c in out if not c.get("rule_id")}
+    ruled: dict[tuple, dict] = {}
+    for c in sorted((c for c in out if c.get("rule_id")), key=lambda c: -c["score"]):
+        k = (c["path"], c["start"], c["tag"])
+        if k not in taken:
+            taken.add(k)
+            ruled[k] = c
+    out = [c for c in out if not c.get("rule_id")] + list(ruled.values())
     return _bound(out, settings.candidates_per_tag)
 
 
@@ -734,22 +810,29 @@ def window_hashes(path, ref: str, items: list[dict]) -> dict[tuple[str, int, int
 
 
 def refresh(
-    conn, repo: str, path, head: str, t0: int, sig: dict, settings: AnalysisSettings
+    conn,
+    repo: str,
+    path,
+    head: str,
+    t0: int,
+    sig: dict,
+    settings: AnalysisSettings,
+    profile: Profile | None = None,
 ) -> int:
     """Mine `head` and store the result; rows the miners no longer find are removed."""
-    found = mine(path, head, t0, sig, settings)
+    found = mine(path, head, t0, sig, settings, profile=profile)
     hashes = window_hashes(path, head, found)
     now = db.now_iso()
     with db.immediate(conn):
         for c in found:
             conn.execute(
                 "INSERT INTO candidates(repo, path, line_start, line_end, tag, why, score, "
-                "head_sha, first_seen_at, last_seen_at, window_hash) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?) "
+                "head_sha, first_seen_at, last_seen_at, window_hash, rule_id) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(repo, path, line_start, tag) DO UPDATE SET "
                 "line_end=excluded.line_end, why=excluded.why, score=excluded.score, "
                 "head_sha=excluded.head_sha, last_seen_at=excluded.last_seen_at, "
-                "window_hash=excluded.window_hash",
+                "window_hash=excluded.window_hash, rule_id=excluded.rule_id",
                 (
                     repo,
                     c["path"],
@@ -762,9 +845,15 @@ def refresh(
                     now,
                     now,
                     hashes.get((c["path"], c["start"], c["end"])),
+                    c.get("rule_id"),
                 ),
             )
-        conn.execute("DELETE FROM candidates WHERE repo = ? AND head_sha != ?", (repo, head))
+        keep = {(c["path"], c["start"], c["tag"]) for c in found}
+        for r in conn.execute(
+            "SELECT id, path, line_start, tag FROM candidates WHERE repo = ?", (repo,)
+        ).fetchall():
+            if (r["path"], r["line_start"], r["tag"]) not in keep:
+                conn.execute("DELETE FROM candidates WHERE id = ?", (r["id"],))
     return len(found)
 
 
@@ -774,7 +863,7 @@ def load_candidates(
     """Stored candidates for `repo`, best score first."""
     sql = (
         "SELECT path, line_start AS start, line_end AS end, tag, why, score, head_sha, "
-        "first_seen_at, last_seen_at FROM candidates WHERE repo = ?"
+        "first_seen_at, last_seen_at, rule_id FROM candidates WHERE repo = ?"
     )
     args: list = [repo]
     if tag:
@@ -798,7 +887,7 @@ def load_rated(
     """Current candidates joined to their scout rating (same window text), best rated first."""
     sql = (
         "SELECT c.id, c.path, c.line_start AS start, c.line_end AS end, c.tag, c.why AS reason, "
-        "c.score, c.head_sha, r.teachable, r.verdict, r.concept, r.why, r.rated_at "
+        "c.score, c.head_sha, c.rule_id, r.teachable, r.verdict, r.concept, r.why, r.rated_at "
         "FROM candidates c JOIN candidate_ratings r ON r.repo = c.repo AND r.path = c.path "
         "AND r.line_start = c.line_start AND r.tag = c.tag AND r.window_hash = c.window_hash "
         "WHERE c.repo = ? AND r.teachable >= ?"

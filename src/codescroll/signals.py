@@ -608,7 +608,9 @@ def _cached(conn, repo_id: int, head: str) -> dict | None:
     return {k: found[k] for k in SIGNAL_KINDS}
 
 
-def analyze(conn, repo: Repo, settings: AnalysisSettings, force: bool = False) -> dict:
+def analyze(
+    conn, repo: Repo, settings: AnalysisSettings, force: bool = False, profile=None
+) -> dict:
     if repo.fetch:  # never raises; a failure keeps the old ref
         gitq.fetch_ref(repo.path, repo.ref, settings.fetch_min_interval_s)
     head = gitq.rev_parse(repo.path, repo.ref)
@@ -680,7 +682,7 @@ def analyze(conn, repo: Repo, settings: AnalysisSettings, force: bool = False) -
             (head, now, repo_id),
         )
     result = {kind: db.loads(text) for kind, text, _ in computed}
-    candidates.refresh(conn, repo.name, path, head, t0, result, settings)
+    candidates.refresh(conn, repo.name, path, head, t0, result, settings, profile)
     ledger.refresh(
         conn, repo.name, result, t0, head, gitq.ls_tree_blobs(path, ref), datetime.now(UTC)
     )

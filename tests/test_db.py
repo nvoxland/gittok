@@ -44,6 +44,7 @@ def test_migrate_twice_applies_nothing_second_time(tmp_path):
         "0016_lead_rejects.sql",
         "0017_digests.sql",
         "0018_replies.sql",
+        "0019_candidate_rule_id.sql",
     ]
     assert db.migrate(conn) == []
     assert conn.execute("SELECT name FROM schema_migrations").fetchall()[0]["name"] == first[0]

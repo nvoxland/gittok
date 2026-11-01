@@ -183,7 +183,9 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
             skipped: list[dict] = []
             for n in names:
                 try:
-                    repo_signals[n] = signals.analyze(conn, cfg.repos[n], cfg.settings.analysis)
+                    repo_signals[n] = signals.analyze(
+                        conn, cfg.repos[n], cfg.settings.analysis, profile=cfg.profile(n)
+                    )
                 except gitq.GitError as e:
                     skipped.append({"repo": n, "error": str(e)})
             if not repo_signals:

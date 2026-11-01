@@ -57,7 +57,8 @@ def ensure_candidates(conn, cfg: Config, repo) -> str:
         )
 
     if not have():
-        res = signals.analyze(conn, repo, cfg.settings.analysis)
+        profile = cfg.profile(repo.name)
+        res = signals.analyze(conn, repo, cfg.settings.analysis, profile=profile)
         if not have():
             candidates.refresh(
                 conn,
@@ -67,6 +68,7 @@ def ensure_candidates(conn, cfg: Config, repo) -> str:
                 res["t0"],
                 res["signals"],
                 cfg.settings.analysis,
+                profile,
             )
     # Rows written before ratings existed have no hash.
     missing = conn.execute(

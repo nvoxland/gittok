@@ -264,6 +264,27 @@ Unrated windows (no scout rating for the same window text) count only when no ra
 
 A candidate lead is a path lead with the window as its `lines`, key `cand:<path>:<line_start>:<tag>`, and text `[<verdict>] <miner why> (<path>:<line>). Scout: '<concept>' - <scout why> (teachable N)`. It gets the same materials as other path leads (the window, what it defines, callers, why-commits). Cooldown and story blocks apply as for any path lead. `ledger.refresh` stores the candidate leads; `ledger.for_brief(..., analyses=...)` redoes them first, because scouts rate windows after the analysis. Those rows keep the repo's latest `last_seen_at`.
 
+### Candidate score and repo profiles
+
+Every candidate, built-in or from a profile rule, gets its `score` from one formula (`candidates._rescore`):
+
+`score = weight x strength x fanin x size x age x churn`
+
+| Factor | Value |
+|---|---|
+| `weight` | 1 for built-in miners. A profile rule sets it (0.1 to 3). |
+| `strength` | `log2(1 + raw)`, where `raw` is the miner's own count (lines, branches, hits). A profile hit has raw 1, so strength 1. This keeps the order inside one tag. |
+| `fanin` | `1 + 0.25 x min(4, log2(1 + importers of the file))`. Range 1 to 2. |
+| `size` | The file has fewer than 10 lines: 0.7. Fewer than 20: 0.85. Else 1. |
+| `age` | The file changed in the 90 days before the analyzed commit: 1. Else 0.85. |
+| `churn` | `1 + 0.5 x (file commits in 90 days / commits of the top file)`, from the churn signal (top 25 files). A file outside that list, or no churn signal: 1. |
+
+The limits stay: `analysis.candidates_per_tag` per tag (a profile rule has its own limit, per tag and rule) and 3 per file. The stored key is still (repo, path, line start, tag). When a profile hit and a built-in hit share that key, the built-in hit stays.
+
+A repo profile is a YAML file `config/profiles/<repo>.yaml` in CodeScroll (never in the repo it describes). Its format is `src/codescroll/schema/profile.schema.json`. `profiles.py` loads it and rejects unknown keys, a bad tag, a weight outside 0.1 to 3, a rule with both or neither of `regex` and `ast_grep`, and a bad glob. Each error names the detector id. A repo with no file has an empty profile: built-in miners only. Rules are data. CodeScroll never runs code from a profile.
+
+`detectors.py` runs the rules over the same files as the built-in miners (same size caps and skip rules). A `regex` rule uses the `regex` module with a 0.2 s limit for each file and rule. A timeout logs the rule and file, and skips them. Lines over 1000 characters are not matched. An `ast_grep` rule needs `ast-grep-py` (`uv sync --group profiles`). Without it these rules are skipped with one log line. ast-grep supports Python, TypeScript, JavaScript and others, but not Clojure. The profile `ignore` globs also remove built-in candidates. `candidates.rule_id` holds the rule id (NULL for built-ins), and `load_candidates` and `load_rated` return it. `Config.role_for(repo, path)` gives the role of the longest matching dir in `roles`.
+
 Intro slots use code dirs only (`brief.code_path`: no hidden, test, fixture, cassette, snapshot, vendored, generated or docs dirs), and prefer dirs that hold a `core` or `entry_point` candidate. `whose_code` never offers the root dir or hidden dirs.
 
 ## 13. Story variants
