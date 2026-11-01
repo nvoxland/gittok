@@ -37,6 +37,9 @@ def schema_errors(card: object, personas) -> list[str]:
     for err in sorted(v.iter_errors(card), key=lambda e: list(e.absolute_path)):
         where = "/".join(str(p) for p in err.absolute_path) or "(card)"
         out.append(f"{where}: {_short(err)}")
+    s = card.get("series") if isinstance(card, dict) else None
+    if isinstance(s, dict) and not out and s["part"] > s["of"]:  # JSON Schema cannot compare
+        out.append(f"series: part {s['part']} is more than of {s['of']}")
     return out
 
 

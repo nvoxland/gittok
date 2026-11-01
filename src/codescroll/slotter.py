@@ -5,9 +5,10 @@ from __future__ import annotations
 import random
 from datetime import datetime, timedelta
 
-from codescroll import srs, supply
+from codescroll import characters, db, srs, supply
 
 SRS_MIN_POSITION = 3
+SERIES_GAP = 3  # parts of one series sit at least this many positions apart
 DEFAULT_KNOBS = {
     "repeat_days": 7,
     "learning_boost_share": 0.10,
@@ -65,6 +66,74 @@ def _rhythm(order: list[str], format_of: dict[str, str], knobs: dict) -> list[st
         ] or rest
         want = {"fast": "slow", "slow": "fast"}.get(speed(out[-1])) if out else None
         pick = next((i for i in allowed if want and speed(i) == want), allowed[0])
+        rest.remove(pick)
+        out.append(pick)
+    return out
+
+
+def _series_of(conn, ids: list[str]) -> dict[str, tuple]:
+    """Card id -> (repo_id, key, part) for the cards that belong to a series."""
+    out = {}
+    for r in conn.execute(
+        "SELECT id, repo_id, spec FROM cards "
+        f"WHERE id IN ({','.join('?' * len(ids))}) "
+        "AND json_extract(spec, '$.series.key') IS NOT NULL",
+        ids,
+    ):
+        s = db.loads(r["spec"])["series"]
+        out[r["id"]] = (r["repo_id"], s["key"], s["part"])
+    return out
+
+
+def _unseen_earlier(conn, served: set[str], series: dict[str, tuple]) -> dict[str, set[str]]:
+    """Card id -> ids of earlier parts that are ready, never seen, and not served before."""
+    out: dict[str, set[str]] = {}
+    for cid, (repo_id, key, part) in series.items():
+        out[cid] = {
+            r["id"]
+            for r in conn.execute(
+                "SELECT c.id FROM cards c WHERE c.status = 'ready' AND c.repo_id = ? "
+                "AND json_extract(c.spec, '$.series.key') = ? "
+                "AND json_extract(c.spec, '$.series.part') < ? "
+                "AND NOT EXISTS (SELECT 1 FROM events e WHERE e.card_id = c.id "
+                "AND e.type = 'impression')",
+                (repo_id, key, part),
+            )
+        } - served
+    return out
+
+
+def _hold_back_series(conn, ids: list[str], served: set[str], keep: set[str]) -> list[str]:
+    """Drop series parts whose unseen earlier parts are not in `keep` (the cards that go out)."""
+    series = _series_of(conn, ids) if ids else {}
+    waiting = _unseen_earlier(conn, served, series)
+    return [i for i in ids if not (waiting.get(i, set()) - keep)]
+
+
+def _order_series(order: list[str], series: dict[str, tuple]) -> list[str]:
+    """Greedy reorder: parts of one series in part order and SERIES_GAP positions apart.
+
+    Takes the first card of `order` that fits; when none fits the gap, the first one whose
+    earlier parts are all out (the batch is too small to keep the gap).
+    """
+    rest, out, last = list(order), [], {}
+
+    def in_order(i: str) -> bool:
+        s = series.get(i)
+        return not s or not any(
+            series[j][:2] == s[:2] and series[j][2] < s[2] for j in rest if j in series
+        )
+
+    while rest:
+        ready = [i for i in rest if in_order(i)]
+        fits = [
+            i
+            for i in ready
+            if i not in series or len(out) - last.get(series[i][:2], -SERIES_GAP) >= SERIES_GAP
+        ]
+        pick = (fits or ready)[0]
+        if pick in series:
+            last[series[pick][:2]] = len(out)
         rest.remove(pick)
         out.append(pick)
     return out
@@ -202,6 +271,16 @@ def build_batch(conn, cfg, limit: int, served: set[str], seed: int, now: datetim
                     scores[i] = scores.get(i, 0.0) * (
                         r["factor"] if r["factor"] is not None else 1.0
                     )
+    follow_dirs = characters.followed_dirs(conn)
+    if follow_dirs:  # a followed file or dir lifts its dir's cards (characters.FOLLOW_BOOST)
+        for i in ids:
+            repos = [v for f, v in feats[i] if f == "repo"]
+            card_dirs = [v for f, v in feats[i] if f == "dir"]
+            if any(
+                r in repos and any(dir_matches(d, fd) for d in card_dirs) for r, fd in follow_dirs
+            ):
+                scores[i] = scores.get(i, 0.0) * characters.FOLLOW_BOOST
+    ids = _hold_back_series(conn, ids, served, set(ids))
     ids.sort(key=lambda i: (-scores.get(i, 0.0), i))
     best: dict[str, str] = {}  # one card per story key in a batch: the best scored
     for i in ids:
@@ -267,6 +346,7 @@ def build_batch(conn, cfg, limit: int, served: set[str], seed: int, now: datetim
 
     for i in ids:
         take(i)
+    picked = _hold_back_series(conn, picked, served, set(picked))
     picked.sort(key=lambda i: (-scores.get(i, 0.0), i))
     formats = {
         r["id"]: r["format"]
@@ -275,4 +355,5 @@ def build_batch(conn, cfg, limit: int, served: set[str], seed: int, now: datetim
         )
     }
     ordered = _rhythm(picked, formats, knobs)
+    ordered = _order_series(ordered, _series_of(conn, picked) if picked else {})
     return _insert_srs(ordered, due, limit)

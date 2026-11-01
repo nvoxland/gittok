@@ -23,7 +23,7 @@ You get one work packet: a repo, a number of cards, story types, one story type 
 
 ## Card shape
 
-Every card has: `story_type`, `format`, `persona`, `tone`, `repos` (repo names), `dirs` (repo-relative directories the card is about; may be empty), `hook`, `learn`, `visual`, `depth`, `sources`. Optional: `difficulty` (1 to 3), `comments`, `series` (always `null` for now), `account`.
+Every card has: `story_type`, `format`, `persona`, `tone`, `repos` (repo names), `dirs` (repo-relative directories the card is about; may be empty), `hook`, `learn`, `visual`, `depth`, `sources`. Optional: `difficulty` (1 to 3), `comments` (each may set `spoiler: false` to show before a quiz is answered), `series` (`null`, or `{key, part, of}` with 1 <= part <= of <= 5 for a run of linked cards), `account`.
 
 - `format`: pick one of the allowed formats the packet lists for that card's story type; choose the one that best shows the fact. A card in any other format is rejected (`format_not_allowed`). Each format allows one `visual.kind`; the exact `visual` JSON for your formats is in the format sections below.
 - `account`: `"repo:path"` (a file or directory that exists at the repo ref). The card is then shown as posted by that file (`@shipping.clj`). `persona` is still required and sets the voice of the comments. Use it when the code itself would "say" the card.

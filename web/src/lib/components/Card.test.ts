@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetCardStateForTest } from '#lib/cardState.ts';
 import Card from './Card.svelte';
@@ -93,26 +93,41 @@ describe('Card', () => {
 		expect(container.querySelector('section[data-panel="2"] .codeblock')).not.toHaveClass('wrap');
 	});
 
-	it('shows one comment line on the front and all comments on a last panel', () => {
+	it('shows two comments with avatars on the front and all of them on a last panel', () => {
 		const card = fakeCard({
 			depth: [{ kind: 'explain', text: 'Why.' }],
 			comments: [
 				{ persona: 'penny_learns', text: 'Wait, why?' },
-				{ persona: 'archivist', text: 'Since 2019.' }
+				{ persona: 'archivist', text: 'Since 2019.' },
+				{ persona: 'greybeard', text: 'Told you.' }
 			]
 		});
 		const { container } = render(Card, { card });
 		const front = container.querySelector('section.front')!;
-		expect(front.querySelector('.comment-preview')?.textContent?.trim()).toBe(
-			'@penny_learns: Wait, why? · 2 comments'
+		const faces = [...front.querySelectorAll('.face-comments li')];
+		expect(faces.map((li) => li.textContent?.trim())).toEqual([
+			'@penny_learns: Wait, why?',
+			'@archivist: Since 2019.'
+		]);
+		expect(front.querySelectorAll('.face-comments img')).toHaveLength(2);
+		expect(front.querySelector('.face-comments img')!.getAttribute('src')).toBe(
+			'/api/avatars/penny_learns'
 		);
+		expect(within(front as HTMLElement).getByRole('button', { name: 'All 3 comments' })).toBeTruthy();
 		const panel = container.querySelector('section.comments-panel')!;
 		expect(panel.getAttribute('data-panel')).toBe('2');
 		const items = [...panel.querySelectorAll('.comments li')].map((li) => li.textContent?.trim());
-		expect(items).toEqual(['@penny_learns: Wait, why?', '@archivist: Since 2019.']);
+		expect(items).toEqual(['@penny_learns: Wait, why?', '@archivist: Since 2019.', '@greybeard: Told you.']);
 		expect(container.querySelectorAll('.dot')).toHaveLength(3);
 	});
 
+	it('comment author names link to the persona page', () => {
+		const card = fakeCard({ comments: [{ persona: 'penny_learns', text: 'Wait, why?' }] });
+		const { container } = render(Card, { card });
+		const link = container.querySelector('section.front .face-comments a')!;
+		expect(link).toHaveAttribute('href', '/persona/penny_learns');
+		expect(link.textContent).toBe('@penny_learns');
+	});
 
 	it('renders fallback for unknown visual kind', () => {
 		const card = fakeCard({ visual: { kind: 'hologram' } as unknown as CardT['visual'] });
@@ -302,6 +317,23 @@ describe('Card quiz', () => {
 		expect(screen.getByText('What is wrong here?')).toBeInTheDocument();
 		expect(screen.getAllByRole('button', { name: /^(Alpha|Beta|Gamma)$/ })).toHaveLength(3);
 		expect(screen.queryByText(/Told you so/)).toBeNull();
+	});
+
+	it('a quiz comment with spoiler false shows before the answer', () => {
+		const card = quiz({
+			comments: [
+				{ persona: 'greybeard', text: 'Hidden until answered.' },
+				{ persona: 'archivist', text: 'Safe to read.', spoiler: false }
+			]
+		});
+		render(Card, { card });
+		expect(screen.getAllByText(/Safe to read/).length).toBeGreaterThan(0);
+		expect(screen.queryByText(/Hidden until answered/)).toBeNull();
+	});
+
+	it('a non-quiz comment with spoiler true stays hidden only on quizzes', () => {
+		render(Card, { card: fakeCard({ comments: [{ persona: 'greybeard', text: 'Plain.' }] }) });
+		expect(screen.getAllByText(/Plain\./).length).toBeGreaterThan(0);
 	});
 
 	it('correct answer: posts, emits answer, reveals explanation, disables choices', async () => {

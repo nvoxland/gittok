@@ -3,18 +3,24 @@ personas:
   greybeard:
     name: Greybeard
     voice: Grumpy senior engineer who has seen it all. Dry.
+    bio: Has watched three rewrites fail and one succeed. Trusts nothing with a version 1.0.
   penny_learns:
     name: Penny
     voice: Enthusiastic junior. Asks naive-but-good questions.
+    bio: Six months in. Reads every file top to bottom and asks what the rest of us stopped asking.
   archivist:
     name: The Archivist
     voice: Codebase historian. Loves lore and dates.
+    bio: Keeps the lore. Knows which commit broke which thing, and on what Tuesday.
   meme_compiler:
     name: Meme Compiler
     voice: Pure memes, chaotic.
+    bio: Turns every diff into a joke. Compiles with warnings.
   paranoid_sec:
     name: Paranoid Sec
     voice: Worries about security and failure modes.
+    bio: Sees an injection point in every string. Sleeps with the logs on.
   shipit_sam:
     name: Ship-It Sam
     voice: Hype. Celebrates merges and speed.
+    bio: Merges first, celebrates second. Every deploy is a launch party.

@@ -43,6 +43,7 @@ class Persona:
     handle: str
     name: str
     voice: str
+    bio: str | None = None
 
 
 @dataclass(frozen=True)
@@ -346,11 +347,11 @@ def _load_personas(root: Path) -> dict[str, Persona]:
         _mapping(data.get("personas"), "personas", file), "persona", file
     ).items():
         raw = _mapping(raw, f"persona '{handle}'", file)
-        _check_keys(raw, {"name", "voice"}, f"persona '{handle}'", file)
+        _check_keys(raw, {"name", "voice", "bio"}, f"persona '{handle}'", file)
         for req in ("name", "voice"):
             if req not in raw:
                 raise ConfigError(f"persona '{handle}' is missing '{req}' ({file})")
-        out[handle] = Persona(handle, raw["name"], raw["voice"])
+        out[handle] = Persona(handle, raw["name"], raw["voice"], raw.get("bio"))
     return out
 
 

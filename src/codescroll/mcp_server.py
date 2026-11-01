@@ -17,6 +17,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from codescroll import brief as brief_mod
 from codescroll import (
+    characters,
     db,
     gitq,
     knowledge,
@@ -270,14 +271,17 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
         Research only what it lacks. guidance_markdown has the base rules plus the sections
         for every format the packet allows. Write exactly `count` cards, one per entry in
         `card_stories`; for each, pick one of the formats in the same entry of `allowed`.
+        cast_markdown has each persona's recent lines: call back to a joke, never repeat one.
         """
         with _db(cfg) as conn:
             pk = runs.get_packet(conn, run_id, packet_id)
+            cast = characters.cast_notes(conn, cfg, pk.get("personas") or [])
         # Sections for every allowed format; packets from before `allowed` fall back to formats.
         shown = [f for fs in pk.get("allowed") or [] for f in fs] or pk["formats"]
         return {
             **pk,
             "materials_markdown": materials.packet_materials(cfg, pk.get("lead_refs") or []),
+            "cast_markdown": cast,
             "guidance_markdown": brief_mod.guidance_markdown(
                 cfg.personas, shown, cfg.meme_templates, cfg.mascots, pk.get("templates")
             ),

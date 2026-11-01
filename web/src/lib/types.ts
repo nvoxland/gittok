@@ -136,7 +136,8 @@ export type Resolved = {
 	depth: (ResolvedCode | ResolvedDiff | null)[];
 };
 
-export type Comment = { persona: string; text: string };
+export type Comment = { persona: string; text: string; spoiler?: boolean };
+export type Series = { key: string; part: number; of: number };
 export type Source = { repo: string; commit: string };
 
 export type Interaction = {
@@ -172,6 +173,7 @@ export type Card = {
 	learn?: string;
 	visual: Visual;
 	account?: string;
+	series?: Series | null;
 	interaction?: Interaction;
 	depth: DepthPanel[];
 	comments: Comment[];
@@ -254,3 +256,24 @@ export type AppNotification = {
 	repo?: string | null;
 };
 export type NotificationsResponse = { notifications: AppNotification[]; unread: number };
+
+export type PersonaProfile = {
+	handle: string;
+	name: string;
+	voice: string;
+	bio: string | null;
+	posts: Card[];
+	comments: { card_id: string; repo: string; hook: string; text: string }[];
+};
+export type FileHistory = {
+	commits: number;
+	last_touched: string | null;
+	authors: { name: string; commits: number }[];
+};
+export type FileProfile = {
+	repo: string;
+	path: string;
+	history: FileHistory | null;
+	cards: Card[];
+	followed: boolean;
+};

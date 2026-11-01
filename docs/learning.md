@@ -109,7 +109,7 @@ def reset_weights(conn, feature: str | None = None) -> int
 4. Learning boost: 10% of slots go to cards whose dirs have the fewest impressions (coverage).
 5. Rhythm: never more than 2 of the same format in a row; alternate fast formats (meme, text_meme, fun_fact, chart, hot_take) with slow ones (thread, comic, code_card, quiz, iceberg, day_in_life) when both are available.
 6. One story, one slot: variants of one story (same `story_key`, section 13) are never served within `repeat_days` of each other. A card is a candidate only if no card of its story had an impression in that window. A batch holds at most one card per `story_key`, the best scored.
-7. Series: parts of a series stay in order and at least 3 cards apart (series is null until M5; keep the hook).
+7. Series: parts of a series stay in order and at least 3 cards apart (`series` is `{key, part, of}`; SERIES_GAP positions apart, and a part waits for unseen earlier parts).
 8. SRS: at most 2 due cards per batch, placed at positions ≥ 3.
 
 The cursor is an opaque base64 of `{"served": [short ids], "seed": int}`; a malformed cursor is a 400. `seed` makes a batch reproducible for tests.
