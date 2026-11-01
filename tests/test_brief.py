@@ -281,7 +281,7 @@ def test_variant_slot_only_when_leads_run_out():
     bare = build(count=10, sig=NO_LEADS, variants=[variant()])
     [line] = variant_leads(bare)
     assert line.startswith('[variant] retell "Rounding was fixed twice 0." (commit_drama, ')
-    assert "first told as code_card) as a " in line
+    assert "first told as code_card) in format `" in line
     assert "cite the same sources: fixture@" + "a" * 7 in line
     assert sum(p.count for p in bare.packets) == 10
     pk = next(p for p in bare.packets if any(x.startswith("[variant]") for x in p.leads))
