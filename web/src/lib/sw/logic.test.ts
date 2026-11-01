@@ -32,7 +32,7 @@ describe('classifyRequest', () => {
 		expect(c('GET', '/api/stories')).toBe('passthrough');
 	});
 	it('serves navigations network-first with the shell as fallback', () =>
-		expect(c('GET', '/saved', 'navigate')).toBe('navigate'));
+		expect(c('GET', '/notifications', 'navigate')).toBe('navigate'));
 });
 
 describe('cacheKey', () => {

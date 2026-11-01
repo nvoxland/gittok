@@ -15,7 +15,17 @@ let answersCache: Record<string, StoredAnswer> | undefined;
 const ANSWER_TTL_MS = 12 * 3600_000;
 type StoredAnswer = { value: unknown; at: number };
 
-const flagsMap = () => (flagsCache ??= load<Record<string, CardFlags>>(() => localStorage, KEY));
+const flagsMap = () => (flagsCache ??= dropSaved(load(() => localStorage, KEY)));
+
+// Older versions also stored a `saved` flag. The Save feature is gone, so drop it on load.
+function dropSaved(
+	stored: Record<string, CardFlags & { saved?: boolean }>
+): Record<string, CardFlags> {
+	const flags: Record<string, CardFlags> = {};
+	for (const [id, f] of Object.entries(stored))
+		if (f?.liked !== undefined) flags[id] = { liked: f.liked };
+	return flags;
+}
 const answersMap = () =>
 	(answersCache ??= load<Record<string, StoredAnswer>>(() => sessionStorage, ANSWER_KEY));
 
@@ -74,7 +84,8 @@ export function clearAnswers(ids: string[]): void {
 // Beat cards play once; afterwards they open on the full view.
 const PLAYED_KEY = 'codescroll.played';
 let playedCache: Record<string, number> | undefined;
-const playedMap = () => (playedCache ??= load<Record<string, number>>(() => localStorage, PLAYED_KEY));
+const playedMap = () =>
+	(playedCache ??= load<Record<string, number>>(() => localStorage, PLAYED_KEY));
 
 export function hasPlayed(id: string): boolean {
 	return id in playedMap();

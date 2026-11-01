@@ -384,7 +384,7 @@ Full JSON Schema lives in `schema/card.schema.json` and is validated strictly.
 | `skip` | left in under ~1s |
 | `scroll_back` | returned to a previous card |
 | `depth_open` | horizontal swipe, panel index |
-| `like` / `save` / `explain_more` | — |
+| `like` / `explain_more` | — |
 | `answer` | choice, correct/incorrect |
 | `source_tap` | tapped file/commit link |
 
@@ -400,7 +400,7 @@ Per impression, compute a reward in [0, 1]:
 
 - Skip under ~1s → strong negative (0).
 - Dwell normalized by **expected read time** for the card's format/length (a thread should take longer than a meme).
-- Positive boosts: depth_open, explain_more, like, save, source_tap; **scroll_back** is the strongest signal.
+- Positive boosts: depth_open, explain_more, like, source_tap; **scroll_back** is the strongest signal.
 - Interactive: answering counts as engagement regardless of correctness.
 
 Reward weights live in `config/reward.yaml` and are expected to be tuned.

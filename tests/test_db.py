@@ -31,6 +31,7 @@ def test_migrate_twice_applies_nothing_second_time(tmp_path):
         "0003_learning_indexes.sql",
         "0004_social.sql",
         "0005_prefs.sql",
+        "0006_drop_saves.sql",
     ]
     assert db.migrate(conn) == []
     assert conn.execute("SELECT name FROM schema_migrations").fetchall()[0]["name"] == first[0]
@@ -145,3 +146,18 @@ def test_concurrent_open_db_migrates_once_without_errors(tmp_path):
     conn = db.connect(path)
     names = [r[0] for r in conn.execute("SELECT name FROM schema_migrations")]
     assert len(names) == len(set(names)) == len(db._migration_files())
+
+
+def test_drop_saves_migration_deletes_save_events_only(tmp_path):
+    conn = db.connect(tmp_path / "x.db")
+    db.migrate(conn)
+    conn.execute("DELETE FROM schema_migrations WHERE name = '0006_drop_saves.sql'")
+    for t in ("save", "like"):
+        conn.execute(
+            "INSERT INTO events(card_id, type, ts, data, received_at) "
+            "VALUES ('c', ?, 1, '{}', 'x')",
+            (t,),
+        )
+    conn.commit()
+    assert db.migrate(conn) == ["0006_drop_saves.sql"]
+    assert [r[0] for r in conn.execute("SELECT type FROM events")] == ["like"]
