@@ -681,3 +681,13 @@ def test_rejected_event_batch_is_logged(cfg, client):
     assert client.post("/api/events", json=body).status_code == 422
     log = (cfg.settings.data_dir / "logs" / "rejected-events.log").read_text()
     assert "bogus" in log and "422" in log
+
+
+def test_api_requests_are_logged_with_status(cfg, client):
+    """One line per /api/ request (time, host, method, path, status), to debug the phone."""
+    body = {"events": [{"card_id": "c_1", "type": "impression", "ts": 1, "data": {}}]}
+    client.post("/api/events", json=body)
+    client.get("/api/feed?limit=1")
+    lines = (cfg.settings.data_dir / "logs" / "api.log").read_text().splitlines()
+    assert lines[-2].endswith("POST /api/events 200")
+    assert lines[-1].endswith("GET /api/feed 200")

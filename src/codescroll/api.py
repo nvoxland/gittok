@@ -104,13 +104,40 @@ def _is_loopback(scope) -> bool:
 class SecurityMiddleware:
     """Loopback-only MCP, LAN pairing cookie, and a request body size limit."""
 
-    def __init__(self, app, lan_token: str | None = None):
+    def __init__(self, app, lan_token: str | None = None, api_log: Callable[[], Any] | None = None):
         self.app = app
         self.token = lan_token
+        self.api_log = api_log  # returns the log file path; /api/ requests are logged there
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
+        if self.api_log and scope["path"].startswith("/api/"):
+            return await self._logged(scope, receive, send)
+        return await self._handle(scope, receive, send)
+
+    async def _logged(self, scope, receive, send):
+        status = 0
+
+        async def capture(msg):
+            nonlocal status
+            if msg["type"] == "http.response.start":
+                status = msg["status"]
+            await send(msg)
+
+        try:
+            await self._handle(scope, receive, capture)
+        finally:
+            try:
+                path = self.api_log()
+                path.parent.mkdir(parents=True, exist_ok=True)
+                host = (scope.get("client") or ("?",))[0]
+                with path.open("a") as f:
+                    f.write(f"{db.now_iso()} {host} {scope['method']} {scope['path']} {status}\n")
+            except OSError:
+                pass  # logging never fails a request
+
+    async def _handle(self, scope, receive, send):
         path = scope["path"]
         loopback = _is_loopback(scope)
 
@@ -362,7 +389,11 @@ def create_app(
                     w.stop()
 
     app = FastAPI(title="CodeScroll", lifespan=lifespan)
-    app.add_middleware(SecurityMiddleware, lan_token=lan_token)
+    app.add_middleware(
+        SecurityMiddleware,
+        lan_token=lan_token,
+        api_log=lambda: get_config().settings.data_dir / "logs" / "api.log",
+    )
 
     @app.exception_handler(RequestValidationError)
     async def log_rejected_events(request: Request, exc: RequestValidationError):
