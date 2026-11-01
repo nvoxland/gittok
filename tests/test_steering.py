@@ -507,6 +507,7 @@ def test_add_repo_appends_entry_checks_git_and_keeps_comments(ycfg, fixture_repo
         "ref": "main",
         "group": "ops",
         "mascot": "crow",
+        "next": "Next: run /codescroll-profile-repo gamma to teach CodeScroll this codebase.",
     }
     new = config_mod.load_config(ycfg.root)
     g = new.repos["gamma"]

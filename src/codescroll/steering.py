@@ -924,7 +924,14 @@ def add_repo(
         {"name": name, "path": str(full), "ref": ref, "group": group, "mascot": mascot},
         created_by,
     )
-    return {"name": name, "path": str(full), "ref": ref, "group": group, "mascot": mascot}
+    return {
+        "name": name,
+        "path": str(full),
+        "ref": ref,
+        "group": group,
+        "mascot": mascot,
+        "next": f"Next: run /codescroll-profile-repo {name} to teach CodeScroll this codebase.",
+    }
 
 
 def set_mascot(

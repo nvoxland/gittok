@@ -14,7 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-SKILL_NAMES = ("codescroll-generate", "codescroll-steer")
+SKILL_NAMES = ("codescroll-generate", "codescroll-steer", "codescroll-profile-repo")
 AGENT_FILES = (
     "codescroll-writer.md",
     "codescroll-scout.md",

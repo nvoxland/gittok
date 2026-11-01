@@ -29,6 +29,7 @@ from codescroll import (
     ledger,
     mcp_server,
     profile,
+    profiling,
     refit,
     render,
     signals,
@@ -250,12 +251,16 @@ def _health(args) -> int:
         h = supply.feed_health(conn, cfg, _now())
     if not args.hint:
         print(json.dumps(h, indent=2))
-    elif h["want"] > 0:
-        # One line for the SessionStart hook; silent when the feed has enough cards.
-        print(
-            f"CodeScroll feed is low: {h['backlog']} unseen cards ({h['runway_days']} days). "
-            f"It wants {h['want']} more: offer to run /codescroll-generate."
-        )
+    else:
+        # Lines for the SessionStart hook; silent when nothing is needed.
+        if h["want"] > 0:
+            print(
+                f"CodeScroll feed is low: {h['backlog']} unseen cards ({h['runway_days']} days). "
+                f"It wants {h['want']} more: offer to run /codescroll-generate."
+            )
+        line = profiling.profile_hint(cfg)
+        if line:
+            print(line)
     return 0
 
 
@@ -401,6 +406,7 @@ def _repos_add(args) -> int:
         load_config(), args.name, args.path, ref=args.ref, group=args.group, mascot=args.mascot
     )
     print(f"added repo {out['name']} ({out['path']})")
+    print(out["next"])
     return 0
 
 

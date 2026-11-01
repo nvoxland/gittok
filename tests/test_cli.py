@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from codescroll import cli
+from codescroll import cli, db
 from tests.cards import example_card, text_card
 from tests.conftest import make_config
 
@@ -588,8 +588,9 @@ def test_gc_prints_counts_as_json(cfg, capsys):
 
 def test_health_hint_is_one_line_when_cards_are_wanted_else_silent(cfg, capsys, monkeypatch):
     """For the SessionStart hook: a reminder only when the feed needs cards."""
-    from codescroll import supply
+    from codescroll import profiling, supply
 
+    monkeypatch.setattr(profiling, "profile_hint", lambda cfg: None)
     want = {"backlog": 4, "runway_days": 0.4, "want": 20}
     monkeypatch.setattr(supply, "feed_health", lambda conn, cfg, now: want)
     assert cli.main(["health", "--hint"]) == 0
@@ -599,3 +600,55 @@ def test_health_hint_is_one_line_when_cards_are_wanted_else_silent(cfg, capsys, 
     want["want"] = 0
     assert cli.main(["health", "--hint"]) == 0
     assert capsys.readouterr().out == ""
+
+
+def test_health_hint_names_repos_without_a_profile_on_one_line(cfg, capsys):
+    assert cli.main(["health", "--hint"]) == 0
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if "profile" in ln]
+    assert len(lines) == 1
+    assert "fixture" in lines[0] and "/codescroll-profile-repo" in lines[0]
+    assert "no profile" in lines[0]
+
+
+def _quiet_feed(monkeypatch):
+    from codescroll import supply
+
+    monkeypatch.setattr(
+        supply, "feed_health", lambda conn, cfg, now: {"backlog": 9, "runway_days": 9, "want": 0}
+    )
+
+
+def test_health_hint_is_silent_when_profiles_are_current(cfg, capsys, monkeypatch):
+    from contextlib import closing
+
+    from codescroll import profiling
+
+    _quiet_feed(monkeypatch)
+    rule = {"id": "x", "tag": "t_x", "weight": 1, "match": {"regex": "def ", "paths": ["**"]}}
+    with closing(db.open_db(cli._db_path(cfg))) as conn:
+        assert profiling.save_profile(cfg, conn, "fixture", {"detectors": [rule]})["ok"]
+    assert cli.main(["health", "--hint"]) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_health_hint_flags_changed_manifests(cfg, capsys, monkeypatch):
+    from contextlib import closing
+
+    from codescroll import profiling
+
+    _quiet_feed(monkeypatch)
+    rule = {"id": "x", "tag": "t_x", "weight": 1, "match": {"regex": "def ", "paths": ["**"]}}
+    with closing(db.open_db(cli._db_path(cfg))) as conn:
+        assert profiling.save_profile(cfg, conn, "fixture", {"detectors": [rule]})["ok"]
+    monkeypatch.setattr(profiling, "_manifests_changed", lambda *a: True)
+    assert cli.main(["health", "--hint"]) == 0
+    out = capsys.readouterr().out
+    assert "manifests changed" in out and "fixture" in out
+    assert len(out.splitlines()) == 1
+
+
+def test_repos_add_prints_the_profile_next_step(cfg, fixture_repo, capsys, monkeypatch):
+    out = {"name": "zed", "path": "/x", "next": "Next: run /codescroll-profile-repo zed"}
+    monkeypatch.setattr(cli.steering, "add_repo", lambda *a, **k: out)
+    assert cli.main(["repos", "add", "zed", str(fixture_repo.path)]) == 0
+    assert "/codescroll-profile-repo zed" in capsys.readouterr().out

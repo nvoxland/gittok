@@ -161,6 +161,41 @@ def _manifests_changed(path, old_head: str | None, now: dict[str, str]) -> bool 
         return None
 
 
+def profile_hint(cfg) -> str | None:
+    """One line for the SessionStart hook: repos with no profile, or whose manifests changed
+    since their profile was written. None when nothing is needed."""
+    missing: list[str] = []
+    stale: list[str] = []
+    for name, repo in cfg.repos.items():
+        prof = cfg.profiles.get(name)
+        if prof is None:
+            missing.append(name)
+            continue
+        try:
+            head = gitq.rev_parse(repo.path, repo.ref)
+            changed = _manifests_changed(repo.path, prof.head_sha, _manifest_shas(repo.path, head))
+        except gitq.GitError:
+            continue
+        if changed:
+            stale.append(name)
+    parts = []
+    if missing:
+        parts.append(
+            f"{', '.join(missing)} has no profile"
+            if len(missing) == 1
+            else f"{', '.join(missing)} have no profile"
+        )
+    if stale:
+        parts.append(f"manifests changed since the profile of {', '.join(stale)}")
+    if not parts:
+        return None
+    todo = ", ".join(missing + stale)
+    return (
+        f"CodeScroll: {'; '.join(parts)}. "
+        f"Offer to run /codescroll-profile-repo <repo> (for {todo})."
+    )
+
+
 def _top_dirs(paths: list[str]) -> dict[str, int]:
     counts: Counter[str] = Counter()
     for p in paths:

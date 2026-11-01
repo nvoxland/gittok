@@ -111,7 +111,9 @@ def test_skills_dry_run_copies_nothing(tmp_path):
     env = make_env(tmp_path)
     lines = install.install_skills(env)
     assert not (env.home / ".claude").exists()
-    assert sum("would copy" in line for line in lines) == 2 + len(install.AGENT_FILES)
+    assert sum("would copy" in line for line in lines) == len(install.SKILL_NAMES) + len(
+        install.AGENT_FILES
+    )
 
 
 # 8. skills apply copies both
@@ -317,3 +319,7 @@ def test_writer_agent_has_no_check_cards_step():
         ".claude/skills/codescroll-generate/SKILL.md",
     ):
         assert "check_cards" not in (root / rel).read_text(), rel
+
+
+def test_profile_repo_skill_is_registered():
+    assert "codescroll-profile-repo" in install.SKILL_NAMES
