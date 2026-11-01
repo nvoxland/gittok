@@ -225,7 +225,15 @@ def _gc(args) -> int:
 def _health(args) -> int:
     cfg = load_config()
     with closing(db.open_db(_db_path(cfg))) as conn:
-        print(json.dumps(supply.feed_health(conn, cfg, _now()), indent=2))
+        h = supply.feed_health(conn, cfg, _now())
+    if not args.hint:
+        print(json.dumps(h, indent=2))
+    elif h["want"] > 0:
+        # One line for the SessionStart hook; silent when the feed has enough cards.
+        print(
+            f"CodeScroll feed is low: {h['backlog']} unseen cards ({h['runway_days']} days). "
+            f"It wants {h['want']} more: offer to run /codescroll-generate."
+        )
     return 0
 
 
@@ -559,6 +567,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser(
         "health", help="print feed health (backlog, runway, how many to make) as JSON"
     )
+    p.add_argument("--hint", action="store_true", help="one reminder line if cards are wanted")
     p.set_defaults(fn=_health)
     p = sub.add_parser("gc", help="delete old cards, events, and files (prints counts as JSON)")
     p.add_argument("--dry-run", action="store_true", help="count what would go; change nothing")

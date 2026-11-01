@@ -17,6 +17,10 @@
           {
             "command": "bd prime",
             "type": "command"
+          },
+          {
+            "type": "command",
+            "command": "uv run --quiet codescroll health --hint 2>/dev/null || true"
           }
         ],
         "matcher": ""

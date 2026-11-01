@@ -584,3 +584,18 @@ def test_gc_prints_counts_as_json(cfg, capsys):
     assert cli.main(["gc", "--vacuum"]) == 0
     assert json.loads(capsys.readouterr().out)["events"] == 0
     assert (cfg.settings.data_dir / "gc_last.json").exists()
+
+
+def test_health_hint_is_one_line_when_cards_are_wanted_else_silent(cfg, capsys, monkeypatch):
+    """For the SessionStart hook: a reminder only when the feed needs cards."""
+    from codescroll import supply
+
+    want = {"backlog": 4, "runway_days": 0.4, "want": 20}
+    monkeypatch.setattr(supply, "feed_health", lambda conn, cfg, now: want)
+    assert cli.main(["health", "--hint"]) == 0
+    out = capsys.readouterr().out.strip().splitlines()
+    assert len(out) == 1
+    assert "20" in out[0] and "/codescroll-generate" in out[0] and "0.4" in out[0]
+    want["want"] = 0
+    assert cli.main(["health", "--hint"]) == 0
+    assert capsys.readouterr().out == ""
