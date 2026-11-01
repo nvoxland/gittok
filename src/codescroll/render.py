@@ -163,21 +163,33 @@ class IllustrationRenderer:
         runner: Callable[[list[str], float], None] = _default_runner,
         command: list[str] | None = None,
         model: str = "",
+        path: str = "",
     ):
         self._runner = runner
         self._command = command
         self._model = model
+        # settings.render.mflux_path: a folder from mflux-save. Until it exists the renderer
+        # is unavailable, so illustration cards wait as pending_render instead of failing.
+        self._path = Path(path).expanduser() if path else None
 
     def _cmd(self) -> list[str] | None:
         return self._command or _mflux_command(self._model)
 
+    def _why_unavailable(self) -> str | None:
+        if self._cmd() is None:
+            return "mflux is not installed (uv sync --group images)"
+        if self._path is not None and not self._path.is_dir():
+            return f"saved model {self._path} is missing: run mflux-save (docs/install.md)"
+        return None
+
     def available(self) -> bool:
-        return self._cmd() is not None
+        return self._why_unavailable() is None
 
     def render(self, visual: dict, cfg, spec: dict) -> list[RenderedImage]:
         base = self._cmd()
-        if base is None:
-            raise RendererUnavailable("mflux is not installed (uv sync --group images)")
+        why = self._why_unavailable()
+        if base is None or why:
+            raise RendererUnavailable(why)
         scenes = visual["panels"] if visual.get("kind") == "comic" else [visual]
         mascots = mascots_for(visual, cfg, spec)
         seed0 = visual.get("seed", mascots[0].seed if mascots else 0)
@@ -233,7 +245,9 @@ RENDERER_KEY = {"meme": "meme", "illustration": "illustration", "comic": "illust
 def default_renderers(cfg) -> dict[str, Renderer]:
     return {
         "meme": MemeRenderer(cfg.settings.render.memegen_url),
-        "illustration": IllustrationRenderer(model=cfg.settings.render.mflux_model),
+        "illustration": IllustrationRenderer(
+            model=cfg.settings.render.mflux_model, path=cfg.settings.render.mflux_path
+        ),
     }
 
 

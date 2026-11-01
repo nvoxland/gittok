@@ -388,7 +388,9 @@ def _avatars(args) -> int:
     try:
         res = avatars.generate_avatars(
             cfg,
-            render.IllustrationRenderer(model=cfg.settings.render.mflux_model),
+            render.IllustrationRenderer(
+                model=cfg.settings.render.mflux_model, path=cfg.settings.render.mflux_path
+            ),
             force=args.force,
         )
     except render.RenderError as e:

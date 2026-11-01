@@ -191,6 +191,17 @@ def test_illustration_unavailable_without_mflux(monkeypatch):
         r.render({"kind": "illustration", "prompt": "p"}, None, {"repos": []})
 
 
+def test_illustration_unavailable_until_saved_model_exists(tmp_path):
+    """mflux_path names a folder mflux-save has not written yet: wait, do not fail cards."""
+    missing = tmp_path / "z-image-turbo-q4"
+    r = render.IllustrationRenderer(command=["x"], path=str(missing))
+    assert r.available() is False
+    with pytest.raises(render.RendererUnavailable, match="mflux-save"):
+        r.render({"kind": "illustration", "prompt": "p"}, None, {"repos": []})
+    missing.mkdir()
+    assert r.available() is True
+
+
 class FakeRenderer:
     def __init__(self, is_available=True, error=None, n=1):
         self.is_available = is_available
