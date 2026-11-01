@@ -292,7 +292,7 @@ def test_variant_slot_only_when_leads_run_out():
         "sources": [{"repo": "fixture", "commit": "a" * 40}],
     }
     # The packet slot for the variant has a format the story has not used, from its category.
-    fmt = line.split(" as a ")[1].split(";")[0]
+    fmt = line.split("in format `")[1].split("`")[0]
     assert fmt in pk.formats and fmt != "code_card"
     assert fmt in brief.CATEGORY_FORMATS["git_drama"]
     assert "commit_drama" in pk.story_types
