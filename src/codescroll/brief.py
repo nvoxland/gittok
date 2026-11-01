@@ -165,6 +165,7 @@ class Lead:
     path: str | None = None
     lines: tuple[int, int] | None = None
     text: str = ""
+    id: int | None = None  # ledger row id, when the lead came from the ledger
 
 
 def leads_for(
@@ -886,6 +887,7 @@ def build_brief(
     unavailable_formats=frozenset(),
     groups: dict[str, list[str]] | None = None,
     format_weights: dict[str, float] | None = None,
+    ledger: dict[tuple[str, str], list[Lead]] | None = None,
 ) -> Brief:
     if not repo_signals:
         raise ValueError("no repos to build a brief from")
@@ -1068,13 +1070,16 @@ def build_brief(
             t0 = repo_signals[repo].get("t0")
             for t in stories_in[category]:
                 if (repo, t) not in leads_by:
-                    wide = lead_refs_for(
-                        t,
-                        sig,
-                        t0,
-                        limit=1000 if prefer_dirs or ban_dirs else MAX_LEADS_PER_TYPE,
-                        repo=repo,
-                    )
+                    # A ledger entry (even an empty one) replaces computing leads.
+                    wide = (ledger or {}).get((repo, t))
+                    if wide is None:
+                        wide = lead_refs_for(
+                            t,
+                            sig,
+                            t0,
+                            limit=1000 if prefer_dirs or ban_dirs else MAX_LEADS_PER_TYPE,
+                            repo=repo,
+                        )
                     ref_by[(repo, t)] = {x.text: x for x in wide}
                     wide_text = [x.text for x in wide]
                     leads_by[(repo, t)] = focused_first(wide_text)[:MAX_LEADS_PER_TYPE]

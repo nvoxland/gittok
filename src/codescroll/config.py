@@ -46,6 +46,7 @@ class AgentSettings:
     target_runway_days: int = 3
     min_burn_per_day: int = 10
     min_run_count: int = 8
+    lead_cooldown_days: int = 30
 
 
 @dataclass(frozen=True)
@@ -86,6 +87,7 @@ class GcSettings:
     events_after_days: int = 90
     run_files_after_days: int = 30
     social_after_days: int = 30
+    leads_after_days: int = 180
     interval_s: float = 3600.0
 
 

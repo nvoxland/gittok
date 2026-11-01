@@ -1356,3 +1356,36 @@ def test_lead_refs_for_known_stories():
 
 def test_code_card_and_text_post_are_haiku_formats():
     assert {"code_card", "text_post"} <= brief.HAIKU_FORMATS
+
+
+def test_ledger_leads_replace_computed_leads_and_keep_ids():
+    mine = brief.Lead("hot_spot", "fixture", "path", path="zzz/only.py", text="only lead", id=42)
+    ledger = {("fixture", "hot_spot"): [mine], ("fixture", "rip"): []}
+    d = {"categories": {"git_drama": 1.0}, "tones": DEFAULTS["tones"]}
+    b = build(count=10, packet_size=5, defaults=d, ledger=ledger)
+    refs = [r for p in b.packets for r in p.lead_refs if r["story_type"] == "hot_spot"]
+    assert refs and {r["id"] for r in refs} == {42}
+    assert {r["text"] for r in refs} == {"only lead"}
+    # an empty ledger list means "nothing fresh": no computed fallback for that type
+    assert not [r for p in b.packets for r in p.lead_refs if r["story_type"] == "rip"]
+    # a type absent from the ledger still computes its leads
+    assert any(
+        r["story_type"] == "commit_drama" and r["kind"] == "commit"
+        for p in b.packets
+        for r in p.lead_refs
+    )
+
+
+def test_ledger_leads_still_honor_ban_dir_rules():
+    keep = brief.Lead("hot_spot", "fixture", "path", path="lib/ok.py", text="lib/ok.py: x", id=1)
+    drop = brief.Lead("hot_spot", "fixture", "path", path="src/no.py", text="src/no.py: x", id=2)
+    d = {"categories": {"git_drama": 1.0}, "tones": DEFAULTS["tones"]}
+    b = build(
+        count=10,
+        packet_size=5,
+        defaults=d,
+        ledger={("fixture", "hot_spot"): [drop, keep]},
+        rules=[rule("ban", "dir", "src")],
+    )
+    ids = {r["id"] for p in b.packets for r in p.lead_refs if r["story_type"] == "hot_spot"}
+    assert ids == {1}

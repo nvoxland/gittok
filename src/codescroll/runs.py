@@ -7,7 +7,7 @@ import secrets
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 
-from codescroll import db, signals, store, validator
+from codescroll import db, ledger, signals, store, validator
 
 
 class RunError(Exception):
@@ -142,8 +142,9 @@ def check(conn, cfg, run_id: str, cards: list | dict) -> dict:
 def submit(conn, cfg, run_id: str, cards: list | dict, packet_id: str | None = None) -> dict:
     raw = cards
     cards = _card_list(cards)
+    lead_refs: list[dict] = []
     if packet_id is not None:
-        get_packet(conn, run_id, packet_id)
+        lead_refs = get_packet(conn, run_id, packet_id).get("lead_refs") or []
     run0 = get_run(conn, run_id)
     _check_open(run0, run_id)
     max_images = cfg.settings.render.max_illustrations_per_run
@@ -180,6 +181,11 @@ def submit(conn, cfg, run_id: str, cards: list | dict, packet_id: str | None = N
                 seen.add(a.story_key)
                 used += cost
                 card_id = store.insert_card(conn, cfg, run_id, a)
+                if used_lead := ledger.match_lead(a.card, lead_refs):
+                    conn.execute(
+                        "UPDATE cards SET lead_id = ? WHERE id = ?", (used_lead["id"], card_id)
+                    )
+                    ledger.mark_covered(conn, used_lead["id"], datetime.now(UTC))
                 stored.append({"index": a.index, "card_id": card_id})
         rejected.sort(key=lambda r: r.index)
         rej = [r.as_dict() for r in rejected]

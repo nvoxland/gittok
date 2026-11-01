@@ -1,6 +1,7 @@
 """Garbage collection: delete cards and files that have no further use.
 
-Kept for good: `stories` (duplicate checks), `rewards` and `weights` (learning), `runs` rows.
+Kept for good: `stories` (duplicate checks), `rewards` and `weights` (learning), `runs` rows,
+covered `leads`.
 See docs/learning.md, "Garbage collection".
 """
 
@@ -28,6 +29,7 @@ COUNT_KEYS = (
     "run_files",
     "story_views",
     "notifications",
+    "leads",
     "asset_files",
 )
 
@@ -126,6 +128,7 @@ def collect(
     run_dirs = _run_dirs(conn, cfg, now)
     event_args = (_ms(now - timedelta(days=g.events_after_days)),)
     social_cut = _iso(now - timedelta(days=g.social_after_days))
+    lead_cut = _iso(now - timedelta(days=g.leads_after_days))
 
     counts = {k: len(v) for k, v in victims.items()}
     counts["run_files"] = len(run_dirs)
@@ -140,6 +143,9 @@ def collect(
         "SELECT COUNT(*) FROM notifications WHERE read_at IS NOT NULL AND read_at < ?",
         (social_cut,),
     ).fetchone()[0]
+    counts["leads"] = conn.execute(
+        "SELECT COUNT(*) FROM leads WHERE last_seen_at < ? AND times_covered = 0", (lead_cut,)
+    ).fetchone()[0]
     if dry_run:
         return counts
 
@@ -153,6 +159,7 @@ def collect(
             )  # features, assets cascade
         conn.execute(f"DELETE FROM events WHERE {_OLD_EVENT}", event_args)
         conn.execute("DELETE FROM story_views WHERE seen_at < ?", (social_cut,))
+        conn.execute("DELETE FROM leads WHERE last_seen_at < ? AND times_covered = 0", (lead_cut,))
         conn.execute(
             "DELETE FROM notifications WHERE read_at IS NOT NULL AND read_at < ?", (social_cut,)
         )

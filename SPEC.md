@@ -524,6 +524,7 @@ Example: user tells Claude Code "less memes, more of the sync engine this week" 
 - `srs` (spaced repetition state per card)
 - `notifications`
 - `stories` (one row per story ever made: `story_key`, repo, type, sources, first and last card time, `cards_made`, `best_reward`, `liked`). Gc never deletes it, so duplicate checks survive card deletion.
+- `leads` (the lead ledger: one row per commit lead, or per path and blob sha, with `story_type`, `strength`, `head_sha`, first and last seen time, `times_covered`, `last_covered_at`, `mean_reward`). `cards.lead_id` points at the lead a card used (no foreign key). Gc deletes only leads that are old and never covered.
 
 ---
 

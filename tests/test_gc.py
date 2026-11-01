@@ -309,3 +309,30 @@ def test_last_result_written_and_read(conn, cfg):
 
 def test_vacuum_runs(conn, cfg):
     gc.collect(conn, cfg, NOW, vacuum=True)
+
+
+def add_lead(conn, path, seen_days_ago, covered=0):
+    conn.execute(
+        "INSERT INTO leads(repo, story_type, kind, path, text, strength, head_sha, "
+        "first_seen_at, last_seen_at, times_covered) "
+        "VALUES ('r', 'hot_spot', 'path', ?, 't', 1.0, 'h', ?, ?, ?)",
+        (path, iso(400), iso(seen_days_ago), covered),
+    )
+    conn.commit()
+
+
+def test_stale_uncovered_leads_are_deleted(conn, cfg):
+    add_lead(conn, "old_uncovered", 200)
+    add_lead(conn, "old_covered", 200, covered=1)
+    add_lead(conn, "fresh_uncovered", 10)
+    cid = add_card(conn, cfg)
+    seen(conn, cid, 20)  # card gc never touches leads
+
+    res = gc.collect(conn, cfg, NOW, dry_run=True)
+    assert res["leads"] == 1
+    assert count(conn, "SELECT COUNT(*) FROM leads") == 3
+
+    res = gc.collect(conn, cfg, NOW)
+    assert res["leads"] == 1
+    left = {r[0] for r in conn.execute("SELECT path FROM leads")}
+    assert left == {"old_covered", "fresh_uncovered"}

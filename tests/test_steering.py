@@ -742,3 +742,23 @@ def test_coverage_rows_carry_depth_and_prefixes_do_not_double_count(conn, cfg):
     rows = {r["dir"]: r for r in steering.coverage(conn, cfg)}
     assert rows["billing"]["depth"] == 1
     assert (rows["billing"]["impressions"], rows["billing"]["cards"]) == (1, 1)
+
+
+def test_coverage_rows_count_current_leads_and_covered_leads(conn, cfg):
+    def lead(path, seen, covered=0, story="hot_spot"):
+        conn.execute(
+            "INSERT INTO leads(repo, story_type, kind, path, text, strength, head_sha, "
+            "first_seen_at, last_seen_at, times_covered) "
+            "VALUES ('fixture', ?, 'path', ?, 't', 1.0, 'h', 'a', ?, ?)",
+            (story, path, seen, covered),
+        )
+
+    lead("src/a.py", "2026-06-01T00:00:00Z", covered=1)
+    lead("src/a.py", "2026-06-01T00:00:00Z", story="analogy")  # same file, other story type
+    lead("src/b.py", "2026-06-01T00:00:00Z")
+    lead("billing/gone.py", "2026-05-01T00:00:00Z", covered=2)  # not at the current head
+    conn.commit()
+    by_dir = {r["dir"]: r for r in steering.coverage(conn, cfg)}
+    assert (by_dir["src"]["leads"], by_dir["src"]["leads_covered"]) == (2, 1)
+    assert (by_dir["data"]["leads"], by_dir["data"]["leads_covered"]) == (0, 0)
+    assert "billing" not in by_dir or by_dir["billing"]["leads"] == 0

@@ -20,6 +20,7 @@ from codescroll import (
     db,
     gitq,
     learning,
+    ledger,
     materials,
     render,
     research,
@@ -181,6 +182,7 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
                 rules=steering.list_rules(conn),
                 unavailable_formats=unavailable_formats(cfg),
                 max_illustrations=cfg.settings.render.max_illustrations_per_run,
+                ledger=ledger.for_brief(conn, cfg, sorted(repo_signals), datetime.now(UTC)),
                 **mix_inputs(conn, cfg),
             )
             packets = [

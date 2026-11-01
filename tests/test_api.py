@@ -324,7 +324,9 @@ def test_repo_profile_excludes_unready_cards_and_caps_at_20(cfg, client, fixture
     with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
         for i in range(25):
             conn.execute(
-                "INSERT INTO cards SELECT ?, run_id, repo_id, story_type, format, persona, tone, "
+                "INSERT INTO cards(id, run_id, repo_id, story_type, format, persona, tone, "
+                "spec, resolved, status, story_key, created_at) "
+                "SELECT ?, run_id, repo_id, story_type, format, persona, tone, "
                 "spec, resolved, ?, ?, ? FROM cards WHERE id = ?",
                 (
                     f"c_x{i}",

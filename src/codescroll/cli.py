@@ -24,6 +24,7 @@ from codescroll import (
     gc,
     install,
     learning,
+    ledger,
     mcp_server,
     profile,
     refit,
@@ -102,6 +103,7 @@ def _brief(args) -> int:
             rules=steering.list_rules(conn),
             unavailable_formats=mcp_server.unavailable_formats(cfg),
             max_illustrations=cfg.settings.render.max_illustrations_per_run,
+            ledger=ledger.for_brief(conn, cfg, sorted(repo_signals), datetime.now(UTC)),
             **mcp_server.mix_inputs(conn, cfg),
         )
     print(b.to_markdown())

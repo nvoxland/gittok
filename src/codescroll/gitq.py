@@ -254,3 +254,15 @@ def recent_commits(repo: Path | str, ref: str, since_ts: int) -> list[dict]:
             {"sha": sha, "author": author, "ts": int(ts), "subject": subject, "files": files}
         )
     return commits
+
+
+def ls_tree_blobs(repo: Path | str, ref: str) -> dict[str, str]:
+    """Path -> blob sha for every file at `ref`, in one call."""
+    _check_rev(ref)
+    _, out = run_bytes(repo, "ls-tree", "-r", "-z", ref)
+    blobs = {}
+    for rec in out.decode(errors="replace").split("\0"):
+        meta, _, path = rec.partition("\t")  # "<mode> <type> <sha>"
+        if path:
+            blobs[path] = meta.split()[-1]
+    return blobs

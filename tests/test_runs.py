@@ -436,3 +436,52 @@ def test_seconds_per_card_rounds_and_is_none_without_cards(conn, cfg, fixture_re
     assert done["accepted"] == 2 and done["seconds_per_card"] == 12.5
     b = runs.open_run(conn, cfg, repo=None, brief="b", requested=3, now=NOW)
     assert runs.finish_run(conn, b, now=NOW + timedelta(seconds=25))["seconds_per_card"] is None
+
+
+def _lead_row(conn, **kw) -> int:
+    row = {"kind": "path", "path": "", "commit_sha": "", "blob_sha": ""} | kw
+    cur = conn.execute(
+        "INSERT INTO leads(repo, story_type, kind, path, commit_sha, blob_sha, text, strength, "
+        "head_sha, first_seen_at, last_seen_at) "
+        "VALUES ('fixture', 'commit_drama', ?, ?, ?, ?, 't', 1.0, 'h', 'x', 'x')",
+        (row["kind"], row["path"], row["commit_sha"], row["blob_sha"]),
+    )
+    return cur.lastrowid
+
+
+def test_submit_marks_lead_covered(conn, cfg, fixture_repo):
+    fix1 = fixture_repo.shas["fix1"]
+    by_commit = _lead_row(conn, kind="commit", commit_sha=fix1, path="billing/invoice.py")
+    other = _lead_row(conn, path="src/other.py")
+    refs = [
+        {"story_type": "commit_drama", "repo": "fixture", "kind": "path", "path": "src/other.py",
+         "id": other},
+        {"story_type": "commit_drama", "repo": "fixture", "kind": "commit", "commit": fix1,
+         "path": "billing/invoice.py", "id": by_commit},
+    ]  # fmt: skip
+    packets = [{"id": "p1", "repo": "fixture", "count": 2, "lead_refs": refs}]
+    run_id = runs.open_run(
+        conn, cfg, repo="fixture", brief="b", requested=3, packets=packets, now=NOW
+    )
+    res = runs.submit(
+        conn, cfg, run_id, [example_card(fixture_repo), text_card(fixture_repo)], packet_id="p1"
+    )
+    hit, miss = (a["card_id"] for a in res["accepted"])
+
+    def lead_id(card_id):
+        return conn.execute("SELECT lead_id FROM cards WHERE id = ?", (card_id,)).fetchone()[0]
+
+    assert lead_id(hit) == by_commit
+    assert lead_id(miss) is None
+    row = conn.execute(
+        "SELECT times_covered, last_covered_at FROM leads WHERE id = ?", (by_commit,)
+    ).fetchone()
+    assert row["times_covered"] == 1 and row["last_covered_at"] > "2026"
+    assert conn.execute("SELECT times_covered FROM leads WHERE id = ?", (other,)).fetchone()[0] == 0
+
+
+def test_submit_without_packet_marks_nothing(conn, cfg, fixture_repo):
+    lead = _lead_row(conn, path="billing/invoice.py")
+    run_id = runs.open_run(conn, cfg, repo="fixture", brief="b", requested=3, now=NOW)
+    runs.submit(conn, cfg, run_id, [example_card(fixture_repo)])
+    assert conn.execute("SELECT times_covered FROM leads WHERE id = ?", (lead,)).fetchone()[0] == 0

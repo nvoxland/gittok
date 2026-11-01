@@ -179,3 +179,18 @@ def test_blame_range_reports_author_timezone(tmp_path):
     sha = b.commit("tz", date="2026-01-01T03:00:00+10:30")
     [row] = gitq.blame_range(path, sha, "a.py", 1, 1)
     assert row["author_tz"] == "+1030"
+
+
+def test_ls_tree_blobs_maps_paths_to_blob_shas(fixture_repo):
+    blobs = gitq.ls_tree_blobs(fixture_repo.path, "main")
+    assert "billing/invoice.py" in blobs
+    assert "billing" not in blobs  # trees are not listed
+    assert "src/legacy.py" not in blobs  # deleted before head
+    assert all(len(v) == 40 for v in blobs.values())
+    want = gitq.run(fixture_repo.path, "rev-parse", "main:billing/invoice.py").strip()
+    assert blobs["billing/invoice.py"] == want
+
+
+def test_ls_tree_blobs_rejects_option_injection(fixture_repo):
+    with pytest.raises(gitq.GitError):
+        gitq.ls_tree_blobs(fixture_repo.path, "--output=/tmp/x")

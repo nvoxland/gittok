@@ -1,11 +1,12 @@
 """Drives the real MCP server in-process, the way a Claude Code session would."""
 
 import json
+from datetime import UTC, datetime
 
 import pytest
 from mcp import Client
 
-from codescroll import mcp_server
+from codescroll import db, ledger, mcp_server
 from tests.cards import example_card, text_card
 from tests.conftest import make_config
 
@@ -247,3 +248,30 @@ async def test_get_packet_attaches_materials(fixture_repo, tmp_path):
         assert all(len(g["lead_refs"]) == len(g["leads"]) for g in seen)
         joined = "\n".join(g["materials_markdown"] for g in seen)
         assert "```diff" in joined or "blob " in joined
+
+
+async def _lead_ids(client, brief) -> set[int]:
+    ids = set()
+    for pk in brief["packets"]:
+        args = {"run_id": brief["run_id"], "packet_id": pk["id"]}
+        got = data(await client.call_tool("get_packet", args))
+        ids |= {r["id"] for r in got["lead_refs"] if r.get("id") is not None}
+    return ids
+
+
+async def test_second_brief_on_same_head_skips_covered_leads(fixture_repo, tmp_path):
+    cfg = make_config(fixture_repo, tmp_path, packet_size=2)
+    server = mcp_server.build_server(lambda: cfg)
+    async with Client(server) as client:
+        first = data(await client.call_tool("get_brief", {"count": 6}))
+        first_ids = await _lead_ids(client, first)
+        assert first_ids  # leads come from the ledger and carry its ids
+        with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+            marks = ",".join("?" * len(first_ids))
+            conn.execute(
+                f"UPDATE leads SET times_covered = 1, last_covered_at = ? WHERE id IN ({marks})",
+                (ledger.iso(datetime.now(UTC)), *first_ids),
+            )
+        second = data(await client.call_tool("get_brief", {"count": 6}))
+        second_ids = await _lead_ids(client, second)
+        assert not first_ids & second_ids

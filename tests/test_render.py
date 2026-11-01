@@ -230,7 +230,9 @@ def seed_pending(cfg, fixture_repo, visual, count=1):
         ids = [res["accepted"][0]["card_id"]]
         for i in range(1, count):
             conn.execute(
-                "INSERT INTO cards SELECT ?, run_id, repo_id, story_type, format, persona, tone, "
+                "INSERT INTO cards(id, run_id, repo_id, story_type, format, persona, tone, "
+                "spec, resolved, status, story_key, created_at) "
+                "SELECT ?, run_id, repo_id, story_type, format, persona, tone, "
                 "spec, resolved, status, ?, created_at FROM cards WHERE id = ?",
                 (f"c_copy{i}", f"key{i}", ids[0]),
             )

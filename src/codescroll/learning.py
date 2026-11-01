@@ -266,6 +266,12 @@ def process_events(conn, cfg, now: datetime | None = None) -> dict:
                 "WHERE story_key = (SELECT story_key FROM cards WHERE id = ?)",
                 (r, None if liked is None else int(liked), imp["card_id"]),
             )
+            conn.execute(  # running mean over every reward of cards made from the lead
+                "UPDATE leads SET mean_reward = (COALESCE(mean_reward, 0) * rewards_n + ?) "
+                "/ (rewards_n + 1), rewards_n = rewards_n + 1 "
+                "WHERE id = (SELECT lead_id FROM cards WHERE id = ?)",
+                (r, imp["card_id"]),
+            )
             stats["impressions"] += 1
             stats["rewards"] += 1
             for feature, value in card_features(conn, cfg, imp["card_id"], now=now):

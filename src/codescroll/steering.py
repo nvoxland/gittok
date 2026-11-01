@@ -414,7 +414,8 @@ def _repo_top_dirs(conn, repo) -> set[str]:
 
 
 def coverage(conn, cfg, repo: str | None = None) -> list[dict]:
-    """Per repo and top-level dir: depth, impressions, cards, last_seen. Least covered first.
+    """Per repo and top-level dir: depth, impressions, cards, last_seen, and the ledger leads
+    under it (`leads` now at HEAD, `leads_covered` of them with a card). Least covered first.
 
     A card has a `dir` feature per path prefix; each card counts once per top-level dir.
     """
@@ -442,7 +443,20 @@ def coverage(conn, cfg, repo: str | None = None) -> list[dict]:
             s["cards"].add(row["card_id"])
             if row["last"] is not None:
                 s["last"] = max(s["last"] or 0, row["last"])
-        for top in sorted(_repo_top_dirs(conn, cfg.repos[name]) | set(stats)):
+        # Current leads per top dir. A file counts once, however many story types offer it.
+        lead_n: dict[str, list[int]] = {}
+        for lead in conn.execute(
+            "SELECT path, MAX(times_covered) AS covered FROM leads WHERE repo = ? AND path != '' "
+            "AND last_seen_at = (SELECT MAX(last_seen_at) FROM leads WHERE repo = ?) "
+            "GROUP BY path, commit_sha, blob_sha",
+            (name, name),
+        ):
+            top = _top_level(lead["path"]) if "/" in lead["path"] else None
+            if top:
+                n = lead_n.setdefault(top, [0, 0])
+                n[0] += 1
+                n[1] += lead["covered"] > 0
+        for top in sorted(_repo_top_dirs(conn, cfg.repos[name]) | set(stats) | set(lead_n)):
             s = stats.get(top) or {"impressions": 0, "cards": set(), "last": None}
             last = (
                 None if s["last"] is None else _iso(datetime.fromtimestamp(s["last"] / 1000, UTC))
@@ -455,6 +469,8 @@ def coverage(conn, cfg, repo: str | None = None) -> list[dict]:
                     "impressions": s["impressions"],
                     "cards": len(s["cards"]),
                     "last_seen": last,
+                    "leads": lead_n.get(top, [0, 0])[0],
+                    "leads_covered": lead_n.get(top, [0, 0])[1],
                 }
             )
     out.sort(key=lambda r: (r["impressions"], r["cards"], r["repo"], r["dir"]))

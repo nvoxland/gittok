@@ -8,7 +8,7 @@ from codescroll import db
 SPEC_TABLES = {
     "repos", "groups", "repo_groups", "git_signals", "runs", "cards", "card_features",
     "assets", "events", "rewards", "weights", "rules", "personas", "mascots", "srs",
-    "notifications", "stories",
+    "notifications", "stories", "leads",
 }  # fmt: skip
 
 
@@ -33,6 +33,7 @@ def test_migrate_twice_applies_nothing_second_time(tmp_path):
         "0005_prefs.sql",
         "0006_drop_saves.sql",
         "0007_stories.sql",
+        "0008_leads.sql",
     ]
     assert db.migrate(conn) == []
     assert conn.execute("SELECT name FROM schema_migrations").fetchall()[0]["name"] == first[0]
@@ -102,7 +103,11 @@ def test_stories_migration_backfills_from_cards(tmp_path):
         "VALUES ('c1','like',1,'{\"on\":true}','now')"
     )
     conn.execute("DROP TABLE stories")
-    conn.executescript(db._migration_files()[-1].read_text(encoding="utf-8"))
+    conn.executescript(
+        next(f for f in db._migration_files() if f.name == "0007_stories.sql").read_text(
+            encoding="utf-8"
+        )
+    )
 
     rows = {r["story_key"]: r for r in conn.execute("SELECT * FROM stories")}
     assert set(rows) == {"k1", "k2"}

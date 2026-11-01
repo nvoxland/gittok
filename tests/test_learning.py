@@ -546,3 +546,27 @@ def test_reward_updates_every_prefix(conn, cfg):
     learning.process_events(conn, cfg, now=at(5))
     w = weights(conn)
     assert {v for (f, v) in w if f == "dir"} >= {"x", "x/y", "x/y/z"}
+
+
+def test_lead_mean_reward_updates(conn, cfg):
+    conn.execute(
+        "INSERT INTO leads(id, repo, story_type, kind, text, strength, head_sha, first_seen_at, "
+        "last_seen_at) VALUES (1, 'fixture', 'rip', 'path', 't', 1.0, 'h', 'x', 'x')"
+    )
+    a, b, plain = add_card(conn, cfg), add_card(conn, cfg), add_card(conn, cfg)
+    conn.execute("UPDATE cards SET lead_id = 1 WHERE id IN (?, ?)", (a, b))
+    conn.commit()
+    ev(conn, a, "impression", T0)
+    ev(conn, a, "like", T0 + 400, {"on": True})
+    ev(conn, b, "impression", T0 + 1000)
+    ev(conn, b, "skip", T0 + 1100, {"ms": 100})
+    ev(conn, plain, "impression", T0 + 2000)
+    learning.process_events(conn, cfg, now=at(5))
+    got = conn.execute("SELECT mean_reward, rewards_n FROM leads WHERE id = 1").fetchone()
+    r = rewards(conn)
+    assert got["rewards_n"] == 2
+    assert got["mean_reward"] == pytest.approx((r[a] + r[b]) / 2)
+    assert r[a] != r[b]
+    # processing again changes nothing
+    learning.process_events(conn, cfg, now=at(6))
+    assert conn.execute("SELECT rewards_n FROM leads WHERE id = 1").fetchone()[0] == 2

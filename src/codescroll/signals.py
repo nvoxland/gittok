@@ -5,9 +5,10 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
-from codescroll import db, gitq
+from codescroll import db, gitq, ledger
 from codescroll.config import AnalysisSettings, Repo
 
 
@@ -677,6 +678,9 @@ def analyze(conn, repo: Repo, settings: AnalysisSettings, force: bool = False) -
             (head, now, repo_id),
         )
     result = {kind: db.loads(text) for kind, text, _ in computed}
+    ledger.refresh(
+        conn, repo.name, result, t0, head, gitq.ls_tree_blobs(path, ref), datetime.now(UTC)
+    )
     return {**meta, "cached": False, "signals": result}
 
 

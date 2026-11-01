@@ -186,6 +186,7 @@ Settings (`gc:` in `config/settings.yaml`):
 | events | `events_after_days: 90` | the event is older than N days and was recorded before the card's newest reward was computed |
 | run files | `run_files_after_days: 30` | the run is not open and ended more than N days ago; the folder `data/runs/<id>/` goes, the `runs` row stays |
 | social | `social_after_days: 30` | `story_views` seen, and notifications read, more than N days ago |
+| leads | `leads_after_days: 180` | the lead was last seen at HEAD more than N days ago and no card ever used it (`times_covered = 0`) |
 
 Liked means the latest `like` event has `on: true`. If gc already removed the like events, `stories.liked` gives the answer. `process_events` keeps `stories.liked` and `stories.best_reward` up to date.
 
@@ -194,6 +195,7 @@ Deleting a card removes its `card_features`, its `assets` rows, its files in `da
 What stays, and why:
 
 - `stories`: the duplicate check reads it, so a deleted story is not made again.
+- `leads` that a card used: coverage history stays.
 - `rewards` and `weights`: this is what the feed learned. A pass never changes the weights.
 - `events` that are newer than the newest reward, and events of impressions with no reward yet: the learner has not used them.
 - Fresh unseen cards: gc never lowers the backlog.
@@ -201,3 +203,26 @@ What stays, and why:
 A phone with an offline batch can still send events or an answer for a deleted card. Events are stored. `POST /api/answer` returns 404, and the quiz shows "This card is gone."
 
 `feed_health` shows the counts of the last real pass under `gc`. The server keeps them in `data/gc_last.json`.
+
+## 12. Lead ledger
+
+A lead is a place to look: a commit, or a file at one blob. Each time `signals.analyze` recomputes a repo (a new HEAD), `ledger.refresh` stores every commit and path lead of every story type in the `leads` table. Leads of kind `none` (a directory, a pair) are not stored.
+
+What a row holds:
+
+- Identity: repo, story type, kind, path, commit sha, blob sha. A path lead carries the blob sha of the file at the analyzed ref. A changed file has a new blob, so it is a new row. The old row stays, and its `times_covered` shows it was told before.
+- `strength`: `1 / (1 + rank)` inside its story type, from the signal order.
+- `first_seen_at`, `last_seen_at`, `head_sha`: set again on each refresh.
+- `times_covered`, `last_covered_at`, `mean_reward`, `rewards_n`: see below.
+
+`get_brief` draws leads from the ledger. A row is a candidate when it was seen in the latest refresh of its repo (it still exists at HEAD) and its `last_covered_at` is not within `agent.lead_cooldown_days` (30). Candidates are sorted by:
+
+`score = interest x strength x 0.5 ^ times_covered`
+
+`interest` is the mean of the `dir` posterior means (section 4) over the parent dir prefixes of the lead's path. An unknown prefix counts as 0.5. A lead with no path counts as 0.5. Ties go to the lower row id. `focus` and `ban` dir rules still filter the leads by text. If the repo has no ledger rows for a story type, the brief computes the leads from signals as before. If all rows of a type are in cooldown, the type has no leads.
+
+Coverage marking: `submit_cards(packet_id)` finds the packet lead each accepted card used. The first lead whose commit is cited by the card (sources, visual, or depth panels) wins. Else the first lead whose path is cited. The card gets `cards.lead_id`. The lead gets `times_covered + 1` and `last_covered_at`. Cards submitted without a packet mark nothing.
+
+Reward: when `process_events` writes a reward for a card with a `lead_id`, the lead's `mean_reward` becomes the running mean of those rewards (`rewards_n` counts them).
+
+The `coverage` tool adds `leads` (current leads under each top dir, one per file) and `leads_covered` (of those, how many a card used).

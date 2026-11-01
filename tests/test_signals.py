@@ -263,6 +263,22 @@ def test_analyze_force_recomputes(conn, fixture_repo, git_calls):
     assert n == len(signals.SIGNAL_KINDS)  # INSERT OR REPLACE, no duplicates
 
 
+def test_analyze_fills_the_lead_ledger_only_when_it_recomputes(conn, fixture_repo):
+    repo = _repo(fixture_repo)
+    signals.analyze(conn, repo, AnalysisSettings())
+    blob = gitq.run(fixture_repo.path, "rev-parse", "main:src/util.py").strip()
+    row = conn.execute(
+        "SELECT head_sha, blob_sha FROM leads WHERE repo = 'fixture' AND story_type = 'hot_spot' "
+        "AND path = 'src/util.py'"
+    ).fetchone()
+    assert (row["head_sha"], row["blob_sha"]) == (fixture_repo.shas["head"], blob)
+    conn.execute("DELETE FROM leads")
+    assert signals.analyze(conn, repo, AnalysisSettings())["cached"] is True
+    assert conn.execute("SELECT COUNT(*) FROM leads").fetchone()[0] == 0  # cache hit: no refresh
+    signals.analyze(conn, repo, AnalysisSettings(), force=True)
+    assert conn.execute("SELECT COUNT(*) FROM leads").fetchone()[0] > 0
+
+
 def test_analyze_windows_are_relative_to_t0_not_wall_clock(conn, fixture_repo):
     out = signals.analyze(conn, _repo(fixture_repo), AnalysisSettings())
     assert out["t0"] == 1771599600  # 2026-02-20T15:00Z, months before wall-clock today
