@@ -9,7 +9,8 @@
 	import Poster from './Poster.svelte';
 	import { visuals } from './visuals/index.ts';
 	import { getAnswer, getFlags, setFlag } from '#lib/cardState.ts';
-	import type { Card, FeedEventType, ResolvedCode, ResolvedDiff } from '#lib/types.ts';
+	import { postReply } from '#lib/api.ts';
+	import type { Card, FeedEventType, Reply, ResolvedCode, ResolvedDiff } from '#lib/types.ts';
 
 	let {
 		card,
@@ -66,9 +67,41 @@
 	// Comments wait for a quiz answer: they can give it away.
 	const firstExplain = $derived(card.depth.findIndex((d) => d.kind === 'explain'));
 	// A comment is a spoiler unless it says otherwise on a quiz card; other cards show them all.
+	// `idx` is the comment's place in the card's full list: replies are stored against it.
 	const visibleComments = $derived(
-		(card.comments ?? []).filter((c) => answered || !(c.spoiler ?? !!card.interaction))
+		(card.comments ?? [])
+			.map((c, idx) => ({ ...c, idx }))
+			.filter((c) => answered || !(c.spoiler ?? !!card.interaction))
 	);
+
+	// The reader's replies (shown only to them), the open reply box, and its draft.
+	let replies: Reply[] = $state(card.replies ?? []);
+	let replyOpen: string | null = $state(null);
+	let draft = $state('');
+	let replyError = $state('');
+	let sending = $state(false);
+
+	function toggleReply(key: string) {
+		replyOpen = replyOpen === key ? null : key;
+		draft = '';
+		replyError = '';
+	}
+
+	async function sendReply(idx: number) {
+		const text = draft.trim();
+		if (!text || sending) return;
+		sending = true;
+		replyError = '';
+		try {
+			replies = [...replies, await postReply(card.id, idx, text)];
+			replyOpen = null;
+			draft = '';
+		} catch {
+			replyError = 'Could not send the reply.';
+		} finally {
+			sending = false;
+		}
+	}
 	const showComments = $derived(visibleComments.length > 0);
 	const count = $derived(1 + card.depth.length + (showComments ? 1 : 0));
 
@@ -76,6 +109,44 @@
 		row?.scrollTo({ left: (card.depth.length + 1) * row.clientWidth, behavior: 'smooth' });
 	}
 </script>
+
+{#snippet commentRow(c: { persona: string; text: string; idx: number }, where: string)}
+	<li>
+		<Avatar handle={c.persona} size={20} />
+		<div class="comment-body">
+			<span><a class="handle" href="/persona/{encodeURIComponent(c.persona)}">@{c.persona}</a>: {c.text}</span>
+			{#each replies.filter((r) => r.comment_index === c.idx) as r (r.id)}
+				<div class="reply">
+					<span class="you">You</span>: <span>{r.text}</span>
+					{#if r.answered_card_id}
+						<a class="answered" href="/card/{encodeURIComponent(r.answered_card_id)}">@{r.persona} answered →</a>
+					{/if}
+				</div>
+			{/each}
+			<button type="button" class="reply-btn" onclick={() => toggleReply(`${where}:${c.idx}`)}>
+				Reply
+			</button>
+			{#if replyOpen === `${where}:${c.idx}`}
+				<form
+					class="reply-form"
+					onsubmit={(e) => {
+						e.preventDefault();
+						sendReply(c.idx);
+					}}
+				>
+					<textarea
+						aria-label="Your reply"
+						maxlength="280"
+						rows="2"
+						bind:value={draft}
+					></textarea>
+					<button type="submit" disabled={!draft.trim() || sending}>Send</button>
+					{#if replyError}<span class="reply-error" role="alert">{replyError}</span>{/if}
+				</form>
+			{/if}
+		</div>
+	</li>
+{/snippet}
 
 <article data-card-id={card.id} class:first>
 	<header>
@@ -123,11 +194,8 @@
 			<h2>{card.hook}</h2>
 			{#if showComments}
 				<ul class="face-comments">
-					{#each visibleComments.slice(0, 2) as c, i (i)}
-						<li>
-							<Avatar handle={c.persona} size={20} />
-							<span><a class="handle" href="/persona/{encodeURIComponent(c.persona)}">@{c.persona}</a>: {c.text}</span>
-						</li>
+					{#each visibleComments.slice(0, 2) as c (c.idx)}
+						{@render commentRow(c, 'face')}
 					{/each}
 				</ul>
 				{#if visibleComments.length > 2}
@@ -169,8 +237,8 @@
 		{#if showComments}
 			<section data-panel={card.depth.length + 1} class="comments-panel">
 				<ul class="comments">
-					{#each visibleComments as c, i (i)}
-						<li><Avatar handle={c.persona} size={20} /><span><a class="handle" href="/persona/{encodeURIComponent(c.persona)}">@{c.persona}</a>: {c.text}</span></li>
+					{#each visibleComments as c (c.idx)}
+						{@render commentRow(c, 'panel')}
 					{/each}
 				</ul>
 			</section>
@@ -370,6 +438,51 @@
 	}
 	.comments li :global(.avatar) {
 		margin-top: 0.1rem;
+	}
+	.comment-body {
+		display: grid;
+		gap: 0.25rem;
+		min-width: 0;
+	}
+	.reply {
+		padding-left: 0.6rem;
+		border-left: 2px solid var(--border);
+	}
+	.you {
+		font-weight: 600;
+	}
+	.answered {
+		margin-left: 0.4rem;
+		color: var(--accent);
+	}
+	.reply-btn {
+		justify-self: start;
+		padding: 0;
+		border: 0;
+		background: none;
+		color: var(--muted);
+		font-size: 0.75rem;
+		cursor: pointer;
+	}
+	.reply-form {
+		display: grid;
+		gap: 0.3rem;
+	}
+	.reply-form textarea {
+		width: 100%;
+		box-sizing: border-box;
+		font: inherit;
+		background: var(--surface);
+		color: inherit;
+		border: 1px solid var(--border);
+		border-radius: 6px;
+	}
+	.reply-form button {
+		justify-self: start;
+	}
+	.reply-error {
+		color: var(--muted);
+		font-size: 0.75rem;
 	}
 	.handle {
 		color: var(--muted);

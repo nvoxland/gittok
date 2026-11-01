@@ -7,7 +7,7 @@ import secrets
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 
-from codescroll import db, ledger, signals, store, validator
+from codescroll import db, ledger, replies, signals, store, validator
 
 
 class RunError(Exception):
@@ -193,14 +193,29 @@ def submit(conn, cfg, run_id: str, cards: list | dict, packet_id: str | None = N
                     validator.Rejection(a.index, "over_quota", "run quota is already filled")
                 )
             else:
+                used_lead = ledger.match_lead(a.card, lead_refs)
+                if used_lead and (
+                    (need := replies.required_persona(conn, used_lead["id"]))
+                    and a.card.get("persona") != need
+                ):
+                    rejected.append(
+                        validator.Rejection(
+                            a.index,
+                            "wrong_persona",
+                            f"this lead answers a reader reply to @{need}; "
+                            f"the card's persona must be {need}",
+                        )
+                    )
+                    continue
                 seen.add(a.story_key)
                 used += cost
                 card_id = store.insert_card(conn, cfg, run_id, a)
-                if used_lead := ledger.match_lead(a.card, lead_refs):
+                if used_lead:
                     conn.execute(
                         "UPDATE cards SET lead_id = ? WHERE id = ?", (used_lead["id"], card_id)
                     )
                     ledger.mark_covered(conn, used_lead["id"], datetime.now(UTC))
+                    replies.answer(conn, used_lead["id"], card_id)
                 stored.append({"index": a.index, "card_id": card_id})
         rejected.sort(key=lambda r: r.index)
         rej = [r.as_dict() for r in rejected]

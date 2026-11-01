@@ -31,6 +31,7 @@ from codescroll import (
     mcp_server,
     profile,
     render,
+    replies,
     signals,
     social,
     srs,
@@ -240,6 +241,12 @@ class StorySeen(BaseModel):
         if not all(_SHA.fullmatch(s) for s in v):
             raise ValueError("shas must be 7-40 hex characters")
         return v
+
+
+class ReplyBody(BaseModel):
+    card_id: str
+    comment_index: int
+    text: str
 
 
 class NotificationsRead(BaseModel):
@@ -464,9 +471,11 @@ def create_app(
     def card(card_id: str):
         with conn() as c:
             row = c.execute("SELECT * FROM cards WHERE id = ?", (card_id,)).fetchone()
-        if row is None:
-            raise HTTPException(404, f"unknown card {card_id}")
-        return public_card(row, get_config())
+            if row is None:
+                raise HTTPException(404, f"unknown card {card_id}")
+            card = public_card(row, get_config())
+            replies.attach(c, [card])
+        return card
 
     @app.post("/api/answer")
     def answer(body: Answer):
@@ -497,8 +506,20 @@ def create_app(
                 "SELECT c.* FROM saved_cards s JOIN cards c ON c.id = s.card_id "
                 "ORDER BY s.saved_ts DESC, s.card_id"
             ).fetchall()
-        cfg = get_config()
-        return {"cards": [public_card(r, cfg) for r in rows]}
+            cfg = get_config()
+            cards = [public_card(r, cfg) for r in rows]
+            replies.attach(c, cards)
+        return {"cards": cards}
+
+    @app.post("/api/replies")
+    def post_reply(body: ReplyBody):
+        with conn() as c:
+            try:
+                return replies.add(c, body.card_id, body.comment_index, body.text)
+            except replies.UnknownCard as e:
+                raise HTTPException(404, str(e)) from None
+            except replies.ReplyError as e:
+                raise HTTPException(400, str(e)) from None
 
     @app.get("/api/stories")
     def stories():

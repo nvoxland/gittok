@@ -10,6 +10,7 @@ import type {
 	RepoMap,
 	NotificationsResponse,
 	PersonaProfile,
+	Reply,
 	RepoProfile,
 	Story
 } from './types';
@@ -141,4 +142,18 @@ export async function fetchNotifications(unreadOnly = false): Promise<Notificati
 
 export function markNotificationsRead(ids: number[] | 'all'): Promise<void> {
 	return postJson('/api/notifications/read', ids === 'all' ? { all: true } : { ids });
+}
+
+export async function postReply(
+	card_id: string,
+	comment_index: number,
+	text: string
+): Promise<Reply> {
+	const res = await fetch('/api/replies', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ card_id, comment_index, text })
+	});
+	if (!res.ok) throw new ApiError(`POST /api/replies failed: ${res.status}`, res.status);
+	return (await res.json()) as Reply;
 }

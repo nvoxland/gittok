@@ -18,6 +18,7 @@ from codescroll import (
     db,
     knowledge,
     learning,
+    replies,
     requests,
     social,
     store,
@@ -100,6 +101,18 @@ def refresh(conn, repo_name: str, sig: dict, t0, head_sha: str, blobs: dict, now
     return len(rows)
 
 
+_SERVER_PREFIXES = (
+    requests.KEY_PREFIX,
+    social.NOTIF_PREFIX,
+    social.DIGEST_PREFIX,
+    replies.KEY_PREFIX,
+)
+# SQL for "a server-made pinned lead" and its negation, built from _SERVER_PREFIXES so a new
+# prefix is added in one place.
+_PINNED_SQL = "(" + " OR ".join(f"lead_key LIKE '{p}%'" for p in _SERVER_PREFIXES) + ")"
+_NOT_PINNED_SQL = " AND ".join(f"lead_key NOT LIKE '{p}%'" for p in _SERVER_PREFIXES)
+
+
 def refresh_candidates(conn, repo: str, sig: dict, t0, head_sha: str, now: datetime) -> int:
     """Redo the candidate leads of a repo whose latest refresh already ran.
 
@@ -108,8 +121,7 @@ def refresh_candidates(conn, repo: str, sig: dict, t0, head_sha: str, now: datet
     with the other leads); keys the new pass no longer offers are made non-current.
     """
     stamp = conn.execute(
-        "SELECT MAX(last_seen_at) FROM leads WHERE repo = ? AND lead_key NOT LIKE 'req:%' "
-        "AND lead_key NOT LIKE 'notif:%' AND lead_key NOT LIKE 'digest:%'",
+        f"SELECT MAX(last_seen_at) FROM leads WHERE repo = ? AND {_NOT_PINNED_SQL}",
         (repo,),
     ).fetchone()[0]
     if stamp is None:
@@ -128,9 +140,6 @@ def refresh_candidates(conn, repo: str, sig: dict, t0, head_sha: str, now: datet
     return len(rows)
 
 
-_SERVER_PREFIXES = (requests.KEY_PREFIX, social.NOTIF_PREFIX, social.DIGEST_PREFIX)
-
-
 def _current(conn, repo: str, story_type: str) -> list:
     """Rows seen in the repo's latest refresh, i.e. still present at its current head.
 
@@ -138,10 +147,8 @@ def _current(conn, repo: str, story_type: str) -> list:
     """
     rows = conn.execute(
         "SELECT * FROM leads WHERE repo = ? AND story_type = ? AND (last_seen_at = "
-        "(SELECT MAX(last_seen_at) FROM leads WHERE repo = ? AND lead_key NOT LIKE 'req:%' "
-        "AND lead_key NOT LIKE 'notif:%' AND lead_key NOT LIKE 'digest:%') "
-        "OR ((lead_key LIKE 'req:%' OR lead_key LIKE 'notif:%' OR lead_key LIKE 'digest:%') "
-        "AND last_covered_at IS NULL)) ORDER BY id",
+        f"(SELECT MAX(last_seen_at) FROM leads WHERE repo = ? AND {_NOT_PINNED_SQL}) "
+        f"OR ({_PINNED_SQL} AND last_covered_at IS NULL)) ORDER BY id",
         (repo, story_type, repo),
     ).fetchall()
     if story_type in brief.CANDIDATE_STORIES:  # churn rows from before candidate leads are dead

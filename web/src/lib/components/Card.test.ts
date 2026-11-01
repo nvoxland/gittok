@@ -105,7 +105,7 @@ describe('Card', () => {
 		const { container } = render(Card, { card });
 		const front = container.querySelector('section.front')!;
 		const faces = [...front.querySelectorAll('.face-comments li')];
-		expect(faces.map((li) => li.textContent?.trim())).toEqual([
+		expect(faces.map((li) => li.querySelector('.comment-body > span')?.textContent?.trim())).toEqual([
 			'@penny_learns: Wait, why?',
 			'@archivist: Since 2019.'
 		]);
@@ -116,7 +116,9 @@ describe('Card', () => {
 		expect(within(front as HTMLElement).getByRole('button', { name: 'All 3 comments' })).toBeTruthy();
 		const panel = container.querySelector('section.comments-panel')!;
 		expect(panel.getAttribute('data-panel')).toBe('2');
-		const items = [...panel.querySelectorAll('.comments li')].map((li) => li.textContent?.trim());
+		const items = [...panel.querySelectorAll('.comments li')].map((li) =>
+			li.querySelector('.comment-body > span')?.textContent?.trim()
+		);
 		expect(items).toEqual(['@penny_learns: Wait, why?', '@archivist: Since 2019.', '@greybeard: Told you.']);
 		expect(container.querySelectorAll('.dot')).toHaveLength(3);
 	});
@@ -398,5 +400,76 @@ describe('Card quiz', () => {
 		render(Card, { card });
 		expect(screen.getByText('Alpha.')).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Beta' })).toBeDisabled();
+	});
+});
+
+describe('Card replies', () => {
+	const fetchMock = vi.fn();
+	beforeEach(() => vi.stubGlobal('fetch', fetchMock));
+	afterEach(() => {
+		fetchMock.mockReset();
+		vi.unstubAllGlobals();
+		resetCardStateForTest();
+	});
+	const withComment = (over: Partial<CardT> = {}) =>
+		fakeCard({
+			id: 'c_9',
+			comments: [{ persona: 'greybeard', text: 'Floats and money.' }],
+			...over
+		});
+
+	it('the reply box posts and the reply shows as You', async () => {
+		const stored = {
+			id: 4,
+			card_id: 'c_9',
+			persona: 'greybeard',
+			comment_index: 0,
+			text: 'Why floats?',
+			created_at: 'x',
+			answered_card_id: null
+		};
+		fetchMock.mockResolvedValue({ ok: true, json: async () => stored });
+		render(Card, { card: withComment() });
+		await fireEvent.click(screen.getAllByRole('button', { name: 'Reply' })[0]);
+		const box = screen.getByRole('textbox', { name: 'Your reply' });
+		expect(box).toHaveAttribute('maxlength', '280');
+		await fireEvent.input(box, { target: { value: 'Why floats?' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+		expect((await screen.findAllByText('Why floats?')).length).toBeGreaterThan(0);
+		expect(screen.getAllByText('You').length).toBeGreaterThan(0);
+		expect(fetchMock.mock.calls[0][0]).toBe('/api/replies');
+		expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({
+			card_id: 'c_9',
+			comment_index: 0,
+			text: 'Why floats?'
+		});
+	});
+
+	it('does not send an empty reply', async () => {
+		render(Card, { card: withComment() });
+		await fireEvent.click(screen.getAllByRole('button', { name: 'Reply' })[0]);
+		expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+	});
+
+	it('an answered reply links to the answer card', () => {
+		const card = withComment({
+			replies: [
+				{
+					id: 4,
+					card_id: 'c_9',
+					persona: 'greybeard',
+					comment_index: 0,
+					text: 'Why floats?',
+					created_at: 'x',
+					answered_card_id: 'c_77'
+				}
+			]
+		});
+		render(Card, { card });
+		expect(screen.getAllByText('Why floats?').length).toBeGreaterThan(0);
+		expect(screen.getAllByRole('link', { name: /@greybeard answered/ })[0]).toHaveAttribute(
+			'href',
+			'/card/c_77'
+		);
 	});
 });

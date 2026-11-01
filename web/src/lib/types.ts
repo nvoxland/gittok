@@ -137,6 +137,16 @@ export type Resolved = {
 };
 
 export type Comment = { persona: string; text: string; spoiler?: boolean };
+// The reader's own reply to a persona's comment; shown only to the reader.
+export type Reply = {
+	id: number;
+	card_id: string;
+	persona: string;
+	comment_index: number;
+	text: string;
+	created_at: string;
+	answered_card_id: string | null;
+};
 export type Series = { key: string; part: number; of: number };
 export type Source = { repo: string; commit: string };
 
@@ -177,6 +187,7 @@ export type Card = {
 	interaction?: Interaction;
 	depth: DepthPanel[];
 	comments: Comment[];
+	replies?: Reply[];
 	sources: Source[];
 	resolved: Resolved;
 	// GitHub URLs; null when the repo has no GitHub URL.
