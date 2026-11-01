@@ -105,7 +105,7 @@ def _card_list(cards: list | dict) -> list:
     return cards
 
 
-def _validate(conn, cfg, run: dict, cards: list):
+def _validate(conn, cfg, run: dict, cards: list, lead_refs: list[dict] | None = None):
     max_images = cfg.settings.render.max_illustrations_per_run
     return validator.validate_cards(
         cards,
@@ -115,6 +115,8 @@ def _validate(conn, cfg, run: dict, cards: list):
         mascots=cfg.mascots,
         signals_for=lambda name: signals.load_signals(conn, name),
         illustration_budget=max(0, max_images - run["meta"].get("illustrations", 0)),
+        claim_checks=cfg.settings.agent.claim_checks,
+        lead_texts=[x["text"] for x in lead_refs if x.get("text")] if lead_refs else None,
     )
 
 
@@ -156,7 +158,7 @@ def submit(conn, cfg, run_id: str, cards: list | dict, packet_id: str | None = N
     _check_open(run0, run_id)
     max_images = cfg.settings.render.max_illustrations_per_run
     # Git validation is slow: do it before taking the write lock.
-    accepted, rejected = _validate(conn, cfg, run0, cards)
+    accepted, rejected = _validate(conn, cfg, run0, cards, lead_refs)
     out_dir = cfg.settings.data_dir / "runs" / run_id
     stored: list[dict] = []
     with db.immediate(conn):

@@ -61,6 +61,7 @@ class AgentSettings:
     intro_share: float = 0.25
     scout_max: int = 60  # unrated candidates one scout_status call hands out
     scout_batch: int = 15  # candidates per scout subagent
+    claim_checks: bool = True  # reject cards whose numbers, dates, or names git does not back
 
 
 @dataclass(frozen=True)

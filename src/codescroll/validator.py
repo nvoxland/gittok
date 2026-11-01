@@ -56,7 +56,7 @@ from dataclasses import dataclass, field  # noqa: E402
 from datetime import UTC, datetime, timedelta, timezone  # noqa: E402
 from pathlib import PurePosixPath  # noqa: E402
 
-from codescroll import gitq  # noqa: E402
+from codescroll import claims, gitq  # noqa: E402
 
 MAX_SPAN = 40
 # The card front must fit one phone screen without scrolling: on iOS a scrolling front takes
@@ -499,6 +499,8 @@ class _Ctx:
     signals_for: object = None
     budget: int | None = None  # remaining illustrations; None = unlimited
     card_repos: tuple = ()
+    claim_checks: bool = True
+    lead_texts: list | None = None  # lead text of the packet, when known at submit time
 
 
 def _check_meme(card: dict, ctx: _Ctx) -> None:
@@ -761,6 +763,23 @@ def _check_explain_floor(card: dict, gc: _GitCache) -> None:
     )
 
 
+def _check_claims(card: dict, resolved: dict, gc: _GitCache, ctx: _Ctx) -> None:
+    """Numbers, dates, shas, names, and paths in the prose must match git (claims.py)."""
+    if not ctx.claim_checks:
+        return
+    bars = (resolved.get("visual") or {}).get("bars") or []
+    bad = claims.first_unverified(
+        card,
+        gc,
+        haystack=lambda: _explain_haystack(card, gc, set()),
+        signals_for=ctx.signals_for,
+        lead_texts=ctx.lead_texts,
+        extra_numbers=[b.get("value") for b in bars],
+    )
+    if bad:
+        raise _Reject("claim_unverified", bad.detail())
+
+
 def _validate_one(card: dict, gc: _GitCache, ctx: _Ctx) -> tuple[dict, dict, str]:
     personas = ctx.personas
     ctx.card_repos = tuple(card.get("repos", ())) if isinstance(card, dict) else ()
@@ -851,6 +870,7 @@ def _validate_one(card: dict, gc: _GitCache, ctx: _Ctx) -> tuple[dict, dict, str
             dirs.append(rel)
     card["dirs"] = dirs
     _check_explain_floor(card, gc)  # last: other checks keep their own reasons
+    _check_claims(card, resolved, gc, ctx)
 
     story_key = hashlib.sha1(
         (card["story_type"] + "|" + "|".join(sorted(keys))).encode()
@@ -886,6 +906,8 @@ def validate_cards(
     mascots: dict | None = None,
     signals_for=None,
     illustration_budget: int | None = None,
+    claim_checks: bool = True,
+    lead_texts: list | None = None,
 ) -> tuple[list[Accepted], list[Rejection]]:
     """Validate agent cards against the schema and git. Never raises for bad cards."""
     gc = _GitCache(repos=repos)
@@ -895,6 +917,8 @@ def validate_cards(
         mascots=mascots or {},
         signals_for=signals_for,
         budget=illustration_budget,
+        claim_checks=claim_checks,
+        lead_texts=lead_texts,
     )
     accepted: list[Accepted] = []
     rejected: list[Rejection] = []
