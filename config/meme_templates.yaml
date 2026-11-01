@@ -2,19 +2,64 @@
 # lines the template takes, and a hint for the agent. The renderer checks ids against the
 # running memegen instance's /templates list and logs any that do not exist.
 templates:
-  drake:      {lines: 2, hint: "top = rejected option, bottom = preferred option"}
-  db:         {lines: 3, hint: "distracted boyfriend: new shiny thing, the one looking, the ignored one"}
-  ds:         {lines: 3, hint: "two buttons: left choice, right choice, the sweating person"}
-  fine:       {lines: 2, hint: "this is fine: setup, 'this is fine'"}
-  gru:        {lines: 4, hint: "Gru's plan: three steps, the last one goes wrong, repeated"}
-  buzz:       {lines: 2, hint: "X, X everywhere"}
-  cmm:        {lines: 1, hint: "change my mind: a hot take"}
-  pigeon:     {lines: 3, hint: "is this a pigeon: person, butterfly, question"}
-  spongebob:  {lines: 2, hint: "mocking SpongeBob: setup, mocked repeat"}
-  stonks:     {lines: 2, hint: "a dubious win"}
-  astronaut:  {lines: 4, hint: "always has been: realization, 'always has been'"}
-  rollsafe:   {lines: 2, hint: "can't X if you Y"}
-  woman-cat:  {lines: 2, hint: "woman yelling at cat: accusation, smug reply"}
-  harold:     {lines: 2, hint: "hide the pain: smiling through it"}
-  both:       {lines: 2, hint: "why not both"}
-  afraid:     {lines: 2, hint: "afraid to ask: I don't know X, and at this point I'm afraid to ask"}
+  drake:      {lines: 2, hint: "top = rejected option, bottom = preferred option", fits: [hot_spot, before_after, cursed_clever_line]}
+  db:         {lines: 3, hint: "distracted boyfriend: new shiny thing, the one looking, the ignored one", fits: [secret_couples, new_arrival, whose_code]}
+  ds:         {lines: 3, hint: "two buttons: left choice, right choice, the sweating person", fits: [commit_drama, what_it_does, this_or_that]}
+  fine:       {lines: 2, hint: "this is fine: setup, 'this is fine'", fits: [hot_spot, commit_drama, ancient_todo]}
+  gru:        {lines: 4, hint: "Gru's plan: three steps, the last one goes wrong, repeated", fits: [commit_drama, before_after]}
+  buzz:       {lines: 2, hint: "X, X everywhere", fits: [hot_spot, new_arrival, ancient_todo]}
+  cmm:        {lines: 1, hint: "change my mind: a hot take", fits: [cursed_clever_line, what_it_does, whose_code]}
+  pigeon:     {lines: 3, hint: "is this a pigeon: person, butterfly, question", fits: [what_it_does, new_arrival, secret_couples]}
+  spongebob:  {lines: 2, hint: "mocking SpongeBob: setup, mocked repeat", fits: [commit_drama, cursed_clever_line, whose_code]}
+  stonks:     {lines: 2, hint: "a dubious win", fits: [rip, before_after, commit_drama]}
+  astronaut:  {lines: 4, hint: "always has been: realization, 'always has been'", fits: [archaeology, ancient_todo, secret_couples]}
+  rollsafe:   {lines: 2, hint: "can't X if you Y", fits: [commit_drama, ancient_todo, rip]}
+  woman-cat:  {lines: 2, hint: "woman yelling at cat: accusation, smug reply", fits: [whose_code, commit_drama, secret_couples]}
+  harold:     {lines: 2, hint: "hide the pain: smiling through it", fits: [hot_spot, ancient_todo, commit_drama]}
+  both:       {lines: 2, hint: "why not both", fits: [secret_couples, before_after, new_arrival]}
+  afraid:     {lines: 2, hint: "afraid to ask: I don't know X, and at this point I'm afraid to ask", fits: [archaeology, what_it_does, whose_code]}
+
+  pooh:       {lines: 2, hint: "tuxedo Pooh: the plain way, the fancy way of saying the same thing", fits: [cursed_clever_line, before_after, what_it_does]}
+  gb:         {lines: 4, hint: "galaxy brain: four steps, each more absurd or enlightened than the last", fits: [cursed_clever_line, commit_drama, what_it_does]}
+  midwit:     {lines: 3, hint: "midwit: simple take on the left, overwrought take in the middle, same simple take on the right", fits: [cursed_clever_line, what_it_does, before_after]}
+  panik-kalm-panik: {lines: 3, hint: "panic, calm, panic: bad news, a small comfort, worse news", fits: [commit_drama, hot_spot, ancient_todo]}
+  exit:       {lines: 3, hint: "left exit 12: the exit not taken, the exit taken, the car swerving (the temptation)", fits: [new_arrival, commit_drama, before_after]}
+  handshake:  {lines: 3, hint: "epic handshake: first thing, second thing, what they agree on", fits: [secret_couples, whose_code, hot_spot]}
+  reveal:     {lines: 4, hint: "Scooby-Doo reveal: the mystery, what is under the mask (setup, 'let's see who it is', the surprise)", fits: [whose_code, archaeology, secret_couples]}
+  spiderman:  {lines: 2, hint: "two Spider-Men pointing: thing A, thing B that is the same", fits: [secret_couples, whose_code, before_after]}
+  jim:        {lines: 2, hint: "Jim at the whiteboard: setup, the evidence or the number", fits: [hot_spot, whose_code, secret_couples]}
+  officespace: {lines: 2, hint: "that would be great: polite setup, the unreasonable ask", fits: [ancient_todo, commit_drama, new_arrival]}
+  noidea:     {lines: 2, hint: "I have no idea what I'm doing: setup, confident-but-lost punchline", fits: [commit_drama, cursed_clever_line, what_it_does]}
+  firsttry:   {lines: 2, hint: "first try!: the risky change, it worked first time", fits: [commit_drama, new_arrival, before_after]}
+  success:    {lines: 2, hint: "success kid: setup, small triumph", fits: [rip, before_after, new_arrival]}
+  ggg:        {lines: 2, hint: "good guy Greg: kind act, even kinder result", fits: [whose_code, rip, before_after]}
+  sb:         {lines: 2, hint: "scumbag brain: the helpful setup, the sabotage", fits: [commit_drama, hot_spot, ancient_todo]}
+  fry:        {lines: 2, hint: "not sure if X: not sure if A, or B", fits: [cursed_clever_line, what_it_does, whose_code]}
+  philosoraptor: {lines: 2, hint: "philosoraptor: a fake-deep question setup, the paradox", fits: [archaeology, what_it_does, rip]}
+  wonka:      {lines: 2, hint: "condescending Wonka: oh, you did X, tell me more about Y", fits: [commit_drama, ancient_todo, cursed_clever_line]}
+  mordor:     {lines: 2, hint: "one does not simply: do the thing that sounds easy", fits: [before_after, ancient_todo, what_it_does]}
+  morpheus:   {lines: 2, hint: "Morpheus: what if I told you, the surprising fact", fits: [archaeology, secret_couples, what_it_does]}
+  disastergirl: {lines: 2, hint: "disaster girl: the calm setup, the damage she caused", fits: [hot_spot, commit_drama, rip]}
+  dbg:        {lines: 2, hint: "expectation vs reality: what we expected, what the code did", fits: [before_after, new_arrival, commit_drama]}
+  interesting: {lines: 2, hint: "most interesting man: I don't always X, but when I do Y", fits: [whose_code, cursed_clever_line, commit_drama]}
+  ch:         {lines: 2, hint: "Captain Hindsight: the problem, the obvious fix too late", fits: [commit_drama, ancient_todo, archaeology]}
+  jw:         {lines: 2, hint: "probably not a good idea: the plan, the warning", fits: [commit_drama, cursed_clever_line, rip]}
+  gandalf:    {lines: 2, hint: "confused Gandalf: what happened, why it makes no sense", fits: [archaeology, what_it_does, whose_code]}
+  kermit:     {lines: 2, hint: "none of my business: the tempting snark, but that's none of my business", fits: [whose_code, ancient_todo, hot_spot]}
+  michael-scott: {lines: 2, hint: "Michael Scott no god no: the thing found, the reaction", fits: [archaeology, cursed_clever_line, ancient_todo]}
+  same:       {lines: 3, hint: "they're the same picture: picture A label, picture B label, 'they're the same picture'", fits: [before_after, secret_couples, commit_drama]}
+  balloon:    {lines: 3, hint: "running-away balloon: the thing let go, the person, what they wanted instead", fits: [rip, new_arrival, commit_drama]}
+  pool:       {lines: 3, hint: "ignoring the drowning kid: the real problem, the person, the distraction", fits: [hot_spot, ancient_todo, new_arrival]}
+  drowning:   {lines: 3, hint: "drowning high five: the person helping, the other helper, what is drowning", fits: [hot_spot, commit_drama, secret_couples]}
+  home:       {lines: 3, hint: "we have food at home: what you ask for, the reply, the sad version we actually have", fits: [new_arrival, before_after, rip]}
+  chair:      {lines: 6, hint: "American Chopper argument: six lines of an escalating argument that ends with a chair thrown", fits: [commit_drama, hot_spot, whose_code]}
+  captain:    {lines: 2, hint: "I am the captain now: what was lost or taken over, the new owner", fits: [whose_code, rip, new_arrival]}
+  regret:     {lines: 2, hint: "immediately regret: the decision, the immediate regret", fits: [commit_drama, cursed_clever_line, rip]}
+  gears:      {lines: 2, hint: "what really grinds my gears: the annoying thing", fits: [hot_spot, ancient_todo, secret_couples]}
+  older:      {lines: 2, hint: "an older code sir: old code setup, but it checks out", fits: [archaeology, ancient_todo, rip]}
+  tried:      {lines: 2, hint: "at least you tried: the effort, the failure", fits: [commit_drama, rip, before_after]}
+  mmm:        {lines: 2, hint: "minor mistake Marvin: the small mistake, the huge result", fits: [commit_drama, hot_spot, rip]}
+  whatyear:   {lines: 2, hint: "what year is it: the ancient thing found, the question of how old", fits: [archaeology, ancient_todo, rip]}
+  hagrid:     {lines: 2, hint: "I should not have said that: what was said or committed, the regret", fits: [commit_drama, whose_code, ancient_todo]}
+  remembers:  {lines: 2, hint: "Pepperidge Farm remembers: nostalgic memory of the old way", fits: [archaeology, rip, before_after]}
+  ive:        {lines: 2, hint: "Jony Ive redesigns: the thing, the sleek over-simplified version", fits: [before_after, new_arrival, what_it_does]}
