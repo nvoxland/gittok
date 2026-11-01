@@ -17,6 +17,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from codescroll import brief as brief_mod
 from codescroll import (
+    candidate_leads,
     db,
     gitq,
     knowledge,
@@ -199,12 +200,15 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
                 rules=steering.list_rules(conn),
                 unavailable_formats=unavailable_formats(cfg),
                 max_illustrations=cfg.settings.render.max_illustrations_per_run,
-                ledger=ledger.for_brief(conn, cfg, sorted(repo_signals), datetime.now(UTC)),
+                ledger=ledger.for_brief(
+                    conn, cfg, sorted(repo_signals), datetime.now(UTC), analyses=repo_signals
+                ),
                 lead_ok=ledger.offerable(conn, cfg, datetime.now(UTC)),
                 variants=ledger.variants(conn, cfg, datetime.now(UTC)),
                 variant_max_share=cfg.settings.agent.variant_max_share,
                 intro_share=cfg.settings.agent.intro_share,
                 novelty=knowledge.novelty_maps(conn, cfg, sorted(repo_signals)),
+                intro_prefer={r: candidate_leads.dirs_with_core(conn, r) for r in repo_signals},
                 **mix_inputs(conn, cfg),
             )
             packets = [
