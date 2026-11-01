@@ -117,6 +117,7 @@ def test_finish_run_summary_and_idempotence(conn, cfg, fixture_repo):
         "rejected": 3,
         "submissions": 1,
         "duration_ms": 90_000,
+        "seconds_per_card": 90.0,
         "top_reject_reasons": [["unknown_dir", 2], ["schema", 1]],
         "mcp_calls": {},
         "packets": {},
@@ -426,3 +427,12 @@ def test_check_reports_rejects_and_stores_nothing(conn, cfg, fixture_repo):
     runs.submit(conn, cfg, run_id, [good])
     again = runs.check(conn, cfg, run_id, [good])
     assert [r["reason"] for r in again["rejected"]] == ["duplicate_story"]
+
+
+def test_seconds_per_card_rounds_and_is_none_without_cards(conn, cfg, fixture_repo):
+    a = runs.open_run(conn, cfg, repo=None, brief="b", requested=3, now=NOW)
+    runs.submit(conn, cfg, a, [example_card(fixture_repo), text_card(fixture_repo)])
+    done = runs.finish_run(conn, a, now=NOW + timedelta(seconds=25))
+    assert done["accepted"] == 2 and done["seconds_per_card"] == 12.5
+    b = runs.open_run(conn, cfg, repo=None, brief="b", requested=3, now=NOW)
+    assert runs.finish_run(conn, b, now=NOW + timedelta(seconds=25))["seconds_per_card"] is None

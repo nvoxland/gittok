@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 
 from codescroll import validator
 
@@ -75,7 +75,17 @@ IMAGE_FORMATS = frozenset(
 
 # Formats a haiku can write when the story type is concrete. Everything else needs sonnet.
 HAIKU_FORMATS = frozenset(
-    {"meme", "text_meme", "chart", "breaking_news", "horoscope", "flags", "tier_list"}
+    {
+        "meme",
+        "text_meme",
+        "chart",
+        "breaking_news",
+        "horoscope",
+        "flags",
+        "tier_list",
+        "code_card",
+        "text_post",
+    }
 )
 
 
@@ -140,14 +150,52 @@ def _ranges(ranges: list) -> str:
     return ", ".join(str(a) if a == b else f"{a}-{b}" for a, b in ranges[:4])
 
 
+@dataclass(frozen=True)
+class Lead:
+    """One lead: its text plus the coordinates `materials` uses to attach evidence.
+
+    `kind` is "commit" (a sha, maybe with a path), "path" (a file, maybe with a line span),
+    or "none" (a directory, pair, or cross-repo lead: no single place to look).
+    """
+
+    story_type: str
+    repo: str
+    kind: str
+    commit: str | None = None
+    path: str | None = None
+    lines: tuple[int, int] | None = None
+    text: str = ""
+
+
 def leads_for(
     story_type: str, sig: dict, t0: int | None = None, limit: int = MAX_LEADS_PER_TYPE
 ) -> list[str]:
-    """Human-readable leads for one story type, drawn from precomputed signals.
+    """Human-readable leads for one story type, drawn from precomputed signals."""
+    return [x.text for x in lead_refs_for(story_type, sig, t0, limit)]
+
+
+def lead_refs_for(
+    story_type: str,
+    sig: dict,
+    t0: int | None = None,
+    limit: int = MAX_LEADS_PER_TYPE,
+    repo: str = "",
+) -> list[Lead]:
+    """Leads for one story type with coordinates, drawn from precomputed signals.
 
     Generated files and lockfiles are never leads. "Ancient" stories need material
     older than ANCIENT_DAYS before the repo's last commit (t0).
     """
+
+    def lead(text, kind="none", **coords) -> Lead:
+        return Lead(story_type, repo, kind, text=text, **coords)
+
+    def at_commit(text, sha, path=None) -> Lead:
+        return lead(text, "commit", commit=sha, path=path)
+
+    def at_path(text, path, line=None) -> Lead:
+        return lead(text, "path", path=path, lines=(line, line) if line else None)
+
     churn_files = sig.get("churn", {}).get("files", {})
     hot = [f for f in churn_files.get("90") or churn_files.get("365") or [] if _useful(f["path"])]
     wide = [
@@ -155,51 +203,77 @@ def leads_for(
         for f in churn_files.get("365") or churn_files.get("90") or []
         if _useful(f["path"]) and not _TEST.search(f["path"]) and not _DOC.search(f["path"])
     ]
-    out: list[str] = []
+    out: list[Lead] = []
     if story_type == "hot_spot":
         out += [
-            f"{f['path']}: {f['commits']} commits, {f['lines']} lines changed (90d)" for f in hot
+            at_path(
+                f"{f['path']}: {f['commits']} commits, {f['lines']} lines changed (90d)", f["path"]
+            )
+            for f in hot
         ]
         dirs = sig.get("churn", {}).get("dirs", {}).get("90", [])
-        out += [f"dir {d['path']}/: {d['commits']} commits (90d)" for d in dirs[:2]]
+        out += [lead(f"dir {d['path']}/: {d['commits']} commits (90d)") for d in dirs[:2]]
     elif story_type == "commit_drama":
         for r in sig.get("reverts", []):
             out.append(
-                f"revert {_sha(r['sha'])} ({_date(r['ts'])}, {r['author']}) undid "
-                f'{_sha(r.get("reverted_sha"))} "{r.get("reverted_subject", "?")}"'
+                at_commit(
+                    f"revert {_sha(r['sha'])} ({_date(r['ts'])}, {r['author']}) undid "
+                    f'{_sha(r.get("reverted_sha"))} "{r.get("reverted_subject", "?")}"',
+                    r["sha"],
+                )
             )
         for c in (c for c in sig.get("fix_chains", []) if _useful(c["path"])):
             subj = " -> ".join(f'{_sha(x["sha"])} "{x["subject"]}"' for x in c["commits"])
-            out.append(f"fix chain on {c['path']}: {subj}")
+            out.append(
+                at_commit(f"fix chain on {c['path']}: {subj}", c["commits"][-1]["sha"], c["path"])
+            )
         for h in sig.get("huge_diffs", []):
             out.append(
-                f'huge diff {_sha(h["sha"])} "{h["subject"]}" ({h["lines"]} lines, '
-                f"{h['author']}, {_date(h['ts'])})"
+                at_commit(
+                    f'huge diff {_sha(h["sha"])} "{h["subject"]}" ({h["lines"]} lines, '
+                    f"{h['author']}, {_date(h['ts'])})",
+                    h["sha"],
+                )
             )
         for n in sig.get("commit_times", {}).get("late_night", []):
             out.append(
-                f"late-night commit {_sha(n['sha'])} at {n['local_hour']:02d}:xx by "
-                f'{n["author"]}: "{n["subject"]}"'
+                at_commit(
+                    f"late-night commit {_sha(n['sha'])} at {n['local_hour']:02d}:xx by "
+                    f'{n["author"]}: "{n["subject"]}"',
+                    n["sha"],
+                )
             )
     elif story_type == "archaeology":
         out += [
-            f"{o['path']}:{o['line']} from {_date(o['ts'])} ({o['author']}, {_sha(o['sha'])}): "
-            f"{o['text'].strip()[:80]}"
+            at_path(
+                f"{o['path']}:{o['line']} from {_date(o['ts'])} ({o['author']}, {_sha(o['sha'])}): "
+                f"{o['text'].strip()[:80]}",
+                o["path"],
+                o["line"],
+            )
             for o in sig.get("oldest_lines", [])
             if _old(o["ts"], t0) and _useful(o["path"])
         ]
     elif story_type == "rip":
         out += [
-            f"{d['path']} born {_date(d.get('born_ts'))} ({_sha(d.get('born_sha'))}), died "
-            f"{_date(d['died_ts'])} ({_sha(d['died_sha'])}, {d['died_author']}): "
-            f'"{d["cause"]}", lived {d.get("lived_days", "?")} days'
+            at_commit(
+                f"{d['path']} born {_date(d.get('born_ts'))} ({_sha(d.get('born_sha'))}), died "
+                f"{_date(d['died_ts'])} ({_sha(d['died_sha'])}, {d['died_author']}): "
+                f'"{d["cause"]}", lived {d.get("lived_days", "?")} days',
+                d["died_sha"],
+                d["path"],
+            )
             for d in sig.get("deleted_paths", [])
             if _useful(d["path"])
         ]
     elif story_type == "ancient_todo":
         out += [
-            f"{t['path']}:{t['line']} {t['tag']} from {_date(t['ts'])} ({t['author']}, "
-            f"{_sha(t['sha'])}): {t['text'].strip()[:80]}"
+            at_path(
+                f"{t['path']}:{t['line']} {t['tag']} from {_date(t['ts'])} ({t['author']}, "
+                f"{_sha(t['sha'])}): {t['text'].strip()[:80]}",
+                t["path"],
+                t["line"],
+            )
             for t in sig.get("todo_ages", [])
             if _old(t["ts"], t0) and _COMMENT_TODO.search(t["text"]) and _useful(t["path"])
         ]
@@ -209,17 +283,25 @@ def leads_for(
             key=lambda c: c.get("same_dir", False),
         )
         out += [
-            f"{c['a']} + {c['b']}: changed together {c['count']} times (jaccard {c['jaccard']})"
+            at_path(
+                f"{c['a']} + {c['b']}: changed together {c['count']} times "
+                f"(jaccard {c['jaccard']})",
+                c["a"],
+            )
             for c in pairs
         ]
     elif story_type == "whose_code":
         for d, authors in sig.get("author_shares", {}).get("by_dir", {}).items():
             top = ", ".join(f"{a['author']} {round(a['share'] * 100)}%" for a in authors[:3])
-            out.append(f"dir {d}/: {top}")
+            out.append(lead(f"dir {d}/: {top}"))
     elif story_type == "new_arrival":
         out += [
-            f"{n['path']} added {_date(n['ts'])} in {_sha(n['sha'])} by {n['author']}: "
-            f'"{n["subject"]}"'
+            at_commit(
+                f"{n['path']} added {_date(n['ts'])} in {_sha(n['sha'])} by {n['author']}: "
+                f'"{n["subject"]}"',
+                n["sha"],
+                n["path"],
+            )
             for n in sig.get("new_files", [])
             if _useful(n["path"])
         ]
@@ -234,11 +316,21 @@ def leads_for(
                     if h
                     else "the visual is the file at that fix's first parent"
                 )
-                out.append(f'fix {_sha(x["sha"])} on {c["path"]}: "{x["subject"]}" ({where})')
+                out.append(
+                    at_commit(
+                        f'fix {_sha(x["sha"])} on {c["path"]}: "{x["subject"]}" ({where})',
+                        x["sha"],
+                        c["path"],
+                    )
+                )
     elif story_type == "before_after":
         recent = sig.get("commits_since", {}).get("commits", [])
         out += [
-            f'recent commit {_sha(c["sha"])} ({_date(c["ts"])}, {c["author"]}): "{c["subject"]}"'
+            at_commit(
+                f"recent commit {_sha(c['sha'])} ({_date(c['ts'])}, {c['author']}): "
+                f'"{c["subject"]}"',
+                c["sha"],
+            )
             for c in recent
         ]
         hunks = _fix_hunks(sig)
@@ -248,9 +340,18 @@ def leads_for(
             before = (
                 f" (before: {_sha(h['parent'])}, changed lines {_ranges(h['ranges'])})" if h else ""
             )
-            out.append(f'fix {_sha(x["sha"])} on {c["path"]}: "{x["subject"]}"{before}')
+            out.append(
+                at_commit(
+                    f'fix {_sha(x["sha"])} on {c["path"]}: "{x["subject"]}"{before}',
+                    x["sha"],
+                    c["path"],
+                )
+            )
     else:  # explanatory types: point at central, much-edited files
-        out += [f"{f['path']} ({f['commits']} commits in the last year)" for f in wide]
+        out += [
+            at_path(f"{f['path']} ({f['commits']} commits in the last year)", f["path"])
+            for f in wide
+        ]
     return out[:limit]
 
 
@@ -516,6 +617,7 @@ class Packet:
     tones: list[str]
     personas: list[str]
     leads: list[str]
+    lead_refs: list[dict] = field(default_factory=list)  # Lead coordinates, same order as leads
     formats: list[str] = field(default_factory=list)
     repos: list[str] = field(default_factory=list)  # all repos the packet covers; [0] is `repo`
 
@@ -533,8 +635,6 @@ class Brief:
     unavailable: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
-        from dataclasses import asdict
-
         return {
             "count": self.count,
             "quotas": self.quotas,
@@ -898,6 +998,7 @@ def build_brief(
     used: dict[str, int] = {}
     spent = 0
     leads_by: dict[tuple[str, str], list[str]] = {}
+    ref_by: dict[tuple[str, str], dict[str, Lead]] = {}  # lead text -> its coordinates
     repo_total: dict[str, int] = {}
     for ci, (category, n) in enumerate(sorted(quotas.items(), key=lambda kv: (-kv[1], kv[0]))):
         if not n:
@@ -967,10 +1068,16 @@ def build_brief(
             t0 = repo_signals[repo].get("t0")
             for t in stories_in[category]:
                 if (repo, t) not in leads_by:
-                    wide = leads_for(
-                        t, sig, t0, limit=1000 if prefer_dirs or ban_dirs else MAX_LEADS_PER_TYPE
+                    wide = lead_refs_for(
+                        t,
+                        sig,
+                        t0,
+                        limit=1000 if prefer_dirs or ban_dirs else MAX_LEADS_PER_TYPE,
+                        repo=repo,
                     )
-                    leads_by[(repo, t)] = focused_first(wide)[:MAX_LEADS_PER_TYPE]
+                    ref_by[(repo, t)] = {x.text: x for x in wide}
+                    wide_text = [x.text for x in wide]
+                    leads_by[(repo, t)] = focused_first(wide_text)[:MAX_LEADS_PER_TYPE]
             usable = [t for t in stories_in[category] if leads_by[(repo, t)]] or list(
                 stories_in[category]
             )
@@ -1056,9 +1163,20 @@ def build_brief(
                 chunk = group[start : start + packet_size]
                 types = list(dict.fromkeys(t for _, _, t, _, _ in chunk))
                 if grp:
-                    plead = [f"[{t}] {line}" for t in types for line in cross_by_group[grp][t]]
+                    pairs = [
+                        (f"[{t}] {line}", Lead(t, repo, "none", text=line))
+                        for t in types
+                        for line in cross_by_group[grp][t]
+                    ]
                 else:
-                    plead = [f"[{t}] {line}" for t in types for line in leads_by[(repo, t)]]
+                    pairs = [
+                        (f"[{t}] {line}", ref_by[(repo, t)][line])
+                        for t in types
+                        for line in leads_by[(repo, t)]
+                    ]
+                if not pairs:
+                    none = "No precomputed leads: explore with list_dir and git_log."
+                    pairs = [(none, Lead(types[0], repo, "none", text=none))]
                 packets.append(
                     Packet(
                         id=f"p{len(packets) + 1}",
@@ -1072,7 +1190,8 @@ def build_brief(
                             persona_cycle[(slot_no + i) % len(persona_cycle)]
                             for i in range(len(chunk))
                         ],
-                        leads=plead or ["No precomputed leads: explore with list_dir and git_log."],
+                        leads=[line for line, _ in pairs],
+                        lead_refs=[asdict(ref) for _, ref in pairs],
                         formats=[f for _, _, _, f, _ in chunk],
                         repos=list(unit_repos),
                     )

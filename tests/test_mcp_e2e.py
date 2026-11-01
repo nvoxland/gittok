@@ -231,3 +231,19 @@ async def test_explicit_count_still_opens_run(fixture_repo, tmp_path):
     async with Client(server) as client:
         out = data(await client.call_tool("get_brief", {"count": 2}))
         assert out["run_id"] and "nothing_to_do" not in out
+
+
+async def test_get_packet_attaches_materials(fixture_repo, tmp_path):
+    cfg = make_config(fixture_repo, tmp_path, packet_size=2)
+    server = mcp_server.build_server(lambda: cfg)
+    async with Client(server) as client:
+        brief = data(await client.call_tool("get_brief", {"count": 6}))
+        run_id = brief["run_id"]
+        assert "materials_markdown" not in brief
+        seen = []
+        for pk in brief["packets"]:
+            args = {"run_id": run_id, "packet_id": pk["id"]}
+            seen.append(data(await client.call_tool("get_packet", args)))
+        assert all(len(g["lead_refs"]) == len(g["leads"]) for g in seen)
+        joined = "\n".join(g["materials_markdown"] for g in seen)
+        assert "```diff" in joined or "blob " in joined

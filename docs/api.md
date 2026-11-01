@@ -52,6 +52,19 @@ One `Card`, or 404.
 
 Response: `{ "stored": 3 }`. Unknown types are rejected with 422.
 
+## MCP `get_packet(run_id, packet_id)`
+
+Not an HTTP route. A writer subagent calls it for one work packet. Fields:
+
+- `id`, `repo`, `repos`, `count`, `suggested_model`, `categories`, `story_types`, `formats`, `tones`, `personas`.
+- `leads`: lead text, one per line of `packet_markdown`.
+- `lead_refs`: one object per lead, same order. Keys: `story_type`, `repo`, `kind` (`commit`, `path`, or `none`), `commit`, `path`, `lines` (`[start, end]` or null), `text`.
+- `packet_markdown`: the packet, focus lines, and recent stories not to repeat.
+- `materials_markdown`: evidence for the leads. A commit lead gets subject, author, date, `--stat` (15 files), and the diff of the most-changed file (80 lines). A path lead gets the blob sha, 60 numbered lines, top 3 blame authors, and first and last commit dates. At most 6 KB per lead and 30 KB per packet, cut with `[truncated]`. Computed on each call, not stored.
+- `guidance_markdown`: card-writing rules and the sections for the packet's formats.
+
+`finish_run` returns `seconds_per_card`: run duration divided by accepted cards, rounded to 0.1 s (null when no card was accepted).
+
 ## GET /healthz
 
 `{ "ok": true }`

@@ -1323,3 +1323,36 @@ def test_image_share_respects_budget_bans_and_unavailable():
         "visual_mix": {"image_min_share": 1.0},
     }
     assert set(_fmts(build(count=4, defaults=d))) == {"quiz"}
+
+
+def test_lead_refs_match_leads_order_and_coordinates():
+    b = build(count=10, packet_size=5)
+    for p in b.packets:
+        assert len(p.lead_refs) == len(p.leads)
+        for text, ref in zip(p.leads, p.lead_refs, strict=True):
+            if ref["kind"] == "commit":
+                assert len(ref["commit"]) == 40
+                assert ref["commit"][:10] in text
+            elif ref["kind"] == "path":
+                assert ref["path"] in text
+            else:
+                assert ref["kind"] == "none"
+            assert ref["repo"] == "fixture"
+            assert text == f"[{ref['story_type']}] {ref['text']}"
+    kinds = {r["kind"] for p in b.packets for r in p.lead_refs}
+    assert {"commit", "path"} <= kinds
+
+
+def test_lead_refs_for_known_stories():
+    sig = signals()
+    later = T0 + 400 * 86400
+    refs = brief.lead_refs_for("ancient_todo", sig, later)
+    assert [r.text for r in refs] == brief.leads_for("ancient_todo", sig, later)
+    assert refs[0].kind == "path" and refs[0].path == "src/util.py" and refs[0].lines == (1, 1)
+    rip = brief.lead_refs_for("rip", sig)[0]
+    assert (rip.kind, rip.commit, rip.path) == ("commit", "2" * 40, "src/legacy.py")
+    assert brief.lead_refs_for("whose_code", sig)[0].kind == "none"
+
+
+def test_code_card_and_text_post_are_haiku_formats():
+    assert {"code_card", "text_post"} <= brief.HAIKU_FORMATS

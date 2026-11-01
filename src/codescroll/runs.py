@@ -239,6 +239,11 @@ def _summary(run: dict) -> dict:
         "rejected": run["rejected"],
         "submissions": run["submissions"],
         "duration_ms": run["duration_ms"],
+        "seconds_per_card": (
+            round(run["duration_ms"] / 1000 / run["accepted"], 1)
+            if run["accepted"] and run["duration_ms"] is not None
+            else None
+        ),
         "top_reject_reasons": [[k, v] for k, v in counts.most_common(5)],
         "mcp_calls": run["meta"].get("mcp_calls", {}),
         "packets": run["meta"].get("packet_results", {}),

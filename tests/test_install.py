@@ -302,7 +302,18 @@ def test_repo_writer_agent_only_has_codescroll_tools():
     tools_line = next(ln for ln in front.splitlines() if ln.startswith("tools:"))
     tools = [t.strip() for t in tools_line.removeprefix("tools:").split(",")]
     assert tools and all(t.startswith("mcp__codescroll__") for t in tools)
-    assert {"mcp__codescroll__get_packet", "mcp__codescroll__check_cards"} <= set(tools)
+    assert "mcp__codescroll__get_packet" in tools
+    assert "mcp__codescroll__check_cards" not in tools
     assert "mcp__codescroll__submit_cards" in tools
     assert not {"mcp__codescroll__add_rule", "mcp__codescroll__get_brief"} & set(tools)
     assert "model: sonnet" in front
+
+
+def test_writer_agent_has_no_check_cards_step():
+    root = Path(__file__).resolve().parents[1]
+    for rel in (
+        ".claude/agents/codescroll-writer.md",
+        "src/codescroll/prompts/generate.md",
+        ".claude/skills/codescroll-generate/SKILL.md",
+    ):
+        assert "check_cards" not in (root / rel).read_text(), rel

@@ -20,6 +20,7 @@ from codescroll import (
     db,
     gitq,
     learning,
+    materials,
     render,
     research,
     runs,
@@ -33,9 +34,10 @@ from codescroll.config import Config, ConfigError, load_config
 INSTRUCTIONS = """\
 CodeScroll turns git history into feed cards. To generate cards, follow the
 codescroll-generate skill: the driver calls get_brief and gives each packet id to a cheap
-subagent (the packet's suggested model). The subagent calls get_packet, researches with
-git_log / git_show / git_blame / git_grep / read_file / list_dir, runs check_cards, and
-submits with submit_cards(packet_id). The driver then calls finish_run.
+subagent (the packet's suggested model). The subagent calls get_packet (leads, attached
+materials, guidance), researches with git_log / git_show / git_blame / git_grep /
+read_file / list_dir only for what the materials lack, and submits with
+submit_cards(packet_id). The driver then calls finish_run.
 All repo tools are read-only and take a configured repo name, never a path."""
 
 _ERRORS = (
@@ -211,13 +213,16 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
     def get_packet(cfg: Config, run_id: str, packet_id: str) -> dict:
         """One work packet: its leads (packet_markdown) and card-writing guidance.
 
-        guidance_markdown has the base rules plus the sections for this packet's formats.
-        Write exactly `count` cards, one per entry in `formats`.
+        lead_refs has the coordinates of each lead (same order as leads). materials_markdown
+        has the evidence for them: commit stat and diff, or numbered file lines and blame.
+        Research only what it lacks. guidance_markdown has the base rules plus the sections
+        for this packet's formats. Write exactly `count` cards, one per entry in `formats`.
         """
         with _db(cfg) as conn:
             pk = runs.get_packet(conn, run_id, packet_id)
         return {
             **pk,
+            "materials_markdown": materials.packet_materials(cfg, pk.get("lead_refs") or []),
             "guidance_markdown": brief_mod.guidance_markdown(
                 cfg.personas, pk["formats"], cfg.meme_templates, cfg.mascots
             ),

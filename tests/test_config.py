@@ -99,7 +99,7 @@ def test_settings_defaults_when_absent(tmp_path):
     s = cfg.settings
     assert (s.server.host, s.server.port) == ("127.0.0.1", 8008)
     assert (s.agent.default_count, s.agent.max_count) == (10, 20)
-    assert (s.agent.per_day_runs, s.agent.packet_size) == (4, 4)
+    assert (s.agent.per_day_runs, s.agent.packet_size) == (4, 2)
     assert s.analysis.churn_windows_days == (30, 90, 365)
     assert s.analysis.history_window_days == 720
     assert s.research.max_read_lines == 300

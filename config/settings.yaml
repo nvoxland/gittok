@@ -6,7 +6,7 @@ agent:
   default_count: 10            # cards per get_brief
   max_count: 20                # get_brief refuses larger counts
   per_day_runs: 10             # get_brief refuses to open more runs per day
-  packet_size: 4               # cards per work packet (3-5)
+  packet_size: 2               # cards per work packet (1-5)
   target_runway_days: 3        # get_brief makes cards until the unseen backlog lasts this long
   min_burn_per_day: 10         # cards per day assumed at least, so a quiet week does not starve
 analysis:
