@@ -128,18 +128,24 @@ def refresh_candidates(conn, repo: str, sig: dict, t0, head_sha: str, now: datet
     return len(rows)
 
 
+_SERVER_PREFIXES = (requests.KEY_PREFIX, social.NOTIF_PREFIX)
+
+
 def _current(conn, repo: str, story_type: str) -> list:
     """Rows seen in the repo's latest refresh, i.e. still present at its current head.
 
     Unserved follow-up requests ("req:" keys) always count: no refresh drops them.
     """
-    return conn.execute(
+    rows = conn.execute(
         "SELECT * FROM leads WHERE repo = ? AND story_type = ? AND (last_seen_at = "
         "(SELECT MAX(last_seen_at) FROM leads WHERE repo = ? AND lead_key NOT LIKE 'req:%' "
         "AND lead_key NOT LIKE 'notif:%') OR ((lead_key LIKE 'req:%' OR lead_key LIKE 'notif:%') "
         "AND last_covered_at IS NULL)) ORDER BY id",
         (repo, story_type, repo),
     ).fetchall()
+    if story_type in brief.CANDIDATE_STORIES:  # churn rows from before candidate leads are dead
+        rows = [r for r in rows if r["lead_key"].startswith(("cand:", *_SERVER_PREFIXES))]
+    return rows
 
 
 def _interest(path: str, means: dict[str, tuple[float, float]]) -> float:
@@ -153,7 +159,7 @@ def _interest(path: str, means: dict[str, tuple[float, float]]) -> float:
 
 def _pinned(r) -> bool:
     """Server-made leads (follow-up requests, hot-file notifications) skip filters and go first."""
-    return r["lead_key"].startswith((requests.KEY_PREFIX, social.NOTIF_PREFIX))
+    return r["lead_key"].startswith(_SERVER_PREFIXES)
 
 
 def _lead(r) -> brief.Lead:

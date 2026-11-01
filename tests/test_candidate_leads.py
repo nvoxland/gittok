@@ -160,6 +160,18 @@ def test_for_brief_refreshes_candidate_leads_when_ratings_arrive_later(conn, cfg
     assert got[("r", "hot_spot")]  # other types stay current after the candidate refresh
 
 
+def test_old_churn_rows_of_the_nine_types_are_no_longer_current(conn, cfg):
+    conn.execute(
+        "INSERT INTO leads(repo, story_type, kind, path, lead_key, text, strength, head_sha, "
+        "first_seen_at, last_seen_at) VALUES ('r', 'what_it_does', 'path', 'src/x.py', "
+        "'p:src/x.py', 'src/x.py (9 commits in the last year)', 1.0, 'h1', ?, ?)",
+        (ledger.iso(NOW), ledger.iso(NOW)),
+    )
+    refresh(conn, {"churn": {"files": {"90": [{"path": "src/x.py", "commits": 3, "lines": 9}]}}})
+    assert ledger.ranked(conn, cfg, "r", "what_it_does", NOW, 5) == []
+    assert ("r", "what_it_does") not in ledger.for_brief(conn, cfg, ["r"], NOW)
+
+
 # --- brief ---------------------------------------------------------------
 
 
