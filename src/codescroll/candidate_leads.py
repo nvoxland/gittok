@@ -100,14 +100,10 @@ def _text(c: dict, rated: bool) -> str:
     )
 
 
-def _eligible(story_type: str, c: dict, sig: dict, t0, cache: dict) -> float | None:
+def _eligible(story_type: str, c: dict, sig: dict, t0, cache: dict, files=None) -> float | None:
     """Fit of one window to a story type, folding in the extra rule of guess_who/guess_when."""
     spec = SPECS[story_type]
-    if (
-        not brief.code_path(c["path"])
-        or brief._TEST.search(c["path"])
-        or brief._DOC.search(c["path"])
-    ):
+    if not brief.code_path(c["path"], files) or brief.test_or_doc(c["path"], files):
         return None
     fit = _fit(spec, c["tag"], c.get("verdict"))
     if fit is None:
@@ -125,7 +121,7 @@ def _eligible(story_type: str, c: dict, sig: dict, t0, cache: dict) -> float | N
 
 
 def leads_for(
-    conn, repo: str, story_type: str, sig: dict, t0, limit: int
+    conn, repo: str, story_type: str, sig: dict, t0, limit: int, files=None
 ) -> list[tuple[brief.Lead, float]]:
     """(lead, strength) pairs for one story type, best first. Empty when no window fits."""
     spec = SPECS[story_type]
@@ -135,7 +131,7 @@ def leads_for(
     scored: list[tuple[float, float, dict]] = []
     for r in rated_rows:
         c = {**r, "reason": r["reason"], "scout_why": r["why"]}
-        fit = _eligible(story_type, c, sig, t0, cache)
+        fit = _eligible(story_type, c, sig, t0, cache, files)
         if fit is not None:
             scored.append(
                 (r["teachable"] / 5 * fit * factors.get(rule_stats.rule_key(c), 1.0), r["score"], c)
@@ -153,7 +149,7 @@ def leads_for(
             )
         ]
         c_pool = [{**c, "reason": c["why"]} for c in pool]
-        elig = [(c, _eligible(story_type, c, sig, t0, cache)) for c in c_pool]
+        elig = [(c, _eligible(story_type, c, sig, t0, cache, files)) for c in c_pool]
         elig = [(c, f) for c, f in elig if f is not None]
         scored = [
             (

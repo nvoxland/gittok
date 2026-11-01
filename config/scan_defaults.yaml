@@ -1,0 +1,131 @@
+# Bootstrap file set for a repo that has NO profile (config/profiles/<repo>.yaml).
+# Which files CodeScroll reads, and which are tests, fixtures, generated, docs or vendored,
+# is decided per project by its profile. Nothing like this lives in the Python code.
+#
+# A profile REPLACES each of these keys it sets (no merging), so the profiling agent is in
+# control. A key the profile leaves out falls back to the value here. Globs: "*" stays inside
+# one path part, "**" crosses parts, a glob with no "/" matches the file name at any depth.
+
+# Files that are read. Derived from the extensions in languages.yaml.
+scan:
+  - '*.py'
+  - '*.clj'
+  - '*.cljs'
+  - '*.cljc'
+  - '*.bb'
+  - '*.ts'
+  - '*.tsx'
+  - '*.js'
+  - '*.jsx'
+  - '*.mjs'
+  - '*.cjs'
+  - '*.svelte'
+
+# Files never read: hidden dirs, dependency and build dirs, lockfiles, minified and
+# machine-generated suffixes.
+ignore:
+  - '**/.*/**'
+  - '**/node_modules/**'
+  - '**/vendor/**'
+  - '**/vendored/**'
+  - '**/third_party/**'
+  - '**/third-party/**'
+  - '**/dist/**'
+  - '**/build/**'
+  - '**/target/**'
+  - '**/out/**'
+  - '**/.venv/**'
+  - '**/venv/**'
+  - '**/__pycache__/**'
+  - '**/.svelte-kit/**'
+  - '**/site-packages/**'
+  - '**/bower_components/**'
+  - '*.min.*'
+  - '*-lock.*'
+  - '*.lock'
+  - '*_pb2.py'
+  - '*.pb.*'
+  - '*.d.ts'
+
+# Kinds classify files that are read. Generated, vendored and fixture files are not mined
+# (no candidates), but stay classified for the intro, the repo map and the leads.
+kinds:
+  test:
+    - '**/test/**'
+    - '**/tests/**'
+    - '**/spec/**'
+    - '**/specs/**'
+    - '**/__tests__/**'
+    - '**/testdata/**'
+    - '*_test.*'
+    - '*_spec.*'
+    - '*.test.*'
+    - '*.spec.*'
+    - 'test_*'
+  fixture:
+    - '**/fixture/**'
+    - '**/fixtures/**'
+    - '**/cassette/**'
+    - '**/cassettes/**'
+    - '**/snapshot/**'
+    - '**/snapshots/**'
+    - '**/__snapshots__/**'
+    - '**/mock/**'
+    - '**/mocks/**'
+    - '**/__mocks__/**'
+  generated:
+    - '**/generated/**'
+    - '**/gen/**'
+    - '**/dist/**'
+    - '**/build/**'
+    - '**/target/**'
+  vendored:
+    - '**/vendor/**'
+    - '**/vendored/**'
+    - '**/third_party/**'
+    - '**/node_modules/**'
+  docs:
+    - '**/doc/**'
+    - '**/docs/**'
+    - '**/documentation/**'
+    - '*.md'
+    - '*.markdown'
+    - '*.rst'
+    - '*.txt'
+    - '*.adoc'
+    - '*.log'
+    - '*.csv'
+
+# A read file whose first 5 lines match one of these (case-insensitive regexes) is generated.
+generated_markers:
+  - '@generated|do not edit|auto-?generated|code generated'
+
+# Paths that are never a lead for a story (lockfiles, source maps, binary assets), also with
+# a profile. Matched on top of the file set.
+noise:
+  - '**/.beads/**'
+  - '**/node_modules/**'
+  - '**/dist/**'
+  - '**/build/**'
+  - '**/vendor/**'
+  - '**/.svelte-kit/**'
+  - 'package-lock.json'
+  - 'yarn.lock'
+  - 'pnpm-lock.yaml'
+  - 'uv.lock'
+  - 'poetry.lock'
+  - 'Cargo.lock'
+  - 'Gemfile.lock'
+  - 'go.sum'
+  - 'deps.lock.json'
+  - '*.min.js'
+  - '*.min.css'
+  - '*.map'
+  - '*.lock'
+  - '*.jsonl'
+  - '*.svg'
+  - '*.png'
+  - '*.jpg'
+  - '*.gif'
+  - '*.ico'
+  - '*.pdf'

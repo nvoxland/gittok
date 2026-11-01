@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from codescroll import candidates, db, gitq, ledger
+from codescroll import candidates, db, gitq, ledger, profiles
 from codescroll.config import AnalysisSettings, Repo
 
 
@@ -684,7 +684,14 @@ def analyze(
     result = {kind: db.loads(text) for kind, text, _ in computed}
     candidates.refresh(conn, repo.name, path, head, t0, result, settings, profile)
     ledger.refresh(
-        conn, repo.name, result, t0, head, gitq.ls_tree_blobs(path, ref), datetime.now(UTC)
+        conn,
+        repo.name,
+        result,
+        t0,
+        head,
+        gitq.ls_tree_blobs(path, ref),
+        datetime.now(UTC),
+        profiles.fileset_for(profile),
     )
     return {**meta, "cached": False, "signals": result}
 

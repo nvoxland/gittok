@@ -127,6 +127,7 @@ def _brief(args) -> int:
             min_spot_the_bug=cfg.settings.agent.min_spot_the_bug_per_run,
             novelty=knowledge.novelty_maps(conn, cfg, sorted(repo_signals)),
             intro_prefer={r: candidate_leads.dirs_with_core(conn, r) for r in repo_signals},
+            filesets={r: cfg.fileset(r) for r in repo_signals},
             **mcp_server.mix_inputs(conn, cfg),
         )
     print(b.to_markdown())

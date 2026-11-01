@@ -182,6 +182,7 @@ class Config:
     meme_templates: dict[str, MemeTemplate] = field(default_factory=dict)
     languages: dict = field(default_factory=dict)  # config/languages.yaml
     profiles: dict = field(default_factory=dict)  # repo -> profiles.Profile (config/profiles/)
+    scan_defaults: dict = field(default_factory=dict)  # config/scan_defaults.yaml
 
     def repo(self, name: str) -> Repo:
         try:
@@ -194,6 +195,12 @@ class Config:
         from .profiles import Profile
 
         return self.profiles.get(repo) or Profile()
+
+    def fileset(self, repo: str):
+        """The repo's file set: its profile's scan, ignore and kinds, else the bootstrap."""
+        from .profiles import fileset_for
+
+        return fileset_for(self.profile(repo), self.scan_defaults or None)
 
     def role_for(self, repo: str, path: str) -> str | None:
         """One-line purpose of the dir that holds `path`, from the repo's profile."""
@@ -425,7 +432,7 @@ def _load_meme_templates(root: Path) -> dict[str, MemeTemplate]:
 _LANG_KEYS = {
     "extensions", "comment", "block", "func_start", "entry_points", "entry_paths",
     "import_style", "imports", "public", "branch", "skipped_test", "catch_all", "sleep",
-    "regex_literal", "bit_ops", "meta", "commented_code", "test_file", "thresholds",
+    "regex_literal", "bit_ops", "meta", "commented_code", "thresholds",
 }  # fmt: skip
 
 
@@ -456,6 +463,20 @@ def load_languages(root: Path | None = None) -> dict:
     return {"thresholds": _mapping(data.get("thresholds"), "thresholds", file), "languages": langs}
 
 
+_SCAN_KEYS = {"scan", "ignore", "kinds", "generated_markers", "noise"}
+
+
+def load_scan_defaults(root: Path | None = None) -> dict:
+    """config/scan_defaults.yaml: the file set of a repo that has no profile."""
+    root = project_root() if root is None else Path(root)
+    file = root / "config" / "scan_defaults.yaml"
+    if not file.is_file():  # a test root without the file: use the shipped one
+        file = Path(__file__).parents[2] / "config" / "scan_defaults.yaml"
+    data = _mapping(_read(file, required=True), "scan_defaults.yaml", file)
+    _check_keys(data, _SCAN_KEYS, "scan_defaults.yaml", file)
+    return data
+
+
 def load_config(root: Path | None = None) -> Config:
     root = project_root() if root is None else Path(root).resolve()
     from .profiles import load_profiles
@@ -474,4 +495,5 @@ def load_config(root: Path | None = None) -> Config:
         meme_templates=_load_meme_templates(root),
         languages=load_languages(root),
         profiles=load_profiles(root),
+        scan_defaults=load_scan_defaults(root),
     )

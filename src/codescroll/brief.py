@@ -12,7 +12,8 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 
-from codescroll import candidates, knowledge, validator
+from codescroll import knowledge, validator
+from codescroll.profiles import FileSet, fileset_for
 
 _DRAMA = (
     "commit_drama",
@@ -171,52 +172,40 @@ def _sha(s) -> str:
     return (s or "?")[:10]
 
 
-_NOISE = re.compile(
-    r"(^|/)(\.beads|node_modules|dist|build|vendor|\.svelte-kit)/"
-    r"|(^|/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|uv\.lock|poetry\.lock|Cargo\.lock"
-    r"|Gemfile\.lock|go\.sum|deps\.lock\.json)$"
-    r"|\.(min\.js|min\.css|map|lock|jsonl|svg|png|jpg|gif|ico|pdf)$"
-)
-_TEST = re.compile(
-    r"(^|/)(tests?|spec|__tests__)/|(_test|_spec|\.test|\.spec)\.[a-z]+$|(^|/)test_[^/]+$"
-)
-_DOC = re.compile(r"\.(md|markdown|txt|rst|adoc)$", re.IGNORECASE)
+def _fs(files: FileSet | None) -> FileSet:
+    return files or fileset_for(None)
+
+
+def _useful(path: str, files: FileSet | None = None) -> bool:
+    """False for lockfiles, build output, source maps and binary assets (file set + noise)."""
+    return not _fs(files).is_noise(path)
+
+
+def test_or_doc(path: str, files: FileSet | None = None) -> bool:
+    """True for a test file or a doc file, by the file set's kinds."""
+    fs = _fs(files)
+    return fs.is_test(path) or fs.matches(path, "docs")
+
+
 _COMMENT_TODO = re.compile(r"(#|//|;|--|/\*|\*|<!--)\s*(TODO|FIXME|HACK|XXX)\b")
 ANCIENT_DAYS = 90
 
 
-def _useful(path: str) -> bool:
-    return not _NOISE.search(path)
+def code_path(path: str, files: FileSet | None = None) -> bool:
+    """True when `path` is not ignored and its dir is no test, fixture, vendored, generated or
+    docs dir. The file set's ignore globs and kinds decide (the profile, or the bootstrap)."""
+    fs = _fs(files)
+    return not fs.ignored(path) and fs.is_code_dir(path.rpartition("/")[0])
 
 
-# Dirs that hold no code worth an intro: hidden dirs, tests, fixtures, recorded HTTP, snapshots,
-# vendored or generated code, docs. One list, used for intro slots (candidates.SKIP_PATH covers
-# hidden and vendored dirs for the miners).
-_NON_CODE_DIR = re.compile(
-    r"^(\.[^/]*|tests?|specs?|__tests__|fixtures?|cassettes?|snapshots?|__snapshots__|mocks?"
-    r"|__mocks__|testdata|vendor|vendored|third_party|generated|gen|dist|build|target"
-    r"|docs?|documentation|node_modules)$",
-    re.IGNORECASE,
-)
+def code_file(path: str, files: FileSet | None = None) -> bool:
+    """True for a source file in a code dir: `code_path`, and not of kind docs."""
+    return code_path(path, files) and not _fs(files).matches(path, "docs")
 
 
-def code_path(path: str) -> bool:
-    """True when no parent dir of `path` is hidden, test, fixture, vendored, generated or docs."""
-    dirs = path.split("/")[:-1]
-    return not any(_NON_CODE_DIR.match(d) for d in dirs) and not candidates.SKIP_PATH.search(path)
-
-
-_DOC_SUFFIX = re.compile(r"\.(md|markdown|rst|txt|adoc|log|csv)$", re.IGNORECASE)
-
-
-def code_file(path: str) -> bool:
-    """True for a source file in a code dir: `code_path`, and not a doc or text file."""
-    return code_path(path) and not _DOC_SUFFIX.search(path)
-
-
-def _real_dir(d: str) -> bool:
+def _real_dir(d: str, files: FileSet | None = None) -> bool:
     """A dir `whose_code` may name: not the root, and a code dir (`code_path`)."""
-    return d not in ("", ".") and code_path(f"{d}/x")
+    return d not in ("", ".") and code_path(f"{d}/x", files)
 
 
 def _old(ts, t0) -> bool:
@@ -264,12 +253,16 @@ def lead_refs_for(
     t0: int | None = None,
     limit: int = MAX_LEADS_PER_TYPE,
     repo: str = "",
+    files: FileSet | None = None,
 ) -> list[Lead]:
     """Leads for one story type with coordinates, drawn from precomputed signals.
 
     Generated files and lockfiles are never leads. "Ancient" stories need material
     older than ANCIENT_DAYS before the repo's last commit (t0).
     """
+
+    def useful(path: str) -> bool:
+        return _useful(path, files)
 
     def lead(text, kind="none", **coords) -> Lead:
         return Lead(story_type, repo, kind, text=text, **coords)
@@ -281,7 +274,7 @@ def lead_refs_for(
         return lead(text, "path", path=path, lines=(line, line) if line else None, key=key)
 
     churn_files = sig.get("churn", {}).get("files", {})
-    hot = [f for f in churn_files.get("90") or churn_files.get("365") or [] if _useful(f["path"])]
+    hot = [f for f in churn_files.get("90") or churn_files.get("365") or [] if useful(f["path"])]
     out: list[Lead] = []
     if story_type == "hot_spot":
         out += [
@@ -304,7 +297,7 @@ def lead_refs_for(
                     r["sha"],
                 )
             )
-        for c in (c for c in sig.get("fix_chains", []) if _useful(c["path"])):
+        for c in (c for c in sig.get("fix_chains", []) if useful(c["path"])):
             subj = " -> ".join(f'{_sha(x["sha"])} "{x["subject"]}"' for x in c["commits"])
             out.append(
                 at_commit(f"fix chain on {c['path']}: {subj}", c["commits"][-1]["sha"], c["path"])
@@ -334,7 +327,7 @@ def lead_refs_for(
                 o["line"],
             )
             for o in sig.get("oldest_lines", [])
-            if _old(o["ts"], t0) and _useful(o["path"])
+            if _old(o["ts"], t0) and useful(o["path"])
         ]
     elif story_type == "rip":
         out += [
@@ -346,7 +339,7 @@ def lead_refs_for(
                 d["path"],
             )
             for d in sig.get("deleted_paths", [])
-            if _useful(d["path"])
+            if useful(d["path"])
         ]
     elif story_type == "ancient_todo":
         out += [
@@ -357,11 +350,11 @@ def lead_refs_for(
                 t["line"],
             )
             for t in sig.get("todo_ages", [])
-            if _old(t["ts"], t0) and _COMMENT_TODO.search(t["text"]) and _useful(t["path"])
+            if _old(t["ts"], t0) and _COMMENT_TODO.search(t["text"]) and useful(t["path"])
         ]
     elif story_type == "secret_couples":
         pairs = sorted(
-            (c for c in sig.get("co_change", []) if _useful(c["a"]) and _useful(c["b"])),
+            (c for c in sig.get("co_change", []) if useful(c["a"]) and useful(c["b"])),
             key=lambda c: c.get("same_dir", False),
         )
         out += [
@@ -375,7 +368,7 @@ def lead_refs_for(
         ]
     elif story_type == "whose_code":
         for d, authors in sig.get("author_shares", {}).get("by_dir", {}).items():
-            if not _real_dir(d):
+            if not _real_dir(d, files):
                 continue
             top = ", ".join(f"{a['author']} {round(a['share'] * 100)}%" for a in authors[:3])
             out.append(lead(f"dir {d}/: {top}", key=f"dir:{d}"))
@@ -388,11 +381,11 @@ def lead_refs_for(
                 n["path"],
             )
             for n in sig.get("new_files", [])
-            if _useful(n["path"])
+            if useful(n["path"])
         ]
     elif story_type == "spot_the_bug":
         hunks = _fix_hunks(sig)
-        for c in (c for c in sig.get("fix_chains", []) if _useful(c["path"])):
+        for c in (c for c in sig.get("fix_chains", []) if useful(c["path"])):
             for x in c["commits"]:
                 h = hunks.get((x["sha"], c["path"]))
                 where = (
@@ -419,7 +412,7 @@ def lead_refs_for(
             for c in recent
         ]
         hunks = _fix_hunks(sig)
-        for c in (c for c in sig.get("fix_chains", []) if _useful(c["path"])):
+        for c in (c for c in sig.get("fix_chains", []) if useful(c["path"])):
             x = c["commits"][-1]
             h = hunks.get((x["sha"], c["path"]))
             before = (
@@ -534,12 +527,7 @@ def _identifiers(subject: str) -> set[str]:
 
 def _contract_file(path: str) -> bool:
     base = path.rsplit("/", 1)[-1]
-    return (
-        _useful(path)
-        and not _TEST.search(path)
-        and not _DOC.search(path)
-        and base.lower() not in _GENERIC_BASENAMES
-    )
+    return _useful(path) and not test_or_doc(path) and base.lower() not in _GENERIC_BASENAMES
 
 
 def _files_text(c: dict) -> str:
@@ -1037,6 +1025,7 @@ def build_brief(
     novelty: dict[str, dict[str, float]] | None = None,
     intro_share: float = 0.0,
     intro_prefer: dict[str, set[str]] | None = None,
+    filesets: dict[str, FileSet] | None = None,
     min_spot_the_bug: float = 0.0,
 ) -> Brief:
     """Build the brief.
@@ -1193,6 +1182,7 @@ def build_brief(
                 repo_signals[repo].get("t0"),
                 limit=1000 if prefer_dirs or ban_dirs else MAX_LEADS_PER_TYPE,
                 repo=repo,
+                files=(filesets or {}).get(repo),
             )
             if lead_ok:  # no ledger rows: still honor cooldown and story blocks
                 wide = [x for x in wide if lead_ok(x)]
@@ -1414,7 +1404,7 @@ def build_brief(
 
     # 1c. Intro slots: reserve a share of the cards for leads from the least-known dirs.
     intro_at = _assign_intro(
-        slots, variant_at, ref_by, novelty, intro_share, count, intro_prefer or {}
+        slots, variant_at, ref_by, novelty, intro_share, count, intro_prefer or {}, filesets
     )
 
     # The image share is a soft target the packet states; no format is forced.
@@ -1544,13 +1534,16 @@ def _subject(ld: Lead) -> str | None:
 INTRO_MIN_NOVELTY = 0.5  # a dir this known or better is not "unseen": no intro slot for it
 
 
-def _assign_intro(slots, variant_at, ref_by, novelty, intro_share, count, prefer=None) -> dict:
+def _assign_intro(
+    slots, variant_at, ref_by, novelty, intro_share, count, prefer=None, filesets=None
+) -> dict:
     """slot index -> (dir, Lead) for the intro slots.
 
     Dirs with leads are ranked by novelty (highest first, then by their best lead's rank) and
     dealt out one slot at a time, so a few dirs share the slots instead of one dir taking all.
     A slot takes the best unused lead of its own repo and story type in the dir. Only code dirs
-    count (`code_path`: no hidden, test, fixture, cassette, vendored, generated or docs dirs).
+    count (`code_path`: the repo's file set says which dirs are test, fixture, vendored,
+    generated, docs or ignored).
     Dirs in `prefer[repo]` (they hold core or entry_point candidates) come first.
     """
     prefer = prefer or {}
@@ -1565,8 +1558,9 @@ def _assign_intro(slots, variant_at, ref_by, novelty, intro_share, count, prefer
             continue
         for rank, ld in enumerate(by_text.values()):
             d, n = knowledge.lead_dir(ld.path, nmap)
-            code = code_file(ld.path) if ld.path else code_path(f"{d}/x")
-            if d and n >= INTRO_MIN_NOVELTY and code and code_path(f"{d}/x"):
+            fs = (filesets or {}).get(repo)
+            code = code_file(ld.path, fs) if ld.path else code_path(f"{d}/x", fs)
+            if d and n >= INTRO_MIN_NOVELTY and code and code_path(f"{d}/x", fs):
                 cands.setdefault((repo, d), []).append((rank, story, ld))
                 nov_of[(repo, d)] = n
     order = sorted(

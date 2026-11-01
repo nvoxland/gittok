@@ -51,7 +51,6 @@ languages:
       - '\b(?:exec|eval)\('
       - '\bsetattr\('
     commented_code: '^\s*(?:[\w.\[\]]+\s*=[^=]|(?:def|class|return|import|from|if|for|while|print|raise|with)\b|[\w.]+\(.*\)$)'
-    test_file: '(^|/)tests?/|(^|/)test_[^/]*\.py$|_test\.py$'
     thresholds:
       god_fan_out: 8
 
@@ -90,7 +89,6 @@ languages:
       deep_nesting: 12   # paren depth, not indentation
       long_function: 60
       god_fan_out: 15
-    test_file: '(^|/)test/|_test\.clj[sc]?$'
 
   typescript:
     extensions: [.ts, .tsx, .js, .jsx, .mjs, .cjs, .svelte]
@@ -126,7 +124,6 @@ languages:
       - '\beval\('
       - '\bnew\s+Function\('
     commented_code: '^\s*(?:[\w.\[\]]+\s*=[^=]|(?:const|let|var|function|return|import|export|if|for|while|await)\b|[\w.]+\(.*\);?$|[})\]];?$)'
-    test_file: '(^|/)(tests?|__tests__)/|\.(test|spec)\.\w+$'
     thresholds:
       big_literal: 40
       god_fan_out: 12

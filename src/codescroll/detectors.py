@@ -105,9 +105,8 @@ def _regex_hits(d: Detector, rx, sf, stats: dict | None = None) -> list[dict]:
                 continue
             m = rx.search(line, timeout=REGEX_TIMEOUT_S)
             if m:
-                out.append(
-                    _hit(d, sf, i + 1, line.strip(), m.group(1) if m.re.groups else m.group(0))
-                )
+                found = next((g for g in m.groups() if g is not None), m.group(0))
+                out.append(_hit(d, sf, i + 1, line.strip(), found))
     except TimeoutError:
         log.warning("rule '%s' timed out on %s; the file is skipped for this rule", d.id, sf.path)
         if stats is not None:
@@ -167,5 +166,8 @@ def run(profile: Profile, files, stats: dict | None = None) -> list[dict]:
         for sf in files:
             if not _applies(d, sf, include, exclude):
                 continue
-            out += _regex_hits(d, rx, sf, stats) if rx else _ast_hits(d, sf)
+            try:
+                out += _regex_hits(d, rx, sf, stats) if rx else _ast_hits(d, sf)
+            except Exception as e:  # noqa: BLE001  (one bad rule or file must not stop the run)
+                log.warning("rule '%s' failed on %s: %s; skipped", d.id, sf.path, e)
     return out

@@ -62,12 +62,14 @@ def _row(repo, ld, blobs, strength, head_sha, stamp) -> tuple:
     )
 
 
-def _candidate_rows(conn, repo: str, sig: dict, t0, head_sha: str, blobs: dict, stamp: str):
+def _candidate_rows(
+    conn, repo: str, sig: dict, t0, head_sha: str, blobs: dict, stamp: str, files=None
+):
     """Rows for the story types that come from rated candidates (candidate_leads)."""
     return [
         _row(repo, ld, blobs, strength, head_sha, stamp)
         for t in brief.CANDIDATE_STORIES
-        for ld, strength in candidate_leads.leads_for(conn, repo, t, sig, t0, WIDE_LIMIT)
+        for ld, strength in candidate_leads.leads_for(conn, repo, t, sig, t0, WIDE_LIMIT, files)
     ]
 
 
@@ -82,7 +84,9 @@ _UPSERT = (
 )
 
 
-def refresh(conn, repo_name: str, sig: dict, t0, head_sha: str, blobs: dict, now: datetime) -> int:
+def refresh(
+    conn, repo_name: str, sig: dict, t0, head_sha: str, blobs: dict, now: datetime, files=None
+) -> int:
     """Upsert every commit and path lead of every story type. Returns the rows touched.
 
     `blobs` maps path -> blob sha at the analyzed ref. `strength` is 1 / (1 + rank) within
@@ -93,9 +97,11 @@ def refresh(conn, repo_name: str, sig: dict, t0, head_sha: str, blobs: dict, now
     types = dict.fromkeys(t for ts in brief.CATEGORY_STORIES.values() for t in ts)
     rows = []
     for t in types:
-        for rank, ld in enumerate(brief.lead_refs_for(t, sig, t0, WIDE_LIMIT, repo=repo_name)):
+        for rank, ld in enumerate(
+            brief.lead_refs_for(t, sig, t0, WIDE_LIMIT, repo=repo_name, files=files)
+        ):
             rows.append(_row(repo_name, ld, blobs, 1 / (1 + rank), head_sha, stamp))
-    rows += _candidate_rows(conn, repo_name, sig, t0, head_sha, blobs, stamp)
+    rows += _candidate_rows(conn, repo_name, sig, t0, head_sha, blobs, stamp, files)
     with db.immediate(conn):
         conn.executemany(_UPSERT, rows)
     return len(rows)

@@ -1,7 +1,11 @@
 """Repo profiles: per-repo detector rules kept as data.
 
 A profile lives in `config/profiles/<repo>.yaml` inside CodeScroll, never in the user's repo.
-It holds the stack, a role per directory, detector rules, and ignore globs. Rules are data:
+It holds the stack, a role per directory, detector rules, and the file set: `scan` globs (files
+that are read), `ignore` globs (never read) and `kinds` (test, fixture, generated, docs,
+vendored). `FileSet` is the one classifier; the bootstrap values for a repo with no profile
+are in `config/scan_defaults.yaml`. A profile key replaces the bootstrap key; an absent key
+falls back to it. Rules are data:
 a regex or an ast-grep pattern plus path globs. CodeScroll never runs code from a profile.
 The engine that applies the rules is in `candidates.py`; the format is in
 `schema/profile.schema.json`. No profile file means built-in detectors only.
@@ -27,6 +31,9 @@ from jsonschema import Draft202012Validator
 from .config import ConfigError
 
 WHY_FIELDS = {"line", "match"}
+KINDS = ("test", "fixture", "generated", "docs", "vendored")
+KIND_ORDER = ("vendored", "generated", "fixture", "test", "docs")  # first match wins
+UNMINED = frozenset({"generated", "vendored", "fixture"})  # read, classified, never mined
 DEFAULT_WINDOW = 20
 
 
@@ -50,7 +57,10 @@ class Profile:
     stack: tuple[str, ...] = ()
     roles: dict[str, str] = field(default_factory=dict)
     detectors: tuple[Detector, ...] = ()
-    ignore: tuple[str, ...] = ()
+    ignore: tuple[str, ...] | None = None  # None: not set, the bootstrap ignore applies
+    scan: tuple[str, ...] | None = None
+    kinds: dict[str, tuple[str, ...]] | None = None
+    generated_markers: tuple[str, ...] | None = None
     version: int = 1
     written_at: str | None = None
     head_sha: str | None = None
@@ -71,7 +81,7 @@ class Profile:
         return self.roles[best[1]] if best else None
 
     def ignores(self, path: str) -> bool:
-        return any(glob_matcher(g)(path) for g in self.ignore)
+        return any(glob_matcher(g)(path) for g in self.ignore or ())
 
 
 # ---------- globs ----------
@@ -118,6 +128,93 @@ def glob_matcher(glob: str):
     except re.error as e:
         raise ValueError(f"bad glob: {e}") from e
     return lambda path: rx.match(path) is not None
+
+
+# ---------- file set ----------
+
+
+def _any(matchers, path: str) -> bool:
+    return any(m(path) for m in matchers)
+
+
+@dataclass(frozen=True)
+class FileSet:
+    """Which files are read and what kind each is. Built by `fileset_for`.
+
+    A file is read iff it matches `scan` and not `ignore`. `kind` classifies it. Generated,
+    vendored and fixture files are read and classified but never mined (`mined`)."""
+
+    scan: tuple[str, ...]
+    ignore: tuple[str, ...]
+    kinds: dict[str, tuple[str, ...]]
+    markers: tuple[str, ...]
+    noise: tuple[str, ...]
+
+    def _m(self, globs):
+        return [glob_matcher(g) for g in globs]
+
+    def ignored(self, path: str) -> bool:
+        return _any(self._m(self.ignore), path)
+
+    def reads(self, path: str) -> bool:
+        return _any(self._m(self.scan), path) and not self.ignored(path)
+
+    def matches(self, path: str, kind: str) -> bool:
+        return _any(self._m(self.kinds.get(kind, ())), path)
+
+    def kind(self, path: str) -> str | None:
+        """test, fixture, generated, docs or vendored; None for a plain source file."""
+        return next((k for k in KIND_ORDER if self.matches(path, k)), None)
+
+    def is_test(self, path: str) -> bool:
+        return self.matches(path, "test")
+
+    def mined(self, path: str) -> bool:
+        return self.kind(path) not in UNMINED
+
+    def is_code_dir(self, d: str) -> bool:
+        """True when files in dir `d` are neither ignored nor of any kind."""
+        probe = f"{d}/x" if d not in ("", ".") else "x"
+        return not self.ignored(probe) and self.kind(probe) is None
+
+    def hidden_from_map(self, d: str) -> bool:
+        """A dir the repo map leaves out: ignored, fixture, generated or vendored."""
+        probe = f"{d}/x" if d not in ("", ".") else "x"
+        return self.ignored(probe) or self.kind(probe) in UNMINED
+
+    def is_noise(self, path: str) -> bool:
+        """Never a lead: ignored, or a lockfile, source map or binary asset."""
+        return self.ignored(path) or _any(self._m(self.noise), path)
+
+    def has_generated_marker(self, lines) -> bool:
+        head = "\n".join(lines[:5])
+        return any(re.search(m, head, re.IGNORECASE) for m in self.markers)
+
+
+@cache
+def default_scan_defaults() -> dict:
+    from .config import load_scan_defaults
+
+    return load_scan_defaults()
+
+
+def fileset_for(profile: Profile | None, defaults: dict | None = None) -> FileSet:
+    """The file set of `profile`. A key the profile sets replaces the bootstrap key; a key it
+    leaves out falls back to `defaults` (config/scan_defaults.yaml). No merging."""
+    d = defaults or default_scan_defaults()
+    p = profile or Profile()
+
+    def pick(mine, key):
+        return (d.get(key) or ()) if mine is None else mine
+
+    kinds = (d.get("kinds") or {}) if p.kinds is None else p.kinds
+    return FileSet(
+        scan=tuple(pick(p.scan, "scan")),
+        ignore=tuple(pick(p.ignore, "ignore")),
+        kinds={k: tuple(v or ()) for k, v in kinds.items()},
+        markers=tuple(pick(p.generated_markers, "generated_markers")),
+        noise=tuple(d.get("noise") or ()),
+    )
 
 
 # ---------- parsing ----------
@@ -208,13 +305,31 @@ def parse(raw, repo: str) -> Profile:
                 why=d.get("why"),
             )
         )
-    for g in raw.get("ignore") or []:
-        _check_glob(repo, "ignore", g)
+    for key in ("ignore", "scan"):
+        for g in raw.get(key) or []:
+            _check_glob(repo, key, g)
+    for kind, globs in (raw.get("kinds") or {}).items():
+        for g in globs:
+            _check_glob(repo, f"kinds.{kind}", g)
+    for rx in raw.get("generated_markers") or []:
+        try:
+            re.compile(rx)
+        except re.error as e:
+            _fail(repo, "generated_markers", f"bad regex: {e} ({rx!r})")
+
+    def opt(key):
+        return tuple(raw[key] or ()) if raw.get(key) is not None else None
+
     return Profile(
         stack=tuple(raw.get("stack") or ()),
         roles=dict(raw.get("roles") or {}),
         detectors=tuple(dets),
-        ignore=tuple(raw.get("ignore") or ()),
+        ignore=opt("ignore"),
+        scan=opt("scan"),
+        kinds=(
+            {k: tuple(v) for k, v in raw["kinds"].items()} if raw.get("kinds") is not None else None
+        ),
+        generated_markers=opt("generated_markers"),
         version=raw.get("version", 1),
         written_at=raw.get("written_at"),
         head_sha=raw.get("head_sha"),

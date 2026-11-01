@@ -63,7 +63,7 @@ def test_window_defaults_to_20():
 
 def test_empty_profile():
     p = profiles.Profile()
-    assert p.detectors == () and p.ignore == () and p.roles == {}
+    assert p.detectors == () and p.ignore is None and p.roles == {}
 
 
 @pytest.mark.parametrize(

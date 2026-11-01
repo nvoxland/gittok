@@ -36,7 +36,7 @@ FILES = {
     "app/hack.py": "# HACK: temporary\n" + "x = 1\n" * 12,
     "app/evil.py": f"# {BAD_LINE}\nx = 1\n",
     "web/api.ts": "export function load() {\n  return fetch('/x');\n}\nfunction local() {}\n",
-    "web/gen/out.ts": "export function generated() {}\n",
+    "web/lib/out.ts": "export function generated() {}\n",
 }
 
 HAVE_ASTGREP = detectors.ast_grep_available()
@@ -104,7 +104,7 @@ def test_paths_and_exclude(repo_path):
 def test_language_restricts_regex_files(repo_path):
     r = rule(match={"regex": r"function \w+", "paths": ["**"], "language": "typescript"})
     out = by_rule(run(repo_path, profile(detectors=[r])), "audit")
-    assert {c["path"] for c in out} == {"web/api.ts", "web/gen/out.ts"}
+    assert {c["path"] for c in out} == {"web/api.ts", "web/lib/out.ts"}
 
 
 def test_per_file_cap_and_per_rule_limit(repo_path):
@@ -184,7 +184,7 @@ def test_ast_grep_rule_makes_candidates(repo_path):
     defs = sorted(by_rule(out, "py-def"), key=lambda c: c["start"])
     assert defs[0]["why"] == "def def invoices():"
     assert len(defs) == 3 and defs[0]["tag"] == "defs"
-    assert {c["path"] for c in by_rule(out, "ts-fn")} == {"web/api.ts", "web/gen/out.ts"}
+    assert {c["path"] for c in by_rule(out, "ts-fn")} == {"web/api.ts", "web/lib/out.ts"}
 
 
 @pytest.mark.skipif(not HAVE_ASTGREP, reason="ast-grep-py not installed")
@@ -227,3 +227,25 @@ def test_refresh_stores_rule_id(repo_path, tmp_path):
     # a forced re-run without the rule removes its rows
     signals.analyze(conn, repo, AnalysisSettings(), force=True)
     assert candidates.load_candidates(conn, "fixture", tag="audit_trail") == []
+
+
+def test_optional_first_group_does_not_crash(repo_path):
+    r = rule("opt", match={"regex": r"^\s*(async )?def (\w+)\(", "paths": ["app/**"]})
+    out = by_rule(run(repo_path, profile(detectors=[r])), "opt")
+    assert out and all(c["path"].startswith("app/") for c in out)
+
+
+def test_run_never_raises_on_a_bad_hit(repo_path, monkeypatch, caplog):
+    real = detectors._hit
+
+    def flaky(d, sf, line, text, match):
+        if sf.path == "app/core.py":
+            raise RuntimeError("boom")
+        return real(d, sf, line, text, match)
+
+    monkeypatch.setattr(detectors, "_hit", flaky)
+    r = rule("flaky", match={"regex": r"def (\w+)", "paths": ["app/**"]})
+    with caplog.at_level(logging.WARNING, logger="codescroll.detectors"):
+        out = by_rule(run(repo_path, profile(detectors=[r])), "flaky")
+    assert out and all(c["path"] != "app/core.py" for c in out)
+    assert any("app/core.py" in x.message for x in caplog.records)

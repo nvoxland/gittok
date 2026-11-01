@@ -8,6 +8,7 @@ own-authorship prior, into a number in [0, 1]: 1 means "the reader has not learn
 from __future__ import annotations
 
 from codescroll import db, signals
+from codescroll.profiles import fileset_for
 
 MAX_DEPTH = 2  # a card counts toward its dirs and their parents, at most 2 path levels deep
 POS_SCALE = 4.0  # familiarity points that halve the base novelty
@@ -215,16 +216,18 @@ def knowledge_rows(conn, cfg, limit: int = 10) -> list[dict]:
     return out[:limit]
 
 
-def _visible(d: str) -> bool:
-    return not any(p.startswith(".") or p in ("fixture", "fixtures") for p in d.split("/"))
+def _visible(d: str, files=None) -> bool:
+    """False for a dir the repo's file set ignores or classes as fixture, generated, vendored."""
+    return not (files or fileset_for(None)).hidden_from_map(d)
 
 
 def repo_map(conn, cfg, repo: str) -> list[dict]:
     """Per-dir knowledge, card counts and verdict counts for the repo map (up to 2 levels)."""
+    files = cfg.fileset(repo)
     nmap = novelty_map(conn, repo, cfg.settings.user.git_identities)
     churn = ((signals.load_signals(conn, repo) or {}).get("churn") or {}).get("dirs") or {}
     window = churn.get("365") or churn.get(max(churn, key=int, default=""), [])
-    dirs = {d for d in set(nmap) | _prefixes(r["path"] for r in window[:30]) if _visible(d)}
+    dirs = {d for d in set(nmap) | _prefixes(r["path"] for r in window[:30]) if _visible(d, files)}
     know = {
         r["dir"]: dict(r) for r in conn.execute("SELECT * FROM knowledge WHERE repo = ?", (repo,))
     }

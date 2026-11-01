@@ -11,6 +11,7 @@ from collections import Counter
 
 from codescroll import candidates, gitq, links, research
 from codescroll.brief import _useful
+from codescroll.profiles import fileset_for
 
 LEAD_CAP = 4 * 1024  # bytes of materials per lead
 # Story types whose writers must explain behaviour get callers, definitions and imports too.
@@ -169,24 +170,23 @@ def _clip_line(text: str) -> str:
     return text if len(text) <= LINE_CLIP else text[: LINE_CLIP - 1] + "…"
 
 
-def _called_from(root, ref: str, lang, path: str, names: list[str]) -> list[str]:
+def _called_from(root, ref: str, lang, path: str, names: list[str], files=None) -> list[str]:
     """Up to MAX_CALLERS "path:line: text" call sites, non-test files first."""
     pats = _def_patterns(lang)
+    fs = files or fileset_for(None)
     per_symbol: list[list[tuple[bool, str, int, str]]] = []
     seen: set[tuple[str, int]] = set()
     for name in [n for n in names if len(n) >= MIN_SYMBOL_LEN][:MAX_SYMBOLS]:
         hits = []
         for p, num, text in gitq.grep_word(root, ref, name):
-            if (p, num) in seen or candidates.SKIP_PATH.search(p):
+            if (p, num) in seen or fs.ignored(p):
                 continue
             if p == path and any(
                 (m := pat.match(text)) and candidates._first_group(m) == name for pat in pats
             ):
                 continue
             seen.add((p, num))
-            other = _lang_for(p)
-            is_test = bool(other and other.test_file and other.test_file.search(p))
-            hits.append((is_test, p, num, text))
+            hits.append((fs.is_test(p), p, num, text))
         hits.sort(key=lambda h: (h[0], h[1], h[2]))
         per_symbol.append(hits)
     picked: list[tuple[bool, str, int, str]] = []
@@ -311,6 +311,7 @@ def _path_materials(cfg, root, ref: str, lead: dict) -> str:
         out.append(f"first commit touching it: {dates[-1]}; last: {dates[0]}")
     text = "\n".join(out)
     explain = lead.get("story_type") in EXPLAIN_TYPES
+    files = cfg.fileset(lead["repo"]) if lead.get("repo") in getattr(cfg, "repos", {}) else None
     cap = EXPLAIN_LEAD_CAP if explain else LEAD_CAP
     sections: list[str] = []
     lang = _lang_for(path) if explain else None
@@ -321,7 +322,7 @@ def _path_materials(cfg, root, ref: str, lead: dict) -> str:
         if defs:
             sections.append(defs)
             room -= len(defs.encode()) + 2
-        calls = _called_from(root, ref, lang, path, names) if names else []
+        calls = _called_from(root, ref, lang, path, names, files) if names else []
         called = _fit_lines("Called from:", calls, room)
         if called:
             sections.append(called)

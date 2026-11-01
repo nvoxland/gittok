@@ -22,15 +22,9 @@ from pathlib import Path
 
 from . import config, db, detectors, gitq
 from .config import AnalysisSettings
-from .profiles import Profile
+from .profiles import FileSet, Profile, fileset_for
 
 WINDOW = 40
-SKIP_PATH = re.compile(
-    r"(^|/)\.[\w-]+/|(^|/)(node_modules|vendor|vendored|third_party|third-party|dist|build|target|out|"
-    r"\.venv|venv|__pycache__|\.svelte-kit|site-packages|bower_components)/"
-    r"|\.min\.|-lock\.|\.lock$|_pb2\.py$|\.pb\.|\.d\.ts$"
-)
-GENERATED = re.compile(r"@generated|do not edit|auto-?generated|code generated", re.I)
 SMELL = re.compile(
     r"\b(HACK|XXX|FIXME|KLUDGE)\b|\b(work-?around)\b|\b(temporar(?:y|ily))\b"
     r"|\b(do(?:n'?t| not)\s+(?:remove|delete|touch|change))\b",
@@ -67,7 +61,6 @@ class Lang:
     bit_ops: re.Pattern | None
     meta: list[re.Pattern]
     commented_code: re.Pattern | None
-    test_file: re.Pattern | None
 
     @property
     def comment(self) -> str:
@@ -114,7 +107,6 @@ def _compile(name: str, raw: dict, base: dict) -> Lang:
         bit_ops=_re(raw.get("bit_ops")),
         meta=_res(raw.get("meta")),
         commented_code=_re(raw.get("commented_code")),
-        test_file=_re(raw.get("test_file")),
     )
 
 
@@ -136,6 +128,14 @@ def _compiled_languages() -> dict[str, Lang]:
     spec = _default_languages()
     base = spec.get("thresholds") or {}
     return {n: _compile(n, raw, base) for n, raw in (spec.get("languages") or {}).items()}
+
+
+def text_lang(base: dict | None = None) -> Lang:
+    """The language of a scanned file with no known extension: no built-in patterns, so only
+    profile detectors apply to it."""
+    if base is None:
+        base = _default_languages().get("thresholds") or {}
+    return _compile("text", {"extensions": []}, base)
 
 
 # ---------- small helpers ----------
@@ -184,28 +184,37 @@ def _first_group(m: re.Match) -> str | None:
 # ---------- reading files ----------
 
 
-def _read_files(path, ref, settings: AnalysisSettings, langs: dict[str, Lang]) -> list[SourceFile]:
+def _read_files(
+    path,
+    ref,
+    settings: AnalysisSettings,
+    langs: dict[str, Lang],
+    files: FileSet | None = None,
+) -> list[SourceFile]:
+    """Files at `ref` that the file set reads (scan minus ignore). Generated, vendored and
+    fixture files and files with a generated header are left out. A file with no known
+    language gets the `text` language. `files` defaults to the bootstrap file set."""
+    fs = files or fileset_for(None)
     by_ext = {ext: lang for lang in langs.values() for ext in lang.raw["extensions"]}
+    plain = text_lang(next(iter(langs.values())).th if langs else {})
     picked = []
     for p, sha, size in gitq.ls_tree_files(path, ref):
-        lang = by_ext.get(posixpath.splitext(p)[1])
-        if lang is None or not 0 < size <= settings.candidate_max_file_bytes or SKIP_PATH.search(p):
+        if not 0 < size <= settings.candidate_max_file_bytes or not fs.reads(p) or not fs.mined(p):
             continue
-        picked.append((p, sha, lang))
+        picked.append((p, sha, by_ext.get(posixpath.splitext(p)[1]) or plain))
     picked.sort(key=lambda t: t[0])
     picked = picked[: settings.candidate_max_files]
     blobs = gitq.read_blobs(path, list({sha for _, sha, _ in picked}))
-    files = []
+    out = []
     for p, sha, lang in picked:
         data = blobs.get(sha)
         if data is None or b"\0" in data[:8000]:
             continue
         lines = data.decode("utf-8", errors="replace").splitlines()
-        if GENERATED.search("\n".join(lines[:5])) or any(len(ln) > 2000 for ln in lines):
+        if fs.has_generated_marker(lines) or any(len(ln) > 2000 for ln in lines):
             continue
-        is_test = bool(lang.test_file and lang.test_file.search(p))
-        files.append(SourceFile(p, lang, lines, is_test))
-    return files
+        out.append(SourceFile(p, lang, lines, fs.is_test(p)))
+    return out
 
 
 # ---------- imports: fan-in and fan-out ----------
@@ -758,11 +767,14 @@ def mine(
 ) -> list[dict]:
     """All candidates at `ref`, bounded per tag. Read-only.
 
-    `profile` adds its detector hits and its `ignore` globs (which also drop built-in hits)."""
+    The profile's file set (scan, ignore, kinds) decides which files are read; with no profile
+    the bootstrap file set applies. `profile` also adds its detector hits, and these may land in
+    files of the `text` language, which the built-in miners skip."""
     spec = languages or _default_languages()
     base = spec.get("thresholds") or {}
     langs = {n: _compile(n, raw, base) for n, raw in (spec.get("languages") or {}).items()}
-    files = _read_files(path, ref, settings, langs)
+    all_files = _read_files(path, ref, settings, langs, fileset_for(profile))
+    files = [sf for sf in all_files if sf.lang.name != "text"]
     fan_in, fan_out = _fan(files)
     out = _structure(files, fan_in, fan_out)
     for sf in files:
@@ -771,9 +783,8 @@ def mine(
         out += _markers(sf)
     out += _quality(files, fan_in, sig, t0, path, ref)
     if profile is not None:
-        out += detectors.run(profile, [sf for sf in files if not profile.ignores(sf.path)])
-        out = [c for c in out if not profile.ignores(c["path"])]
-    _rescore(out, files, fan_in, sig, t0, path, ref)
+        out += detectors.run(profile, all_files)
+    _rescore(out, all_files, fan_in, sig, t0, path, ref)
     # Profile hits keep one row per stored key (path, start, tag); a built-in hit wins a clash.
     taken = {(c["path"], c["start"], c["tag"]) for c in out if not c.get("rule_id")}
     ruled: dict[tuple, dict] = {}

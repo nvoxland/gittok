@@ -16,11 +16,29 @@
       "maxProperties": 100
     },
     "ignore": {"type": "array", "items": {"$ref": "#/$defs/glob"}, "maxItems": 100},
+    "scan": {"type": "array", "items": {"$ref": "#/$defs/glob"}, "maxItems": 100},
+    "kinds": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "test": {"$ref": "#/$defs/globs"},
+        "fixture": {"$ref": "#/$defs/globs"},
+        "generated": {"$ref": "#/$defs/globs"},
+        "docs": {"$ref": "#/$defs/globs"},
+        "vendored": {"$ref": "#/$defs/globs"}
+      }
+    },
+    "generated_markers": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1, "maxLength": 200},
+      "maxItems": 10
+    },
     "detectors": {"type": "array", "items": {"$ref": "#/$defs/detector"}, "maxItems": 60}
   },
   "$defs": {
     "slug": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,39}$"},
     "glob": {"type": "string", "minLength": 1, "maxLength": 200},
+    "globs": {"type": "array", "items": {"$ref": "#/$defs/glob"}, "maxItems": 100},
     "detector": {
       "type": "object",
       "additionalProperties": false,
