@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-from codescroll import candidates, gitq, links, research
+from codescroll import candidates, gitq, links, research, structure
 from codescroll.brief import _useful
 from codescroll.profiles import fileset_for
 
@@ -170,20 +170,78 @@ def _clip_line(text: str) -> str:
     return text if len(text) <= LINE_CLIP else text[: LINE_CLIP - 1] + "…"
 
 
-def _called_from(root, ref: str, lang, path: str, names: list[str], files=None) -> list[str]:
-    """Up to MAX_CALLERS "path:line: text" call sites, non-test files first."""
-    pats = _def_patterns(lang)
+MAX_PARSED = 40  # files read through the structure layer to check call sites
+
+
+class _RefIndex:
+    """Which names are real references (not comments or strings) on which lines of a file,
+    from the structure layer. A file it cannot read has no entry: every hit in it stays."""
+
+    def __init__(self, root, ref: str, queries: dict | None):
+        self.root, self.ref, self.queries = root, ref, queries
+        self.by_file: dict[str, dict[int, set[str]] | None] = {}
+
+    def is_ref(self, path: str, line: int, name: str) -> bool:
+        if path not in self.by_file:
+            self.by_file[path] = self._load(path) if len(self.by_file) < MAX_PARSED else None
+        index = self.by_file[path]
+        return True if index is None else name in index.get(line, ())
+
+    def _load(self, path: str):
+        if not structure.available() or structure.grammar_for(path, self.queries) is None:
+            return None
+        try:
+            data = gitq.show_file(self.root, self.ref, path)
+        except gitq.GitError:
+            return None
+        if b"\0" in data[:8192]:
+            return None
+        text = "\n".join(gitq.split_lines(data.decode(errors="replace")))
+        facts = structure.parse(path, text, self.queries)
+        if facts is None:
+            return None
+        index: dict[int, set[str]] = {}
+        for nm, line in facts.refs:
+            index.setdefault(line, set()).add(nm.rsplit("/", 1)[-1])
+        return index
+
+
+def _called_from(
+    root,
+    ref: str,
+    lang,
+    path: str,
+    names: list[str],
+    files=None,
+    facts=None,
+    queries: dict | None = None,
+) -> list[str]:
+    """Up to MAX_CALLERS "path:line: text" call sites, non-test files first. With the structure
+    layer a `git grep -w` hit counts only when the name is a reference on that line (not text
+    in a comment or a string); without it every hit counts."""
+    pats = _def_patterns(lang) if lang else []
+    own = {(d.name, d.start) for d in facts.defs} if facts else set()
+    refs = _RefIndex(root, ref, queries) if structure.available() else None
     fs = files or fileset_for(None)
     per_symbol: list[list[tuple[bool, str, int, str]]] = []
     seen: set[tuple[str, int]] = set()
     for name in [n for n in names if len(n) >= MIN_SYMBOL_LEN][:MAX_SYMBOLS]:
         hits = []
-        for p, num, text in gitq.grep_word(root, ref, name):
-            if (p, num) in seen or fs.ignored(p):
-                continue
-            if p == path and any(
-                (m := pat.match(text)) and candidates._first_group(m) == name for pat in pats
+        rows = [
+            (p, num, text)
+            for p, num, text in gitq.grep_word(root, ref, name)
+            if (p, num) not in seen and not fs.ignored(p)
+        ]
+        rows.sort(key=lambda r: (fs.is_test(r[0]), r[0], r[1]))
+        for p, num, text in rows:
+            if p == path and (
+                (name, num) in own
+                or any(
+                    (m := pat.match(text)) and candidates._first_group(m) == name for pat in pats
+                )
             ):
+                continue
+            if refs is not None and not refs.is_ref(p, num, name):
                 continue
             seen.add((p, num))
             hits.append((fs.is_test(p), p, num, text))
@@ -199,14 +257,29 @@ def _called_from(root, ref: str, lang, path: str, names: list[str], files=None) 
     return [f"{p}:{num}: {_clip_line(text)}" for _, p, num, text in picked]
 
 
-def _import_lines(lang, lines: list[str]) -> list[str]:
+def _import_lines(lang, lines: list[str], facts=None) -> list[str]:
     out = []
+    if lang is None or (facts is not None and not lang.imports):
+        for imp in facts.imports if facts else ():
+            out.append(_clip_line(imp.text.splitlines()[0]))
+            if len(out) >= MAX_IMPORTS:
+                break
+        return out
     for ln in lines:
         if any(p.search(ln) for p in lang.imports):
             out.append(_clip_line(ln))
             if len(out) >= MAX_IMPORTS:
                 break
     return out
+
+
+def _defined_in(facts, start: int, end: int) -> list[str]:
+    """Names of the definitions that start in lines start..end, from the structure layer."""
+    names: list[str] = []
+    for d in facts.defs:
+        if start <= d.start <= end and (d.kind != "var" or d.top) and d.name not in names:
+            names.append(d.name)
+    return names
 
 
 def _fit_lines(title: str, rows: list[str], room: int) -> str:
@@ -315,14 +388,25 @@ def _path_materials(cfg, root, ref: str, lead: dict) -> str:
     cap = EXPLAIN_LEAD_CAP if explain else LEAD_CAP
     sections: list[str] = []
     lang = _lang_for(path) if explain else None
-    if lang:
-        names = _defined_names(lang, lines[start - 1 : end])
+    repo = lead.get("repo")
+    queries = cfg.profile(repo).queries if repo in getattr(cfg, "repos", {}) else None
+    facts = (
+        structure.parse(path, "\n".join(lines), queries)
+        if explain and structure.available()
+        else None
+    )
+    if lang or facts:
+        names = (
+            _defined_in(facts, start, end)
+            if facts
+            else _defined_names(lang, lines[start - 1 : end])
+        )
         room = cap - len(text.encode())
         defs = _fit_lines("Defines:", [", ".join(names)] if names else [], room)
         if defs:
             sections.append(defs)
             room -= len(defs.encode()) + 2
-        calls = _called_from(root, ref, lang, path, names, files) if names else []
+        calls = _called_from(root, ref, lang, path, names, files, facts, queries) if names else []
         called = _fit_lines("Called from:", calls, room)
         if called:
             sections.append(called)
@@ -331,7 +415,7 @@ def _path_materials(cfg, root, ref: str, lead: dict) -> str:
         if why:
             sections.append(why)
             room -= len(why.encode()) + 2
-        imps = _fit_lines("Imports:", _import_lines(lang, lines), room)
+        imps = _fit_lines("Imports:", _import_lines(lang, lines, facts), room)
         if imps:
             sections.append(imps)
     else:

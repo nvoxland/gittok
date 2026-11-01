@@ -1,0 +1,109 @@
+# Data for the tree-sitter structure layer (src/codescroll/structure.py).
+# Each shipped grammar has a tags query next to this file: config/queries/<grammar>.scm.
+# A query captures: @definition.<kind> + @name (+ @private), @reference, @comment,
+# @import (statement) + @import.path (module spec) + @import.relative (marks a relative spec).
+# Queries are data. A repo profile may carry its own query for a grammar (profile `queries`).
+#
+# Grammar names are those of tree-sitter-language-pack. Install the grammars with
+# `uv sync --group structure` and `codescroll structure --prefetch` (docs/install.md).
+
+# Default shape rules for a grammar that has no entry below (a profile query for a stack we do
+# not ship). Matched on node type names.
+generic:
+  comment: "#"
+  nesting_regex: '^(if|for|while|switch|match|try|with|loop|unless|until)(_\w+)?$'
+  branch_regex: '^(if|elif|elsif|else_if|for|while|until|case|when|catch|except|rescue|match_arm|switch_case|switch_default)(_\w+)?$|^(ternary|conditional)_expression$'
+  params: {field: parameters, ignore: [comment]}
+  public: {}
+  thresholds: {deep_nesting: 5}
+
+# Used for files that have no grammar. Comment-like lines are found by prefix; nesting is
+# indentation levels. Files with these extensions are never read as text code.
+text_fallback:
+  comment_prefixes: ["#", "//", ";", "--", "/*", "*", "%"]
+  indent_unit_max: 8
+  skip_extensions: [.json, .jsonl, .yaml, .yml, .toml, .ini, .cfg, .csv, .tsv, .svg, .html,
+                    .css, .scss, .xml, .md, .markdown, .rst, .txt, .adoc, .lock, .map, .sql]
+
+languages:
+  python:
+    extensions: {.py: python}
+    comment: "#"
+    nesting: [if_statement, for_statement, while_statement, try_statement, with_statement, match_statement]
+    branch: [if_statement, elif_clause, for_statement, while_statement, except_clause, case_clause,
+             boolean_operator, conditional_expression]
+    params: {field: parameters, skip_first: [self, cls], ignore: [comment, keyword_separator, positional_separator]}
+    public: {private_prefix: "_"}
+    thresholds: {deep_nesting: 5}
+
+  typescript:   # also javascript, tsx and svelte
+    extensions: {.ts: typescript, .tsx: tsx, .jsx: tsx, .js: javascript, .mjs: javascript,
+                 .cjs: javascript, .svelte: svelte}
+    query_alias: {tsx: typescript}
+    comment: "//"
+    nesting: [if_statement, for_statement, for_in_statement, while_statement, do_statement,
+              try_statement, switch_statement]
+    flat: [[if_statement, else_clause]]
+    branch: [if_statement, for_statement, for_in_statement, while_statement, do_statement,
+             switch_case, catch_clause, ternary_expression]
+    params: {field: parameters, ignore: [comment]}
+    public: {exported: export_statement}
+    thresholds: {deep_nesting: 5}
+
+  clojure:
+    extensions: {.clj: clojure, .cljs: clojure, .cljc: clojure, .bb: clojure}
+    comment: ";"
+    lisp: true
+    # head symbol -> kind of the definition it makes; `{{def_heads}}` in a query expands to these
+    def_heads:
+      function: [defn, defn-, defmacro, fn-traced]
+      method: [defmethod, defmulti]
+      var: [def, defonce, def-, defprotocol, defrecord, deftype]
+    private_heads: [defn-, def-]
+    nesting_heads: [if, if-not, when, when-not, if-let, when-let, if-some, when-some, cond, condp,
+                    case, loop, doseq, for, try, dotimes, while, cond->, cond->>]
+    branch_heads: [if, if-not, if-let, if-some, when, when-not, when-let, when-some, cond, condp,
+                   case, and, or, catch]
+    thresholds: {deep_nesting: 5}
+
+  go:
+    extensions: {.go: go}
+    comment: "//"
+    import_unit: dir      # an import names a directory (package), not a file
+    nesting: [if_statement, for_statement, expression_switch_statement, type_switch_statement, select_statement]
+    flat: [[if_statement, if_statement]]
+    branch: [if_statement, for_statement, expression_case, type_case, communication_case, default_case]
+    params: {field: parameters, multi_field: name, ignore: [comment]}
+    public: {capitalized: true}
+    thresholds: {deep_nesting: 5}
+
+  ruby:
+    extensions: {.rb: ruby}
+    comment: "#"
+    nesting: [if, unless, while, until, for, case, begin]
+    branch: [if, elsif, unless, while, until, for, when, rescue, conditional]
+    params: {field: parameters, ignore: [comment]}
+    public: {private_prefix: "_"}
+    thresholds: {deep_nesting: 5}
+
+  java:
+    extensions: {.java: java}
+    comment: "//"
+    nesting: [if_statement, for_statement, enhanced_for_statement, while_statement, do_statement,
+              try_statement, switch_expression, switch_statement]
+    flat: [[if_statement, if_statement]]
+    branch: [if_statement, for_statement, enhanced_for_statement, while_statement, do_statement,
+             switch_label, catch_clause, ternary_expression]
+    params: {field: parameters, ignore: [comment]}
+    public: {}
+    thresholds: {deep_nesting: 5}
+
+  rust:
+    extensions: {.rs: rust}
+    comment: "//"
+    nesting: [if_expression, for_expression, while_expression, loop_expression, match_expression]
+    flat: [[if_expression, else_clause]]
+    branch: [if_expression, for_expression, while_expression, match_arm]
+    params: {field: parameters, ignore: [comment, self_parameter]}
+    public: {child_type: visibility_modifier}
+    thresholds: {deep_nesting: 5}

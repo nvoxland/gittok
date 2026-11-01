@@ -35,6 +35,18 @@ Rules for safe changes:
 | Skills | `rm -r ~/.claude/skills/codescroll-generate ~/.claude/skills/codescroll-steer` |
 | LaunchAgent | `uv run codescroll install --uninstall --launchd --apply` (runs `launchctl bootout gui/<uid> <plist>` and removes the plist) |
 
+## Structure layer (optional, tree-sitter)
+
+CodeScroll reads code structure (definitions, imports, comments) with tree-sitter when the optional group is installed. Without it everything works on the regex patterns in `config/languages.yaml` and, for other file types, on plain text rules.
+
+```bash
+uv sync --group structure          # tree-sitter-language-pack 1.22.x, about 2 MB
+uv run codescroll structure        # status: installed, grammars needed, grammars missing (JSON)
+uv run codescroll structure --prefetch   # download the grammars for the repos in config/repos.yaml
+```
+
+The package holds no grammars. They are a bundle of about 26 MB (12 languages) that the pack downloads from GitHub on first use into `~/Library/Caches/tree-sitter-language-pack/` (Linux: `~/.cache/`). `--prefetch` does this once, on purpose, so a mining run never waits on the network. A grammar that is not in the cache is not used; `codescroll health --hint` (the SessionStart hook) prints one line naming the missing grammars. Offline, run `--prefetch` on a machine with network and copy the cache dir. Shipped queries: python, typescript/tsx/javascript/svelte, clojure, go, ruby, java, rust. Another stack: let the profile skill write a `queries` entry (docs/learning.md, "The structure layer").
+
 ## Meme renderer (memegen)
 
 Meme cards are drawn by a local [memegen](https://github.com/jacebrowning/memegen) server at `settings.render.memegen_url` (default `http://127.0.0.1:5001`). There is no public image, so build it from source. The build file is `Containerfile`, and the app listens on 5000 inside the container.

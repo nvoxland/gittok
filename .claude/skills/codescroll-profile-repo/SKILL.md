@@ -24,6 +24,7 @@ Requires the `codescroll` MCP server (tools named `mcp__codescroll__*`). If thos
 - `generated_markers` (optional): regexes for generated headers.
 
 The profile owns the file set. A key you write REPLACES the bootstrap default (`config/scan_defaults.yaml`); a key you leave out falls back to it. No merging: if you write `ignore`, list every ignore you need, including `node_modules/**`.
+- `queries` (optional): `{grammar: tags query text}` for a language CodeScroll has no shipped query for (see step 5b).
 - `detectors`: rules with `id`, `tag`, `match` (`regex` or `ast_grep`, `paths`, optional `exclude`), `weight` (0.1 to 3), optional `verdict_hint` (good, bad, clever, cursed, core), `window` (lines, 1 to 40), and `why`.
 
 ## Steps
@@ -34,6 +35,7 @@ The profile owns the file set. A key you write REPLACES the bootstrap default (`
 4. Write `roles` for the main dirs. One line each, plain words.
 5. Decide `scan` from the extension counts and the stack. Include the code extensions and the non-code files that teach: SQL migrations, GraphQL or proto schemas, EDN or YAML config that the code reads, workflow files. Skip binary and prose-only files.
    Decide `ignore` and `kinds` from what THIS project builds or generates. Check the manifests' build config, `.gitattributes`, generated markers, and committed build output (`list_dir`, `read_file`, `git_grep`). Confirm each survey hint by looking; a hint is a guess. Put tests, fixtures, recorded HTTP and snapshots in `kinds`; put generated code and vendored code in `kinds` too; put build output and lockfiles in `ignore`.
+   5b. Read `survey_repo(...)["structure"]`. It lists the file types that have a grammar but no shipped query (`uncovered`, with the grammar name). The shipped queries cover python, typescript/javascript/svelte, clojure, go, ruby, java and rust. If a language that matters in this repo is listed there, and it has no regex patterns either, write a minimal tags query for it and put it in `queries` under the grammar name. Keep it to these captures: `@definition.function` (or `.class`, `.method`) on the whole definition with `@name` on its name, `@comment` on comment nodes, and `@import` with `@import.path` on the module string. Start with the function and comment lines only. `save_profile` tests it: it must compile, read at least one file, and find something. Fix the query from the error text. If `structure.installed` is false, skip this step and tell the user to run `uv sync --group structure`.
 6. Write 8 to 20 detectors. Cover these:
    - Entry points of this stack: route tables, endpoint macros or decorators, handlers, jobs, CLI commands.
    - The data model: schemas, models, migrations.

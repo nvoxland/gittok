@@ -6,7 +6,9 @@ that are read), `ignore` globs (never read) and `kinds` (test, fixture, generate
 vendored). `FileSet` is the one classifier; the bootstrap values for a repo with no profile
 are in `config/scan_defaults.yaml`. A profile key replaces the bootstrap key; an absent key
 falls back to it. Rules are data:
-a regex or an ast-grep pattern plus path globs. CodeScroll never runs code from a profile.
+a regex or an ast-grep pattern plus path globs. A profile may also carry `queries`: a
+tree-sitter tags query per grammar (see structure.py), so a stack we do not ship can still be
+read by structure. CodeScroll never runs code from a profile.
 The engine that applies the rules is in `candidates.py`; the format is in
 `schema/profile.schema.json`. No profile file means built-in detectors only.
 
@@ -61,6 +63,7 @@ class Profile:
     scan: tuple[str, ...] | None = None
     kinds: dict[str, tuple[str, ...]] | None = None
     generated_markers: tuple[str, ...] | None = None
+    queries: dict[str, str] = field(default_factory=dict)  # grammar -> tree-sitter tags query
     version: int = 1
     written_at: str | None = None
     head_sha: str | None = None
@@ -330,6 +333,7 @@ def parse(raw, repo: str) -> Profile:
             {k: tuple(v) for k, v in raw["kinds"].items()} if raw.get("kinds") is not None else None
         ),
         generated_markers=opt("generated_markers"),
+        queries=dict(raw.get("queries") or {}),
         version=raw.get("version", 1),
         written_at=raw.get("written_at"),
         head_sha=raw.get("head_sha"),
