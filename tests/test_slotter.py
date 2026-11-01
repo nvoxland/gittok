@@ -91,6 +91,30 @@ def test_recently_impressed_cards_are_excluded_for_repeat_days(conn, cfg):
     assert sorted(batch(conn, cfg)) == sorted([old, fresh])
 
 
+def _same_story(conn, *ids, key="story-1"):
+    for i in ids:
+        conn.execute("UPDATE cards SET story_key = ?, format = ? WHERE id = ?", (key, i, i))
+    conn.commit()
+
+
+def test_variants_of_one_story_not_served_within_repeat_window(conn, cfg):
+    first, variant, other = (add_card(conn, cfg) for _ in range(3))
+    _same_story(conn, first, variant)
+    impress(conn, first, NOW - timedelta(days=3))
+    assert sorted(batch(conn, cfg)) == sorted([other])
+    conn.execute("DELETE FROM events")  # the impression is now outside the window
+    impress(conn, first, NOW - timedelta(days=8))
+    out = batch(conn, cfg)  # both are eligible again, but still only one per batch
+    assert len(out) == 2 and other in out and (first in out) != (variant in out)
+
+
+def test_one_card_per_story_key_per_batch(conn, cfg, monkeypatch):
+    a, b, c = (add_card(conn, cfg) for _ in range(3))
+    _same_story(conn, a, b)
+    fix_scores(monkeypatch, {a: 0.2, b: 0.9, c: 0.5})
+    assert sorted(batch(conn, cfg)) == sorted([b, c])
+
+
 def test_ban_rule_removes_matching_cards(conn, cfg):
     a = add_card(conn, cfg, format="chart")
     b = add_card(conn, cfg, format="meme")

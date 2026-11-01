@@ -118,6 +118,13 @@ def _validate(conn, cfg, run: dict, cards: list):
     )
 
 
+def _duplicate_why(conn, cfg, a, seen: set[str]) -> str | None:
+    """Why an accepted card is a duplicate story; None if it is new or an allowed variant."""
+    if a.story_key in seen:
+        return "already in this submission"
+    return store.story_blocker(conn, a.story_key, a.card["format"], cfg.settings.agent)
+
+
 def check(conn, cfg, run_id: str, cards: list | dict) -> dict:
     """Validate without storing: the same git checks as submit, plus duplicate stories.
 
@@ -130,8 +137,8 @@ def check(conn, cfg, run_id: str, cards: list | dict) -> dict:
     ok: list[int] = []
     seen: set[str] = set()
     for a in accepted:
-        if a.story_key in seen or store.story_key_exists(conn, a.story_key, since_days=36500):
-            rejected.append(validator.Rejection(a.index, "duplicate_story", "already in the feed"))
+        if why := _duplicate_why(conn, cfg, a, seen):
+            rejected.append(validator.Rejection(a.index, "duplicate_story", why))
         else:
             seen.add(a.story_key)
             ok.append(a.index)
@@ -163,10 +170,8 @@ def submit(conn, cfg, run_id: str, cards: list | dict, packet_id: str | None = N
         used = run["meta"].get("illustrations", 0)  # re-read under the lock
         for a in accepted:
             cost = validator.illustration_cost(a.card)
-            if a.story_key in seen or store.story_key_exists(conn, a.story_key, since_days=36500):
-                rejected.append(
-                    validator.Rejection(a.index, "duplicate_story", "already in the feed")
-                )
+            if why := _duplicate_why(conn, cfg, a, seen):
+                rejected.append(validator.Rejection(a.index, "duplicate_story", why))
             elif used + cost > max_images:
                 rejected.append(
                     validator.Rejection(

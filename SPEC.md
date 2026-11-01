@@ -513,7 +513,7 @@ Example: user tells Claude Code "less memes, more of the sync engine this week" 
 - `repos`, `groups`, `repo_groups`
 - `git_signals` (precomputed per repo/run)
 - `runs` (brief, agent backend, counts, rejects, duration)
-- `cards` (spec JSON, status, created_at, run_id)
+- `cards` (spec JSON, status, created_at, run_id). Unique on `(story_key, format)`: one story may be told again in another format (docs/learning.md section 13).
 - `card_features` (card_id, feature, value)
 - `assets` (card_id, kind, path)
 - `events`
@@ -523,7 +523,7 @@ Example: user tells Claude Code "less memes, more of the sync engine this week" 
 - `personas`, `mascots`
 - `srs` (spaced repetition state per card)
 - `notifications`
-- `stories` (one row per story ever made: `story_key`, repo, type, sources, first and last card time, `cards_made`, `best_reward`, `liked`). Gc never deletes it, so duplicate checks survive card deletion.
+- `stories` (one row per story ever made: `story_key`, repo, type, sources, first and last card time, `cards_made`, `best_reward`, `liked`, `formats`: the JSON list of formats already used). Gc never deletes it, so duplicate checks survive card deletion.
 - `leads` (the lead ledger: one row per commit lead, or per path and blob sha, with `story_type`, `strength`, `head_sha`, first and last seen time, `times_covered`, `last_covered_at`, `mean_reward`). `cards.lead_id` points at the lead a card used (no foreign key). Gc deletes only leads that are old and never covered.
 
 ---

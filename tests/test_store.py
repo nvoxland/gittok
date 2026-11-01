@@ -1,3 +1,4 @@
+import sqlite3
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -12,7 +13,7 @@ from codescroll.config import (
     ServerSettings,
     Settings,
 )
-from tests.cards import example_card, guess_who_card
+from tests.cards import example_card, guess_who_card, text_card
 
 PERSONAS = ["greybeard", "penny_learns", "archivist", "meme_compiler", "paranoid_sec", "shipit_sam"]
 
@@ -261,3 +262,63 @@ def test_root_file_adds_no_dir(fixture_repo):
     card["depth"] = []
     card["sources"] = [{"repo": "fixture", "path": "setup.py"}]
     assert _dirs(card) == set()
+
+
+VARIANT_NOW = datetime(2026, 3, 1, tzinfo=UTC)
+
+
+def _story_row(conn, key, **over):
+    sets = ", ".join(f"{k} = ?" for k in over)
+    conn.execute(f"UPDATE stories SET {sets} WHERE story_key = ?", (*over.values(), key))
+    conn.commit()
+    return conn.execute("SELECT * FROM stories WHERE story_key = ?", (key,)).fetchone()
+
+
+def _variant_story(conn, cfg, fixture_repo, **over):
+    """A story told once as text_post 20 days ago, with a good reward unless overridden."""
+    _insert_run(conn)
+    acc = _accept(cfg, text_card(fixture_repo))
+    created = (VARIANT_NOW - timedelta(days=20)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    store.store_card(conn, cfg, "r_1", acc, now=created)
+    row = _story_row(conn, acc.story_key, **{"best_reward": 0.8, **over})
+    return acc, row
+
+
+def _decide(cfg, row, fmt, now=VARIANT_NOW):
+    return store.variant_blocker(row, fmt, cfg.settings.agent, now)
+
+
+def test_variant_card_allowed_with_different_format(conn, cfg, fixture_repo):
+    acc, row = _variant_story(conn, cfg, fixture_repo)
+    assert db.loads(row["formats"]) == ["text_post"]
+    assert _decide(cfg, None, "meme") is None  # a new story is always fine
+    assert _decide(cfg, row, "meme") is None
+    # The unique index is (story_key, format): a second format inserts.
+    other = _accept(cfg, text_card(fixture_repo, format="fun_fact"))
+    assert other.story_key == acc.story_key
+    store.store_card(conn, cfg, "r_1", other, now="2026-03-01T00:00:00Z")
+    row = conn.execute("SELECT * FROM stories WHERE story_key = ?", (acc.story_key,)).fetchone()
+    assert db.loads(row["formats"]) == ["text_post", "fun_fact"]
+    assert row["cards_made"] == 2
+    with pytest.raises(sqlite3.IntegrityError):  # same story and format twice still fails
+        store.store_card(conn, cfg, "r_1", other, now="2026-03-02T00:00:00Z")
+
+
+def test_variant_rejected_same_format(conn, cfg, fixture_repo):
+    _, row = _variant_story(conn, cfg, fixture_repo)
+    assert "format" in _decide(cfg, row, "text_post")
+
+
+def test_variant_rejected_too_soon(conn, cfg, fixture_repo):
+    _, row = _variant_story(conn, cfg, fixture_repo)
+    soon = VARIANT_NOW - timedelta(days=10)  # the last card is then 10 days old
+    assert "14 days" in _decide(cfg, row, "meme", now=soon)
+
+
+def test_variant_rejected_low_reward_unless_liked(conn, cfg, fixture_repo):
+    acc, row = _variant_story(conn, cfg, fixture_repo, best_reward=0.3)
+    assert "reward" in _decide(cfg, row, "meme")
+    row = _story_row(conn, acc.story_key, best_reward=None)
+    assert "reward" in _decide(cfg, row, "meme")
+    row = _story_row(conn, acc.story_key, liked=1)
+    assert _decide(cfg, row, "meme") is None

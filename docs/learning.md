@@ -108,8 +108,9 @@ def reset_weights(conn, feature: str | None = None) -> int
 3. Exploration: `exploration_share` (0.18) of slots are filled uniformly at random from candidates outside the top half.
 4. Learning boost: 10% of slots go to cards whose dirs have the fewest impressions (coverage).
 5. Rhythm: never more than 2 of the same format in a row; alternate fast formats (meme, text_meme, fun_fact, chart, hot_take) with slow ones (thread, comic, code_card, quiz, iceberg, day_in_life) when both are available.
-6. Series: parts of a series stay in order and at least 3 cards apart (series is null until M5; keep the hook).
-7. SRS: at most 2 due cards per batch, placed at positions ≥ 3.
+6. One story, one slot: variants of one story (same `story_key`, section 13) are never served within `repeat_days` of each other. A card is a candidate only if no card of its story had an impression in that window. A batch holds at most one card per `story_key`, the best scored.
+7. Series: parts of a series stay in order and at least 3 cards apart (series is null until M5; keep the hook).
+8. SRS: at most 2 due cards per batch, placed at positions ≥ 3.
 
 The cursor is an opaque base64 of `{"served": [short ids], "seed": int}`; a malformed cursor is a 400. `seed` makes a batch reproducible for tests.
 
@@ -226,3 +227,17 @@ Coverage marking: `submit_cards(packet_id)` finds the packet lead each accepted 
 Reward: when `process_events` writes a reward for a card with a `lead_id`, the lead's `mean_reward` becomes the running mean of those rewards (`rewards_n` counts them).
 
 The `coverage` tool adds `leads` (current leads under each top dir, one per file) and `leads_covered` (of those, how many a card used).
+
+## 13. Story variants
+
+A story that did well can be told again in another format. The `story_key` stays the same (it comes from the story type and the sources, not the format). Uniqueness on `cards` is per `(story_key, format)`. `stories.formats` is a JSON list of the formats already used. It lives on the story row, so it survives gc.
+
+`submit_cards` and `check_cards` accept a card of an existing story only when all of these hold. If one fails, the card is rejected as `duplicate_story` and the detail names the failed condition.
+
+- Its format is not in `stories.formats`.
+- The story's `best_reward` is at least `agent.variant_min_reward` (0.6), or the story is liked.
+- The story's last card is at least `agent.variant_after_days` (14) old.
+
+The decision is `store.variant_blocker`. Two cards of one story in the same submission are always a duplicate.
+
+The brief offers variants. `ledger.variants` lists the stories that meet the reward and age conditions (liked first, then best reward). It adds the hook of the newest card; if gc deleted every card, the lead has the story type and sources only. `build_brief` uses a variant for a slot only when that slot has no fresh lead: its (repo, story type) has fewer leads than slots. The variant must be in the slot's repo and a story type of the slot's category. At most `floor(agent.variant_max_share x count)` slots (0.2) become variants. A variant slot keeps the story's story type and gets a format of the category that the story has not used. The packet lead reads `[variant] retell "<hook>" (<story type>, first told as <formats>) as a <format>; cite the same sources: <sources>`. Its `lead_refs` entry is `{"kind": "variant", "story_key", "sources"}`. A variant lead marks no ledger coverage.

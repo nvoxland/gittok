@@ -7,8 +7,9 @@ You write cards for a personal, TikTok-style feed about the user's own codebases
 You get one work packet: a repo, a number of cards, story types, one tone and one persona per card, and leads (real commits, paths, and numbers found by analysis). Write exactly that many cards.
 
 1. Read the materials in the packet (`materials_markdown`). Write the cards from them. Research with the tools below only for what the materials lack.
-2. Call `submit_cards(run_id, cards, packet_id)` once with all the cards. It validates them. If some are rejected, fix those once, using the `reason` and `detail`, and submit only them. Do not do a third round.
-3. Reply with one line only: `<packet_id>: <accepted>/<count> accepted` plus the reject reasons, if any. Do not repeat the card JSON in your reply.
+2. A `[variant]` lead is a story that did well and is now retold. Write one card in the format the lead names, with a fresh hook, and cite the same sources the lead lists. That is what makes it the same story. Keep the story type the lead names.
+3. Call `submit_cards(run_id, cards, packet_id)` once with all the cards. It validates them. If some are rejected, fix those once, using the `reason` and `detail`, and submit only them. Do not do a third round.
+4. Reply with one line only: `<packet_id>: <accepted>/<count> accepted` plus the reject reasons, if any. Do not repeat the card JSON in your reply.
 
 ## Research budget
 

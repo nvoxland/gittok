@@ -116,8 +116,8 @@ def insert_card(conn, cfg, run_id: str, acc, now: str | None = None) -> str:
     )
     created = now or db.now_iso()
     conn.execute(
-        "INSERT INTO stories(story_key, repo, story_type, sources, first_card_at, last_card_at) "
-        "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(story_key) DO UPDATE SET "
+        "INSERT INTO stories(story_key, repo, story_type, sources, first_card_at, last_card_at, "
+        "formats) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(story_key) DO UPDATE SET "
         "cards_made = cards_made + 1, last_card_at = excluded.last_card_at",
         (
             acc.story_key,
@@ -126,8 +126,18 @@ def insert_card(conn, cfg, run_id: str, acc, now: str | None = None) -> str:
             db.dumps(card.get("sources", [])),
             created,
             created,
+            db.dumps([card["format"]]),
         ),
     )
+    row = conn.execute(
+        "SELECT formats FROM stories WHERE story_key = ?", (acc.story_key,)
+    ).fetchone()
+    used = db.loads(row["formats"])
+    if card["format"] not in used:
+        conn.execute(
+            "UPDATE stories SET formats = ? WHERE story_key = ?",
+            (db.dumps([*used, card["format"]]), acc.story_key),
+        )
     return card_id
 
 
@@ -139,3 +149,27 @@ def story_key_exists(conn, key: str, since_days: int = 30, now: datetime | None 
         (key, cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")),
     ).fetchone()
     return row is not None
+
+
+def variant_blocker(story, fmt: str, agent, now: datetime) -> str | None:
+    """Why a card of format `fmt` may not join an existing story; None if it may.
+
+    `story` is the `stories` row, or None for a new story (always allowed). A story is told
+    again only in a new format, if it did well or was liked, and long enough after its last card.
+    """
+    if story is None:
+        return None
+    if fmt in db.loads(story["formats"]):
+        return f"story was already told in format {fmt}"
+    if not story["liked"] and (story["best_reward"] or 0) < agent.variant_min_reward:
+        return f"story reward is below {agent.variant_min_reward} and it is not liked"
+    cutoff = (now - timedelta(days=agent.variant_after_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if story["last_card_at"] > cutoff:
+        return f"last card of this story is under {agent.variant_after_days} days old"
+    return None
+
+
+def story_blocker(conn, key: str, fmt: str, agent, now: datetime | None = None) -> str | None:
+    """`variant_blocker` for a story looked up by key."""
+    story = conn.execute("SELECT * FROM stories WHERE story_key = ?", (key,)).fetchone()
+    return variant_blocker(story, fmt, agent, now or datetime.now(UTC))

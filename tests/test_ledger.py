@@ -163,3 +163,40 @@ def test_for_brief_includes_only_types_with_current_rows(conn, cfg):
     assert ("r", "commit_drama") not in got and not any(k[0] == "nope" for k in got)
     conn.execute("UPDATE leads SET last_covered_at = ?", (ledger.iso(NOW),))
     assert ledger.for_brief(conn, cfg, ["r"], NOW)[("r", "hot_spot")] == []  # exhausted, not absent
+
+
+def iso_days(days):
+    return ledger.iso(NOW - timedelta(days=days))
+
+
+def test_variants_lists_good_old_stories_best_first_with_newest_hook(conn, cfg):
+    conn.execute("INSERT INTO repos(name, path) VALUES ('r', '/r')")
+    conn.execute("INSERT INTO runs(id, status, started_at) VALUES ('r1','finished','t')")
+    old = iso_days(40)
+    src = '[{"repo": "r", "commit": "abc"}]'
+    for key, reward, liked, last in (
+        ("good", 0.7, 0, old),
+        ("best", 0.9, 0, old),
+        ("liked", None, 1, old),
+        ("weak", 0.2, 0, old),
+        ("recent", 0.9, 0, iso_days(3)),
+    ):
+        conn.execute(
+            "INSERT INTO stories(story_key, repo, story_type, sources, first_card_at,"
+            " last_card_at, best_reward, liked, formats) VALUES"
+            " (?, 'r', 'hot_spot', ?, ?, ?, ?, ?, '[\"meme\"]')",
+            (key, src, old, last, reward, liked),
+        )
+    conn.execute(
+        "INSERT INTO cards(id, run_id, repo_id, story_type, format, persona, tone, spec,"
+        " story_key, created_at) VALUES ('c1','r1',1,'hot_spot','meme','p','t',"
+        "'{\"hook\": \"Hot file\"}','best',?)",
+        (old,),
+    )
+    got = ledger.variants(conn, cfg, NOW)
+    assert [v["story_key"] for v in got] == ["liked", "best", "good"]
+    best = got[1]
+    assert best["hook"] == "Hot file" and best["formats_used"] == ["meme"]
+    assert (best["repo"], best["story_type"]) == ("r", "hot_spot")
+    assert best["sources"] == [{"repo": "r", "commit": "abc"}] and best["best_reward"] == 0.9
+    assert got[0]["hook"] is None  # its card was deleted by gc: story type and sources only

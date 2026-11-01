@@ -253,6 +253,61 @@ def test_empty_signals_still_produce_packets():
     assert all(p.leads for p in b.packets)
 
 
+NO_LEADS = {"x": 1}  # not empty, so build() does not swap in signals()
+
+
+def variant(n=0, story_type="commit_drama", formats_used=("code_card",), **over):
+    return {
+        "story_key": f"key{n}",
+        "story_type": story_type,
+        "repo": "fixture",
+        "sources": [{"repo": "fixture", "commit": "a" * 40}],
+        "hook": f"Rounding was fixed twice {n}.",
+        "formats_used": list(formats_used),
+        "best_reward": 0.9 - n / 100,
+        **over,
+    }
+
+
+def variant_leads(b):
+    return [x for p in b.packets for x in p.leads if x.startswith("[variant]")]
+
+
+def test_variant_slot_only_when_leads_run_out():
+    plenty = build(count=2, variants=[variant()])
+    assert variant_leads(plenty) == []
+    assert all(r["kind"] != "variant" for p in plenty.packets for r in p.lead_refs)
+
+    bare = build(count=10, sig=NO_LEADS, variants=[variant()])
+    [line] = variant_leads(bare)
+    assert line.startswith('[variant] retell "Rounding was fixed twice 0." (commit_drama, ')
+    assert "first told as code_card) as a " in line
+    assert "cite the same sources: fixture@" + "a" * 7 in line
+    assert sum(p.count for p in bare.packets) == 10
+    pk = next(p for p in bare.packets if any(x.startswith("[variant]") for x in p.leads))
+    i = next(i for i, x in enumerate(pk.leads) if x.startswith("[variant]"))
+    assert pk.lead_refs[i] == {
+        "kind": "variant",
+        "story_key": "key0",
+        "sources": [{"repo": "fixture", "commit": "a" * 40}],
+    }
+    # The packet slot for the variant has a format the story has not used, from its category.
+    fmt = line.split(" as a ")[1].split(";")[0]
+    assert fmt in pk.formats and fmt != "code_card"
+    assert fmt in brief.CATEGORY_FORMATS["git_drama"]
+    assert "commit_drama" in pk.story_types
+
+
+def test_variant_slots_capped_by_share():
+    many = [variant(n) for n in range(8)]
+    assert len(variant_leads(build(count=10, sig=NO_LEADS, variants=many))) == 2  # 0.2 x 10
+    assert (
+        len(variant_leads(build(count=10, sig=NO_LEADS, variants=many, variant_max_share=0.4))) == 4
+    )
+    assert variant_leads(build(count=10, sig=NO_LEADS, variants=many, variant_max_share=0)) == []
+    assert variant_leads(build(count=4, sig=NO_LEADS, variants=many)) == []  # floor(0.8) = 0
+
+
 def test_guidance_has_rules_personas_and_budget():
     from codescroll.config import Persona
 

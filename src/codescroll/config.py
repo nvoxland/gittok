@@ -47,6 +47,9 @@ class AgentSettings:
     min_burn_per_day: int = 10
     min_run_count: int = 8
     lead_cooldown_days: int = 30
+    variant_min_reward: float = 0.6
+    variant_after_days: int = 14
+    variant_max_share: float = 0.2
 
 
 @dataclass(frozen=True)

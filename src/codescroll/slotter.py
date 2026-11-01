@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from codescroll import srs, supply
 
@@ -128,6 +128,28 @@ def _active_rules(conn, now: datetime) -> list:
     ).fetchall()
 
 
+def _story_keys(conn, ids: list[str]) -> dict[str, str]:
+    """Card id -> story key, in one query."""
+    return {
+        r["id"]: r["story_key"]
+        for r in conn.execute(
+            f"SELECT id, story_key FROM cards WHERE id IN ({','.join('?' * len(ids))})", ids
+        )
+    }
+
+
+def _impressed_stories(conn, since_ms: int) -> set[str]:
+    """Story keys of cards that had an impression since `since_ms`."""
+    return {
+        r[0]
+        for r in conn.execute(
+            "SELECT DISTINCT c.story_key FROM events e JOIN cards c ON c.id = e.card_id "
+            "WHERE e.type = 'impression' AND e.ts >= ?",
+            (since_ms,),
+        )
+    }
+
+
 def build_batch(conn, cfg, limit: int, served: set[str], seed: int, now: datetime) -> list[str]:
     from codescroll import learning
 
@@ -136,6 +158,11 @@ def build_batch(conn, cfg, limit: int, served: set[str], seed: int, now: datetim
     knobs = _knobs(rc)
     due = [d for d in srs.due_cards(conn, now) if d not in served]
     ids = [i for i in supply.unseen_ready(conn, rc, now) if i not in served and i not in due]
+    # Variants of one story are never close together: skip stories shown within repeat_days.
+    story_of = _story_keys(conn, ids)
+    since_ms = int((now - timedelta(days=knobs["repeat_days"])).timestamp() * 1000)
+    shown = _impressed_stories(conn, since_ms)
+    ids = [i for i in ids if story_of[i] not in shown]
     feats = {i: set(learning.card_features(conn, cfg, i, now=now)) for i in ids + due}
     rules = _active_rules(conn, now)
     for r in rules:
@@ -153,6 +180,10 @@ def build_batch(conn, cfg, limit: int, served: set[str], seed: int, now: datetim
                         r["factor"] if r["factor"] is not None else 1.0
                     )
     ids.sort(key=lambda i: (-scores.get(i, 0.0), i))
+    best: dict[str, str] = {}  # one card per story key in a batch: the best scored
+    for i in ids:
+        best.setdefault(story_of[i], i)
+    ids = [i for i in ids if best[story_of[i]] == i]
 
     caps = [
         (

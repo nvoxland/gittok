@@ -872,6 +872,26 @@ def _pick_format(
     )
 
 
+def _source_ref(src: dict) -> str:
+    """One card source as a short citation: `repo@sha7` or `repo:path:lines`."""
+    repo = src.get("repo", "?")
+    if src.get("commit"):
+        return f"{repo}@{src['commit'][:7]}"
+    lines = src.get("lines")
+    return f"{repo}:{src.get('path', '?')}" + (f":{lines[0]}-{lines[1]}" if lines else "")
+
+
+def _variant_pair(v: dict, fmt: str) -> tuple[str, dict]:
+    """The packet lead (text, lead_ref) that asks a writer to retell story `v` as `fmt`."""
+    told = f'"{v["hook"]}" ' if v.get("hook") else ""
+    line = (
+        f"[variant] retell {told}({v['story_type']}, first told as "
+        f"{', '.join(v['formats_used'])}) as a {fmt}; cite the same sources: "
+        f"{', '.join(_source_ref(x) for x in v['sources'])}"
+    )
+    return line, {"kind": "variant", "story_key": v["story_key"], "sources": v["sources"]}
+
+
 def build_brief(
     *,
     repo_signals,
@@ -888,7 +908,15 @@ def build_brief(
     groups: dict[str, list[str]] | None = None,
     format_weights: dict[str, float] | None = None,
     ledger: dict[tuple[str, str], list[Lead]] | None = None,
+    variants: list[dict] | None = None,
+    variant_max_share: float = 0.2,
 ) -> Brief:
+    """Build the brief.
+
+    `variants` lists stories that may be retold in a new format (story_key, story_type, repo,
+    sources, hook, formats_used), best first. They fill slots that have no fresh lead, at most
+    `variant_max_share` x `count` of them.
+    """
     if not repo_signals:
         raise ValueError("no repos to build a brief from")
     rules = list(rules or [])
@@ -1113,12 +1141,51 @@ def build_brief(
                 story_used[story] = story_used.get(story, 0) + 1
                 slots.append((repo, category, story, fmt, None))
 
+    # 1a. Variants: a slot with no fresh lead may retell a good old story in a new format.
+    variant_at: dict[int, dict] = {}  # slot index -> variant
+    cap = int(variant_max_share * count)
+    seen_n: Counter = Counter()
+    needy = []  # slots past the fresh leads of their (repo, story type)
+    for i, (repo, _, story, _, grp) in enumerate(slots):
+        if grp is None:
+            seen_n[(repo, story)] += 1
+            if seen_n[(repo, story)] > len(leads_by[(repo, story)]):
+                needy.append(i)
+    for v in variants or []:
+        if len(variant_at) >= cap:
+            break
+        for i in needy:
+            repo, category, story, fmt, _ = slots[i]
+            options = [f for f in formats_in[category] if f not in v["formats_used"]]
+            if repo != v["repo"] or v["story_type"] not in stories_in[category] or not options:
+                continue
+            room = spent - ILLUSTRATION_COST.get(fmt, 0)
+            new = _pick_format(
+                options,
+                used,
+                room,
+                max_illustrations,
+                fmt_boost,
+                fmt_caps,
+                recent_fmt,
+                format_weights,
+            )
+            used[fmt] -= 1
+            used[new] = used.get(new, 0) + 1
+            spent = room + ILLUSTRATION_COST.get(new, 0)
+            story_used[story] -= 1
+            story_used[v["story_type"]] = story_used.get(v["story_type"], 0) + 1
+            slots[i] = (repo, category, v["story_type"], new, None)
+            variant_at[i] = v
+            needy.remove(i)
+            break
+
     # 1b. Image share: swap text formats for image formats of the same category.
     target = float((defaults.get("visual_mix") or {}).get("image_min_share") or 0)
     image_n = sum(s[3] in IMAGE_FORMATS for s in slots)
     while slots and image_n < target * len(slots):
         for i, (repo, category, story, fmt, grp) in enumerate(slots):
-            if grp is not None or fmt in IMAGE_FORMATS or fmt == "quiz":
+            if grp is not None or i in variant_at or fmt in IMAGE_FORMATS or fmt == "quiz":
                 continue
             room = spent - ILLUSTRATION_COST.get(fmt, 0)
             options = [
@@ -1158,14 +1225,15 @@ def build_brief(
     for repo, grp, unit_repos in units:
         for cheap in (True, False):
             group = [
-                s
-                for s in slots
+                i
+                for i, s in enumerate(slots)
                 if s[0] == repo
                 and s[4] == grp
                 and (s[2] in CONCRETE_TYPES and s[3] in HAIKU_FORMATS) == cheap
             ]
             for start in range(0, len(group), packet_size):
-                chunk = group[start : start + packet_size]
+                chunk_ix = group[start : start + packet_size]
+                chunk = [slots[i] for i in chunk_ix]
                 types = list(dict.fromkeys(t for _, _, t, _, _ in chunk))
                 if grp:
                     pairs = [
@@ -1179,9 +1247,12 @@ def build_brief(
                         for t in types
                         for line in leads_by[(repo, t)]
                     ]
-                if not pairs:
+                if not pairs and len(chunk_ix) > sum(i in variant_at for i in chunk_ix):
                     none = "No precomputed leads: explore with list_dir and git_log."
                     pairs = [(none, Lead(types[0], repo, "none", text=none))]
+                for i in chunk_ix:
+                    if i in variant_at:
+                        pairs.append(_variant_pair(variant_at[i], slots[i][3]))
                 packets.append(
                     Packet(
                         id=f"p{len(packets) + 1}",
@@ -1196,7 +1267,7 @@ def build_brief(
                             for i in range(len(chunk))
                         ],
                         leads=[line for line, _ in pairs],
-                        lead_refs=[asdict(ref) for _, ref in pairs],
+                        lead_refs=[r if isinstance(r, dict) else asdict(r) for _, r in pairs],
                         formats=[f for _, _, _, f, _ in chunk],
                         repos=list(unit_repos),
                     )

@@ -132,6 +132,40 @@ def for_brief(conn, cfg, repos, now: datetime, limit: int = WIDE_LIMIT) -> dict:
     return out
 
 
+def variants(conn, cfg, now: datetime, limit: int = 30) -> list[dict]:
+    """`build_brief(variants=...)` input: stories that may be retold in a new format.
+
+    A story qualifies when it was liked or its best reward is `agent.variant_min_reward`, and
+    its last card is `agent.variant_after_days` old. Liked first, then best reward. The hook is
+    the newest card's; it is None when gc deleted every card of the story.
+    """
+    a = cfg.settings.agent
+    rows = conn.execute(
+        "SELECT * FROM stories WHERE (liked = 1 OR best_reward >= ?) AND last_card_at <= ? "
+        "ORDER BY liked DESC, best_reward DESC, last_card_at, story_key LIMIT ?",
+        (a.variant_min_reward, iso(now - timedelta(days=a.variant_after_days)), limit),
+    ).fetchall()
+    out = []
+    for r in rows:
+        card = conn.execute(
+            "SELECT json_extract(spec, '$.hook') AS hook FROM cards WHERE story_key = ? "
+            "ORDER BY created_at DESC, id DESC LIMIT 1",
+            (r["story_key"],),
+        ).fetchone()
+        out.append(
+            {
+                "story_key": r["story_key"],
+                "story_type": r["story_type"],
+                "repo": r["repo"],
+                "sources": json.loads(r["sources"]),
+                "hook": card["hook"] if card else None,
+                "formats_used": json.loads(r["formats"]),
+                "best_reward": r["best_reward"],
+            }
+        )
+    return out
+
+
 def _sha_match(a: str, b: str) -> bool:
     """Full or abbreviated shas of one commit (7+ hex chars)."""
     a, b = a.lower(), b.lower()

@@ -159,9 +159,8 @@ def test_duplicate_story_across_runs_is_rejected(conn, cfg, fixture_repo):
 
     second = runs.open_run(conn, cfg, repo=None, brief="b", requested=3, now=NOW)
     res = runs.submit(conn, cfg, second, [example_card(fixture_repo), text_card(fixture_repo)])
-    assert res["rejected"] == [
-        {"index": 0, "reason": "duplicate_story", "detail": "already in the feed"}
-    ]
+    assert [(r["index"], r["reason"]) for r in res["rejected"]] == [(0, "duplicate_story")]
+    assert "already told in format code_card" in res["rejected"][0]["detail"]
     assert [a["index"] for a in res["accepted"]] == [1]
     assert res["totals"]["accepted"] == 1
     assert res["totals"]["rejected"] == 1
@@ -255,6 +254,29 @@ def test_parallel_submits_keep_counters_and_files(cfg, fixture_repo):
     assert (run["accepted"], run["submissions"]) == (4, 4)
     files = sorted(p.name for p in (cfg.settings.data_dir / "runs" / run_id).iterdir())
     assert files == [f"submission-{i}.json" for i in range(1, 5)]
+
+
+def test_submit_accepts_variant_of_a_good_old_story_in_a_new_format(conn, cfg, fixture_repo):
+    first = runs.open_run(conn, cfg, repo=None, brief="b", requested=3, now=NOW)
+    runs.submit(conn, cfg, first, [text_card(fixture_repo)])
+    runs.finish_run(conn, first, now=NOW)
+    variant = text_card(fixture_repo, format="fun_fact", hook="Legacy.py, retold.")
+
+    second = runs.open_run(conn, cfg, repo=None, brief="b", requested=3, now=NOW)
+    res = runs.submit(conn, cfg, second, [variant])  # too soon, no reward yet
+    assert "reward" in res["rejected"][0]["detail"]
+    conn.execute("UPDATE stories SET best_reward = 0.9")
+    res = runs.submit(conn, cfg, second, [variant])
+    assert "days old" in res["rejected"][0]["detail"]
+    conn.execute("UPDATE stories SET last_card_at = '2020-01-01T00:00:00Z'")
+    assert runs.check(conn, cfg, second, [variant])["ok"] == [0]
+    res = runs.submit(conn, cfg, second, [variant])
+    assert [a["index"] for a in res["accepted"]] == [0]
+    assert conn.execute("SELECT COUNT(*) FROM cards").fetchone()[0] == 2
+    story = conn.execute("SELECT * FROM stories").fetchone()
+    assert (story["cards_made"], db.loads(story["formats"])) == (2, ["text_post", "fun_fact"])
+    again = runs.submit(conn, cfg, second, [variant])  # same format twice is never allowed
+    assert "already told" in again["rejected"][0]["detail"]
 
 
 def test_parallel_duplicate_story_stored_once(cfg, fixture_repo):
