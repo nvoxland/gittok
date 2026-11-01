@@ -38,8 +38,14 @@ describe('ComicVisual', () => {
 		expect(container.querySelector('.grid')).toHaveClass('cols-2');
 		expect(screen.getByText('Caption 2')).toBeInTheDocument();
 	});
-	it('uses a single column for 3 panels', () => {
+	it('puts 3 panels side by side in one strip, so the whole comic fits on the front', () => {
 		const { container } = render(ComicVisual, { visual: comicVisual(3), resolved: images(3) });
-		expect(container.querySelector('.grid')).toHaveClass('cols-1');
+		expect(container.querySelector('.grid')).toHaveClass('cols-3');
+	});
+	it('shows captions under the pictures, not over them', () => {
+		const { container } = render(ComicVisual, { visual: comicVisual(3), resolved: images(3) });
+		const panel = container.querySelector('.panel')!;
+		expect(panel.lastElementChild!.tagName).toBe('FIGCAPTION');
+		expect(panel.querySelector('figcaption')).toHaveClass('below');
 	});
 });

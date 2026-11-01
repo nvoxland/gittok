@@ -1,7 +1,8 @@
 <script lang="ts">
 	import type { ComicVisual, ResolvedImages } from '#lib/types.ts';
 	let { visual, resolved }: { visual: ComicVisual; resolved: ResolvedImages | null } = $props();
-	const cols = $derived(visual.panels.length % 2 === 0 ? 2 : 1);
+	// 3 panels read as one strip; 2 or 4 as a 2-wide grid. Never one tall column: it runs off the front.
+	const cols = $derived(visual.panels.length === 3 ? 3 : 2);
 </script>
 
 <div class="grid cols-{cols}">
@@ -16,7 +17,7 @@
 					alt={p.caption}
 				/>
 			{/if}
-			<figcaption>{p.caption}</figcaption>
+			<figcaption class="below">{p.caption}</figcaption>
 		</figure>
 	{/each}
 </div>
@@ -29,8 +30,8 @@
 	.cols-2 {
 		grid-template-columns: 1fr 1fr;
 	}
-	.cols-1 {
-		grid-template-columns: 1fr;
+	.cols-3 {
+		grid-template-columns: 1fr 1fr 1fr;
 	}
 	.panel {
 		position: relative;
@@ -39,22 +40,25 @@
 		border-radius: 4px;
 		overflow: hidden;
 		background: var(--surface);
-		min-height: 3rem;
+		display: flex;
+		flex-direction: column;
 	}
 	img {
 		display: block;
 		width: 100%;
 		height: auto;
+		max-height: 30dvh;
+		object-fit: contain;
+		background: #fff;
 	}
 	figcaption {
-		position: absolute;
-		left: 0;
-		right: 0;
-		bottom: 0;
+		flex: 1;
 		padding: 0.3rem 0.4rem;
-		font-size: 0.8rem;
+		font-size: 0.75rem;
+		line-height: 1.25;
 		font-weight: 600;
 		color: #111;
-		background: rgba(255, 255, 255, 0.85);
+		background: #fff;
+		border-top: 2px solid var(--text);
 	}
 </style>
