@@ -51,6 +51,7 @@ class AgentSettings:
     variant_min_reward: float = 0.6
     variant_after_days: int = 14
     variant_max_share: float = 0.2
+    intro_share: float = 0.25
 
 
 @dataclass(frozen=True)

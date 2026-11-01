@@ -12,7 +12,7 @@ import json
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
-from codescroll import brief, db, learning, requests, store, storykey
+from codescroll import brief, db, knowledge, learning, requests, store, storykey
 
 WIDE_LIMIT = 50  # leads kept per story type per refresh
 UNKNOWN_INTEREST = 0.5
@@ -184,11 +184,17 @@ def ranked(
     limit: int,
     dir_means: dict | None = None,
     blocks: _StoryBlocks | None = None,
+    nmap: dict | None = None,
 ) -> list[brief.Lead]:
     """Current leads for one story type, best first, without leads still in their cooldown
     or whose story is blocked.
 
-    score = interest x strength x 0.5 ** times_covered.
+    score = (0.5 + interest) x strength x novelty x 0.5 ** times_covered.
+
+    Novelty (knowledge.lead_dir; 1.0 for an unknown dir) leads: what the reader has not learned
+    comes first. Interest is a mild factor in [0.5, 1.5] so it only breaks near-ties; it stays
+    because the learned dir reward is still the best signal of what the reader enjoys. Novelty
+    already falls as cards are seen, so `times_covered` is the only other repeat brake.
     """
     cutoff = iso(now - timedelta(days=cfg.settings.agent.lead_cooldown_days))
     if dir_means is None:
@@ -202,8 +208,13 @@ def ranked(
         and (r["lead_key"].startswith(requests.KEY_PREFIX) or not blocks.blocks(_lead(r)))
     ]
 
+    if nmap is None:
+        nmap = knowledge.novelty_map(conn, repo, cfg.settings.user.git_identities)
+
     def score(r) -> float:
-        return _interest(r["path"], dir_means) * r["strength"] * 0.5 ** r["times_covered"]
+        nov = knowledge.lead_dir(r["path"], nmap)[1]
+        interest = 0.5 + _interest(r["path"], dir_means)
+        return interest * r["strength"] * nov * 0.5 ** r["times_covered"]
 
     # Follow-up requests go first: the reader asked for them.
     rows.sort(key=lambda r: (not r["lead_key"].startswith(requests.KEY_PREFIX), -score(r), r["id"]))
@@ -219,12 +230,16 @@ def for_brief(conn, cfg, repos, now: datetime, limit: int = WIDE_LIMIT) -> dict:
     """
     dir_means = learning.posterior_means(conn, cfg, "dir", now)
     blocks = _StoryBlocks(_blocked_stories(conn, cfg, now))
+    ids = cfg.settings.user.git_identities
+    nmaps = {r: knowledge.novelty_map(conn, r, ids) for r in repos}
     types = dict.fromkeys(t for ts in brief.CATEGORY_STORIES.values() for t in ts)
     out = {}
     for repo in repos:
         for t in types:
             if _current(conn, repo, t):
-                out[(repo, t)] = ranked(conn, cfg, repo, t, now, limit, dir_means, blocks)
+                out[(repo, t)] = ranked(
+                    conn, cfg, repo, t, now, limit, dir_means, blocks, nmaps[repo]
+                )
     return out
 
 

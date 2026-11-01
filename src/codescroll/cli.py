@@ -23,6 +23,7 @@ from codescroll import (
     db,
     gc,
     install,
+    knowledge,
     learning,
     ledger,
     mcp_server,
@@ -109,6 +110,8 @@ def _brief(args) -> int:
             lead_ok=ledger.offerable(conn, cfg, datetime.now(UTC)),
             variants=ledger.variants(conn, cfg, datetime.now(UTC)),
             variant_max_share=cfg.settings.agent.variant_max_share,
+            intro_share=cfg.settings.agent.intro_share,
+            novelty=knowledge.novelty_maps(conn, cfg, sorted(repo_signals)),
             **mcp_server.mix_inputs(conn, cfg),
         )
     print(b.to_markdown())

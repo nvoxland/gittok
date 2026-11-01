@@ -180,6 +180,30 @@ def novelty_map(conn, repo: str, identities=()) -> dict[str, float]:
     return {d: combine(rows.get(d, {}), churn.get(d, 0), _own(own, d)) for d in sorted(dirs)}
 
 
+def novelty_maps(conn, cfg, repos) -> dict[str, dict[str, float]]:
+    """repo -> novelty_map, for `build_brief(novelty=...)`."""
+    ids = cfg.settings.user.git_identities
+    return {r: novelty_map(conn, r, ids) for r in repos}
+
+
+def lead_dir(path: str | None, nmap: dict[str, float]) -> tuple[str | None, float]:
+    """(dir, novelty) of a lead path: the deepest known prefix, at most 2 levels deep.
+
+    A file uses its parent dirs; a dir lead (a path that is itself a known dir) uses itself.
+    With no known prefix the dir is the path's first two dir levels and novelty is 1.0.
+    A root-level file has no dir: (None, 1.0).
+    """
+    segs = [p for p in (path or "").split("/") if p][:MAX_DEPTH]
+    if not segs:
+        return None, 1.0
+    for i in range(len(segs), 0, -1):
+        d = "/".join(segs[:i])
+        if d in nmap:
+            return d, nmap[d]
+    dirs = [p for p in (path or "").split("/") if p][:-1][:MAX_DEPTH]
+    return ("/".join(dirs) or None), 1.0
+
+
 def knowledge_rows(conn, cfg, limit: int = 10) -> list[dict]:
     """The most novel dirs first, for get_profile."""
     ids = cfg.settings.user.git_identities

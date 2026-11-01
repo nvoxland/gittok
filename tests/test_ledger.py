@@ -92,9 +92,10 @@ def test_ranked_prefers_interesting_uncovered_leads(conn, cfg):
     refresh(conn, sig("src/a.py", "lib/b.py", "docs/c.py"))
     ids = {r["path"]: r["id"] for r in rows(conn)}
     # src ranks first by strength, but lib is loved and src is not; docs is unknown (0.5).
-    seed_dir_interest(conn, lib=0.9, src=0.2)
+    seed_dir_interest(conn, lib=1.0, src=0.0)
     order = [x.path for x in ledger.ranked(conn, cfg, "r", "hot_spot", NOW, 10)]
-    assert order == ["lib/b.py", "src/a.py", "docs/c.py"]  # scores 0.45, 0.2, 0.17
+    # scores 0.75, 0.5, 0.33: interest is only a mild factor (0.5 + interest)
+    assert order == ["lib/b.py", "src/a.py", "docs/c.py"]
     # covering lib twice quarters its score: it drops to the bottom but stays offered
     conn.execute("UPDATE leads SET times_covered = 2 WHERE id = ?", (ids["lib/b.py"],))
     got = ledger.ranked(conn, cfg, "r", "hot_spot", NOW, 10)

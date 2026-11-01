@@ -14,6 +14,7 @@ agent:
   variant_min_reward: 0.6      # a story is retold in a new format only if its best reward is this high (or liked)
   variant_after_days: 14       # ...and its last card is at least this old
   variant_max_share: 0.2       # at most this share of a brief's cards are variants
+  intro_share: 0.25            # at least this share of a brief's cards intro the least-known dirs (explain from zero)
 analysis:
   history_window_days: 720     # relative to the ref's last commit date
   churn_windows_days: [30, 90, 365]
