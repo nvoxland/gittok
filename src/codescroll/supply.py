@@ -8,7 +8,7 @@ import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from codescroll import social
+from codescroll import gc, social
 
 IMAGE_KINDS = ("meme", "illustration", "comic", "chart", "diagram")
 MB = 1024 * 1024
@@ -97,6 +97,7 @@ def feed_health(conn, cfg, now: datetime) -> dict:
         "image_share": {"ready": _image_share(conn), "shown_7d": _image_share(conn, since_ms)},
         "db_mb": _file_mb(Path(db_file)) if db_file else 0,
         "assets_mb": _dir_mb(cfg.settings.data_dir / "assets"),
+        "gc": gc.last_result(cfg),
     }
 
 

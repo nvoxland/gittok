@@ -97,3 +97,12 @@ def test_low_runway_notification_once_per_day(conn, cfg):
     ]
     fill(conn, cfg, 30)
     assert supply.notify_low_runway(conn, cfg, NOW + timedelta(days=2)) == 0
+
+
+def test_feed_health_reports_last_gc_pass(conn, cfg):
+    from codescroll import gc
+
+    assert supply.feed_health(conn, cfg, NOW)["gc"] is None
+    cfg.settings.data_dir.mkdir(parents=True, exist_ok=True)
+    (cfg.settings.data_dir / gc.LAST_FILE).write_text('{"at": "x", "counts": {"seen": 3}}')
+    assert supply.feed_health(conn, cfg, NOW)["gc"] == {"at": "x", "counts": {"seen": 3}}

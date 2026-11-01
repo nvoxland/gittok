@@ -65,6 +65,10 @@ Not an HTTP route. A writer subagent calls it for one work packet. Fields:
 
 `finish_run` returns `seconds_per_card`: run duration divided by accepted cards, rounded to 0.1 s (null when no card was accepted).
 
+## POST /api/answer
+
+Body: `{ "card_id": "c_...", "choice": 0, "session": "..." }`. Returns the reveal `{ "correct", "answer_index", "explanation" }`. A card id that does not exist (for example, deleted by garbage collection) returns 404. A card with no question, or a bad `choice`, returns 400. The Quiz component shows "This card is gone." on 404 and does not retry.
+
 ## GET /healthz
 
 `{ "ok": true }`
@@ -76,12 +80,14 @@ Not an HTTP route. A writer subagent calls it for one work packet. Fields:
 ```json
 { "backlog": 41, "burn_per_day": 12.0, "runway_days": 3.4, "target_days": 3,
   "want": 0, "pending_render": 2, "render_failed": 0,
-  "image_share": { "ready": 0.02, "shown_7d": 0.0 }, "db_mb": 3.1, "assets_mb": 0.6 }
+  "image_share": { "ready": 0.02, "shown_7d": 0.0 }, "db_mb": 3.1, "assets_mb": 0.6,
+  "gc": { "at": "2026-06-01T12:00:00Z", "counts": { "seen": 4, "liked": 0, "unseen": 1 } } }
 ```
 
 - `backlog`: ready cards with no impression in the last `repeat_days`.
 - `burn_per_day`: distinct cards shown per day, mean of 7 days, never below `agent.min_burn_per_day`.
 - `want`: how many cards to make so the backlog lasts `agent.target_runway_days`. It is 0, or between `agent.min_run_count` and `agent.max_count`.
+- `gc`: when the last real garbage collection pass ran and what it deleted, or `null` before the first pass (see docs/learning.md).
 - `image_share`: share of cards with a meme, illustration, comic, chart, or diagram visual.
 
 `get_brief(repo=None, count=None)`: without `count`, it makes `want` cards. When `want` is 0, it returns `{"run_id": null, "nothing_to_do": true, "health": {...}}`. It opens no run, analyzes no repo, and does not count toward `per_day_runs`. An explicit `count` always opens a run.

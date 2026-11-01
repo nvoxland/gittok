@@ -77,6 +77,19 @@ class RenderSettings:
 
 
 @dataclass(frozen=True)
+class GcSettings:
+    seen_after_days: int = 14
+    liked_after_days: int = 90
+    unseen_after_days: int = 45
+    failed_after_days: int = 7
+    srs_keep_days: int = 60
+    events_after_days: int = 90
+    run_files_after_days: int = 30
+    social_after_days: int = 30
+    interval_s: float = 3600.0
+
+
+@dataclass(frozen=True)
 class Mascot:
     name: str
     repo: str | None
@@ -112,6 +125,7 @@ class Settings:
     research: ResearchSettings
     render: RenderSettings = field(default_factory=RenderSettings)
     repos: ReposSettings = field(default_factory=ReposSettings)
+    gc: GcSettings = field(default_factory=GcSettings)
 
 
 @dataclass(frozen=True)
@@ -206,7 +220,7 @@ def _load_settings(root: Path) -> Settings:
     data = _mapping(_read(file), "settings", file)
     _check_keys(
         data,
-        {"data_dir", "server", "agent", "analysis", "research", "render", "repos"},
+        {"data_dir", "server", "agent", "analysis", "research", "render", "repos", "gc"},
         "settings",
         file,
     )
@@ -221,6 +235,7 @@ def _load_settings(root: Path) -> Settings:
         research=_section(ResearchSettings, data.get("research"), "settings.research", file),
         render=_section(RenderSettings, data.get("render"), "settings.render", file),
         repos=_repos_settings(data.get("repos"), root, file),
+        gc=_section(GcSettings, data.get("gc"), "settings.gc", file),
     )
 
 

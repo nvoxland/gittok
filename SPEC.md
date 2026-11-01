@@ -523,6 +523,7 @@ Example: user tells Claude Code "less memes, more of the sync engine this week" 
 - `personas`, `mascots`
 - `srs` (spaced repetition state per card)
 - `notifications`
+- `stories` (one row per story ever made: `story_key`, repo, type, sources, first and last card time, `cards_made`, `best_reward`, `liked`). Gc never deletes it, so duplicate checks survive card deletion.
 
 ---
 

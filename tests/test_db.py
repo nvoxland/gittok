@@ -8,7 +8,7 @@ from codescroll import db
 SPEC_TABLES = {
     "repos", "groups", "repo_groups", "git_signals", "runs", "cards", "card_features",
     "assets", "events", "rewards", "weights", "rules", "personas", "mascots", "srs",
-    "notifications",
+    "notifications", "stories",
 }  # fmt: skip
 
 
@@ -32,6 +32,7 @@ def test_migrate_twice_applies_nothing_second_time(tmp_path):
         "0004_social.sql",
         "0005_prefs.sql",
         "0006_drop_saves.sql",
+        "0007_stories.sql",
     ]
     assert db.migrate(conn) == []
     assert conn.execute("SELECT name FROM schema_migrations").fetchall()[0]["name"] == first[0]
@@ -81,6 +82,35 @@ def test_connect_creates_parent_dirs(tmp_path):
     p = tmp_path / "a" / "b" / "x.db"
     db.connect(p).close()
     assert p.exists()
+
+
+def test_stories_migration_backfills_from_cards(tmp_path):
+    conn = db.open_db(tmp_path / "x.db")
+    conn.execute("INSERT INTO repos(name, path) VALUES ('r', '/r')")
+    conn.execute("INSERT INTO runs(id, status, started_at) VALUES ('r','open','now')")
+    spec = '{"sources": [{"repo": "r", "commit": "abc"}]}'
+    for cid, key in (("c1", "k1"), ("c2", "k2")):
+        conn.execute(
+            "INSERT INTO cards(id, run_id, repo_id, story_type, format, persona, tone, spec,"
+            " story_key, created_at) VALUES (?,'r',1,'s','f','p','t',?,?,'2026-01-01T00:00:00Z')",
+            (cid, spec, key),
+        )
+    conn.execute("INSERT INTO rewards(card_id, reward, computed_at) VALUES ('c1', 0.7, 'now')")
+    conn.execute("INSERT INTO rewards(card_id, reward, computed_at) VALUES ('c1', 0.2, 'now')")
+    conn.execute(
+        "INSERT INTO events(card_id, type, ts, data, received_at) "
+        "VALUES ('c1','like',1,'{\"on\":true}','now')"
+    )
+    conn.execute("DROP TABLE stories")
+    conn.executescript(db._migration_files()[-1].read_text(encoding="utf-8"))
+
+    rows = {r["story_key"]: r for r in conn.execute("SELECT * FROM stories")}
+    assert set(rows) == {"k1", "k2"}
+    assert rows["k1"]["repo"] == "r" and rows["k1"]["story_type"] == "s"
+    assert db.loads(rows["k1"]["sources"]) == [{"repo": "r", "commit": "abc"}]
+    assert rows["k1"]["cards_made"] == 1
+    assert rows["k1"]["best_reward"] == 0.7 and rows["k1"]["liked"] == 1
+    assert rows["k2"]["best_reward"] is None and rows["k2"]["liked"] == 0
 
 
 def test_card_cascade_and_events_survive(tmp_path):

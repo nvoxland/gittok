@@ -187,6 +187,7 @@ def test_serve_starts_the_render_learning_and_profile_workers(cfg, monkeypatch):
         "learning_worker": True,
         "profile_worker": True,
         "notify_worker": True,
+        "gc_worker": True,
         "lan_token": None,
         "app": "app",
     }
@@ -573,3 +574,13 @@ def test_refeature_rewrites_features(cfg, fixture_repo, capsys):
     with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
         dirs = {r[0] for r in conn.execute("SELECT value FROM card_features WHERE feature='dir'")}
     assert "stale" not in dirs and {"billing", "src"} <= dirs
+
+
+def test_gc_prints_counts_as_json(cfg, capsys):
+    assert cli.main(["gc", "--dry-run"]) == 0
+    counts = json.loads(capsys.readouterr().out)
+    assert counts["seen"] == 0 and set(counts) >= {"liked", "unseen", "asset_files"}
+    assert not (cfg.settings.data_dir / "gc_last.json").exists()
+    assert cli.main(["gc", "--vacuum"]) == 0
+    assert json.loads(capsys.readouterr().out)["events"] == 0
+    assert (cfg.settings.data_dir / "gc_last.json").exists()

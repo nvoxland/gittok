@@ -169,3 +169,35 @@ Removed. Like is the only reaction. Migration 0006 deleted the stored `save` eve
 | focus `repo`, `dir` | slot weight (1 + slots) / leads first, plus a focus line | reserved slots |
 | focus `format`, `story_type`, `group`, `tone` | like boost with factor 1 + slots | reserved slots |
 | any rule on `recency`, `has_comments`, `persona` (except ban), `template` or `visual_kind` (except ban) | no effect | ranking only |
+
+## 11. Garbage collection
+
+Nothing grows without bound. `src/codescroll/gc.py` deletes cards and files that have no further use. `GcWorker` runs a pass every `gc.interval_s` (1 hour) inside `codescroll serve`. `codescroll gc [--dry-run] [--vacuum]` runs one pass and prints the counts as JSON. A dry run changes nothing. `VACUUM` runs only from the CLI.
+
+Settings (`gc:` in `config/settings.yaml`):
+
+| rule | default | a card (or row) is deleted when |
+|---|---|---|
+| seen | `seen_after_days: 14` | it has at least one reward, its last impression is older than N days, and it is not liked |
+| liked | `liked_after_days: 90` | the same, but the card is liked |
+| unseen | `unseen_after_days: 45` | it never had an impression and `created_at` is older than N days |
+| failed | `failed_after_days: 7` | `status` is `render_failed` and `created_at` is older than N days |
+| SRS | `srs_keep_days: 60` | never, if it has an `srs` row that is not mastered and due within N days (overdue cards stay too) |
+| events | `events_after_days: 90` | the event is older than N days and was recorded before the card's newest reward was computed |
+| run files | `run_files_after_days: 30` | the run is not open and ended more than N days ago; the folder `data/runs/<id>/` goes, the `runs` row stays |
+| social | `social_after_days: 30` | `story_views` seen, and notifications read, more than N days ago |
+
+Liked means the latest `like` event has `on: true`. If gc already removed the like events, `stories.liked` gives the answer. `process_events` keeps `stories.liked` and `stories.best_reward` up to date.
+
+Deleting a card removes its `card_features`, its `assets` rows, its files in `data/assets/<card_id>/`, and its `srs` row. `notifications.card_id` becomes NULL.
+
+What stays, and why:
+
+- `stories`: the duplicate check reads it, so a deleted story is not made again.
+- `rewards` and `weights`: this is what the feed learned. A pass never changes the weights.
+- `events` that are newer than the newest reward, and events of impressions with no reward yet: the learner has not used them.
+- Fresh unseen cards: gc never lowers the backlog.
+
+A phone with an offline batch can still send events or an answer for a deleted card. Events are stored. `POST /api/answer` returns 404, and the quiz shows "This card is gone."
+
+`feed_health` shows the counts of the last real pass under `gc`. The server keeps them in `data/gc_last.json`.

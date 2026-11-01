@@ -90,6 +90,33 @@ def test_explicit_like_beats_skip(conn, cfg):
     assert rewards(conn)[a] == pytest.approx(learning.RewardConfig().weights["like"])
 
 
+def test_process_events_updates_story_best_reward_and_liked(conn, cfg):
+    a, b = add_card(conn, cfg), add_card(conn, cfg)
+    ev(conn, a, "impression", T0)
+    ev(conn, a, "like", T0 + 400, {"on": True})
+    ev(conn, b, "impression", T0 + 1000)
+    ev(conn, b, "like", T0 + 1100, {"on": True})
+    ev(conn, b, "like", T0 + 1200, {"on": False})
+    learning.process_events(conn, cfg, now=at(5))
+
+    def story(card):
+        return conn.execute(
+            "SELECT s.best_reward, s.liked FROM stories s JOIN cards c USING (story_key) "
+            "WHERE c.id = ?",
+            (card,),
+        ).fetchone()
+
+    assert story(a)["liked"] == 1
+    assert story(a)["best_reward"] == pytest.approx(rewards(conn)[a])
+    assert story(b)["liked"] == 0
+    # a later, lower reward does not lower best_reward
+    ev(conn, a, "impression", T0 + 10 * MIN)
+    ev(conn, a, "skip", T0 + 10 * MIN + 100, {"ms": 100})
+    ev(conn, b, "impression", T0 + 20 * MIN)
+    learning.process_events(conn, cfg, now=at(60))
+    assert story(a)["best_reward"] == pytest.approx(learning.RewardConfig().weights["like"])
+
+
 def test_short_dwell_without_engagement_counts_as_skip(conn, cfg):
     a, b, c = add_card(conn, cfg), add_card(conn, cfg), add_card(conn, cfg)
     ev(conn, a, "impression", T0)

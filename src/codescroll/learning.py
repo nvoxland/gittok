@@ -259,6 +259,13 @@ def process_events(conn, cfg, now: datetime | None = None) -> dict:
                 "VALUES (?, ?, ?, ?)",
                 (imp["card_id"], imp["id"], r, _iso(now)),
             )
+            liked = _toggled_on(events, "like") if any(t == "like" for t, _ in events) else None
+            conn.execute(
+                "UPDATE stories SET best_reward = MAX(COALESCE(best_reward, 0), ?), "
+                "liked = COALESCE(?, liked) "
+                "WHERE story_key = (SELECT story_key FROM cards WHERE id = ?)",
+                (r, None if liked is None else int(liked), imp["card_id"]),
+            )
             stats["impressions"] += 1
             stats["rewards"] += 1
             for feature, value in card_features(conn, cfg, imp["card_id"], now=now):

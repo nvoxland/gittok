@@ -9,6 +9,15 @@ import type {
 	Story
 } from './types';
 
+export class ApiError extends Error {
+	constructor(
+		message: string,
+		readonly status: number
+	) {
+		super(message);
+	}
+}
+
 export async function fetchFeed(cursor?: string, limit = 20): Promise<FeedResponse> {
 	const params = new URLSearchParams({ limit: String(limit) });
 	if (cursor) params.set('cursor', cursor);
@@ -47,7 +56,7 @@ export async function postAnswer(card_id: string, choice: number): Promise<Answe
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ card_id, choice, session: getSessionId() })
 	});
-	if (!res.ok) throw new Error(`POST /api/answer failed: ${res.status}`);
+	if (!res.ok) throw new ApiError(`POST /api/answer failed: ${res.status}`, res.status);
 	return (await res.json()) as AnswerResponse;
 }
 

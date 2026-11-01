@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { postAnswer } from '#lib/api.ts';
+	import { ApiError, postAnswer } from '#lib/api.ts';
 	import { getAnswer, setAnswer } from '#lib/cardState.ts';
 	import type { AnswerResponse, Interaction } from '#lib/types.ts';
 
@@ -18,9 +18,10 @@
 	let result = $state<Result | undefined>(getAnswer<Result>(cardId));
 	let pending = $state(false);
 	let failed = $state(false);
+	let gone = $state(false); // the server deleted the card (gc): do not retry
 
 	async function pick(choice: number) {
-		if (result || pending) return;
+		if (result || pending || gone) return;
 		pending = true;
 		failed = false;
 		try {
@@ -28,8 +29,9 @@
 			result = { ...res, choice };
 			setAnswer(cardId, result);
 			onAnswer?.(choice, res.correct);
-		} catch {
-			failed = true;
+		} catch (e) {
+			if (e instanceof ApiError && e.status === 404) gone = true;
+			else failed = true;
 		} finally {
 			pending = false;
 		}
@@ -51,11 +53,14 @@
 				type="button"
 				class="choice {choiceClass(i)}"
 				class:picked={result?.choice === i}
-				disabled={result !== undefined || pending}
+				disabled={result !== undefined || pending || gone}
 				onclick={() => pick(i)}>{choice}</button
 			>
 		{/each}
 	</div>
+	{#if gone}
+		<p class="quiet" role="status">This card is gone.</p>
+	{/if}
 	{#if failed}
 		<p class="status" role="alert">Could not send the answer. Try again.</p>
 	{/if}
@@ -127,6 +132,11 @@
 	.explanation {
 		margin: 0.25rem 0 0;
 		font-size: 0.9rem;
+	}
+	.quiet {
+		color: var(--muted, inherit);
+		font-size: 0.85rem;
+		opacity: 0.75;
 	}
 	.status {
 		color: #e5484d;

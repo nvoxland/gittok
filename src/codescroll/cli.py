@@ -21,6 +21,7 @@ import uvicorn
 from codescroll import (
     avatars,
     db,
+    gc,
     install,
     learning,
     mcp_server,
@@ -138,6 +139,7 @@ def _feed_app(lan_token: str | None):
         learning_worker=True,
         profile_worker=True,
         notify_worker=True,
+        gc_worker=True,
         lan_token=lan_token,
     )
 
@@ -205,6 +207,14 @@ def _notify(args) -> int:
     with closing(db.open_db(_db_path(cfg))) as conn:
         made = social.generate_notifications(conn, cfg, _now())
     print(" ".join(f"{k}={v}" for k, v in made.items()))
+    return 0
+
+
+def _gc(args) -> int:
+    cfg = load_config()
+    with closing(db.open_db(_db_path(cfg))) as conn:
+        counts = gc.collect(conn, cfg, _now(), dry_run=args.dry_run, vacuum=args.vacuum)
+    print(json.dumps(counts, indent=2))
     return 0
 
 
@@ -546,6 +556,10 @@ def main(argv: list[str] | None = None) -> int:
         "health", help="print feed health (backlog, runway, how many to make) as JSON"
     )
     p.set_defaults(fn=_health)
+    p = sub.add_parser("gc", help="delete old cards, events, and files (prints counts as JSON)")
+    p.add_argument("--dry-run", action="store_true", help="count what would go; change nothing")
+    p.add_argument("--vacuum", action="store_true", help="shrink the database file afterwards")
+    p.set_defaults(fn=_gc)
     p = sub.add_parser("learn", help="turn new impressions into rewards and update weights once")
     p.set_defaults(fn=_learn)
     p = sub.add_parser("reset-weights", help="delete learned weights (all, or one feature)")

@@ -114,13 +114,28 @@ def insert_card(conn, cfg, run_id: str, acc, now: str | None = None) -> str:
         "INSERT INTO card_features(card_id, feature, value) VALUES (?, ?, ?)",
         [(card_id, f, v) for f, v in sorted(_features(card))],
     )
+    created = now or db.now_iso()
+    conn.execute(
+        "INSERT INTO stories(story_key, repo, story_type, sources, first_card_at, last_card_at) "
+        "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(story_key) DO UPDATE SET "
+        "cards_made = cards_made + 1, last_card_at = excluded.last_card_at",
+        (
+            acc.story_key,
+            card["repos"][0],
+            card["story_type"],
+            db.dumps(card.get("sources", [])),
+            created,
+            created,
+        ),
+    )
     return card_id
 
 
 def story_key_exists(conn, key: str, since_days: int = 30, now: datetime | None = None) -> bool:
+    """True if a card for this story was made within the window, even if gc deleted it since."""
     cutoff = (now or datetime.now(UTC)) - timedelta(days=since_days)
     row = conn.execute(
-        "SELECT 1 FROM cards WHERE story_key = ? AND created_at >= ? LIMIT 1",
+        "SELECT 1 FROM stories WHERE story_key = ? AND last_card_at >= ? LIMIT 1",
         (key, cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")),
     ).fetchone()
     return row is not None

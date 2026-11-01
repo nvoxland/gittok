@@ -441,6 +441,15 @@ def test_answer_errors(cfg, client, fixture_repo):
     assert answer_events(cfg) == []
 
 
+def test_answer_on_deleted_card_is_404(cfg, client, fixture_repo):
+    (quiz,) = seed(cfg, fixture_repo, [quiz_card(fixture_repo)])
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as c:
+        c.execute("DELETE FROM cards WHERE id = ?", (quiz,))  # as gc does
+    r = client.post("/api/answer", json={"card_id": quiz, "choice": 0})
+    assert r.status_code == 404
+    assert answer_events(cfg) == []
+
+
 def test_no_saved_endpoint(client):
     assert client.get("/api/saved").status_code == 404
 
@@ -580,3 +589,28 @@ def test_no_notify_worker_by_default(social_cfg):
 
     with TestClient(api.create_app(lambda: social_cfg)):
         assert not [t for t in threading.enumerate() if t.name == "notify-worker"]
+
+
+def test_lifespan_runs_gc_worker_and_stops_it(social_cfg):
+    import threading
+    import time
+
+    from tests.test_social import NOW
+
+    app = api.create_app(lambda: social_cfg, gc_worker=True, gc_interval_s=0.01, clock=lambda: NOW)
+    db.open_db(social_cfg.settings.data_dir / "codescroll.db").close()  # migrate before threads
+    with TestClient(app):
+        last = social_cfg.settings.data_dir / "gc_last.json"
+        for _ in range(200):
+            if last.exists():
+                break
+            time.sleep(0.02)
+        assert last.exists()
+    assert not [t for t in threading.enumerate() if t.name == "gc-worker"]
+
+
+def test_no_gc_worker_by_default(social_cfg):
+    import threading
+
+    with TestClient(api.create_app(lambda: social_cfg)):
+        assert not [t for t in threading.enumerate() if t.name == "gc-worker"]

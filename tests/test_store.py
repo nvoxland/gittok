@@ -125,6 +125,40 @@ def test_story_key_exists_respects_window(conn, cfg, fixture_repo):
     assert not store.story_key_exists(conn, acc.story_key, since_days=5, now=now)
 
 
+def test_insert_card_upserts_story(conn, cfg, fixture_repo):
+    _insert_run(conn)
+    acc = _accept(cfg, example_card(fixture_repo))
+    store.store_card(conn, cfg, "r_1", acc, now="2026-02-01T00:00:00Z")
+
+    row = conn.execute("SELECT * FROM stories WHERE story_key = ?", (acc.story_key,)).fetchone()
+    assert row["repo"] == "fixture" and row["story_type"] == acc.card["story_type"]
+    assert db.loads(row["sources"]) == acc.card["sources"]
+    assert (row["first_card_at"], row["last_card_at"]) == ("2026-02-01T00:00:00Z",) * 2
+    assert (row["cards_made"], row["best_reward"], row["liked"]) == (1, None, 0)
+
+    conn.execute("DELETE FROM cards")  # the unique index on cards.story_key would block a repeat
+    store.store_card(conn, cfg, "r_1", acc, now="2026-02-05T00:00:00Z")
+    row = conn.execute("SELECT * FROM stories WHERE story_key = ?", (acc.story_key,)).fetchone()
+    assert row["cards_made"] == 2
+    assert (row["first_card_at"], row["last_card_at"]) == (
+        "2026-02-01T00:00:00Z",
+        "2026-02-05T00:00:00Z",
+    )
+
+
+def test_duplicate_story_detected_after_card_deleted(conn, cfg, fixture_repo):
+    _insert_run(conn)
+    acc = _accept(cfg, example_card(fixture_repo))
+    now = datetime(2026, 3, 1, tzinfo=UTC)
+    created = (now - timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    store.store_card(conn, cfg, "r_1", acc, now=created)
+    conn.execute("DELETE FROM cards")
+    conn.commit()
+
+    assert store.story_key_exists(conn, acc.story_key, now=now)
+    assert not store.story_key_exists(conn, acc.story_key, since_days=5, now=now)
+
+
 def test_ensure_repo_upserts_by_name(conn, tmp_path):
     first = store.ensure_repo(conn, Repo(name="a", path=tmp_path, ref="main"))
     again = store.ensure_repo(conn, Repo(name="a", path=tmp_path / "x", ref="dev", mascot="owl"))

@@ -20,6 +20,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from codescroll import (
     avatars,
     db,
+    gc,
     gitq,
     learning,
     mcp_server,
@@ -300,6 +301,8 @@ def create_app(
     profile_interval_s: float = profile.CHECK_INTERVAL_S,
     notify_worker: bool = False,
     notify_interval_s: float = 60.0,
+    gc_worker: bool = False,
+    gc_interval_s: float | None = None,
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     lan_token: str | None = None,
 ):
@@ -318,7 +321,8 @@ def create_app(
         notifier = (
             social.NotifyWorker(get_config, notify_interval_s, clock) if notify_worker else None
         )
-        workers = (worker, learner, profiler, notifier)
+        collector = gc.GcWorker(get_config, gc_interval_s, clock) if gc_worker else None
+        workers = (worker, learner, profiler, notifier, collector)
         for w in workers:
             if w:
                 w.start()
