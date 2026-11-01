@@ -416,3 +416,20 @@ def test_stale_uncovered_leads_are_deleted(conn, cfg):
     assert res["leads"] == 1
     left = {r[0] for r in conn.execute("SELECT path FROM leads")}
     assert left == {"old_covered", "fresh_uncovered"}
+
+
+def test_big_logs_keep_their_newest_half(conn, cfg):
+    logs = cfg.settings.data_dir / "logs"
+    logs.mkdir(parents=True)
+    big = logs / "api.log"
+    big.write_text("".join(f"line {i}\n" for i in range(100_000)))  # ~1.1 MB
+    small = logs / "rejected-events.log"
+    small.write_text("one\n")
+    gc.collect(conn, cfg, NOW, dry_run=True)
+    assert big.stat().st_size > 1_000_000  # dry run leaves it
+    counts = gc.collect(conn, cfg, NOW)
+    text = big.read_text()
+    assert counts["log_files"] == 1
+    assert len(text) <= cfg.settings.gc.log_max_kb * 1024 // 2 + 20
+    assert text.endswith("line 99999\n") and text.startswith("line ")  # whole lines only
+    assert small.read_text() == "one\n"

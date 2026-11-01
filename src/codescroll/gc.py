@@ -122,6 +122,20 @@ def _remove_dir(path: Path) -> int:
     return n
 
 
+def _big_logs(data_dir, max_kb: int) -> list:
+    logs = data_dir / "logs"
+    if not logs.is_dir():
+        return []
+    return [p for p in sorted(logs.glob("*.log")) if p.stat().st_size > max_kb * 1024]
+
+
+def _trim_log(path, keep_bytes: int) -> None:
+    """Keep the newest `keep_bytes` of a log, cut at a line start."""
+    data = path.read_bytes()[-keep_bytes:]
+    nl = data.find(b"\n")
+    path.write_bytes(data[nl + 1 :] if nl >= 0 else data)
+
+
 def collect(
     conn, cfg, now: datetime, dry_run: bool = False, vacuum: bool = False
 ) -> dict[str, int]:
@@ -132,12 +146,14 @@ def collect(
     ids = [i for k in ("seen", "liked", "unseen", "failed") for i in victims[k]]
     asset_dirs = [data_dir / "assets" / i for i in ids if (data_dir / "assets" / i).is_dir()]
     run_dirs = _run_dirs(conn, cfg, now)
+    big_logs = _big_logs(data_dir, g.log_max_kb)
     event_args = (_ms(now - timedelta(days=g.events_after_days)),)
     social_cut = _iso(now - timedelta(days=g.social_after_days))
     lead_cut = _iso(now - timedelta(days=g.leads_after_days))
 
     counts = {k: len(v) for k, v in victims.items()}
     counts["run_files"] = len(run_dirs)
+    counts["log_files"] = len(big_logs)
     counts["asset_files"] = sum(1 for d in asset_dirs for p in d.rglob("*") if p.is_file())
     counts["events"] = conn.execute(
         f"SELECT COUNT(*) FROM events WHERE {_OLD_EVENT}", event_args
@@ -171,6 +187,8 @@ def collect(
         )
     for d in (*asset_dirs, *run_dirs):
         shutil.rmtree(d, ignore_errors=True)
+    for p in big_logs:
+        _trim_log(p, g.log_max_kb * 1024 // 2)
     conn.execute("PRAGMA optimize")
     if vacuum:
         conn.execute("VACUUM")

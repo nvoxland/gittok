@@ -191,6 +191,7 @@ Settings (`gc:` in `config/settings.yaml`):
 | run files | `run_files_after_days: 30` | the run is not open and ended more than N days ago; the folder `data/runs/<id>/` goes, the `runs` row stays |
 | social | `social_after_days: 30` | `story_views` seen, and notifications read, more than N days ago |
 | leads | `leads_after_days: 180` | the lead was last seen at HEAD more than N days ago and no card ever used it (`times_covered = 0`) |
+| log files | `log_max_kb: 1024` | a `data/logs/*.log` file (`api.log`, `rejected-events.log`) is bigger than N KB; it keeps its newest half, cut at a line start |
 
 The seen rule counts cards, not days. A card is done when you have scrolled past 20 newer cards, so a slow week does not delete cards you never had time to see. Gc counts distinct cards with one query over the last impression of each card. A card with no reward yet is kept, because learning has not used it. A saved card is kept forever, because you asked to keep it.
 

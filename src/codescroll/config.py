@@ -91,6 +91,7 @@ class GcSettings:
     run_files_after_days: int = 30
     social_after_days: int = 30
     leads_after_days: int = 180
+    log_max_kb: int = 1024
     interval_s: float = 3600.0
 
 
