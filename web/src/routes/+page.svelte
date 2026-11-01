@@ -15,6 +15,10 @@
 	let error = $state<string | null>(null);
 	let fromCache = $state(false);
 	let nextCursor: string | null = null;
+	// No more pages: the feed ends with the caught-up card.
+	let atEnd = $state(false);
+	let checking = $state(false);
+	let checkedEmpty = $state(false);
 	let loadingMore = false;
 	let stories = $state<Story[]>([]);
 	let openStory = $state<number | null>(null);
@@ -66,6 +70,7 @@
 			clearAnswers(fresh.map((c) => c.id).filter((id) => id !== feed.resume_card_id));
 			cards = fresh;
 			nextCursor = feed.next_cursor;
+			atEnd = nextCursor === null;
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -84,10 +89,31 @@
 			clearAnswers(fresh.map((c) => c.id));
 			cards = [...cards, ...fresh];
 			nextCursor = feed.next_cursor;
+			atEnd = nextCursor === null;
 		} catch {
 			// Keep the cursor; the next card near the end tries again.
 		} finally {
 			loadingMore = false;
+		}
+	}
+
+	// From the caught-up card: ask for a fresh first page and add the cards not shown yet.
+	async function checkAgain() {
+		checking = true;
+		checkedEmpty = false;
+		try {
+			const feed = await fetchFeed();
+			const have = new Set(cards.map((c) => c.id));
+			const fresh = feed.cards.filter((c) => !have.has(c.id));
+			clearAnswers(fresh.map((c) => c.id));
+			cards = [...cards, ...fresh];
+			nextCursor = feed.next_cursor;
+			atEnd = nextCursor === null;
+			checkedEmpty = fresh.length === 0;
+		} catch {
+			checkedEmpty = true;
+		} finally {
+			checking = false;
 		}
 	}
 </script>
@@ -118,10 +144,26 @@
 		<p class="status error" role="alert">Failed to load feed: {error}</p>
 	{:else if loading}
 		<p class="status">Loading...</p>
-	{:else if cards.length === 0}
-		<p class="status">No cards yet</p>
 	{:else}
-		<Feed {cards} onEvent={(e) => batcher.push(e)} onNearEnd={loadMore} />
+		{#if cards.length > 0}
+			<Feed {cards} onEvent={(e) => batcher.push(e)} onNearEnd={loadMore} />
+		{/if}
+		{#if atEnd}
+			<section class="end" aria-label="End of feed">
+				<h2>You're all caught up</h2>
+				<p>You have seen every card for now.</p>
+				<p>
+					To make more, open Claude Code in the CodeScroll repo and run
+					<code>/codescroll-generate</code>.
+				</p>
+				<button type="button" onclick={checkAgain} disabled={checking}>
+					{checking ? 'Checking…' : 'Check for new cards'}
+				</button>
+				{#if checkedEmpty}
+					<p class="muted" role="status">No new cards yet.</p>
+				{/if}
+			</section>
+		{/if}
 	{/if}
 </main>
 </div>
@@ -173,6 +215,38 @@
 		height: calc(100dvh - var(--chrome-h, 0px));
 		margin: 0;
 		color: var(--muted);
+	}
+	.end {
+		height: 100dvh;
+		scroll-snap-align: start;
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+		gap: 0.75rem;
+		padding: 0 16px;
+		text-align: center;
+	}
+	.end h2,
+	.end p {
+		margin: 0;
+	}
+	.end code {
+		font-size: 0.95em;
+	}
+	.end button {
+		align-self: center;
+		margin-top: 0.5rem;
+		padding: 0.6rem 1.2rem;
+		border-radius: 999px;
+		border: 1px solid var(--border);
+		background: var(--surface);
+		color: inherit;
+		font: inherit;
+		cursor: pointer;
+	}
+	.end .muted {
+		color: var(--muted);
+		font-size: 0.9rem;
 	}
 	.error {
 		color: #e5484d;

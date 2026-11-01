@@ -99,6 +99,52 @@ describe('feed page', () => {
 		expect(getAnswer('c_2')).toBeUndefined();
 	});
 
+	it('ends the feed with a caught-up card that says how to make more', async () => {
+		route({ '/api/feed': { cards: [fakeCard({ hook: 'Only card' })], next_cursor: null } });
+		render(Page);
+		const end = await screen.findByRole('region', { name: 'End of feed' });
+		expect(end).toHaveTextContent(/caught up/i);
+		expect(end).toHaveTextContent('/codescroll-generate');
+		const articles = screen.getAllByRole('article');
+		expect(articles[articles.length - 1].compareDocumentPosition(end)).toBe(
+			Node.DOCUMENT_POSITION_FOLLOWING
+		);
+	});
+
+	it('shows no end card while more pages remain', async () => {
+		route({ '/api/feed': { cards: [fakeCard({ hook: 'A hook' })], next_cursor: 'more' } });
+		render(Page);
+		await screen.findByText('A hook');
+		expect(screen.queryByRole('region', { name: 'End of feed' })).toBeNull();
+	});
+
+	it('the end card checks again and appends only new cards', async () => {
+		let calls = 0;
+		const old = fakeCard({ id: 'c_old', hook: 'Old card' });
+		const fresh = fakeCard({ id: 'c_new', hook: 'New card' });
+		fetchMock.mockImplementation(async (url: string) => ({
+			ok: true,
+			headers: { get: () => null },
+			json: async () =>
+				url.startsWith('/api/feed')
+					? { cards: calls++ === 0 ? [old] : [old, fresh], next_cursor: null }
+					: { notifications: [], unread: 0, stories: [] }
+		}));
+		render(Page);
+		await screen.findByText('Old card');
+		await fireEvent.click(await screen.findByRole('button', { name: /check for new cards/i }));
+		expect(await screen.findByText('New card')).toBeInTheDocument();
+		expect(screen.getAllByRole('article')).toHaveLength(2);
+	});
+
+	it('shows the end card for an empty feed too', async () => {
+		route({ '/api/feed': { cards: [], next_cursor: null } });
+		render(Page);
+		expect(await screen.findByRole('region', { name: 'End of feed' })).toHaveTextContent(
+			'/codescroll-generate'
+		);
+	});
+
 	it('has a bell linking to /notifications', async () => {
 		route({ '/api/feed': feed, '/api/notifications': { notifications: [], unread: 4 } });
 		render(Page);
