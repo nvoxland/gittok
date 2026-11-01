@@ -197,6 +197,37 @@ describe('Card actions', () => {
 		expect(JSON.parse(localStorage.getItem('codescroll.card-state')!).c_save.saved).toBe(true);
 	});
 
+	it('shows visible labels under the action icons', () => {
+		render(Card, { card: fakeCard({ id: 'c_labels' }) });
+		for (const name of ['Like', 'Save', 'Knew it', 'More']) {
+			expect(screen.getByText(name, { selector: '.label' })).toBeInTheDocument();
+		}
+	});
+
+	it('knew it and teach more each emit once, fill, and persist', async () => {
+		const calls: [string, Record<string, unknown> | undefined][] = [];
+		const card = fakeCard({ id: 'c_know' });
+		const { unmount } = render(Card, { card, onAction: (t: string, d?: Record<string, unknown>) => calls.push([t, d]) });
+		const knew = screen.getByRole('button', { name: /knew it/i });
+		const more = screen.getByRole('button', { name: /teach me more/i });
+		expect(knew).toHaveAttribute('aria-pressed', 'false');
+		await fireEvent.click(knew);
+		await fireEvent.click(knew);
+		await fireEvent.click(more);
+		await fireEvent.click(more);
+		expect(knew).toHaveAttribute('aria-pressed', 'true');
+		expect(more).toHaveAttribute('aria-pressed', 'true');
+		expect(calls).toEqual([
+			['knew_it', { on: true }],
+			['teach_more', { on: true }]
+		]);
+		unmount();
+		resetCardStateForTest();
+		render(Card, { card });
+		expect(screen.getByRole('button', { name: /knew it/i })).toHaveAttribute('aria-pressed', 'true');
+		expect(screen.getByRole('button', { name: /teach me more/i })).toHaveAttribute('aria-pressed', 'true');
+	});
+
 	it('a comments button with the count jumps to the comments panel', async () => {
 		const card = fakeCard({
 			depth: [{ kind: 'explain', text: 'Plain words.' }],

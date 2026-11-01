@@ -12,7 +12,7 @@ import json
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
-from codescroll import brief, db, learning, store, storykey
+from codescroll import brief, db, learning, requests, store, storykey
 
 WIDE_LIMIT = 50  # leads kept per story type per refresh
 UNKNOWN_INTEREST = 0.5
@@ -76,10 +76,14 @@ def refresh(conn, repo_name: str, sig: dict, t0, head_sha: str, blobs: dict, now
 
 
 def _current(conn, repo: str, story_type: str) -> list:
-    """Rows seen in the repo's latest refresh, i.e. still present at its current head."""
+    """Rows seen in the repo's latest refresh, i.e. still present at its current head.
+
+    Unserved follow-up requests ("req:" keys) always count: no refresh drops them.
+    """
     return conn.execute(
-        "SELECT * FROM leads WHERE repo = ? AND story_type = ? AND last_seen_at = "
-        "(SELECT MAX(last_seen_at) FROM leads WHERE repo = ?) ORDER BY id",
+        "SELECT * FROM leads WHERE repo = ? AND story_type = ? AND (last_seen_at = "
+        "(SELECT MAX(last_seen_at) FROM leads WHERE repo = ? AND lead_key NOT LIKE 'req:%') "
+        "OR (lead_key LIKE 'req:%' AND last_covered_at IS NULL)) ORDER BY id",
         (repo, story_type, repo),
     ).fetchall()
 
@@ -195,13 +199,14 @@ def ranked(
         r
         for r in _current(conn, repo, story_type)
         if (r["last_covered_at"] is None or r["last_covered_at"] < cutoff)
-        and not blocks.blocks(_lead(r))
+        and (r["lead_key"].startswith(requests.KEY_PREFIX) or not blocks.blocks(_lead(r)))
     ]
 
     def score(r) -> float:
         return _interest(r["path"], dir_means) * r["strength"] * 0.5 ** r["times_covered"]
 
-    rows.sort(key=lambda r: (-score(r), r["id"]))
+    # Follow-up requests go first: the reader asked for them.
+    rows.sort(key=lambda r: (not r["lead_key"].startswith(requests.KEY_PREFIX), -score(r), r["id"]))
     return [_lead(r) for r in rows[:limit]]
 
 
@@ -305,3 +310,4 @@ def mark_covered(conn, lead_id: int, now: datetime) -> None:
         "UPDATE leads SET times_covered = times_covered + 1, last_covered_at = ? WHERE id = ?",
         (iso(now), lead_id),
     )
+    requests.mark_served(conn, lead_id, iso(now))

@@ -3,7 +3,7 @@
 const KEY = 'codescroll.card-state';
 const ANSWER_KEY = 'codescroll.answers';
 
-export type CardFlags = { liked?: boolean; saved?: boolean };
+export type CardFlags = { liked?: boolean; saved?: boolean; knewIt?: boolean; teachMore?: boolean };
 
 let flagsCache: Record<string, CardFlags> | undefined;
 let answersCache: Record<string, StoredAnswer> | undefined;
