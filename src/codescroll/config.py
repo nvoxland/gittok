@@ -125,6 +125,13 @@ class ReposSettings:
 
 
 @dataclass(frozen=True)
+class UserSettings:
+    # Names (as the history shows them) the reader commits under. Their blame share in a dir
+    # is a small prior on novelty only (docs/learning.md section 14).
+    git_identities: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class Settings:
     data_dir: Path
     server: ServerSettings
@@ -134,6 +141,7 @@ class Settings:
     render: RenderSettings = field(default_factory=RenderSettings)
     repos: ReposSettings = field(default_factory=ReposSettings)
     gc: GcSettings = field(default_factory=GcSettings)
+    user: UserSettings = field(default_factory=UserSettings)
 
 
 @dataclass(frozen=True)
@@ -205,6 +213,11 @@ def _section(cls: type, data: Any, what: str, file: Path) -> Any:
     data = _mapping(data, what, file)
     _check_keys(data, {f.name for f in fields(cls)}, what, file)
     kwargs = dict(data)
+    if "git_identities" in kwargs:
+        ids = kwargs["git_identities"] or []
+        if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+            raise ConfigError(f"{what}.git_identities must be a list of text ({file})")
+        kwargs["git_identities"] = tuple(ids)
     if "churn_windows_days" in kwargs:
         kwargs["churn_windows_days"] = tuple(kwargs["churn_windows_days"])
     return cls(**kwargs)
@@ -228,7 +241,7 @@ def _load_settings(root: Path) -> Settings:
     data = _mapping(_read(file), "settings", file)
     _check_keys(
         data,
-        {"data_dir", "server", "agent", "analysis", "research", "render", "repos", "gc"},
+        {"data_dir", "server", "agent", "analysis", "research", "render", "repos", "gc", "user"},
         "settings",
         file,
     )
@@ -244,6 +257,7 @@ def _load_settings(root: Path) -> Settings:
         render=_section(RenderSettings, data.get("render"), "settings.render", file),
         repos=_repos_settings(data.get("repos"), root, file),
         gc=_section(GcSettings, data.get("gc"), "settings.gc", file),
+        user=_section(UserSettings, data.get("user"), "settings.user", file),
     )
 
 

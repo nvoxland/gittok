@@ -52,6 +52,8 @@ EventType = Literal[
     "beats_done",
     "replay",
     "beat_tap",
+    "knew_it",
+    "teach_more",
 ]
 
 

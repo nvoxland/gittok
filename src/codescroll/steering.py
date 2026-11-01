@@ -20,7 +20,7 @@ from pathlib import Path
 
 import yaml
 
-from codescroll import brief, gitq, learning, signals
+from codescroll import brief, gitq, knowledge, learning, signals
 from codescroll.config import load_config
 
 
@@ -389,6 +389,7 @@ def get_profile(conn, cfg, now: datetime | None = None) -> dict:
         "bottom": bottom,
         "rules": list_rules(conn, now=now),
         "evidence": evidence,
+        "knowledge": knowledge.knowledge_rows(conn, cfg),
     }
 
 
@@ -423,6 +424,7 @@ def coverage(conn, cfg, repo: str | None = None) -> list[dict]:
         raise SteeringError(f"Unknown repo '{repo}'. Known: {', '.join(cfg.repos) or 'none'}.")
     out = []
     for name in [repo] if repo else list(cfg.repos):
+        known = knowledge.novelty_map(conn, name, cfg.settings.user.git_identities)
         stats: dict[str, dict] = {}
         for row in conn.execute(
             "SELECT d.value AS dir, c.id AS card_id, "
@@ -471,6 +473,7 @@ def coverage(conn, cfg, repo: str | None = None) -> list[dict]:
                     "last_seen": last,
                     "leads": lead_n.get(top, [0, 0])[0],
                     "leads_covered": lead_n.get(top, [0, 0])[1],
+                    "novelty": known.get(top, 1.0),
                 }
             )
     out.sort(key=lambda r: (r["impressions"], r["cards"], r["repo"], r["dir"]))

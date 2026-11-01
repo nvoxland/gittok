@@ -14,7 +14,7 @@ from typing import Any
 
 import yaml
 
-from codescroll import db
+from codescroll import db, knowledge
 
 log = logging.getLogger(__name__)
 
@@ -280,6 +280,7 @@ def process_events(conn, cfg, now: datetime | None = None) -> dict:
             for feature, value in card_features(conn, cfg, imp["card_id"], now=now):
                 _update_weight(conn, cfg, rc, feature, value, r, now)
                 touched.add((feature, value))
+        knowledge.update_in_tx(conn)
     stats["weights"] = len(touched)
     return stats
 
