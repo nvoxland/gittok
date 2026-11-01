@@ -93,3 +93,31 @@ def test_intro_off_without_novelty_or_share():
         b = build(count=8, defaults=D, ledger={("fixture", "hot_spot"): intro_leads()}, **kw)
         assert not [r for p in b.packets for r in p.lead_refs if r.get("intro")]
         assert "ntro" not in b.summary_markdown()
+
+
+def test_whose_code_skips_fixture_and_docs_dirs():
+    sig = {
+        "author_shares": {
+            "by_dir": {
+                "cassettes": [{"author": "A", "share": 0.7}],
+                "doc": [{"author": "B", "share": 0.9}],
+                "src": [{"author": "C", "share": 0.6}],
+            }
+        }
+    }
+    texts = [ld.text for ld in brief.lead_refs_for("whose_code", sig)]
+    assert texts == ["dir src/: C 60%"]
+
+
+@pytest.mark.parametrize(
+    "path, ok",
+    [
+        ("src/billing/invoice.py", True),
+        ("skills/adr/SKILL.md", False),
+        ("src/notes.txt", False),
+        ("docs/guide.py", False),
+        ("cassettes/http/a.edn", False),
+    ],
+)
+def test_code_file_excludes_docs_and_fixtures(path, ok):
+    assert brief.code_file(path) is ok

@@ -204,9 +204,17 @@ def code_path(path: str) -> bool:
     return not any(_NON_CODE_DIR.match(d) for d in dirs) and not candidates.SKIP_PATH.search(path)
 
 
+_DOC_SUFFIX = re.compile(r"\.(md|markdown|rst|txt|adoc|log|csv)$", re.IGNORECASE)
+
+
+def code_file(path: str) -> bool:
+    """True for a source file in a code dir: `code_path`, and not a doc or text file."""
+    return code_path(path) and not _DOC_SUFFIX.search(path)
+
+
 def _real_dir(d: str) -> bool:
-    """A dir `whose_code` may name: not the root, not a hidden dir."""
-    return d not in ("", ".") and not d.startswith(".")
+    """A dir `whose_code` may name: not the root, and a code dir (`code_path`)."""
+    return d not in ("", ".") and code_path(f"{d}/x")
 
 
 def _old(ts, t0) -> bool:
@@ -1512,7 +1520,8 @@ def _assign_intro(slots, variant_at, ref_by, novelty, intro_share, count, prefer
             continue
         for rank, ld in enumerate(by_text.values()):
             d, n = knowledge.lead_dir(ld.path, nmap)
-            if d and n >= INTRO_MIN_NOVELTY and code_path(f"{d}/x"):
+            code = code_file(ld.path) if ld.path else code_path(f"{d}/x")
+            if d and n >= INTRO_MIN_NOVELTY and code and code_path(f"{d}/x"):
                 cands.setdefault((repo, d), []).append((rank, story, ld))
                 nov_of[(repo, d)] = n
     order = sorted(
