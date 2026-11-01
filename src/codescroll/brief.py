@@ -6,12 +6,13 @@ cards without any other context.
 
 from __future__ import annotations
 
+import math
 import re
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 
-from codescroll import validator
+from codescroll import knowledge, validator
 
 _DRAMA = (
     "commit_drama",
@@ -168,6 +169,7 @@ class Lead:
     text: str = ""
     id: int | None = None  # ledger row id, when the lead came from the ledger
     key: str | None = None  # synthetic ledger key for leads with no single identity in history
+    intro: str | None = None  # set to the dir when this lead is an intro slot's (reader new to it)
 
 
 def leads_for(
@@ -632,6 +634,7 @@ class Packet:
     # Per card: a menu of candidate meme templates (best first), or None for other formats.
     templates: list[list[str] | None] = field(default_factory=list)
     repos: list[str] = field(default_factory=list)  # all repos the packet covers; [0] is `repo`
+    intro: int = 0  # cards of this packet that must use an intro-flagged lead
 
 
 @dataclass
@@ -645,6 +648,7 @@ class Brief:
     rules: list = field(default_factory=list)
     focus: list = field(default_factory=list)  # (repo or None, dir or None, slots)
     unavailable: list = field(default_factory=list)
+    intro: list = field(default_factory=list)  # (repo, dir, cards) reserved for unseen dirs
 
     def to_dict(self) -> dict:
         return {
@@ -681,6 +685,9 @@ class Brief:
             out += ["", "Rules:"]
             out += [_rule_line(r) for r in self.rules]
         out += self._focus_lines()
+        if self.intro:
+            dirs = ", ".join(f"{d}/ ({n})" for _, d, n in self.intro)
+            out += [f"Intro: the reader has not seen these dirs yet: {dirs}. Explain from zero."]
         return "\n".join(out) + "\n"
 
     def _focus_lines(self) -> list[str]:
@@ -710,6 +717,12 @@ class Brief:
             f"- personas, one per card: {', '.join(pk.personas)}",
             "- leads:",
         ]
+        if pk.intro:
+            out.insert(
+                -1,
+                f"- intro cards: {pk.intro} of the cards must use the leads marked `intro` "
+                "(one card each)",
+            )
         if any(pk.templates):
             menus = "; ".join("|".join(m) for m in pk.templates if m)
             out.insert(-1, f"- meme templates to choose from (one menu per meme card): {menus}")
@@ -927,6 +940,8 @@ def build_brief(
     variant_max_share: float = 0.2,
     meme_templates: dict | None = None,
     template_weights: dict[str, float] | None = None,
+    novelty: dict[str, dict[str, float]] | None = None,
+    intro_share: float = 0.0,
 ) -> Brief:
     """Build the brief.
 
@@ -936,6 +951,10 @@ def build_brief(
     meme slot a menu of 3 candidates: templates that fit its story type, least used first
     (recent cards, plus the first pick of earlier menus in this brief), then higher
     `template_weights`, then list order.
+
+    `novelty` (repo -> dir -> novelty, see knowledge.novelty_map) and `intro_share` reserve
+    ceil(count x intro_share) cards for leads from the dirs the reader knows least (novelty at
+    least INTRO_MIN_NOVELTY). Those leads are flagged `intro` and go first in their packet.
     """
     if not repo_signals:
         raise ValueError("no repos to build a brief from")
@@ -1260,6 +1279,9 @@ def build_brief(
         else:
             break  # no legal swap remains
 
+    # 1c. Intro slots: reserve a share of the cards for leads from the least-known dirs.
+    intro_at = _assign_intro(slots, variant_at, ref_by, novelty, intro_share, count)
+
     # 2. Pack slots into as few packets as possible per (repo or group, model tier).
     packets: list[Packet] = []
     slot_no = 0
@@ -1291,6 +1313,21 @@ def build_brief(
                         for t in types
                         for line in leads_by[(repo, t)]
                     ]
+                intro_pairs = []
+                for i in chunk_ix:
+                    if i in intro_at:
+                        d, ld = intro_at[i]
+                        t = slots[i][2]
+                        line = (
+                            f"[{t}] intro: the reader has not seen {d}/ yet; explain what it "
+                            f"is for before the detail. {ld.text}"
+                        )
+                        intro_pairs.append((line, replace(ld, intro=d)))
+                if intro_pairs:
+                    taken = {r.text for _, r in intro_pairs}
+                    pairs = intro_pairs + [
+                        (ln, r) for ln, r in pairs if getattr(r, "text", None) not in taken
+                    ]
                 if not pairs and len(chunk_ix) > sum(i in variant_at for i in chunk_ix):
                     none = "No precomputed leads: explore with list_dir and git_log."
                     pairs = [(none, Lead(types[0], repo, "none", text=none))]
@@ -1315,6 +1352,7 @@ def build_brief(
                         formats=[f for _, _, _, f, _ in chunk],
                         templates=[template_menu(f, t) for _, _, t, f, _ in chunk],
                         repos=list(unit_repos),
+                        intro=sum(i in intro_at for i in chunk_ix),
                     )
                 )
                 slot_no += len(chunk)
@@ -1328,7 +1366,68 @@ def build_brief(
         rules=rules,
         focus=focus,
         unavailable=[f for f in CATEGORY_FORMATS_FLAT if f in set(unavailable_formats)],
+        intro=_intro_summary(intro_at, slots),
     )
+
+
+INTRO_MIN_NOVELTY = 0.5  # a dir this known or better is not "unseen": no intro slot for it
+
+
+def _assign_intro(slots, variant_at, ref_by, novelty, intro_share, count) -> dict:
+    """slot index -> (dir, Lead) for the intro slots.
+
+    Dirs with leads are ranked by novelty (highest first, then by their best lead's rank) and
+    dealt out one slot at a time, so a few dirs share the slots instead of one dir taking all.
+    A slot takes the best unused lead of its own repo and story type in the dir.
+    """
+    if not novelty or intro_share <= 0 or not slots:
+        return {}
+    want = min(math.ceil(count * intro_share - 1e-9), len(slots))
+    cands: dict[tuple[str, str], list] = {}  # (repo, dir) -> [(rank, story, Lead)]
+    nov_of: dict[tuple[str, str], float] = {}
+    for (repo, story), by_text in ref_by.items():
+        nmap = novelty.get(repo)
+        if nmap is None:
+            continue
+        for rank, ld in enumerate(by_text.values()):
+            d, n = knowledge.lead_dir(ld.path, nmap)
+            if d and n >= INTRO_MIN_NOVELTY:
+                cands.setdefault((repo, d), []).append((rank, story, ld))
+                nov_of[(repo, d)] = n
+    order = sorted(cands, key=lambda k: (-nov_of[k], min(c[0] for c in cands[k]), k))
+    out: dict = {}
+    used: set = set()
+    free = [i for i, s in enumerate(slots) if s[4] is None and i not in variant_at]
+    while len(out) < want and order:
+        progress = False
+        for key in order:
+            if len(out) >= want:
+                break
+            repo, d = key
+            for i in free:
+                if i in out or slots[i][0] != repo:
+                    continue
+                pick = next(
+                    (
+                        ld
+                        for _, story, ld in cands[key]
+                        if story == slots[i][2] and id(ld) not in used
+                    ),
+                    None,
+                )
+                if pick is not None:
+                    used.add(id(pick))
+                    out[i] = (d, pick)
+                    progress = True
+                    break
+        if not progress:
+            break
+    return out
+
+
+def _intro_summary(intro_at, slots) -> list:
+    n: Counter = Counter((slots[i][0], d) for i, (d, _) in intro_at.items())
+    return [(repo, d, c) for (repo, d), c in n.items()]
 
 
 _FORMAT_SECTION = re.compile(r"^### Format: `(\w+)`", re.MULTILINE)

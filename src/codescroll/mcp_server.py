@@ -19,6 +19,7 @@ from codescroll import brief as brief_mod
 from codescroll import (
     db,
     gitq,
+    knowledge,
     learning,
     ledger,
     materials,
@@ -200,6 +201,8 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
                 lead_ok=ledger.offerable(conn, cfg, datetime.now(UTC)),
                 variants=ledger.variants(conn, cfg, datetime.now(UTC)),
                 variant_max_share=cfg.settings.agent.variant_max_share,
+                intro_share=cfg.settings.agent.intro_share,
+                novelty=knowledge.novelty_maps(conn, cfg, sorted(repo_signals)),
                 **mix_inputs(conn, cfg),
             )
             packets = [
