@@ -28,8 +28,11 @@
 		display: block;
 		width: 100%;
 		height: auto;
-		max-height: 45dvh; /* leaves room for the hook on the card front */
-		object-fit: cover;
+		/* Small enough that a long hook still fits below it: the card front clips, never scrolls,
+		   so a taller image lost its bottom and its caption. Contain shows the whole picture. */
+		max-height: 38dvh;
+		object-fit: contain;
+		background: var(--surface);
 		border-radius: 8px;
 	}
 	.caption {
