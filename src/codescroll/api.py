@@ -11,7 +11,10 @@ from contextlib import asynccontextmanager, closing
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
@@ -360,6 +363,18 @@ def create_app(
 
     app = FastAPI(title="CodeScroll", lifespan=lifespan)
     app.add_middleware(SecurityMiddleware, lan_token=lan_token)
+
+    @app.exception_handler(RequestValidationError)
+    async def log_rejected_events(request: Request, exc: RequestValidationError):
+        # The client drops a rejected event batch whole, so this log is the only trace of why.
+        if request.url.path == "/api/events":
+            logs = get_config().settings.data_dir / "logs"
+            logs.mkdir(parents=True, exist_ok=True)
+            host = request.client.host if request.client else "?"
+            errors = db.dumps(jsonable_encoder(exc.errors()))[:2000]
+            with (logs / "rejected-events.log").open("a") as f:
+                f.write(f"{db.now_iso()} 422 {host} {errors}\n")
+        return await request_validation_exception_handler(request, exc)
 
     @app.get("/pair")
     def pair(t: str = ""):

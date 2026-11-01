@@ -673,3 +673,11 @@ def test_no_gc_worker_by_default(social_cfg):
 
     with TestClient(api.create_app(lambda: social_cfg)):
         assert not [t for t in threading.enumerate() if t.name == "gc-worker"]
+
+
+def test_rejected_event_batch_is_logged(cfg, client):
+    """A 422 drops the whole batch on the client; the log is the only trace of why."""
+    body = {"events": [{"card_id": "c_1", "type": "bogus", "ts": 1, "data": {}}]}
+    assert client.post("/api/events", json=body).status_code == 422
+    log = (cfg.settings.data_dir / "logs" / "rejected-events.log").read_text()
+    assert "bogus" in log and "422" in log
