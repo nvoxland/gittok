@@ -287,3 +287,57 @@ def ls_tree_blobs(repo: Path | str, ref: str) -> dict[str, str]:
         if path:
             blobs[path] = meta.split()[-1]
     return blobs
+
+
+def ls_tree_files(repo: Path | str, ref: str) -> list[tuple[str, str, int]]:
+    """(path, blob sha, size in bytes) for every regular file at `ref`, in one call."""
+    _check_rev(ref)
+    _, out = run_bytes(repo, "ls-tree", "-r", "-l", "-z", ref)
+    files = []
+    for rec in out.decode(errors="replace").split("\0"):
+        meta, _, path = rec.partition("\t")  # "<mode> <type> <sha> <size>"
+        parts = meta.split()
+        if path and len(parts) == 4 and parts[1] == "blob" and parts[3].isdigit():
+            files.append((path, parts[2], int(parts[3])))
+    return files
+
+
+def read_blobs(repo: Path | str, shas: list[str], chunk: int = 400) -> dict[str, bytes]:
+    """Contents of many blobs through `git cat-file --batch` (a few processes, not one per file)."""
+    out: dict[str, bytes] = {}
+    for i in range(0, len(shas), chunk):
+        batch = shas[i : i + chunk]
+        for sha in batch:
+            if not _HEX_RE.fullmatch(sha):
+                raise GitError(f"invalid blob id: {sha!r}")
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(repo), "--no-pager", "cat-file", "--batch"],
+                input=("\n".join(batch) + "\n").encode(),
+                capture_output=True,
+                env=_env(),
+                timeout=TIMEOUT_S,
+                check=True,
+            )
+        except (OSError, subprocess.SubprocessError) as e:
+            raise GitError(f"git cat-file --batch failed: {e}") from e
+        data, pos = proc.stdout, 0
+        while pos < len(data):
+            nl = data.index(b"\n", pos)
+            header = data[pos:nl].split()
+            if len(header) != 3 or header[1] != b"blob":
+                pos = nl + 1  # "<sha> missing"
+                continue
+            size = int(header[2])
+            out[header[0].decode()] = data[nl + 1 : nl + 1 + size]
+            pos = nl + 1 + size + 1
+    return out
+
+
+def paths_changed_since(repo: Path | str, ref: str, since_ts: int) -> set[str]:
+    """Paths touched by any commit reachable from `ref` and newer than `since_ts`."""
+    _check_rev(ref)
+    out = run(
+        repo, "log", ref, "--no-renames", "--name-only", "--format=", f"--since=@{since_ts}", "--"
+    )
+    return {ln for ln in out.splitlines() if ln}
