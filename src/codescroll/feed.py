@@ -7,7 +7,7 @@ import copy
 import json
 from datetime import datetime
 
-from codescroll import db, links, slotter
+from codescroll import db, links, replies, slotter
 
 
 def card_json(row) -> dict:
@@ -151,7 +151,7 @@ def page(
         r["id"]: r
         for r in conn.execute(f"SELECT * FROM cards WHERE id IN ({','.join('?' * len(ids))})", ids)
     }
-    cards = [public_card(rows[i], cfg) for i in ids]
+    cards = replies.attach(conn, [public_card(rows[i], cfg) for i in ids])
     next_cursor = (
         encode_cursor(([token(t) for t in served] + [token(i) for i in ids])[-MAX_SERVED:], seed)
         if len(ids) >= limit

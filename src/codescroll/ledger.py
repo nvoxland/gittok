@@ -18,6 +18,7 @@ from codescroll import (
     db,
     knowledge,
     learning,
+    replies,
     requests,
     social,
     store,
@@ -109,7 +110,8 @@ def refresh_candidates(conn, repo: str, sig: dict, t0, head_sha: str, now: datet
     """
     stamp = conn.execute(
         "SELECT MAX(last_seen_at) FROM leads WHERE repo = ? AND lead_key NOT LIKE 'req:%' "
-        "AND lead_key NOT LIKE 'notif:%'",
+        "AND lead_key NOT LIKE 'notif:%' "
+        "AND lead_key NOT LIKE 'reply:%'",
         (repo,),
     ).fetchone()[0]
     if stamp is None:
@@ -128,7 +130,7 @@ def refresh_candidates(conn, repo: str, sig: dict, t0, head_sha: str, now: datet
     return len(rows)
 
 
-_SERVER_PREFIXES = (requests.KEY_PREFIX, social.NOTIF_PREFIX)
+_SERVER_PREFIXES = (requests.KEY_PREFIX, social.NOTIF_PREFIX, replies.KEY_PREFIX)
 
 
 def _current(conn, repo: str, story_type: str) -> list:
@@ -139,7 +141,8 @@ def _current(conn, repo: str, story_type: str) -> list:
     rows = conn.execute(
         "SELECT * FROM leads WHERE repo = ? AND story_type = ? AND (last_seen_at = "
         "(SELECT MAX(last_seen_at) FROM leads WHERE repo = ? AND lead_key NOT LIKE 'req:%' "
-        "AND lead_key NOT LIKE 'notif:%') OR ((lead_key LIKE 'req:%' OR lead_key LIKE 'notif:%') "
+        "AND lead_key NOT LIKE 'notif:%' AND lead_key NOT LIKE 'reply:%') "
+        "OR ((lead_key LIKE 'req:%' OR lead_key LIKE 'notif:%' OR lead_key LIKE 'reply:%') "
         "AND last_covered_at IS NULL)) ORDER BY id",
         (repo, story_type, repo),
     ).fetchall()
