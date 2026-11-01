@@ -732,3 +732,59 @@ def test_repo_profile_counts_verdicts_per_top_dir(cfg, client, fixture_repo):
         {"dir": "billing", "counts": {"cursed": 1}},
         {"dir": "src", "counts": {"core": 1}},
     ]
+
+
+def test_repo_map_has_knowledge_and_verdicts_per_dir(cfg, client, fixture_repo):
+    from codescroll import knowledge
+
+    card = example_card(fixture_repo, verdict="cursed")
+    card["comments"] = [
+        {"persona": "greybeard", "text": "Legacy float math that callers still depend on, sadly."}
+    ]
+    ids = seed(cfg, fixture_repo, [card, text_card(fixture_repo, verdict="core")])
+    assert len(ids) == 2
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+        conn.execute(
+            "INSERT INTO events(card_id, type, ts, data, received_at) "
+            "VALUES (?, 'impression', 1000, '{}', 'x')",
+            (ids[0],),
+        )
+        conn.commit()
+        knowledge.update(conn)
+    body = client.get("/api/repos/fixture/map").json()
+    dirs = {d["dir"]: d for d in body["dirs"]}
+    b = dirs["billing"]
+    assert b["cards_seen"] == 1 and b["cards_available"] == 0
+    assert b["verdicts"] == {"cursed": 1}
+    assert 0 <= b["novelty"] < 1.0
+    assert dirs["src"]["cards_available"] == 1
+    assert dirs["src"]["verdicts"] == {"core": 1}
+    assert dirs["src"]["novelty"] == 1.0
+    assert {"quiz_right", "quiz_wrong"} <= set(b)
+
+
+def test_repo_map_skips_hidden_dirs_and_unknown_repo_404(cfg, client, fixture_repo):
+    seed(cfg, fixture_repo, [example_card(fixture_repo, dirs=[".github"])])
+    assert ".github" not in {d["dir"] for d in client.get("/api/repos/fixture/map").json()["dirs"]}
+    assert client.get("/api/repos/nope/map").status_code == 404
+
+
+def test_feed_filters_by_repo_and_dir(cfg, client, fixture_repo):
+    ids = seed(cfg, fixture_repo, [example_card(fixture_repo), text_card(fixture_repo)])
+    got = client.get("/api/feed", params={"dir": "src"}).json()
+    assert [c["id"] for c in got["cards"]] == [ids[1]]
+    assert got["resume_card_id"] is None
+    got = client.get("/api/feed", params={"repo": "fixture", "dir": "billing"}).json()
+    assert [c["id"] for c in got["cards"]] == [ids[0]]
+    assert client.get("/api/feed", params={"repo": "other"}).json()["cards"] == []
+    assert len(client.get("/api/feed").json()["cards"]) == 2
+
+
+def test_feed_dir_filter_matches_subdirs_but_not_prefix_names(cfg, client, fixture_repo):
+    (cid,) = seed(cfg, fixture_repo, [example_card(fixture_repo)])
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+        conn.execute("INSERT INTO card_features VALUES (?, 'dir', 'billing/sub')", (cid,))
+        conn.commit()
+    assert len(client.get("/api/feed", params={"dir": "billing/sub"}).json()["cards"]) == 1
+    assert client.get("/api/feed", params={"dir": "bill"}).json()["cards"] == []
+    assert client.get("/api/feed", params={"dir": "billing/su"}).json()["cards"] == []

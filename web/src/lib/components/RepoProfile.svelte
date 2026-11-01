@@ -21,6 +21,7 @@
 		<div>
 			<h1>{profile.name}</h1>
 			{#if profile.group}<span class="group">{profile.group}</span>{/if}
+			<a class="group" href="/repo/{encodeURIComponent(profile.name)}/map">Map</a>
 		</div>
 	</header>
 
@@ -43,7 +44,13 @@
 			<h2>Top dirs</h2>
 			<ul>
 				{#each s.top_dirs as f (f.path)}
-					<li><span class="path">{f.path}</span><span class="n">{f.commits}</span></li>
+					<li>
+						<a
+							class="path"
+							href="/?{new URLSearchParams({ repo: profile.name, dir: f.path }).toString()}"
+							>{f.path}</a
+						><span class="n">{f.commits}</span>
+					</li>
 				{/each}
 			</ul>
 		</section>

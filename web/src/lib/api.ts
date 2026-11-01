@@ -4,8 +4,10 @@ import type {
 	AnswerResponse,
 	Card,
 	FeedEvent,
+	FeedFilter,
 	FeedResponse,
 	FileProfile,
+	RepoMap,
 	NotificationsResponse,
 	PersonaProfile,
 	RepoProfile,
@@ -21,9 +23,15 @@ export class ApiError extends Error {
 	}
 }
 
-export async function fetchFeed(cursor?: string, limit = 20): Promise<FeedResponse> {
+export async function fetchFeed(
+	cursor?: string,
+	limit = 20,
+	filter: FeedFilter = {}
+): Promise<FeedResponse> {
 	const params = new URLSearchParams({ limit: String(limit) });
 	if (cursor) params.set('cursor', cursor);
+	if (filter.repo) params.set('repo', filter.repo);
+	if (filter.dir) params.set('dir', filter.dir);
 	const res = await fetch(`/api/feed?${params}`);
 	if (!res.ok) throw new Error(`GET /api/feed failed: ${res.status}`);
 	const feed = (await res.json()) as FeedResponse;
@@ -67,6 +75,12 @@ export async function postFollow(repo: string, path: string, on: boolean): Promi
 	});
 	if (!res.ok) throw new Error(`POST /api/follows failed: ${res.status}`);
 	return ((await res.json()) as { followed: boolean }).followed;
+}
+
+export async function fetchRepoMap(name: string): Promise<RepoMap> {
+	const res = await fetch(`/api/repos/${encodeURIComponent(name)}/map`);
+	if (!res.ok) throw new Error(`GET /api/repos/${name}/map failed: ${res.status}`);
+	return (await res.json()) as RepoMap;
 }
 
 export async function fetchCard(id: string): Promise<Card> {

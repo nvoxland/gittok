@@ -21,6 +21,11 @@ describe('fetchFeed', () => {
 		await fetchFeed('abc');
 		expect(fetchMock.mock.calls[0][0]).toBe('/api/feed?limit=20&cursor=abc');
 	});
+	it('adds the repo and dir filter', async () => {
+		fetchMock.mockResolvedValue({ ok: true, json: async () => ({ cards: [], next_cursor: null }) });
+		await fetchFeed(undefined, 20, { repo: 'r', dir: 'a/b' });
+		expect(fetchMock.mock.calls[0][0]).toBe('/api/feed?limit=20&repo=r&dir=a%2Fb');
+	});
 	it('flags responses the service worker served from cache', async () => {
 		fetchMock.mockResolvedValue({
 			ok: true,

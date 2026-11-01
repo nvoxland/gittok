@@ -213,3 +213,54 @@ def knowledge_rows(conn, cfg, limit: int = 10) -> list[dict]:
             out.append({"repo": repo, "dir": d, "novelty": v})
     out.sort(key=lambda r: (-r["novelty"], r["repo"], r["dir"]))
     return out[:limit]
+
+
+def _visible(d: str) -> bool:
+    return not any(p.startswith(".") or p in ("fixture", "fixtures") for p in d.split("/"))
+
+
+def repo_map(conn, cfg, repo: str) -> list[dict]:
+    """Per-dir knowledge, card counts and verdict counts for the repo map (up to 2 levels)."""
+    nmap = novelty_map(conn, repo, cfg.settings.user.git_identities)
+    churn = ((signals.load_signals(conn, repo) or {}).get("churn") or {}).get("dirs") or {}
+    window = churn.get("365") or churn.get(max(churn, key=int, default=""), [])
+    dirs = {d for d in set(nmap) | _prefixes(r["path"] for r in window[:30]) if _visible(d)}
+    know = {
+        r["dir"]: dict(r) for r in conn.execute("SELECT * FROM knowledge WHERE repo = ?", (repo,))
+    }
+    cards = conn.execute(
+        "SELECT c.id, v.value AS verdict, "
+        "EXISTS(SELECT 1 FROM events e WHERE e.card_id = c.id AND e.type = 'impression') AS seen "
+        "FROM cards c JOIN repos r ON r.id = c.repo_id LEFT JOIN card_features v "
+        "ON v.card_id = c.id AND v.feature = 'verdict' WHERE r.name = ? AND c.status = 'ready'",
+        (repo,),
+    ).fetchall()
+    card_dirs: dict[str, set[str]] = {}
+    for r in conn.execute(
+        "SELECT card_id, value FROM card_features WHERE feature = 'dir' AND card_id IN "
+        "(SELECT c.id FROM cards c JOIN repos r ON r.id = c.repo_id WHERE r.name = ?)",
+        (repo,),
+    ):
+        card_dirs.setdefault(r["card_id"], set()).update(_prefixes([r["value"]]))
+    out = {
+        d: {
+            "dir": d,
+            "cards_seen": (know.get(d) or {}).get("cards_seen") or 0,
+            "cards_available": 0,
+            "quiz_right": (know.get(d) or {}).get("quiz_right") or 0,
+            "quiz_wrong": (know.get(d) or {}).get("quiz_wrong") or 0,
+            "novelty": nmap.get(d, 1.0),
+            "verdicts": {},
+        }
+        for d in sorted(dirs)
+    }
+    for c in cards:
+        for d in card_dirs.get(c["id"], ()):
+            if d not in out:
+                continue
+            if not c["seen"]:
+                out[d]["cards_available"] += 1
+            if c["verdict"]:
+                v = out[d]["verdicts"]
+                v[c["verdict"]] = v.get(c["verdict"], 0) + 1
+    return list(out.values())

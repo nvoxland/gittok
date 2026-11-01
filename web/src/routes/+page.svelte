@@ -8,7 +8,28 @@
 	import { setPlaybackSpeed } from '#lib/beats.ts';
 	import { createBatcher } from '#lib/batcher.ts';
 	import { clearAnswers } from '#lib/cardState.ts';
-	import type { Card, Story } from '#lib/types.ts';
+	import type { Card, FeedFilter, Story } from '#lib/types.ts';
+
+	// /?repo=x&dir=y shows only cards under that dir; a chip in the top bar clears it.
+	function readFilter(): FeedFilter {
+		const q = new URLSearchParams(typeof window === 'undefined' ? '' : window.location.search);
+		const f: FeedFilter = {};
+		if (q.get('repo')) f.repo = q.get('repo')!;
+		if (q.get('dir')) f.dir = q.get('dir')!;
+		return f;
+	}
+	let filter = $state<FeedFilter>(readFilter());
+	const filtered = $derived(!!(filter.repo || filter.dir));
+
+	function clearFilter() {
+		filter = {};
+		window.history.replaceState({}, '', window.location.pathname);
+		cards = [];
+		nextCursor = null;
+		atEnd = false;
+		loading = true;
+		void load();
+	}
 
 	let cards = $state<Card[]>([]);
 	let loading = $state(true);
@@ -61,7 +82,7 @@
 	async function load() {
 		try {
 			// The speed must be set before beat cards mount; a failed prefs call keeps the default.
-			const [feed, prefs] = await Promise.all([fetchFeed(), fetchPrefs().catch(() => null)]);
+			const [feed, prefs] = await Promise.all([fetchFeed(undefined, 20, filter), fetchPrefs().catch(() => null)]);
 			if (prefs) setPlaybackSpeed(prefs.playback_speed);
 			fromCache = !!feed.fromCache;
 			const fresh = feed.cards;
@@ -83,7 +104,7 @@
 		if (!nextCursor || loadingMore) return;
 		loadingMore = true;
 		try {
-			const feed = await fetchFeed(nextCursor);
+			const feed = await fetchFeed(nextCursor, 20, filter);
 			const have = new Set(cards.map((c) => c.id));
 			const fresh = feed.cards.filter((c) => !have.has(c.id));
 			clearAnswers(fresh.map((c) => c.id));
@@ -102,7 +123,7 @@
 		checking = true;
 		checkedEmpty = false;
 		try {
-			const feed = await fetchFeed();
+			const feed = await fetchFeed(undefined, 20, filter);
 			const have = new Set(cards.map((c) => c.id));
 			const fresh = feed.cards.filter((c) => !have.has(c.id));
 			clearAnswers(fresh.map((c) => c.id));
@@ -123,6 +144,12 @@
 <header class="chrome" aria-label="Top bar" bind:offsetHeight={chromeH}>
 	<div class="stories-slot"><StoriesRow {stories} onOpen={(i) => (openStory = i)} /></div>
 	<nav class="links">
+		{#if filtered}
+			<span class="filter" data-testid="feed-filter">
+				{[filter.repo, filter.dir].filter(Boolean).join('/')}
+				<button type="button" aria-label="Clear filter" onclick={clearFilter}>&times;</button>
+			</span>
+		{/if}
 		<a href="/saved">Saved</a>
 		<NotificationBell />
 	</nav>
@@ -194,6 +221,29 @@
 		color: var(--muted);
 		text-decoration: none;
 		font-size: 0.85rem;
+	}
+	.filter {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		max-width: 10rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		border: 1px solid var(--border);
+		border-radius: 999px;
+		padding: 0 0.25rem 0 0.6rem;
+		font-size: 0.75rem;
+		color: var(--muted);
+	}
+	.filter button {
+		min-width: 44px;
+		min-height: 44px;
+		border: 0;
+		background: none;
+		color: inherit;
+		font-size: 1rem;
+		cursor: pointer;
 	}
 	.offline {
 		position: fixed;

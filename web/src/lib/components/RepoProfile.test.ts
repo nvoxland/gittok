@@ -30,6 +30,18 @@ const profile = (over: Partial<Profile> = {}): Profile => ({
 });
 
 describe('RepoProfile', () => {
+	it('links to the map and top dirs to the filtered feed', () => {
+		render(RepoProfile, { profile: profile() });
+		expect(screen.getByRole('link', { name: 'Map' })).toHaveAttribute(
+			'href',
+			'/repo/storefront/map'
+		);
+		expect(screen.getByRole('link', { name: 'src' })).toHaveAttribute(
+			'href',
+			'/?repo=storefront&dir=src'
+		);
+	});
+
 	it('shows verdict counts per top dir', () => {
 		render(RepoProfile, {
 			profile: profile({
