@@ -52,6 +52,8 @@ class AgentSettings:
     variant_after_days: int = 14
     variant_max_share: float = 0.2
     intro_share: float = 0.25
+    scout_max: int = 60  # unrated candidates one scout_status call hands out
+    scout_batch: int = 15  # candidates per scout subagent
 
 
 @dataclass(frozen=True)

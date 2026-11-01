@@ -12,6 +12,7 @@ recursion, macros); stable_core, well_tested (quality).
 
 from __future__ import annotations
 
+import hashlib
 import posixpath
 import re
 from dataclasses import dataclass, field
@@ -697,20 +698,46 @@ def mine(
     return _bound(out, settings.candidates_per_tag)
 
 
+def window_hash(lines: list[str]) -> str:
+    return hashlib.sha1("\n".join(lines).encode()).hexdigest()
+
+
+def window_hashes(path, ref: str, items: list[dict]) -> dict[tuple[str, int, int], str]:
+    """(path, start, end) -> sha1 of the window text at `ref`. Items have path, start, end."""
+    wanted = {i["path"] for i in items}
+    if not wanted:
+        return {}
+    blobs = gitq.ls_tree_blobs(path, ref)
+    data = gitq.read_blobs(path, list({blobs[p] for p in wanted if p in blobs}))
+    texts: dict[str, list[str]] = {}
+    for p in wanted:
+        raw = data.get(blobs.get(p, ""))
+        if raw is not None:
+            texts[p] = raw.decode("utf-8", errors="replace").splitlines()
+    return {
+        (i["path"], i["start"], i["end"]): window_hash(texts[i["path"]][i["start"] - 1 : i["end"]])
+        for i in items
+        if i["path"] in texts
+    }
+
+
 def refresh(
     conn, repo: str, path, head: str, t0: int, sig: dict, settings: AnalysisSettings
 ) -> int:
     """Mine `head` and store the result; rows the miners no longer find are removed."""
     found = mine(path, head, t0, sig, settings)
+    hashes = window_hashes(path, head, found)
     now = db.now_iso()
     with db.immediate(conn):
         for c in found:
             conn.execute(
                 "INSERT INTO candidates(repo, path, line_start, line_end, tag, why, score, "
-                "head_sha, first_seen_at, last_seen_at) VALUES (?,?,?,?,?,?,?,?,?,?) "
+                "head_sha, first_seen_at, last_seen_at, window_hash) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(repo, path, line_start, tag) DO UPDATE SET "
                 "line_end=excluded.line_end, why=excluded.why, score=excluded.score, "
-                "head_sha=excluded.head_sha, last_seen_at=excluded.last_seen_at",
+                "head_sha=excluded.head_sha, last_seen_at=excluded.last_seen_at, "
+                "window_hash=excluded.window_hash",
                 (
                     repo,
                     c["path"],
@@ -722,6 +749,7 @@ def refresh(
                     head,
                     now,
                     now,
+                    hashes.get((c["path"], c["start"], c["end"])),
                 ),
             )
         conn.execute("DELETE FROM candidates WHERE repo = ? AND head_sha != ?", (repo, head))
@@ -741,6 +769,34 @@ def load_candidates(
         sql += " AND tag = ?"
         args.append(tag)
     sql += " ORDER BY score DESC, path, line_start"
+    if limit:
+        sql += " LIMIT ?"
+        args.append(limit)
+    return [dict(r) for r in conn.execute(sql, args).fetchall()]
+
+
+def load_rated(
+    conn,
+    repo: str,
+    min_teachable: int = 1,
+    verdicts: list[str] | None = None,
+    tags: list[str] | None = None,
+    limit: int | None = None,
+) -> list[dict]:
+    """Current candidates joined to their scout rating (same window text), best rated first."""
+    sql = (
+        "SELECT c.id, c.path, c.line_start AS start, c.line_end AS end, c.tag, c.why AS reason, "
+        "c.score, c.head_sha, r.teachable, r.verdict, r.concept, r.why, r.rated_at "
+        "FROM candidates c JOIN candidate_ratings r ON r.repo = c.repo AND r.path = c.path "
+        "AND r.line_start = c.line_start AND r.tag = c.tag AND r.window_hash = c.window_hash "
+        "WHERE c.repo = ? AND r.teachable >= ?"
+    )
+    args: list = [repo, min_teachable]
+    for col, vals in (("r.verdict", verdicts), ("c.tag", tags)):
+        if vals is not None:
+            sql += f" AND {col} IN ({','.join('?' * len(vals))})"
+            args += list(vals)
+    sql += " ORDER BY r.teachable DESC, c.score DESC, c.path, c.line_start"
     if limit:
         sql += " LIMIT ?"
         args.append(limit)
