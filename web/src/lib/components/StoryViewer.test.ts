@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/svelte';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import StoryViewer from './StoryViewer.svelte';
 import type { Story } from '#lib/types.ts';
 
@@ -86,5 +86,76 @@ describe('StoryViewer', () => {
 		await fireEvent.click(screen.getByRole('button', { name: 'Next' }));
 		expect(onSeen).toHaveBeenCalledWith('storefront', ['b'.repeat(40)]);
 		expect(onSeen).toHaveBeenCalledTimes(2);
+	});
+
+	it('links a commit page to its card, else to GitHub, else nothing', async () => {
+		const linked: Story = {
+			...story,
+			commits: [
+				{ ...story.commits[0], card_id: 'c_1', url: null },
+				{ ...story.commits[1], card_id: null, url: 'https://github.com/o/r/commit/bbb' },
+				{ ...story.commits[1], sha: 'c'.repeat(40), short: 'ccccccc', subject: 'Third' }
+			]
+		};
+		setup({ story: linked });
+		expect(screen.getByRole('link', { name: /read the card/i })).toHaveAttribute('href', '/card/c_1');
+		await fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+		expect(screen.getByRole('link', { name: /github/i })).toHaveAttribute(
+			'href',
+			'https://github.com/o/r/commit/bbb'
+		);
+		await fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+		expect(screen.queryByRole('link')).toBeNull();
+	});
+
+	it('puts the digest card first and does not mark it as a commit seen', async () => {
+		const withDigest: Story = {
+			...story,
+			digest: { card_id: 'c_d', day: '2026-10-30', hook: 'Auth day', learn: 'Three commits reshaped auth.' }
+		};
+		const { onSeen } = setup({ story: withDigest });
+		expect(screen.getByText('Auth day')).toBeInTheDocument();
+		expect(screen.getByText('Three commits reshaped auth.')).toBeInTheDocument();
+		expect(screen.getByRole('link', { name: /read card/i })).toHaveAttribute('href', '/card/c_d');
+		expect(screen.getAllByTestId('progress')).toHaveLength(3);
+		expect(onSeen).not.toHaveBeenCalled();
+		await fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+		expect(screen.getByText('First fix')).toBeInTheDocument();
+	});
+});
+
+describe('StoryViewer autoplay', () => {
+	afterEach(() => vi.useRealTimers());
+
+	it('advances every 5 seconds and ends with onEnd', async () => {
+		vi.useFakeTimers();
+		const onEnd = vi.fn();
+		const onClose = vi.fn();
+		setup({ autoplay: true, onEnd, onClose });
+		expect(screen.getByText('First fix')).toBeInTheDocument();
+		await vi.advanceTimersByTimeAsync(5000);
+		expect(screen.getByText('Second fix')).toBeInTheDocument();
+		await vi.advanceTimersByTimeAsync(5000);
+		expect(onEnd).toHaveBeenCalledTimes(1);
+		expect(onClose).not.toHaveBeenCalled();
+	});
+
+	it('pauses while held', async () => {
+		vi.useFakeTimers();
+		setup({ autoplay: true });
+		const dialog = screen.getByRole('dialog');
+		await fireEvent.pointerDown(dialog);
+		await vi.advanceTimersByTimeAsync(20000);
+		expect(screen.getByText('First fix')).toBeInTheDocument();
+		await fireEvent.pointerUp(dialog);
+		await vi.advanceTimersByTimeAsync(5000);
+		expect(screen.getByText('Second fix')).toBeInTheDocument();
+	});
+
+	it('does not advance by itself without autoplay', async () => {
+		vi.useFakeTimers();
+		setup();
+		await vi.advanceTimersByTimeAsync(30000);
+		expect(screen.getByText('First fix')).toBeInTheDocument();
 	});
 });

@@ -327,7 +327,9 @@ def _add_card_row(conn, cfg, card_id, path, created_at, lead_id=None):
     from codescroll import store
 
     repo_id = store.ensure_repo(conn, cfg.repos["fixture"])
-    conn.execute("INSERT INTO runs(id, status, started_at) VALUES ('rx', 'finished', 'x')")
+    conn.execute(
+        "INSERT OR IGNORE INTO runs(id, status, started_at) VALUES ('rx', 'finished', 'x')"
+    )
     spec = {"repos": ["fixture"], "sources": [{"repo": "fixture", "path": path, "lines": [1, 2]}]}
     conn.execute(
         "INSERT INTO cards(id, run_id, repo_id, story_type, format, persona, tone, spec, resolved, "
@@ -384,3 +386,104 @@ def test_hot_file_ignores_cards_older_than_a_day(cfg, conn):
     social.generate_notifications(conn, cfg, NOW)
     assert _notif(conn)["card_id"] is None
     assert _notif_leads(conn) == 1
+
+
+# --- daily digest -------------------------------------------------------
+
+
+def _digest_leads(conn):
+    return conn.execute("SELECT * FROM leads WHERE lead_key LIKE 'digest:%'").fetchall()
+
+
+def _newest_sha(cfg):
+    since = int((NOW - timedelta(hours=24)).timestamp())
+    return gitq.recent_commits(cfg.repos["fixture"].path, "main", since)[0]["sha"]
+
+
+def _digest_card(conn, cfg, card_id, sha, lead_id=None):
+    _add_card_row(conn, cfg, card_id, "auth.py", "2026-10-30T12:30:00Z", lead_id=lead_id)
+    spec = db.loads(conn.execute("SELECT spec FROM cards WHERE id = ?", (card_id,)).fetchone()[0])
+    spec["sources"].append({"repo": "fixture", "commit": sha})
+    spec["hook"], spec["learn"] = "Auth day", "Three commits reshaped auth today."
+    conn.execute("UPDATE cards SET spec = ? WHERE id = ?", (db.dumps(spec), card_id))
+    conn.commit()
+
+
+def test_digest_lead_once_per_repo_per_day(cfg, conn):
+    assert social.generate_digests(conn, cfg, NOW) == 1
+    assert social.generate_digests(conn, cfg, NOW + timedelta(minutes=5)) == 0
+    (lead,) = _digest_leads(conn)
+    assert lead["lead_key"] == "digest:fixture:2026-10-30"
+    assert (lead["story_type"], lead["kind"], lead["strength"]) == ("before_after", "commit", 2.0)
+    assert lead["commit_sha"] == _newest_sha(cfg)
+    assert lead["text"].startswith("daily digest for fixture 2026-10-30: 3 commits. Write one card")
+    assert "Cite the newest commit." in lead["text"]
+    rec = conn.execute("SELECT * FROM digests").fetchone()
+    assert (rec["repo"], rec["day"], rec["card_id"]) == ("fixture", "2026-10-30", None)
+
+
+def test_digest_skipped_without_recent_commits(fixture_repo, tmp_path):
+    cfg = make_config(fixture_repo, tmp_path / "other")
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as c:
+        assert social.generate_digests(c, cfg, NOW) == 0
+
+
+def test_digest_is_offered_first_then_gone_once_covered(cfg, conn):
+    from codescroll import ledger
+
+    social.generate_digests(conn, cfg, NOW)
+    offered = ledger.for_brief(conn, cfg, ["fixture"], NOW)[("fixture", "before_after")]
+    assert offered[0].key.startswith("digest:")
+    lead = _digest_leads(conn)[0]
+    _digest_card(conn, cfg, "c_dig", _newest_sha(cfg), lead_id=lead["id"])
+    with db.immediate(conn):
+        ledger.mark_covered(conn, lead["id"], NOW)
+    assert conn.execute("SELECT card_id FROM digests").fetchone()[0] == "c_dig"
+    after = ledger.for_brief(conn, cfg, ["fixture"], NOW).get(("fixture", "before_after"), [])
+    assert not any(ld.key.startswith("digest:") for ld in after)
+    assert social.generate_digests(conn, cfg, NOW) == 0  # still one per day
+
+
+def test_old_unserved_digest_lead_is_dropped(cfg, conn):
+    social.generate_digests(conn, cfg, NOW - timedelta(days=1))
+    assert len(_digest_leads(conn)) == 1
+    social.generate_digests(conn, cfg, NOW)
+    assert [r["lead_key"] for r in _digest_leads(conn)] == ["digest:fixture:2026-10-30"]
+
+
+def test_stories_carry_digest_card_and_commit_links(cfg, conn):
+    story = social.stories(conn, cfg, NOW)[0]
+    assert story["digest"] is None
+    assert all(
+        c["card_id"] is None and c["url"] is None and c["seen"] is False for c in story["commits"]
+    )
+    social.generate_digests(conn, cfg, NOW)
+    sha = story["commits"][1]["sha"]
+    _digest_card(conn, cfg, "c_dig", sha)
+    conn.execute("UPDATE digests SET card_id = 'c_dig'")
+    conn.commit()
+    story = social.stories(conn, cfg, NOW)[0]
+    assert story["digest"] == {
+        "card_id": "c_dig", "day": "2026-10-30", "hook": "Auth day",
+        "learn": "Three commits reshaped auth today.",
+    }  # fmt: skip
+    assert story["commits"][1]["card_id"] is None  # the digest card itself does not count
+    _add_card_row(conn, cfg, "c_one", "a.py", "2026-10-30T12:40:00Z")
+    spec = {"repos": ["fixture"], "sources": [{"repo": "fixture", "commit": sha[:10]}]}
+    conn.execute("UPDATE cards SET spec = ? WHERE id = 'c_one'", (db.dumps(spec),))
+    conn.commit()
+    social.mark_seen(conn, "fixture", [sha], NOW)
+    story = social.stories(conn, cfg, NOW)[0]
+    assert story["commits"][1]["card_id"] == "c_one"
+    assert story["commits"][1]["seen"] is True
+
+
+def test_commit_url_when_repo_has_github_url(cfg):
+    from dataclasses import replace
+
+    repo = replace(cfg.repos["fixture"], url="https://github.com/o/r")
+    cfg = replace(cfg, repos={"fixture": repo})
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as c:
+        story = social.stories(c, cfg, NOW)[0]
+    first = story["commits"][0]
+    assert first["url"] == f"https://github.com/o/r/commit/{first['sha']}"

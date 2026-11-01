@@ -1,22 +1,37 @@
 <script lang="ts">
 	import { relativeTime } from '#lib/relativeTime.ts';
-	import type { Story } from '#lib/types.ts';
+	import type { Story, StoryCommit } from '#lib/types.ts';
 
 	let {
 		story,
 		onClose,
 		onSeen,
+		onEnd,
+		autoplay = false,
 		now = Date.now() / 1000
 	}: {
 		story: Story;
 		onClose: () => void;
 		onSeen?: (repo: string, shas: string[]) => void;
+		/** Called instead of onClose when the last page is done (catch-up plays several repos). */
+		onEnd?: () => void;
+		autoplay?: boolean;
 		now?: number;
 	} = $props();
 
+	const PAGE_MS = 5000;
+	// The digest card, when there is one, is the first page.
+	type Page = { digest: NonNullable<Story['digest']> } | { commit: StoryCommit };
+	const pages: Page[] = $derived([
+		...(story.digest ? [{ digest: story.digest }] : []),
+		...story.commits.map((c) => ({ commit: c }))
+	]);
+
 	let index = $state(0);
+	let held = $state(false);
 	const shown = new Set<string>();
-	const commit = $derived(story.commits[index]);
+	const page = $derived(pages[index]);
+	const commit = $derived(page && 'commit' in page ? page.commit : undefined);
 
 	$effect(() => {
 		const sha = commit?.sha;
@@ -27,9 +42,16 @@
 	});
 
 	function next() {
-		if (index >= story.commits.length - 1) onClose();
+		if (index >= pages.length - 1) (onEnd ?? onClose)();
 		else index += 1;
 	}
+
+	$effect(() => {
+		if (!autoplay || held) return;
+		void index;
+		const t = setTimeout(next, PAGE_MS);
+		return () => clearTimeout(t);
+	});
 	function prev() {
 		if (index > 0) index -= 1;
 	}
@@ -59,9 +81,12 @@
 	tabindex="-1"
 	ontouchstart={onTouchStart}
 	ontouchend={onTouchEnd}
+	onpointerdown={() => (held = true)}
+	onpointerup={() => (held = false)}
+	onpointercancel={() => (held = false)}
 >
 	<div class="bars">
-		{#each story.commits as c, i (c.sha)}
+		{#each pages as p, i ('commit' in p ? p.commit.sha : 'digest')}
 			<span
 				class="bar"
 				data-testid="progress"
@@ -73,12 +98,26 @@
 		<strong>{story.repo}</strong>
 		<button type="button" class="close" aria-label="Close" onclick={onClose}>&#10005;</button>
 	</div>
-	{#if commit}
+	{#if page && 'digest' in page}
+		<div class="page">
+			<p class="meta">Daily digest · {page.digest.day}</p>
+			<p class="subject">{page.digest.hook}</p>
+			<p class="meta">{page.digest.learn}</p>
+			<a class="link" href="/card/{page.digest.card_id}">Read card</a>
+		</div>
+	{:else if commit}
 		<div class="page">
 			<p class="subject">{commit.subject}</p>
 			<p class="meta">{commit.author} · {relativeTime(commit.ts, now)}</p>
 			<p class="meta">{commit.files} {commit.files === 1 ? 'file' : 'files'}</p>
 			<code class="sha">{commit.short}</code>
+			{#if commit.card_id}
+				<a class="link" href="/card/{commit.card_id}">Read the card</a>
+			{:else if commit.url}
+				<a class="link" href={commit.url} target="_blank" rel="noopener noreferrer"
+					>View commit on GitHub</a
+				>
+			{/if}
 		</div>
 	{/if}
 	<button type="button" class="zone left" aria-label="Previous" onclick={prev}></button>
@@ -137,6 +176,17 @@
 		flex-direction: column;
 		justify-content: center;
 		gap: 0.5rem;
+		pointer-events: none; /* taps reach the Previous/Next zones; links opt back in */
+	}
+	.link {
+		align-self: flex-start;
+		position: relative;
+		z-index: 2;
+		pointer-events: auto;
+		min-height: 44px;
+		display: inline-flex;
+		align-items: center;
+		color: var(--accent);
 	}
 	.subject {
 		margin: 0;

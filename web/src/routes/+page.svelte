@@ -3,6 +3,7 @@
 	import Feed from '#lib/components/Feed.svelte';
 	import StoriesRow from '#lib/components/StoriesRow.svelte';
 	import StoryViewer from '#lib/components/StoryViewer.svelte';
+	import CatchUp from '#lib/components/CatchUp.svelte';
 	import NotificationBell from '#lib/components/NotificationBell.svelte';
 	import { fetchFeed, fetchPrefs, fetchStories, markStoriesSeen, postEvents } from '#lib/api.ts';
 	import { setPlaybackSpeed } from '#lib/beats.ts';
@@ -43,6 +44,7 @@
 	let loadingMore = false;
 	let stories = $state<Story[]>([]);
 	let openStory = $state<number | null>(null);
+	let catchingUp = $state(false);
 	let chromeH = $state(0);
 
 	const batcher = createBatcher(postEvents, 5000);
@@ -142,7 +144,7 @@
 <!-- The page scrolls; the top bar scrolls away with the first card. -->
 <div class="app" style="--chrome-h: {chromeH}px">
 <header class="chrome" aria-label="Top bar" bind:offsetHeight={chromeH}>
-	<div class="stories-slot"><StoriesRow {stories} onOpen={(i) => (openStory = i)} /></div>
+	<div class="stories-slot"><StoriesRow {stories} onOpen={(i) => (openStory = i)} onCatchUp={() => (catchingUp = true)} /></div>
 	<nav class="links">
 		{#if filtered}
 			<span class="filter" data-testid="feed-filter">
@@ -164,6 +166,10 @@
 	{#key active.repo}
 		<StoryViewer story={active} {onSeen} onClose={() => (openStory = null)} />
 	{/key}
+{/if}
+
+{#if catchingUp}
+	<CatchUp {stories} {onSeen} onClose={() => (catchingUp = false)} />
 {/if}
 
 <main>

@@ -1,6 +1,10 @@
 <script lang="ts">
 	import type { Story } from '#lib/types.ts';
-	let { stories, onOpen }: { stories: Story[]; onOpen: (index: number) => void } = $props();
+	let {
+		stories,
+		onOpen,
+		onCatchUp
+	}: { stories: Story[]; onOpen: (index: number) => void; onCatchUp?: () => void } = $props();
 	let failed = $state<Record<string, boolean>>({});
 </script>
 
@@ -30,6 +34,11 @@
 				</button>
 			</div>
 		{/each}
+		{#if onCatchUp && stories.some((s) => !s.seen)}
+			<div role="listitem">
+				<button type="button" class="catch" onclick={onCatchUp}>Catch me up</button>
+			</div>
+		{/if}
 	</div>
 {/if}
 
@@ -80,6 +89,18 @@
 		display: grid;
 		place-items: center;
 		font-weight: 700;
+	}
+	.catch {
+		align-self: center;
+		min-height: 44px;
+		padding: 0 12px;
+		border: 1px solid var(--border);
+		border-radius: 999px;
+		background: var(--surface);
+		color: var(--text);
+		font-size: 0.75rem;
+		white-space: nowrap;
+		cursor: pointer;
 	}
 	.name {
 		max-width: 52px;

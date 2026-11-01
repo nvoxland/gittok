@@ -251,13 +251,20 @@ export type StoryCommit = {
 	author: string;
 	subject: string;
 	files: number;
+	seen?: boolean;
+	/** A card that cites this commit. */
+	card_id?: string | null;
+	/** GitHub commit URL, only when no card covers it. */
+	url?: string | null;
 };
+export type StoryDigest = { card_id: string; day: string; hook: string; learn: string };
 export type Story = {
 	repo: string;
 	mascot: string | null;
 	mascot_image: string | null;
 	commits: StoryCommit[];
 	seen: boolean;
+	digest?: StoryDigest | null;
 };
 
 export type AppNotification = {
