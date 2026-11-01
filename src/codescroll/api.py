@@ -25,6 +25,7 @@ from codescroll import (
     db,
     gc,
     gitq,
+    knowledge,
     learning,
     mcp_server,
     profile,
@@ -436,12 +437,17 @@ def create_app(
         return db.open_db(get_config().settings.data_dir / "codescroll.db")
 
     @app.get("/api/feed")
-    def feed(limit: int = Query(20, ge=1, le=50), cursor: str | None = None):
+    def feed(
+        limit: int = Query(20, ge=1, le=50),
+        cursor: str | None = None,
+        repo: str | None = None,
+        dir: str | None = None,
+    ):
         cfg = get_config()
         try:
             with conn() as c:
                 cards, next_cursor, resume = feedmod.page(
-                    c, cfg, limit, cursor, random.randrange(2**31), datetime.now(UTC)
+                    c, cfg, limit, cursor, random.randrange(2**31), datetime.now(UTC), repo, dir
                 )
         except InvalidCursor:
             raise HTTPException(400, "invalid cursor") from None
@@ -534,6 +540,14 @@ def create_app(
             raise HTTPException(404, f"unknown repo {name}")
         with conn() as c:
             return repo_profile(c, cfg, name)
+
+    @app.get("/api/repos/{name}/map")
+    def repo_map(name: str):
+        cfg = get_config()
+        if name not in cfg.repos:
+            raise HTTPException(404, f"unknown repo {name}")
+        with conn() as c:
+            return {"name": name, "dirs": knowledge.repo_map(c, cfg, name)}
 
     @app.post("/api/events")
     def events(batch: EventBatch):

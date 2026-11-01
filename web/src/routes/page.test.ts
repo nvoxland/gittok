@@ -228,4 +228,38 @@ describe('feed page', () => {
 		await screen.findByText('A hook');
 		expect(screen.queryByText(/Offline/)).toBeNull();
 	});
+
+	describe('dir filter', () => {
+		afterEach(() => window.history.replaceState({}, '', '/'));
+		const feedUrls = () =>
+			fetchMock.mock.calls.map(([u]) => String(u)).filter((u) => u.startsWith('/api/feed'));
+
+		it('asks for the filtered feed and shows a chip', async () => {
+			window.history.replaceState({}, '', '/?repo=storefront&dir=src%2Fsync');
+			route({ '/api/feed': feed });
+			render(Page);
+			await screen.findByText('A hook');
+			expect(feedUrls()[0]).toContain('repo=storefront');
+			expect(feedUrls()[0]).toContain('dir=src%2Fsync');
+			expect(screen.getByTestId('feed-filter')).toHaveTextContent('storefront/src/sync');
+		});
+
+		it('clears the filter and reloads the normal feed', async () => {
+			window.history.replaceState({}, '', '/?repo=storefront&dir=src');
+			route({ '/api/feed': feed });
+			render(Page);
+			await screen.findByText('A hook');
+			await fireEvent.click(screen.getByRole('button', { name: 'Clear filter' }));
+			await vi.waitFor(() => expect(screen.queryByTestId('feed-filter')).toBeNull());
+			await vi.waitFor(() => expect(feedUrls().at(-1)).toBe('/api/feed?limit=20'));
+			expect(window.location.search).toBe('');
+		});
+
+		it('shows no chip without a filter', async () => {
+			route({ '/api/feed': feed });
+			render(Page);
+			await screen.findByText('A hook');
+			expect(screen.queryByTestId('feed-filter')).toBeNull();
+		});
+	});
 });

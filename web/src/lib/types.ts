@@ -219,6 +219,19 @@ export type RepoStats = {
 	top_files: { path: string; commits: number }[];
 	top_dirs: { path: string; commits: number }[];
 };
+export type MapDir = {
+	dir: string;
+	cards_seen: number;
+	cards_available: number;
+	quiz_right: number;
+	quiz_wrong: number;
+	novelty: number;
+	verdicts: Record<string, number>;
+};
+export type RepoMap = { name: string; dirs: MapDir[] };
+
+export type FeedFilter = { repo?: string; dir?: string };
+
 export type RepoProfile = {
 	name: string;
 	mascot: string | null;

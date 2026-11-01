@@ -89,8 +89,35 @@ def last_seen_card(conn) -> str | None:
     return row[0] if row else None
 
 
+def filter_excluded(conn, repo: str | None, dir: str | None) -> set[str]:
+    """Ids of cards that do not match the repo/dir filter (hidden from the slotter)."""
+    dir = (dir or "").strip("/")
+    keep = {r[0] for r in conn.execute("SELECT id FROM cards")}
+    if repo:
+        keep &= {
+            r[0]
+            for r in conn.execute(
+                "SELECT card_id FROM card_features WHERE feature = 'repo' AND value = ?", (repo,)
+            )
+        }
+    if dir:
+        keep &= {
+            r[0]
+            for r in conn.execute("SELECT card_id, value FROM card_features WHERE feature = 'dir'")
+            if r[1] == dir or r[1].startswith(dir + "/")
+        }
+    return {r[0] for r in conn.execute("SELECT id FROM cards")} - keep
+
+
 def page(
-    conn, cfg, limit: int, cursor: str | None, seed: int, now: datetime
+    conn,
+    cfg,
+    limit: int,
+    cursor: str | None,
+    seed: int,
+    now: datetime,
+    repo: str | None = None,
+    dir: str | None = None,
 ) -> tuple[list[dict], str | None, str | None]:
     """The next batch of public cards, the cursor for the one after (None when exhausted), and
     the resume card id.
@@ -103,8 +130,9 @@ def page(
     resume = None
     if cursor:
         served, seed = decode_cursor(cursor)
-    else:
+    elif not (repo or dir):
         resume = last_seen_card(conn)
+    hidden = filter_excluded(conn, repo, dir) if (repo or dir) else set()
     seen = {token(t) for t in served}
     served_ids = (
         {r[0] for r in conn.execute("SELECT id FROM cards") if token(r[0]) in seen}
@@ -113,7 +141,9 @@ def page(
     )
     lead = [resume] if resume else []
     ids = lead + (
-        slotter.build_batch(conn, cfg, limit - len(lead), served_ids | set(lead), seed, now)
+        slotter.build_batch(
+            conn, cfg, limit - len(lead), served_ids | set(lead) | hidden, seed, now
+        )
         if limit > len(lead)
         else []
     )
