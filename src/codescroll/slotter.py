@@ -17,6 +17,31 @@ DEFAULT_KNOBS = {
 }
 
 
+# Read time of every format in docs/formats.md: a glance (fast) or a stop-and-read (slow).
+# The fast_formats/slow_formats knobs win; this fills in the formats they leave out.
+FORMAT_SPEED = {
+    **dict.fromkeys(
+        ("meme", "text_meme", "fun_fact", "chart", "hot_take", "text_post", "flags", "horoscope",
+         "breaking_news", "listicle", "tier_list"),
+        "fast",
+    ),
+    **dict.fromkeys(
+        ("thread", "comic", "code_card", "quiz", "iceberg", "day_in_life", "eli5", "diagram",
+         "mascot_scene", "group_chat", "dating_profile", "glow_up"),
+        "slow",
+    ),
+}  # fmt: skip
+
+
+def format_speed(fmt: str, knobs: dict) -> str | None:
+    """ "fast" or "slow" for a format; the knob lists first, then FORMAT_SPEED."""
+    if fmt in knobs["fast_formats"]:
+        return "fast"
+    if fmt in knobs["slow_formats"]:
+        return "slow"
+    return FORMAT_SPEED.get(fmt)
+
+
 def _knobs(rc) -> dict:
     return {**DEFAULT_KNOBS, **(rc.slotting or {})}
 
@@ -27,11 +52,9 @@ def _rhythm(order: list[str], format_of: dict[str, str], knobs: dict) -> list[st
     Walks `order` (best first); at each step takes the first card that keeps the run of equal
     formats at 2 or less, preferring the opposite speed of the previous card.
     """
-    fast, slow = set(knobs["fast_formats"]), set(knobs["slow_formats"])
 
     def speed(i: str) -> str | None:
-        f = format_of[i]
-        return "fast" if f in fast else "slow" if f in slow else None
+        return format_speed(format_of[i], knobs)
 
     rest, out = list(order), []
     while rest:

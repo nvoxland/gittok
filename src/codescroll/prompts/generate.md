@@ -1,12 +1,12 @@
 # How to write CodeScroll cards
 
-You write cards for a personal, TikTok-style feed about the user's own codebases. The user scrolls them on a phone. Cards must be **fun to read and exactly true**.
+You write cards for a personal, TikTok-style feed about codebases the reader works in. The user scrolls them on a phone. Cards must be **fun to read and exactly true**.
 
 **The goal: the reader is learning a codebase, often one other people wrote.** Every card teaches one concrete fact about how the code works: what it does, what calls it, why it exists, or what breaks if it is removed. The joke or format is the wrapper; the fact is the card. Commit counts, blame shares, and churn are leads, not the lesson. Read the code or the commit message and explain the behaviour.
 
 ## Your job
 
-You get one work packet: a repo, a number of cards, story types, one tone and one persona per card, and leads (real commits, paths, and numbers found by analysis). Write exactly that many cards.
+You get one work packet: a repo, a number of cards, story types, one story type with its allowed formats, one tone and one persona per card, and leads (real commits, paths, and numbers found by analysis). Write exactly that many cards.
 
 1. Read the materials in the packet (`materials_markdown`). Write the cards from them. Research with the tools below only for what the materials lack.
 2. A `[variant]` lead is a story that did well and is now retold. Write one card in the format the lead names, with a fresh hook, and cite the same sources the lead lists. That is what makes it the same story. Keep the story type the lead names.
@@ -25,7 +25,7 @@ You get one work packet: a repo, a number of cards, story types, one tone and on
 
 Every card has: `story_type`, `format`, `persona`, `tone`, `repos` (repo names), `dirs` (repo-relative directories the card is about; may be empty), `hook`, `learn`, `visual`, `depth`, `sources`. Optional: `difficulty` (1 to 3), `comments`, `series` (always `null` for now), `account`.
 
-- `format`: use the format the packet suggests for that card. Each format allows one `visual.kind`; the exact `visual` JSON for your formats is in the format sections below.
+- `format`: pick one of the allowed formats the packet lists for that card's story type; choose the one that best shows the fact. A card in any other format is rejected (`format_not_allowed`). Each format allows one `visual.kind`; the exact `visual` JSON for your formats is in the format sections below.
 - `account`: `"repo:path"` (a file or directory that exists at the repo ref). The card is then shown as posted by that file (`@shipping.clj`). `persona` is still required and sets the voice of the comments. Use it when the code itself would "say" the card.
 - **The front must fit one phone screen** (the `hook` plus the `visual`). It never scrolls, so the server rejects cards that would not fit (`too_long`):
   - `hook`: at most 140 characters.

@@ -268,15 +268,18 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
         lead_refs has the coordinates of each lead (same order as leads). materials_markdown
         has the evidence for them: commit stat and diff, or numbered file lines and blame.
         Research only what it lacks. guidance_markdown has the base rules plus the sections
-        for this packet's formats. Write exactly `count` cards, one per entry in `formats`.
+        for every format the packet allows. Write exactly `count` cards, one per entry in
+        `card_stories`; for each, pick one of the formats in the same entry of `allowed`.
         """
         with _db(cfg) as conn:
             pk = runs.get_packet(conn, run_id, packet_id)
+        # Sections for every allowed format; packets from before `allowed` fall back to formats.
+        shown = [f for fs in pk.get("allowed") or [] for f in fs] or pk["formats"]
         return {
             **pk,
             "materials_markdown": materials.packet_materials(cfg, pk.get("lead_refs") or []),
             "guidance_markdown": brief_mod.guidance_markdown(
-                cfg.personas, pk["formats"], cfg.meme_templates, cfg.mascots, pk.get("templates")
+                cfg.personas, shown, cfg.meme_templates, cfg.mascots, pk.get("templates")
             ),
         }
 

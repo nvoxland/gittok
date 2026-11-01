@@ -54,7 +54,9 @@ def _insert_run(conn, run_id="r_1"):
 
 
 def _accept(cfg, card):
-    accepted, rejected = validator.validate_cards([card], cfg.repos, PERSONAS)
+    # These tests are about storage, not about which format suits a story type.
+    pair = {(card["story_type"], card["format"])}
+    accepted, rejected = validator.validate_cards([card], cfg.repos, PERSONAS, variant_formats=pair)
     assert rejected == []
     return accepted[0]
 
@@ -79,7 +81,7 @@ def test_store_card_writes_features(conn, cfg, fixture_repo):
         for r in conn.execute("SELECT * FROM card_features WHERE card_id = ?", (card_id,))
     }
     assert feats == {
-        ("story_type", "commit_drama"),
+        ("story_type", "what_it_does"),
         ("format", "code_card"),
         ("persona", "paranoid_sec"),
         ("tone", "dry-deadpan"),

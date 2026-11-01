@@ -31,7 +31,7 @@ def conn():
 
 
 def path_card(fixture_repo, **over):
-    over = {"story_type": "what_it_does", "sources": SRC, "dirs": ["src"], **over}
+    over = {"story_type": "what_it_does", "format": "eli5", "sources": SRC, "dirs": ["src"], **over}
     card = text_card(fixture_repo, **over)
     card["depth"][0]["text"] = explain("src/app.py")  # the explain floor needs a cited name
     return card
@@ -108,14 +108,14 @@ def test_covering_card_marks_served_and_lead_is_no_longer_offered(conn, cfg, fix
     ev(conn, a, "teach_more")
     learning.process_events(conn, cfg, now=NOW)
     (lead,) = req_leads(conn)
-    ref = {"id": lead["id"], "story_type": "what_it_does", "kind": "path", "path": "src/app.py"}
+    ref = {"id": lead["id"], "story_type": "rip", "kind": "path", "path": "src/app.py"}
     assert ledger.match_lead(meme_card(fixture_repo), [ref]) == ref
     with db.immediate(conn):
         ledger.mark_covered(conn, lead["id"], NOW)
     (r,) = reqs(conn)
     assert r["served_at"] is not None
     out = ledger.for_brief(conn, cfg, ["fixture"], NOW)
-    assert not any(x.key.startswith("req:") for x in out.get(("fixture", "what_it_does"), []))
+    assert not any(x.key.startswith("req:") for x in out.get(("fixture", "rip"), []))
     learning.process_events(conn, cfg, now=NOW)  # does not resurrect it
     assert reqs(conn)[0]["served_at"] is not None and len(req_leads(conn)) == 1
 

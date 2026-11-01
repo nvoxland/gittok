@@ -374,6 +374,19 @@ def _check_format(card: dict) -> None:
         )
 
 
+def _check_format_allowed(card: dict, ctx: _Ctx) -> None:
+    from codescroll.brief import STORY_FORMATS
+
+    story, fmt = card["story_type"], card["format"]
+    allowed = STORY_FORMATS.get(story)
+    if allowed is None or fmt in allowed or (story, fmt) in ctx.variant_formats:
+        return
+    raise _Reject(
+        "format_not_allowed",
+        f"format {fmt!r} does not suit story type {story!r}; use one of: {', '.join(allowed)}",
+    )
+
+
 def _check_interaction_shape(card: dict) -> None:
     """Presence and answer_index rules that need no git."""
     has = "interaction" in card
@@ -501,6 +514,7 @@ class _Ctx:
     card_repos: tuple = ()
     claim_checks: bool = True
     lead_texts: list | None = None  # lead text of the packet, when known at submit time
+    variant_formats: frozenset = frozenset()  # (story_type, format) pairs a packet named
 
 
 def _check_meme(card: dict, ctx: _Ctx) -> None:
@@ -790,6 +804,7 @@ def _validate_one(card: dict, gc: _GitCache, ctx: _Ctx) -> tuple[dict, dict, str
     _check_format(card)
     _check_fit(card)
     _check_interaction_shape(card)
+    _check_format_allowed(card, ctx)
     visual = card["visual"]
     if visual["kind"] == "template" and visual["template"] == "breaking_news":
         visual["data"].setdefault("ticker", [])  # optional in the schema; clients expect a list
@@ -908,6 +923,7 @@ def validate_cards(
     illustration_budget: int | None = None,
     claim_checks: bool = True,
     lead_texts: list | None = None,
+    variant_formats=frozenset(),
 ) -> tuple[list[Accepted], list[Rejection]]:
     """Validate agent cards against the schema and git. Never raises for bad cards."""
     gc = _GitCache(repos=repos)
@@ -919,6 +935,7 @@ def validate_cards(
         budget=illustration_budget,
         claim_checks=claim_checks,
         lead_texts=lead_texts,
+        variant_formats=frozenset(variant_formats),
     )
     accepted: list[Accepted] = []
     rejected: list[Rejection] = []
