@@ -546,3 +546,17 @@ def test_fix_hunks_respects_limit(fixture_repo):
 def test_analyze_stores_fix_hunks(conn, fixture_repo):
     out = signals.analyze(conn, _repo(fixture_repo), AnalysisSettings())
     assert any(h["sha"] == fixture_repo.shas["fix1"] for h in out["signals"]["fix_hunks"])
+
+
+def test_analyze_survives_failing_fetch(conn, tmp_path, fixture_repo):
+    import subprocess
+
+    clone = tmp_path / "c"
+    subprocess.run(["git", "clone", "-q", str(fixture_repo.path), str(clone)], check=True)
+    subprocess.run(
+        ["git", "-C", str(clone), "remote", "set-url", "origin", str(tmp_path / "nope")], check=True
+    )
+    repo = Repo(name="c", path=clone, ref="origin/main", fetch=True)
+    gitq._last_fetch.clear()
+    out = signals.analyze(conn, repo, AnalysisSettings())
+    assert out["head_sha"]

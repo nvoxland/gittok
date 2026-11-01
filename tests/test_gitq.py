@@ -209,3 +209,72 @@ def test_remote_url_reads_origin(tmp_path):
         check=True,
     )
     assert gitq.remote_url(tmp_path) == "git@github.com:org/name.git"
+
+
+def _git(cwd, *args):
+    import subprocess
+
+    return subprocess.run(
+        ["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+@pytest.fixture
+def cloned(tmp_path):
+    origin = tmp_path / "origin.git"
+    seed = tmp_path / "seed"
+    clone = tmp_path / "clone"
+    _git(tmp_path, "init", "--bare", "-b", "master", str(origin))
+    _git(tmp_path, "clone", str(origin), str(seed))
+    for k, v in (("user.name", "t"), ("user.email", "t@t")):
+        _git(seed, "config", k, v)
+    (seed / "a.txt").write_text("one\n")
+    _git(seed, "add", ".")
+    _git(seed, "commit", "-m", "one")
+    _git(seed, "push", "origin", "HEAD:master")
+    _git(tmp_path, "clone", str(origin), str(clone))
+    return origin, seed, clone
+
+
+def _push_new_commit(seed):
+    (seed / "b.txt").write_text("two\n")
+    _git(seed, "add", ".")
+    _git(seed, "commit", "-m", "two")
+    _git(seed, "push", "origin", "HEAD:master")
+
+
+def test_fetch_ref_updates_remote_tracking_only(cloned):
+    _, seed, clone = cloned
+    gitq._last_fetch.clear()
+    head, status = _git(clone, "rev-parse", "HEAD"), _git(clone, "status", "--porcelain")
+    _push_new_commit(seed)
+    new = _git(seed, "rev-parse", "HEAD")
+    assert gitq.fetch_ref(clone, "origin/master") == "fetched"
+    assert _git(clone, "rev-parse", "origin/master") == new
+    assert _git(clone, "rev-parse", "HEAD") == head
+    assert _git(clone, "status", "--porcelain") == status
+    assert not (clone / "b.txt").exists()
+
+
+def test_fetch_ref_skips_non_remote_ref(cloned):
+    _, _, clone = cloned
+    assert gitq.fetch_ref(clone, "HEAD") == "skipped"
+    assert gitq.fetch_ref(clone, "master") == "skipped"
+
+
+def test_fetch_ref_throttles(cloned):
+    _, seed, clone = cloned
+    gitq._last_fetch.clear()
+    assert gitq.fetch_ref(clone, "origin/master", min_interval_s=900) == "fetched"
+    _push_new_commit(seed)
+    before = _git(clone, "rev-parse", "origin/master")
+    assert gitq.fetch_ref(clone, "origin/master", min_interval_s=900) == "throttled"
+    assert _git(clone, "rev-parse", "origin/master") == before
+    assert gitq.fetch_ref(clone, "origin/master", min_interval_s=0) == "fetched"
+
+
+def test_fetch_ref_failure_returns_failed(cloned, tmp_path):
+    _, _, clone = cloned
+    gitq._last_fetch.clear()
+    _git(clone, "remote", "set-url", "origin", str(tmp_path / "missing.git"))
+    assert gitq.fetch_ref(clone, "origin/master") == "failed"

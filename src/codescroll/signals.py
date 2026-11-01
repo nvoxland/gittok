@@ -609,6 +609,8 @@ def _cached(conn, repo_id: int, head: str) -> dict | None:
 
 
 def analyze(conn, repo: Repo, settings: AnalysisSettings, force: bool = False) -> dict:
+    if repo.fetch:  # never raises; a failure keeps the old ref
+        gitq.fetch_ref(repo.path, repo.ref, settings.fetch_min_interval_s)
     head = gitq.rev_parse(repo.path, repo.ref)
     t0 = gitq.commit_time(repo.path, head)
     row = conn.execute(
