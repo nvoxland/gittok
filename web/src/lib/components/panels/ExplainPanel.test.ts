@@ -42,4 +42,22 @@ describe('ExplainPanel', () => {
 		});
 		expect(container.querySelector('.sources')).toBeNull();
 	});
+
+	it('shows the learn line as a lead above the text', () => {
+		const { container } = render(ExplainPanel, {
+			text: 'Body.',
+			learn: 'How total() rounds money.'
+		});
+		const lead = container.querySelector('.learn');
+		expect(lead?.textContent).toContain("You'll learn:");
+		expect(lead?.textContent).toContain('How total() rounds money.');
+		const p = container.querySelector('p:not(.learn)')!;
+		expect(lead!.compareDocumentPosition(p) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+	});
+
+	it('renders without a learn line (cards stored before it existed)', () => {
+		const { container } = render(ExplainPanel, { text: 'Body.' });
+		expect(container.querySelector('.learn')).toBeNull();
+		expect(container.querySelector('p')?.textContent).toBe('Body.');
+	});
 });

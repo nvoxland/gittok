@@ -168,6 +168,8 @@ export type Card = {
 	persona: string;
 	tone: string;
 	hook: string;
+	// "After this card you know ..."; absent on cards stored before it was required.
+	learn?: string;
 	visual: Visual;
 	account?: string;
 	interaction?: Interaction;

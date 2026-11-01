@@ -16,6 +16,14 @@ def test_example_card_passes_schema(fixture_repo):
     assert errors(example_card(fixture_repo)) == []
 
 
+def test_learn_is_required_and_bounded(fixture_repo):
+    card = example_card(fixture_repo)
+    del card["learn"]
+    assert errors(card)
+    assert errors(example_card(fixture_repo, learn="too short"))
+    assert errors(example_card(fixture_repo, learn="x" * 141))
+
+
 def test_text_card_passes_schema(fixture_repo):
     assert errors(text_card(fixture_repo)) == []
 

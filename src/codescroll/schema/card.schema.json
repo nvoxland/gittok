@@ -248,7 +248,7 @@
     "card": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["story_type", "format", "persona", "tone", "repos", "dirs", "hook", "visual", "depth", "sources"],
+      "required": ["story_type", "format", "persona", "tone", "repos", "dirs", "hook", "learn", "visual", "depth", "sources"],
       "properties": {
         "story_type": {"enum": [
           "commit_drama", "hot_spot", "archaeology", "rip", "ancient_todo", "secret_couples", "whose_code",
@@ -268,6 +268,7 @@
         "dirs": {"type": "array", "maxItems": 6, "items": {"type": "string", "maxLength": 400}},
         "difficulty": {"type": "integer", "minimum": 1, "maximum": 3},
         "hook": {"type": "string", "minLength": 1, "maxLength": 200},
+        "learn": {"type": "string", "minLength": 20, "maxLength": 140},
         "visual": {"oneOf": [
           {"$ref": "#/$defs/code_visual"}, {"$ref": "#/$defs/text_visual"}, {"$ref": "#/$defs/meme_visual"},
           {"$ref": "#/$defs/text_meme_visual"}, {"$ref": "#/$defs/illustration_visual"}, {"$ref": "#/$defs/comic_visual"},

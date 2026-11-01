@@ -4,6 +4,19 @@ from __future__ import annotations
 
 import copy
 
+LEARN = "After this card you know how the fixture repo's code works."
+
+
+def explain(ident: str | None = None) -> str:
+    """An explain text that clears the floor; `ident` must occur in the cited code."""
+    ident = ident or "main()` or `parse(s)` or `Fixture"
+    return (
+        f"The code in question is `{ident}`, and it does one small job: it takes its input, "
+        "does the work in a single pass, and hands the result back to its caller.\n\n"
+        "Nothing else in the module depends on how it does that, which is why the "
+        "history around it stays so quiet and why a reader can trust it."
+    )
+
 
 def example_card(fixture_repo, **overrides) -> dict:
     s = fixture_repo.shas
@@ -16,6 +29,7 @@ def example_card(fixture_repo, **overrides) -> dict:
         "dirs": ["billing"],
         "difficulty": 2,
         "hook": "Rounding was fixed twice in two days.",
+        "learn": LEARN,
         "visual": {
             "kind": "code",
             "repo": "fixture",
@@ -25,7 +39,7 @@ def example_card(fixture_repo, **overrides) -> dict:
             "callouts": [{"line": 5, "text": "round() with no digits drops the cents."}],
         },
         "depth": [
-            {"kind": "explain", "text": "The first version rounded to whole units."},
+            {"kind": "explain", "text": explain("round(t)")},
             {
                 "kind": "code_diff",
                 "repo": "fixture",
@@ -54,13 +68,14 @@ def text_card(fixture_repo, **overrides) -> dict:
         "repos": ["fixture"],
         "dirs": ["src"],
         "hook": "RIP legacy.py, 2026-01-05 to 2026-01-25.",
+        "learn": LEARN,
         "visual": {
             "kind": "text",
             "title": "In memoriam",
             "body": "It returned 1. Every time.",
             "bullets": ["Born in the initial commit", "Replaced by util.py"],
         },
-        "depth": [{"kind": "explain", "text": "legacy.py was deleted when util.py took over."}],
+        "depth": [{"kind": "explain", "text": explain("old()")}],
         "sources": [{"repo": "fixture", "commit": fixture_repo.shas["delete_legacy"]}],
     }
     card.update(overrides)
@@ -77,8 +92,9 @@ def _base(fixture_repo, fmt: str, base_visual: dict, /, **overrides) -> dict:
         "repos": ["fixture"],
         "dirs": ["src"],
         "hook": "A short hook.",
+        "learn": LEARN,
         "visual": visual,
-        "depth": [{"kind": "explain", "text": "Plain explanation."}],
+        "depth": [{"kind": "explain", "text": explain()}],
         "sources": [{"repo": "fixture", "path": "src/app.py", "lines": [1, 2]}],
     }
     card.update(overrides)
@@ -181,9 +197,17 @@ def _interactive(fixture_repo, story_type: str, visual: dict, interaction: dict,
         "repos": ["fixture"],
         "dirs": ["src"],
         "hook": "Quick check before you scroll on.",
+        "learn": LEARN,
         "visual": visual,
         "interaction": interaction,
-        "depth": [{"kind": "explain", "text": "Plain explanation."}],
+        "depth": [
+            {
+                "kind": "explain",
+                "text": explain(
+                    "total(items)" if story_type in ("guess_when", "spot_the_bug") else "main()"
+                ),
+            }
+        ],
         "sources": [{"repo": "fixture", "path": "src/app.py", "lines": [1, 2]}],
     }
     card.update(overrides)
@@ -213,7 +237,7 @@ def spot_the_bug_card(fixture_repo, **overrides) -> dict:
         interaction,
         dirs=["billing"],
         depth=[
-            {"kind": "explain", "text": "The fix passed 2 digits to round()."},
+            {"kind": "explain", "text": explain("total(items)")},
             {"kind": "code_diff", "repo": "fixture", "commit": s["fix1"], "path": visual["path"]},
         ],
         sources=[
@@ -309,13 +333,14 @@ def cross_card(a_sha: str, b_sha: str, **overrides) -> dict:
         "repos": ["api", "web"],
         "dirs": [],
         "hook": "The export endpoint landed in api and web the same week.",
+        "learn": LEARN,
         "visual": {
             "kind": "text",
             "title": "Export ripple",
             "body": "api added the endpoint, web wired the button.",
             "bullets": ["api first", "web a day later"],
         },
-        "depth": [{"kind": "explain", "text": "Two commits, two repos, one feature."}],
+        "depth": [{"kind": "explain", "text": explain("A = 2` or `A = 3")}],
         "sources": [
             {"repo": "api", "commit": a_sha},
             {"repo": "web", "commit": b_sha},

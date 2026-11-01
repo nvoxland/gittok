@@ -135,6 +135,7 @@ class _GitCache:
     times: dict = field(default_factory=dict)
     files: dict = field(default_factory=dict)
     diffs: dict = field(default_factory=dict)
+    patches: dict = field(default_factory=dict)
 
     def repo(self, name: str):
         if name not in self.repos:
@@ -210,6 +211,17 @@ class _GitCache:
                 max_bytes=200_000,
             )
         return self.diffs[key]
+
+    def patch(self, repo_name: str, full: str) -> str:
+        """The whole patch of one commit (all files), for finding identifiers in a cited commit."""
+        key = (repo_name, full)
+        if key not in self.patches:
+            self.patches[key] = gitq.run(
+                self.repo(repo_name).path,
+                "show", "--format=", "--no-color", "--no-ext-diff", full,
+                max_bytes=200_000,
+            )  # fmt: skip
+        return self.patches[key]
 
 
 CROSS_STORIES = frozenset({"weekly_recap", "drift_alert", "ripple"})
@@ -660,6 +672,95 @@ def _check_fit(card: dict) -> None:
         )
 
 
+MIN_EXPLAIN_CHARS = 200
+MIN_EXPLAIN_PARAGRAPHS = 2
+# Phrases that admit the writer did not find the reason. Matched on lowercased text.
+UNTRACED_PHRASES = (
+    "did not trace",
+    "didn't trace",
+    "did not read why",
+    "didn't read why",
+    "did not check why",
+    "didn't check why",
+    "not sure why",
+    "unsure why",
+    "unclear why",
+    "don't know why",
+    "do not know why",
+    "could not tell why",
+    "couldn't tell why",
+)
+_BACKTICKED = re.compile(r"`([^`\n]+)`")
+
+
+def _check_untraced(card: dict) -> None:
+    for panel in card["depth"]:
+        if panel["kind"] != "explain":
+            continue
+        low = panel["text"].lower().replace("\u2019", "'")
+        hit = next((p for p in UNTRACED_PHRASES if p in low), None)
+        if hit:
+            raise _Reject(
+                "untraced",
+                f"the explain text says {hit!r}. Read the commit message (git_show) or the "
+                "callers (git_grep) and say why. If you cannot find out, drop the card",
+            )
+
+
+def _explain_haystack(card: dict, gc: _GitCache, cited_paths: set[str]) -> str:
+    """Text of everything the card cites: code at commits, diffs, sources, and commit patches."""
+    parts: list[str] = []
+    refs = [card["visual"]] if card["visual"]["kind"] == "code" else []
+    for panel in card["depth"]:
+        if panel["kind"] == "code":
+            refs.append(panel)
+        elif panel["kind"] == "code_diff":
+            full = gc.commit(panel["repo"], panel["commit"])
+            parts.append(gc.diff(panel["repo"], full, panel["path"]))
+            cited_paths.add(panel["path"])
+    for ref in refs:
+        cited_paths.add(ref["path"])
+        parts.extend(gc.file_lines(ref["repo"], ref["commit"], ref["path"]))
+    for src in card["sources"]:
+        if "commit" in src:
+            parts.append(gc.patch(src["repo"], gc.commit(src["repo"], src["commit"])))
+        else:
+            cited_paths.add(src["path"])
+            parts.extend(gc.file_lines(src["repo"], gc.repo(src["repo"]).ref, src["path"]))
+    return "\n".join(parts)
+
+
+def _check_explain_floor(card: dict, gc: _GitCache) -> None:
+    """The first explain panel is the card's main explanation; it must teach something real."""
+    _check_untraced(card)
+    text = next(p["text"] for p in card["depth"] if p["kind"] == "explain")
+    paragraphs = [b for b in re.split(r"\n\s*\n", text.strip()) if b.strip()]
+    if len(text.strip()) < MIN_EXPLAIN_CHARS or len(paragraphs) < MIN_EXPLAIN_PARAGRAPHS:
+        raise _Reject(
+            "explain_too_thin",
+            f"the first explain panel has {len(text.strip())} characters in {len(paragraphs)} "
+            f"paragraph(s); it needs at least {MIN_EXPLAIN_CHARS} characters in "
+            f"{MIN_EXPLAIN_PARAGRAPHS} paragraphs (blank line between). Explain what the code "
+            "does, what calls it, or why it exists",
+        )
+    cited_paths: set[str] = set()
+    haystack = _explain_haystack(card, gc, cited_paths)
+    spans = [m.strip() for m in _BACKTICKED.findall(text)]
+    for span in spans:
+        bare = span[:-2] if span.endswith("()") else span
+        if len(bare) >= 3 and bare in haystack:
+            return
+        if any(path == span or path.endswith("/" + span) for path in cited_paths):
+            return
+    raise _Reject(
+        "identifier_not_found",
+        "the first explain panel needs at least one `backticked` function, variable, or path "
+        "that occurs in the cited code, diff, or commit"
+        + (f" (none of {spans[:4]} do)" if spans else " (it has none)")
+        + ". Name real identifiers from the code you cite",
+    )
+
+
 def _validate_one(card: dict, gc: _GitCache, ctx: _Ctx) -> tuple[dict, dict, str]:
     personas = ctx.personas
     ctx.card_repos = tuple(card.get("repos", ())) if isinstance(card, dict) else ()
@@ -749,6 +850,7 @@ def _validate_one(card: dict, gc: _GitCache, ctx: _Ctx) -> tuple[dict, dict, str
         if rel and rel not in dirs:
             dirs.append(rel)
     card["dirs"] = dirs
+    _check_explain_floor(card, gc)  # last: other checks keep their own reasons
 
     story_key = hashlib.sha1(
         (card["story_type"] + "|" + "|".join(sorted(keys))).encode()

@@ -105,6 +105,18 @@ A card may set `"account": "repo:path"`. The card is then shown as posted by tha
 - The render worker (in `codescroll serve`, plus `codescroll render`) claims a pending card by setting the transient status `rendering`, so two passes never render the same card. It then sets `ready`, or `render_failed` with the error text in `cards.resolved.render_error`. If the renderer is unavailable, the card goes back to `pending_render`. A card stuck in `rendering` for more than 30 minutes is reset to `pending_render` at the start of the next pass.
 - The feed and `/api/repos/{name}` return only `ready` cards.
 
+## Teaching contract (`learn` and the explain floor)
+
+Every submitted card has a required top-level `learn`: one sentence, 20 to 140 characters, that finishes "After this card you know ...". Old cards stored without it still render; the client treats `learn` as optional and shows it as a "You'll learn:" line at the top of the explain panel.
+
+The first `explain` panel is the card's main explanation. The validator rejects it with:
+
+- `explain_too_thin`: under 200 characters, or fewer than 2 paragraphs (blank line between).
+- `identifier_not_found`: no `backticked` span of 3 or more characters that occurs in a cited code file at its commit, a cited file source at the repo ref, a cited `code_diff`, or the patch of a cited commit source. A span that names a cited path also counts.
+- `untraced` (any explain panel): the text admits the writer did not find the reason ("did not trace", "not sure why", "don't know why", and similar; the list is `UNTRACED_PHRASES` in `validator.py`). The detail tells the writer to read the commit message or callers and say why.
+
+These run after the other checks, so a card with a bad citation still gets that reason first.
+
 ## Explain panel text
 
 The client shows `explain` text as a small markdown subset: paragraphs (blank line), `- ` lists, `` `code` ``, and `**bold**`. Nothing else is parsed, and HTML stays text. A long text with no blank lines is split into paragraphs of 2 to 3 sentences.

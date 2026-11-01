@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from codescroll import api, db, runs, steering
-from tests.cards import example_card, quiz_card, text_card, this_or_that_card
+from tests.cards import example_card, explain, quiz_card, text_card, this_or_that_card
 from tests.conftest import make_config
 
 
@@ -467,6 +467,7 @@ def test_saved_lists_cards_whose_latest_save_is_on(cfg, client, fixture_repo):
             text_card(
                 fixture_repo,
                 hook="Another card.",
+                depth=[{"kind": "explain", "text": explain("round(t, 2)")}],
                 sources=[{"repo": "fixture", "commit": fixture_repo.shas["fix1"]}],
             ),
             quiz_card(fixture_repo),
