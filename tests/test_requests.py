@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from codescroll import api, db, knowledge, learning, ledger, runs, store
-from tests.cards import meme_card, text_card
+from tests.cards import explain, meme_card, text_card
 from tests.conftest import make_config
 
 NOW = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
@@ -32,7 +32,9 @@ def conn():
 
 def path_card(fixture_repo, **over):
     over = {"story_type": "what_it_does", "sources": SRC, "dirs": ["src"], **over}
-    return text_card(fixture_repo, **over)
+    card = text_card(fixture_repo, **over)
+    card["depth"][0]["text"] = explain("src/app.py")  # the explain floor needs a cited name
+    return card
 
 
 def add_card(conn, cfg, spec) -> str:
