@@ -70,6 +70,7 @@ class RewardConfig:
             "recency": 0.6,
             "difficulty": 0.3,
             "has_comments": 0.2,
+            "verdict": 0.6,
         }
     )
     half_life_days: float = 21

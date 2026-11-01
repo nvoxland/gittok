@@ -53,6 +53,7 @@ Every card has: `story_type`, `format`, `persona`, `tone`, `repos` (repo names),
   > The fix passes `2` as the second argument, so `round(t, 2)` keeps cents. Every caller that shows a price to the user gets its value from `total()`, so one wrong round hit every invoice.
 - `sources`: 1 to 8 of `{"repo", "commit"}` or `{"repo", "path", "lines"?}`.
 - `comments`: 0 to 5 of `{"persona", "text"}`, at most 280 characters each. Personas reply, correct, joke, or debate. The front shows only the first comment, on one line, so make the first one short and good; the rest are on their own panel.
+- `verdict` (optional): `good`, `bad`, `clever`, `cursed` or `core`. If the lead says `[cursed]` (or another verdict), copy it to the card. For `bad` and `cursed`, add a comment of at least 40 characters from a persona other than the poster that explains why the code is that way or defends it. A card that only roasts is rejected (`needs_defence`).
 
 ## Citations are checked
 

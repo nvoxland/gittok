@@ -317,8 +317,21 @@ def repo_profile(conn, cfg: Config, name: str) -> dict:
         "WHERE r.name = ? AND c.status = 'ready' ORDER BY c.created_at DESC, c.id DESC LIMIT 20",
         (name,),
     ).fetchall()
+    verdicts: dict[str, dict[str, int]] = {}
+    for r in conn.execute(
+        "SELECT d.value AS dir, v.value AS verdict, COUNT(DISTINCT c.id) AS n "
+        "FROM cards c JOIN repos r ON r.id = c.repo_id "
+        "JOIN card_features v ON v.card_id = c.id AND v.feature = 'verdict' "
+        "JOIN card_features d ON d.card_id = c.id AND d.feature = 'dir' AND d.value NOT LIKE '%/%' "
+        "WHERE r.name = ? AND c.status = 'ready' GROUP BY d.value, v.value",
+        (name,),
+    ):
+        verdicts.setdefault(r["dir"], {})[r["verdict"]] = r["n"]
     return {
         "name": name,
+        "verdicts": [
+            {"dir": d, "counts": dict(sorted(c.items()))} for d, c in sorted(verdicts.items())
+        ],
         "mascot": mascot,
         "mascot_image": image,
         "group": repo.group,

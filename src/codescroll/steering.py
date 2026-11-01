@@ -43,6 +43,7 @@ FEATURES = (
     "difficulty",
     "has_comments",
     "interactive",
+    "verdict",
 )
 
 
@@ -77,6 +78,7 @@ def _schema_values() -> dict[str, list[str]]:
         "story_type": props["story_type"]["enum"],
         "format": props["format"]["enum"],
         "tone": props["tone"]["enum"],
+        "verdict": props["verdict"]["enum"],
         "visual_kind": kinds,
         "template": defs["template_visual"]["properties"]["template"]["enum"],
         "difficulty": [str(n) for n in range(props["difficulty"]["minimum"],
@@ -332,6 +334,7 @@ _NOUN = {
     "difficulty": "difficulty {} cards",
     "has_comments": "cards with comments",
     "interactive": "{} quiz cards",
+    "verdict": "{} code cards",
 }
 _ENDING = {
     "up": ", trending up.",

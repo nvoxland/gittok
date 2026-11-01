@@ -49,6 +49,20 @@
 		</section>
 	</div>
 
+	{#if profile.verdicts?.length}
+		<h2>Verdicts</h2>
+		<ul class="verdicts">
+			{#each profile.verdicts as v (v.dir)}
+				<li data-testid="verdicts-{v.dir}">
+					<span class="path">{v.dir}</span>
+					{#each Object.entries(v.counts) as [verdict, n] (verdict)}
+						<span class="chip {verdict}">{verdict} {n}</span>
+					{/each}
+				</li>
+			{/each}
+		</ul>
+	{/if}
+
 	<h2>Cards</h2>
 	{#if profile.cards.length === 0}
 		<p class="empty">No cards yet</p>
@@ -165,6 +179,30 @@
 	.n {
 		color: var(--muted);
 		font-variant-numeric: tabular-nums;
+	}
+	.verdicts {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		font-size: 0.85rem;
+	}
+	.verdicts li {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.4rem;
+		padding: 0.25rem 0;
+		border-bottom: 1px solid var(--border);
+	}
+	.verdicts .path {
+		flex: 1 1 8rem;
+	}
+	.chip {
+		border: 1px solid var(--border);
+		border-radius: 999px;
+		padding: 0.05rem 0.6rem;
+		font-size: 0.75rem;
+		color: var(--muted);
 	}
 	.grid {
 		list-style: none;

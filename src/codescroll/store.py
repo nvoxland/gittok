@@ -52,6 +52,8 @@ def _features(card: dict) -> set[tuple[str, str]]:
         feats.add(("difficulty", str(card["difficulty"])))
     if "interaction" in card:
         feats.add(("interactive", card["story_type"]))
+    if card.get("verdict"):
+        feats.add(("verdict", card["verdict"]))
     feats.add(("has_comments", "1" if card.get("comments") else "0"))
     feats.add(("visual_kind", card["visual"]["kind"]))
     if card["visual"]["kind"] == "template":

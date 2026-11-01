@@ -719,3 +719,16 @@ def test_public_cards_carry_github_links_only_with_a_url(cfg, fixture_repo):
     assert card["links"]["panels"][1] == f"https://github.com/acme/fixture/commit/{sha}"
     feed = TestClient(api.create_app(lambda: linked)).get("/api/feed").json()
     assert feed["cards"][0]["links"]["repo_url"] == "https://github.com/acme/fixture"
+
+
+def test_repo_profile_counts_verdicts_per_top_dir(cfg, client, fixture_repo):
+    card = example_card(fixture_repo, verdict="cursed")
+    card["comments"] = [
+        {"persona": "greybeard", "text": "Legacy float math that callers still depend on, sadly."}
+    ]
+    seed(cfg, fixture_repo, [card, text_card(fixture_repo, verdict="core")])
+    body = client.get("/api/repos/fixture").json()
+    assert body["verdicts"] == [
+        {"dir": "billing", "counts": {"cursed": 1}},
+        {"dir": "src", "counts": {"core": 1}},
+    ]

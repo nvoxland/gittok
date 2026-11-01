@@ -422,6 +422,24 @@ def _check_interaction_shape(card: dict) -> None:
         )
 
 
+MIN_DEFENCE_CHARS = 40
+
+
+def _check_defence(card: dict) -> None:
+    """A bad or cursed verdict must not be a pure roast: someone else explains or defends it."""
+    if card.get("verdict") not in ("bad", "cursed"):
+        return
+    for c in card.get("comments", []):
+        if c["persona"] != card["persona"] and len(c["text"].strip()) >= MIN_DEFENCE_CHARS:
+            return
+    raise _Reject(
+        "needs_defence",
+        f"a {card['verdict']!r} card needs a comment of at least {MIN_DEFENCE_CHARS} characters, "
+        "from a persona other than the poster, that explains why the code is that way "
+        "or defends it",
+    )
+
+
 def _ranges_touch(ranges: list[tuple[int, int]], lines) -> bool:
     lo, hi = lines[0] - BUG_MARGIN, lines[1] + BUG_MARGIN
     return any(a <= hi and b >= lo for a, b in ranges)
@@ -804,6 +822,7 @@ def _validate_one(card: dict, gc: _GitCache, ctx: _Ctx) -> tuple[dict, dict, str
     _check_format(card)
     _check_fit(card)
     _check_interaction_shape(card)
+    _check_defence(card)
     _check_format_allowed(card, ctx)
     visual = card["visual"]
     if visual["kind"] == "template" and visual["template"] == "breaking_news":
