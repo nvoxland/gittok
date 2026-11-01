@@ -145,7 +145,9 @@ A format without evidence has no factor (1). `mix_inputs` passes the factors to 
 
 ## 8. Saved cards
 
-`GET /api/saved` → `{"cards": [Card]}` for cards whose latest `save` event has `on: true`. Web route `/saved`.
+`GET /api/saved` → `{"cards": [Card]}`, most recently saved first. Web route `/saved`.
+
+Saved state lives in the `saved_cards` table (`card_id`, `saved_at`, `saved_ts`). Gc prunes old events, so events alone cannot hold it. `POST /api/events` updates the table in the same transaction as a `save` event. The newest `save` event by `ts` wins: an older event that arrives late changes nothing. A save for an unknown card is ignored. Migration `0010_saved_cards.sql` fills the table from the latest `save` event per card. Gc never deletes a saved card (see section 11).
 
 ## 9. Reset
 
@@ -179,15 +181,18 @@ Settings (`gc:` in `config/settings.yaml`):
 
 | rule | default | a card (or row) is deleted when |
 |---|---|---|
-| seen | `seen_after_days: 14` | it has at least one reward, its last impression is older than N days, and it is not liked |
+| seen | `seen_after_cards: 20` | it has at least one reward, it is not liked, and at least N other cards have an impression after its last impression |
 | liked | `liked_after_days: 90` | the same, but the card is liked |
 | unseen | `unseen_after_days: 45` | it never had an impression and `created_at` is older than N days |
 | failed | `failed_after_days: 7` | `status` is `render_failed` and `created_at` is older than N days |
+| saved | none | never: a card in `saved_cards` is kept, whatever its age or reward |
 | SRS | `srs_keep_days: 60` | never, if it has an `srs` row that is not mastered and due within N days (overdue cards stay too) |
 | events | `events_after_days: 90` | the event is older than N days and was recorded before the card's newest reward was computed |
 | run files | `run_files_after_days: 30` | the run is not open and ended more than N days ago; the folder `data/runs/<id>/` goes, the `runs` row stays |
 | social | `social_after_days: 30` | `story_views` seen, and notifications read, more than N days ago |
 | leads | `leads_after_days: 180` | the lead was last seen at HEAD more than N days ago and no card ever used it (`times_covered = 0`) |
+
+The seen rule counts cards, not days. A card is done when you have scrolled past 20 newer cards, so a slow week does not delete cards you never had time to see. Gc counts distinct cards with one query over the last impression of each card. A card with no reward yet is kept, because learning has not used it. A saved card is kept forever, because you asked to keep it.
 
 Liked means the latest `like` event has `on: true`. If gc already removed the like events, `stories.liked` gives the answer. `process_events` keeps `stories.liked` and `stories.best_reward` up to date.
 

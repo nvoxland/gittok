@@ -452,7 +452,6 @@ def test_answer_on_deleted_card_is_404(cfg, client, fixture_repo):
     assert answer_events(cfg) == []
 
 
-
 def save_event(client, card_id, on, ts):
     body = {"events": [{"card_id": card_id, "type": "save", "ts": ts, "data": {"on": on}}]}
     client.post("/api/events", json=body)
@@ -483,6 +482,40 @@ def test_saved_lists_cards_whose_latest_save_is_on(cfg, client, fixture_repo):
     assert [card["id"] for card in body["cards"]] == [q, a]  # most recent save first
     assert "answer_index" not in body["cards"][0]["interaction"]
     assert c not in {card["id"] for card in body["cards"]}
+
+
+def saved_rows(cfg):
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as c:
+        return {r["card_id"]: r["saved_ts"] for r in c.execute("SELECT * FROM saved_cards")}
+
+
+def test_save_events_update_saved_cards_table(cfg, client, fixture_repo):
+    a, b = seed(cfg, fixture_repo, [example_card(fixture_repo), text_card(fixture_repo)])
+    save_event(client, a, True, 1000)
+    save_event(client, b, True, 2000)
+    assert saved_rows(cfg) == {a: 1000, b: 2000}
+    save_event(client, b, False, 3000)
+    assert saved_rows(cfg) == {a: 1000}
+    save_event(client, "c_gone", True, 4000)  # unknown card: no row
+    assert saved_rows(cfg) == {a: 1000}
+
+
+def test_older_save_event_does_not_override_newer(cfg, client, fixture_repo):
+    a, b = seed(cfg, fixture_repo, [example_card(fixture_repo), text_card(fixture_repo)])
+    save_event(client, a, True, 5000)
+    save_event(client, a, False, 1000)  # older: ignored
+    assert saved_rows(cfg) == {a: 5000}
+    save_event(client, b, False, 5000)
+    save_event(client, b, True, 1000)  # older than the unsave: stays unsaved
+    assert saved_rows(cfg) == {a: 5000}
+
+
+def test_saved_survives_event_pruning(cfg, client, fixture_repo):
+    (a,) = seed(cfg, fixture_repo, [example_card(fixture_repo)])
+    save_event(client, a, True, 1000)
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as c:
+        c.execute("DELETE FROM events")
+    assert [card["id"] for card in client.get("/api/saved").json()["cards"]] == [a]
 
 
 def test_lifespan_runs_profile_worker_and_stops_it(cfg):

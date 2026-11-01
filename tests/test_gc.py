@@ -72,6 +72,18 @@ def seen(conn, cid, days_ago, reward=0.5, like=None) -> int:
     return imp
 
 
+def bury(conn, cfg, n=20, days_ago=1) -> None:
+    """`n` other cards shown (no reward yet, so gc keeps them) after every older impression."""
+    for i in range(n):
+        later = add_card(conn, cfg)
+        conn.execute(
+            "INSERT INTO events(card_id, type, ts, data, received_at) "
+            "VALUES (?, 'impression', ?, '{}', ?)",
+            (later, ms(days_ago) + i, iso(days_ago)),
+        )
+    conn.commit()
+
+
 def exists(conn, cid) -> bool:
     return conn.execute("SELECT 1 FROM cards WHERE id = ?", (cid,)).fetchone() is not None
 
@@ -91,8 +103,9 @@ def test_seen_unliked_card_past_window_is_deleted_with_assets_and_srs(conn, cfg)
         (cid, iso(1)),
     )
     conn.commit()
-    fresh = add_card(conn, cfg)  # not yet past the window: kept
-    seen(conn, fresh, 5)
+    fresh = add_card(conn, cfg)  # fewer than 20 cards came after it: kept
+    seen(conn, fresh, 0.5)
+    bury(conn, cfg, 20, days_ago=1)
 
     res = gc.collect(conn, cfg, NOW)
 
@@ -107,7 +120,7 @@ def test_seen_unliked_card_past_window_is_deleted_with_assets_and_srs(conn, cfg)
     assert conn.execute("SELECT card_id FROM notifications").fetchone()[0] is None
     # memory is kept
     assert count(conn, "SELECT COUNT(*) FROM rewards WHERE card_id = ?", cid) == 1
-    assert count(conn, "SELECT COUNT(*) FROM stories") == 2
+    assert count(conn, "SELECT COUNT(*) FROM stories") == 22
 
 
 def test_liked_card_kept_until_liked_window(conn, cfg):
@@ -122,6 +135,7 @@ def test_liked_card_kept_until_liked_window(conn, cfg):
         (c, ms(19), json.dumps({"on": False}), iso(19)),
     )
     conn.commit()
+    bury(conn, cfg)
 
     res = gc.collect(conn, cfg, NOW)
 
@@ -129,6 +143,70 @@ def test_liked_card_kept_until_liked_window(conn, cfg):
     assert not exists(conn, b)
     assert not exists(conn, c)
     assert (res["seen"], res["liked"]) == (1, 1)
+
+
+def test_later_impressions_count_distinct_cards_after_the_last_impression(conn, cfg):
+    target = add_card(conn, cfg)
+    seen(conn, target, 3)
+    early = add_card(conn, cfg)  # shown before the target: does not count
+    seen(conn, early, 4)
+    bury(conn, cfg, 18)
+    twice = add_card(conn, cfg)  # many impressions, one card
+    for i in range(5):
+        conn.execute(
+            "INSERT INTO events(card_id, type, ts, data, received_at) "
+            "VALUES (?, 'impression', ?, '{}', ?)",
+            (twice, ms(1) + i, iso(1)),
+        )
+    conn.commit()
+
+    gc.collect(conn, cfg, NOW)
+
+    assert exists(conn, target)  # 18 + 1 = 19 distinct later cards
+
+
+def test_seen_card_deleted_after_20_later_cards(conn, cfg):
+    target = add_card(conn, cfg)
+    seen(conn, target, 3)
+    bury(conn, cfg, 19)
+    assert gc.collect(conn, cfg, NOW)["seen"] == 0
+    assert exists(conn, target)
+    bury(conn, cfg, 1)
+    assert gc.collect(conn, cfg, NOW)["seen"] == 1
+    assert not exists(conn, target)
+
+
+def test_saved_card_never_collected(conn, cfg):
+    saved = add_card(conn, cfg, created_days_ago=400)
+    seen(conn, saved, 300)
+    liked = add_card(conn, cfg, created_days_ago=400)
+    seen(conn, liked, 300, like=True)
+    stale = add_card(conn, cfg, created_days_ago=400)
+    conn.executemany(
+        "INSERT INTO saved_cards(card_id, saved_at, saved_ts) VALUES (?, ?, ?)",
+        [(saved, iso(299), ms(299)), (liked, iso(299), ms(299)), (stale, iso(299), ms(299))],
+    )
+    conn.commit()
+    bury(conn, cfg, 30)
+
+    gc.collect(conn, cfg, NOW)
+
+    assert exists(conn, saved) and exists(conn, liked) and exists(conn, stale)
+    assert count(conn, "SELECT COUNT(*) FROM saved_cards") == 3
+
+
+def test_seen_card_without_reward_kept(conn, cfg):
+    cid = add_card(conn, cfg)
+    conn.execute(
+        "INSERT INTO events(card_id, type, ts, data, received_at) "
+        "VALUES (?, 'impression', ?, '{}', ?)",
+        (cid, ms(3), iso(3)),
+    )
+    conn.commit()
+    bury(conn, cfg, 25)
+
+    assert gc.collect(conn, cfg, NOW)["seen"] == 0
+    assert exists(conn, cid)
 
 
 def test_srs_due_card_kept(conn, cfg):
@@ -149,6 +227,7 @@ def test_srs_due_card_kept(conn, cfg):
         (done, iso(-10)),
     )
     conn.commit()
+    bury(conn, cfg)
 
     gc.collect(conn, cfg, NOW)
 
@@ -272,6 +351,7 @@ def test_dry_run_changes_nothing(conn, cfg):
     )
     conn.execute("INSERT INTO story_views(repo, sha, seen_at) VALUES ('a', '1', ?)", (iso(40),))
     conn.commit()
+    bury(conn, cfg)
     before = snapshot(conn, cfg)
 
     dry = gc.collect(conn, cfg, NOW, dry_run=True)

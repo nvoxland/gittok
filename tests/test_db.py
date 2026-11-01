@@ -8,7 +8,7 @@ from codescroll import db
 SPEC_TABLES = {
     "repos", "groups", "repo_groups", "git_signals", "runs", "cards", "card_features",
     "assets", "events", "rewards", "weights", "rules", "personas", "mascots", "srs",
-    "notifications", "stories", "leads",
+    "notifications", "stories", "leads", "saved_cards",
 }  # fmt: skip
 
 
@@ -35,6 +35,7 @@ def test_migrate_twice_applies_nothing_second_time(tmp_path):
         "0007_stories.sql",
         "0008_leads.sql",
         "0009_story_variants.sql",
+        "0010_saved_cards.sql",
     ]
     assert db.migrate(conn) == []
     assert conn.execute("SELECT name FROM schema_migrations").fetchall()[0]["name"] == first[0]
@@ -227,3 +228,39 @@ def test_drop_saves_migration_deletes_save_events_only(tmp_path):
     conn.commit()
     assert db.migrate(conn) == ["0006_drop_saves.sql"]
     assert [r[0] for r in conn.execute("SELECT type FROM events")] == ["like"]
+
+
+def test_saved_cards_migration_backfills_latest_on_saves(tmp_path):
+    conn = db.open_db(tmp_path / "x.db")
+    conn.execute("INSERT INTO repos(name, path) VALUES ('r', '/r')")
+    conn.execute("INSERT INTO runs(id, status, started_at) VALUES ('r','open','now')")
+    for cid, key in (("c1", "k1"), ("c2", "k2"), ("c3", "k3")):
+        conn.execute(
+            "INSERT INTO cards(id, run_id, repo_id, story_type, format, persona, tone, spec,"
+            " story_key, created_at) VALUES (?,'r',1,'s','text','p','t','{}',?,'2026-01-01')",
+            (cid, key),
+        )
+    for cid, ts, on in (
+        ("c1", 1000, True),
+        ("c2", 1000, True),
+        ("c2", 2000, False),  # latest is off
+        ("c3", 3000, True),
+        ("c_gone", 4000, True),  # no card
+    ):
+        conn.execute(
+            "INSERT INTO events(card_id, type, ts, data, received_at) "
+            "VALUES (?, 'save', ?, ?, 'x')",
+            (cid, ts, db.dumps({"on": on})),
+        )
+    conn.execute("DROP TABLE saved_cards")
+    conn.executescript(
+        next(f for f in db._migration_files() if f.name == "0010_saved_cards.sql").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    rows = {r["card_id"]: r["saved_ts"] for r in conn.execute("SELECT * FROM saved_cards")}
+    assert rows == {"c1": 1000, "c3": 3000}
+    assert conn.execute("SELECT saved_at FROM saved_cards WHERE card_id='c1'").fetchone()[0] == (
+        "1970-01-01T00:00:01Z"
+    )

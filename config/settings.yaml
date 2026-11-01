@@ -36,7 +36,7 @@ repos:
   # add its directory here, for example: allowed_roots: [~/src, ~/work]
   allowed_roots: []
 gc:
-  seen_after_days: 14          # delete a seen, unliked card this long after its last impression
+  seen_after_cards: 20         # delete a seen (rewarded), unliked, unsaved card once this many other cards were shown after it
   liked_after_days: 90         # same for a liked card
   unseen_after_days: 45        # delete a card never shown, this long after it was made
   failed_after_days: 7         # delete a render_failed card this long after it was made

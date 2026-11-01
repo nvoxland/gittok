@@ -52,6 +52,8 @@ One `Card`, or 404.
 
 Response: `{ "stored": 3 }`. Unknown types are rejected with 422.
 
+A `save` event (`data: {"on": bool}`) also updates the `saved_cards` table in the same transaction. The newest event by `ts` wins. `GET /api/saved` reads that table, most recently saved first.
+
 ## MCP `get_packet(run_id, packet_id)`
 
 Not an HTTP route. A writer subagent calls it for one work packet. Fields:

@@ -1,7 +1,7 @@
 """Garbage collection: delete cards and files that have no further use.
 
 Kept for good: `stories` (duplicate checks), `rewards` and `weights` (learning), `runs` rows,
-covered `leads`.
+covered `leads`, and saved cards (`saved_cards`).
 See docs/learning.md, "Garbage collection".
 """
 
@@ -57,19 +57,23 @@ def _card_victims(conn, cfg, now: datetime) -> dict[str, list[str]]:
         "failed": _iso(now - timedelta(days=g.failed_after_days)),
         "unseen": _iso(now - timedelta(days=g.unseen_after_days)),
     }
-    seen_ms = {
-        "seen": _ms(now - timedelta(days=g.seen_after_days)),
-        "liked": _ms(now - timedelta(days=g.liked_after_days)),
-    }
+    liked_ms = _ms(now - timedelta(days=g.liked_after_days))
     protect_until = _iso(now + timedelta(days=g.srs_keep_days))
     out: dict[str, list[str]] = {k: [] for k in ("seen", "liked", "unseen", "failed")}
     rows = conn.execute(
+        "WITH last_imp AS (SELECT card_id, MAX(ts) AS ts FROM events "
+        "  WHERE type = 'impression' GROUP BY card_id) "
         "SELECT c.id, c.status, c.created_at, s.liked AS story_liked, "
         "  (SELECT MAX(ts) FROM events WHERE card_id = c.id AND type = 'impression') AS last_imp, "
         "  (SELECT MAX(CAST(strftime('%s', computed_at) AS INTEGER)) * 1000 FROM rewards "
         "     WHERE card_id = c.id) AS last_reward, "
         "  (SELECT data FROM events WHERE card_id = c.id AND type = 'like' "
         "     ORDER BY ts DESC, id DESC LIMIT 1) AS like_data, "
+        "  (SELECT COUNT(*) FROM last_imp l WHERE l.ts > COALESCE( "
+        "     (SELECT ts FROM last_imp WHERE card_id = c.id), "
+        "     (SELECT MAX(CAST(strftime('%s', computed_at) AS INTEGER)) * 1000 FROM rewards "
+        "        WHERE card_id = c.id))) AS later, "
+        "  EXISTS (SELECT 1 FROM saved_cards WHERE card_id = c.id) AS saved, "
         "  EXISTS (SELECT 1 FROM srs WHERE card_id = c.id AND mastered = 0 AND due_at <= ?) "
         "     AS protected, "
         "  EXISTS (SELECT 1 FROM events WHERE card_id = c.id AND type = 'impression') AS shown "
@@ -77,16 +81,18 @@ def _card_victims(conn, cfg, now: datetime) -> dict[str, list[str]]:
         (protect_until,),
     ).fetchall()
     for r in rows:
-        if r["protected"]:
+        if r["protected"] or r["saved"]:
             continue
         if r["status"] == "render_failed":
             if r["created_at"] < cut["failed"]:
                 out["failed"].append(r["id"])
         elif r["last_reward"] is not None:
             last = r["last_imp"] if r["last_imp"] is not None else r["last_reward"]
-            kind = "liked" if _is_liked(r["like_data"], r["story_liked"]) else "seen"
-            if last < seen_ms[kind]:
-                out[kind].append(r["id"])
+            if _is_liked(r["like_data"], r["story_liked"]):
+                if last < liked_ms:
+                    out["liked"].append(r["id"])
+            elif r["later"] >= g.seen_after_cards:
+                out["seen"].append(r["id"])
         elif not r["shown"] and r["created_at"] < cut["unseen"]:
             out["unseen"].append(r["id"])
     return out

@@ -82,7 +82,7 @@ class RenderSettings:
 
 @dataclass(frozen=True)
 class GcSettings:
-    seen_after_days: int = 14
+    seen_after_cards: int = 20
     liked_after_days: int = 90
     unseen_after_days: int = 45
     failed_after_days: int = 7

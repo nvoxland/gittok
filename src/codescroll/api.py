@@ -65,6 +65,29 @@ PAIR_HTML = (
 )
 
 
+def _sync_saved(c, card_id: str) -> None:
+    """Make `saved_cards` match the card's latest `save` event. Ordered by ts, not by arrival."""
+    last = c.execute(
+        "SELECT ts, data FROM events WHERE card_id = ? AND type = 'save' "
+        "ORDER BY ts DESC, id DESC LIMIT 1",
+        (card_id,),
+    ).fetchone()
+    on = bool((db.loads(last["data"]) or {}).get("on", True))
+    if on and c.execute("SELECT 1 FROM cards WHERE id = ?", (card_id,)).fetchone():
+        c.execute(
+            "INSERT INTO saved_cards(card_id, saved_at, saved_ts) VALUES (?, ?, ?) "
+            "ON CONFLICT(card_id) DO UPDATE SET saved_at = excluded.saved_at, "
+            "saved_ts = excluded.saved_ts",
+            (card_id, _iso_ms(last["ts"]), last["ts"]),
+        )
+    else:
+        c.execute("DELETE FROM saved_cards WHERE card_id = ?", (card_id,))
+
+
+def _iso_ms(ts: int) -> str:
+    return datetime.fromtimestamp(ts / 1000, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _is_loopback(scope) -> bool:
     client = scope.get("client")
     if not client:
@@ -396,20 +419,11 @@ def create_app(
     @app.get("/api/saved")
     def saved():
         with conn() as c:
-            latest: dict[str, tuple[int, bool]] = {}
-            for e in c.execute(
-                "SELECT card_id, ts, data FROM events WHERE type = 'save' "
-                "AND card_id IS NOT NULL ORDER BY ts, id"
-            ):
-                latest[e["card_id"]] = (e["ts"], bool((db.loads(e["data"]) or {}).get("on", True)))
-            ids = sorted((k for k, (_, on) in latest.items() if on), key=lambda k: -latest[k][0])
-            rows = {
-                r["id"]: r
-                for r in c.execute(
-                    f"SELECT * FROM cards WHERE id IN ({','.join('?' * len(ids))})", ids
-                )
-            }
-        return {"cards": [public_card(rows[i]) for i in ids if i in rows]}
+            rows = c.execute(
+                "SELECT c.* FROM saved_cards s JOIN cards c ON c.id = s.card_id "
+                "ORDER BY s.saved_ts DESC, s.card_id"
+            ).fetchall()
+        return {"cards": [public_card(r) for r in rows]}
 
     @app.get("/api/stories")
     def stories():
@@ -467,6 +481,8 @@ def create_app(
                 "INSERT INTO events(card_id, type, ts, data, received_at) VALUES (?, ?, ?, ?, ?)",
                 [(e.card_id, e.type, e.ts, db.dumps(e.data), now) for e in batch.events],
             )
+            for card_id in {e.card_id for e in batch.events if e.type == "save" and e.card_id}:
+                _sync_saved(c, card_id)
         return {"stored": len(batch.events)}
 
     @app.get("/assets/{folder}/{file}")
