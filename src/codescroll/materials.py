@@ -9,10 +9,40 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-from codescroll import gitq, links, research
+from codescroll import candidates, gitq, links, research
 from codescroll.brief import _useful
 
 LEAD_CAP = 4 * 1024  # bytes of materials per lead
+# Story types whose writers must explain behaviour get callers, definitions and imports too.
+EXPLAIN_TYPES = frozenset(
+    {
+        "what_it_does",
+        "journey",
+        "analogy",
+        "snippet_callouts",
+        "cursed_clever_line",
+        "quiz",
+        "this_or_that",
+        "spot_the_bug",
+    }
+)
+EXPLAIN_LEAD_CAP = 6 * 1024
+MAX_SYMBOLS = 4
+MAX_CALLERS = 10
+MAX_IMPORTS = 15
+MIN_SYMBOL_LEN = 3
+LINE_CLIP = 120
+# extra definition patterns per language name, beside the language's `func_start`
+_EXTRA_DEFS = {
+    "python": [r"^\s*class\s+(\w+)"],
+    "clojure": [
+        r"^\s*\((?:def|defonce|defprotocol|defrecord|deftype)\s+(?:\^\S+\s+)*([^\s\[\]()]+)"
+    ],
+    "typescript": [
+        r"^\s*(?:export\s+)?(?:default\s+)?(?:abstract\s+)?(?:class|interface|enum)\s+(\w+)",
+        r"^\s*export\s+(?:const|let|var)\s+(\w+)",
+    ],
+}
 # bytes of materials per packet: get_packet must stay small enough for the harness to show it
 # inline (a ~50 KB reply was saved to a file the writer could not read).
 PACKET_CAP = 12 * 1024
@@ -107,6 +137,90 @@ def _why_section(cfg, lead: dict, room: int) -> str:
     return "Why it changed:\n" + "\n".join(entries) if entries else ""
 
 
+def _lang_for(path: str):
+    name = path.rsplit("/", 1)[-1]
+    ext = "." + name.rsplit(".", 1)[-1] if "." in name else ""
+    for lang in candidates.compiled_languages().values():
+        if ext in lang.raw["extensions"]:
+            return lang
+    return None
+
+
+def _def_patterns(lang) -> list[re.Pattern]:
+    pats = [re.compile(p) for p in _EXTRA_DEFS.get(lang.name, [])]
+    return ([lang.func_start] if lang.func_start else []) + pats
+
+
+def _defined_names(lang, lines: list[str]) -> list[str]:
+    """Symbols defined on `lines`, in order, without duplicates."""
+    names: list[str] = []
+    for ln in lines:
+        for pat in _def_patterns(lang):
+            m = pat.match(ln)
+            name = m and candidates._first_group(m)
+            if name and name not in names:
+                names.append(name)
+                break
+    return names
+
+
+def _clip_line(text: str) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= LINE_CLIP else text[: LINE_CLIP - 1] + "…"
+
+
+def _called_from(root, ref: str, lang, path: str, names: list[str]) -> list[str]:
+    """Up to MAX_CALLERS "path:line: text" call sites, non-test files first."""
+    pats = _def_patterns(lang)
+    per_symbol: list[list[tuple[bool, str, int, str]]] = []
+    seen: set[tuple[str, int]] = set()
+    for name in [n for n in names if len(n) >= MIN_SYMBOL_LEN][:MAX_SYMBOLS]:
+        hits = []
+        for p, num, text in gitq.grep_word(root, ref, name):
+            if (p, num) in seen or candidates.SKIP_PATH.search(p):
+                continue
+            if p == path and any(
+                (m := pat.match(text)) and candidates._first_group(m) == name for pat in pats
+            ):
+                continue
+            seen.add((p, num))
+            other = _lang_for(p)
+            is_test = bool(other and other.test_file and other.test_file.search(p))
+            hits.append((is_test, p, num, text))
+        hits.sort(key=lambda h: (h[0], h[1], h[2]))
+        per_symbol.append(hits)
+    picked: list[tuple[bool, str, int, str]] = []
+    # round robin over symbols so one popular name does not use every slot
+    while len(picked) < MAX_CALLERS and any(per_symbol):
+        for hits in per_symbol:
+            if hits and len(picked) < MAX_CALLERS:
+                picked.append(hits.pop(0))
+    picked.sort(key=lambda h: (h[0], h[1], h[2]))
+    return [f"{p}:{num}: {_clip_line(text)}" for _, p, num, text in picked]
+
+
+def _import_lines(lang, lines: list[str]) -> list[str]:
+    out = []
+    for ln in lines:
+        if any(p.search(ln) for p in lang.imports):
+            out.append(_clip_line(ln))
+            if len(out) >= MAX_IMPORTS:
+                break
+    return out
+
+
+def _fit_lines(title: str, rows: list[str], room: int) -> str:
+    """`title` plus as many whole `rows` as fit in `room` bytes; "" when none fit."""
+    used = len(title.encode()) + 2
+    kept = []
+    for r in rows:
+        used += len(r.encode()) + 1
+        if used > room:
+            break
+        kept.append(r)
+    return title + "\n" + "\n".join(kept) if kept else ""
+
+
 def _commit_materials(cfg, root, lead: dict) -> str:
     sha = gitq.rev_parse(root, lead["commit"])
     cap = cfg.settings.research.max_output_bytes
@@ -196,8 +310,34 @@ def _path_materials(cfg, root, ref: str, lead: dict) -> str:
     if dates:
         out.append(f"first commit touching it: {dates[-1]}; last: {dates[0]}")
     text = "\n".join(out)
-    why = _why_section(cfg, lead, LEAD_CAP - len(text.encode()) - 2)
-    return text + "\n\n" + why if why else text
+    explain = lead.get("story_type") in EXPLAIN_TYPES
+    cap = EXPLAIN_LEAD_CAP if explain else LEAD_CAP
+    sections: list[str] = []
+    lang = _lang_for(path) if explain else None
+    if lang:
+        names = _defined_names(lang, lines[start - 1 : end])
+        room = cap - len(text.encode())
+        defs = _fit_lines("Defines:", [", ".join(names)] if names else [], room)
+        if defs:
+            sections.append(defs)
+            room -= len(defs.encode()) + 2
+        calls = _called_from(root, ref, lang, path, names) if names else []
+        called = _fit_lines("Called from:", calls, room)
+        if called:
+            sections.append(called)
+            room -= len(called.encode()) + 2
+        why = _why_section(cfg, lead, room)
+        if why:
+            sections.append(why)
+            room -= len(why.encode()) + 2
+        imps = _fit_lines("Imports:", _import_lines(lang, lines), room)
+        if imps:
+            sections.append(imps)
+    else:
+        why = _why_section(cfg, lead, cap - len(text.encode()) - 2)
+        if why:
+            sections.append(why)
+    return "\n\n".join([text, *sections])
 
 
 def materials_for(cfg, lead: dict, cache: dict | None = None) -> str:
@@ -206,7 +346,8 @@ def materials_for(cfg, lead: dict, cache: dict | None = None) -> str:
     if kind not in ("commit", "path"):
         return ""
     span = lead.get("lines")
-    key = (lead.get("repo"), kind, lead.get("commit"), lead.get("path"), tuple(span or ()))
+    explain = lead.get("story_type") in EXPLAIN_TYPES
+    key = (lead.get("repo"), kind, lead.get("commit"), lead.get("path"), tuple(span or ()), explain)
     if cache is not None and key in cache:
         return cache[key]
     try:
@@ -217,7 +358,7 @@ def materials_for(cfg, lead: dict, cache: dict | None = None) -> str:
             text = _path_materials(cfg, root, ref, lead)
     except (research.ResearchError, gitq.GitError, KeyError, TypeError, ValueError, OSError):
         text = ""
-    text = _cap(text, LEAD_CAP)
+    text = _cap(text, EXPLAIN_LEAD_CAP if explain else LEAD_CAP)
     if cache is not None:
         cache[key] = text
     return text

@@ -277,6 +277,27 @@ def path_messages(repo: Path | str, ref: str, path: str, since_ts: int) -> list[
     return rows
 
 
+def grep_word(
+    repo: Path | str, ref: str, word: str, max_bytes: int = 64 * 1024
+) -> list[tuple[str, int, str]]:
+    """`git grep -n -w` for a fixed string at `ref`: [(path, line, text)], [] when none."""
+    _check_rev(ref)
+    _, out = run_bytes(
+        repo, "grep", "-n", "-I", "-w", "-F", "-e", word, ref, "--",
+        ok_codes=(0, 1), max_bytes=max_bytes,
+    )  # fmt: skip
+    rows = []
+    prefix = f"{ref}:"
+    for ln in out.decode(errors="replace").splitlines():
+        if not ln.startswith(prefix):
+            continue
+        path, _, rest = ln[len(prefix) :].partition(":")
+        num, _, text = rest.partition(":")
+        if num.isdigit():
+            rows.append((path, int(num), text))
+    return rows
+
+
 def ls_tree_blobs(repo: Path | str, ref: str) -> dict[str, str]:
     """Path -> blob sha for every file at `ref`, in one call."""
     _check_rev(ref)
