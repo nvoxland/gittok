@@ -20,6 +20,7 @@ import uvicorn
 
 from codescroll import (
     avatars,
+    candidate_leads,
     db,
     gc,
     install,
@@ -108,12 +109,15 @@ def _brief(args) -> int:
             rules=steering.list_rules(conn),
             unavailable_formats=mcp_server.unavailable_formats(cfg),
             max_illustrations=cfg.settings.render.max_illustrations_per_run,
-            ledger=ledger.for_brief(conn, cfg, sorted(repo_signals), datetime.now(UTC)),
+            ledger=ledger.for_brief(
+                conn, cfg, sorted(repo_signals), datetime.now(UTC), analyses=repo_signals
+            ),
             lead_ok=ledger.offerable(conn, cfg, datetime.now(UTC)),
             variants=ledger.variants(conn, cfg, datetime.now(UTC)),
             variant_max_share=cfg.settings.agent.variant_max_share,
             intro_share=cfg.settings.agent.intro_share,
             novelty=knowledge.novelty_maps(conn, cfg, sorted(repo_signals)),
+            intro_prefer={r: candidate_leads.dirs_with_core(conn, r) for r in repo_signals},
             **mcp_server.mix_inputs(conn, cfg),
         )
     print(b.to_markdown())

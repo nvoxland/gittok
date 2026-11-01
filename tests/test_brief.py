@@ -141,7 +141,27 @@ def signals():
     }
 
 
+def cand_ledger(repo="fixture"):
+    """Rated-candidate leads for the story types that no longer fall back to churn."""
+    return {
+        (repo, t): [
+            brief.Lead(
+                t,
+                repo,
+                "path",
+                path=f"src/cand_{t}.py",
+                lines=(3, 12),
+                text=f"[core] src/cand_{t}.py:3 is central. Scout: 'hub' - teachable 4",
+                id=1000 + i,
+                key=f"cand:src/cand_{t}.py:3:core",
+            )
+        ]
+        for i, t in enumerate(brief.CANDIDATE_STORIES)
+    }
+
+
 def build(count=10, packet_size=4, recent=None, sig=None, defaults=None, **kw):
+    kw.setdefault("ledger", cand_ledger())
     return brief.build_brief(
         repo_signals={"fixture": {"t0": T0, "head_sha": "9" * 40, "signals": sig or signals()}},
         defaults=defaults or DEFAULTS,
@@ -337,18 +357,6 @@ def test_noise_paths_are_not_leads():
     assert not any("lock" in x or ".beads" in x or ".min." in x for x in leads)
 
 
-def test_explainers_skip_test_files():
-    sig = signals()
-    sig["churn"]["files"]["365"] = [
-        {"path": "test/foo/api_test.clj", "commits": 9, "lines": 9},
-        {"path": "tests/test_x.py", "commits": 9, "lines": 9},
-        {"path": "src/foo/api.clj", "commits": 3, "lines": 9},
-    ]
-    assert brief.leads_for("what_it_does", sig, T0) == [
-        "src/foo/api.clj (3 commits in the last year)"
-    ]
-
-
 def test_ancient_stories_need_old_material():
     sig = signals()
     young = T0 - 5 * 86400
@@ -483,18 +491,6 @@ def test_build_brief_without_personas_uses_default_list():
         recent=[],
     )
     assert all(p.personas for p in b.packets)
-
-
-def test_code_and_explainer_leads_skip_docs():
-    sig = signals()
-    sig["churn"]["files"]["365"] = [
-        {"path": "AGENTS.md", "commits": 9, "lines": 9},
-        {"path": "docs/guide.rst", "commits": 9, "lines": 9},
-        {"path": "NOTES.txt", "commits": 9, "lines": 9},
-        {"path": "src/real.py", "commits": 2, "lines": 9},
-    ]
-    for t in ("snippet_callouts", "cursed_clever_line", "what_it_does", "journey", "analogy"):
-        assert brief.leads_for(t, sig, T0) == ["src/real.py (2 commits in the last year)"], t
 
 
 def test_fix_chains_on_noise_paths_are_not_leads():

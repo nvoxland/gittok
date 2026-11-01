@@ -234,6 +234,29 @@ Reward: when `process_events` writes a reward for a card with a `lead_id`, the l
 
 The `coverage` tool adds `leads` (current leads under each top dir, one per file) and `leads_covered` (of those, how many a card used).
 
+### Candidate leads (understanding and interactive story types)
+
+Nine story types have no signal of their own: `what_it_does`, `journey`, `analogy`, `snippet_callouts`, `cursed_clever_line`, `quiz`, `this_or_that`, `guess_who`, `guess_when`. Their leads come from the miner candidates (`candidates.py`) and the scout ratings (`scout.py`), through `candidate_leads.py`. The churn fallback is gone. A type with no candidate has no leads, so `build_brief` skips it and gives its cards to the other categories (a category whose types all need candidates is dropped when no repo has one, and a repo without candidates gets no share of it).
+
+| story type | tags | verdicts | min teachable | extra rule |
+|---|---|---|---|---|
+| `what_it_does` | core, entry_point, public_api, stable_core | core, good | 2 | |
+| `journey` | entry_point, core | core, good | 2 | |
+| `analogy` | core, god_file, entry_point | core | 2 | |
+| `cursed_clever_line` | clever, smell, long_line, deep_nesting, catch_all, sleep, magic_number, big_literal | clever, cursed, bad | 2 | |
+| `snippet_callouts` | any | any | 4 | |
+| `quiz`, `this_or_that` | any | any | 4 | clever, core, smell, entry_point, god_file or a clever/cursed/bad/core verdict fits best |
+| `guess_who` | any | any | 3 | top dir has two authors with 20% of the changed lines or more (`author_shares`) |
+| `guess_when` | any | any | 3 | tag `stable_core`, or a file with lines older than 90 days (`oldest_lines`) |
+
+A window is eligible when its tag or its verdict is in the row. `strength = teachable / 5 x fit`. Fit is 1.0 when tag and verdict both suit the type, 0.8 for the tag alone, 0.7 for the verdict alone (any-tag types: 1.0 for a preferred tag or verdict, else 0.8). `ledger.ranked` then multiplies by novelty (section 14), interest, and `0.5 ^ times_covered`. A file gives at most 2 windows per type. Test files and docs never count.
+
+Unrated windows (no scout rating for the same window text) count only when no rated window fits the type. They have `strength` at most 0.1 and the lead text starts with `[unrated]`.
+
+A candidate lead is a path lead with the window as its `lines`, key `cand:<path>:<line_start>:<tag>`, and text `[<verdict>] <miner why> (<path>:<line>). Scout: '<concept>' - <scout why> (teachable N)`. It gets the same materials as other path leads (the window, what it defines, callers, why-commits). Cooldown and story blocks apply as for any path lead. `ledger.refresh` stores the candidate leads; `ledger.for_brief(..., analyses=...)` redoes them first, because scouts rate windows after the analysis. Those rows keep the repo's latest `last_seen_at`.
+
+Intro slots use code dirs only (`brief.code_path`: no hidden, test, fixture, cassette, snapshot, vendored, generated or docs dirs), and prefer dirs that hold a `core` or `entry_point` candidate. `whose_code` never offers the root dir or hidden dirs.
+
 ## 13. Story variants
 
 A story that did well can be told again in another format. The `story_key` stays the same (it comes from the story type and the sources, not the format). Uniqueness on `cards` is per `(story_key, format)`. `stories.formats` is a JSON list of the formats already used. It lives on the story row, so it survives gc.

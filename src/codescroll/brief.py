@@ -12,7 +12,7 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 
-from codescroll import knowledge, validator
+from codescroll import candidates, knowledge, validator
 
 _DRAMA = (
     "commit_drama",
@@ -144,6 +144,20 @@ CONCRETE_TYPES = frozenset({"rip", "ancient_todo", "hot_spot", "new_arrival", "w
 
 MAX_LEADS_PER_TYPE = 5
 
+# Story types whose leads are rated candidates (candidate_leads.py), never signals. With no
+# candidate for a type, the brief skips the type.
+CANDIDATE_STORIES = (
+    "what_it_does",
+    "journey",
+    "analogy",
+    "snippet_callouts",
+    "cursed_clever_line",
+    "quiz",
+    "this_or_that",
+    "guess_who",
+    "guess_when",
+)
+
 
 def _date(ts) -> str:
     import datetime as _dt
@@ -171,6 +185,28 @@ ANCIENT_DAYS = 90
 
 def _useful(path: str) -> bool:
     return not _NOISE.search(path)
+
+
+# Dirs that hold no code worth an intro: hidden dirs, tests, fixtures, recorded HTTP, snapshots,
+# vendored or generated code, docs. One list, used for intro slots (candidates.SKIP_PATH covers
+# hidden and vendored dirs for the miners).
+_NON_CODE_DIR = re.compile(
+    r"^(\.[^/]*|tests?|specs?|__tests__|fixtures?|cassettes?|snapshots?|__snapshots__|mocks?"
+    r"|__mocks__|testdata|vendor|vendored|third_party|generated|gen|dist|build|target"
+    r"|docs?|documentation|node_modules)$",
+    re.IGNORECASE,
+)
+
+
+def code_path(path: str) -> bool:
+    """True when no parent dir of `path` is hidden, test, fixture, vendored, generated or docs."""
+    dirs = path.split("/")[:-1]
+    return not any(_NON_CODE_DIR.match(d) for d in dirs) and not candidates.SKIP_PATH.search(path)
+
+
+def _real_dir(d: str) -> bool:
+    """A dir `whose_code` may name: not the root, not a hidden dir."""
+    return d not in ("", ".") and not d.startswith(".")
 
 
 def _old(ts, t0) -> bool:
@@ -236,11 +272,6 @@ def lead_refs_for(
 
     churn_files = sig.get("churn", {}).get("files", {})
     hot = [f for f in churn_files.get("90") or churn_files.get("365") or [] if _useful(f["path"])]
-    wide = [
-        f
-        for f in churn_files.get("365") or churn_files.get("90") or []
-        if _useful(f["path"]) and not _TEST.search(f["path"]) and not _DOC.search(f["path"])
-    ]
     out: list[Lead] = []
     if story_type == "hot_spot":
         out += [
@@ -334,6 +365,8 @@ def lead_refs_for(
         ]
     elif story_type == "whose_code":
         for d, authors in sig.get("author_shares", {}).get("by_dir", {}).items():
+            if not _real_dir(d):
+                continue
             top = ", ".join(f"{a['author']} {round(a['share'] * 100)}%" for a in authors[:3])
             out.append(lead(f"dir {d}/: {top}", key=f"dir:{d}"))
     elif story_type == "new_arrival":
@@ -389,11 +422,7 @@ def lead_refs_for(
                     c["path"],
                 )
             )
-    else:  # explanatory types: point at central, much-edited files
-        out += [
-            at_path(f"{f['path']} ({f['commits']} commits in the last year)", f["path"])
-            for f in wide
-        ]
+    # CANDIDATE_STORIES come from rated candidates (candidate_leads), not from churn.
     return out[:limit]
 
 
@@ -997,6 +1026,7 @@ def build_brief(
     template_weights: dict[str, float] | None = None,
     novelty: dict[str, dict[str, float]] | None = None,
     intro_share: float = 0.0,
+    intro_prefer: dict[str, set[str]] | None = None,
 ) -> Brief:
     """Build the brief.
 
@@ -1135,9 +1165,43 @@ def build_brief(
         want = [d for v in prefer_dirs for d in _dir_candidates(v, all_repos)]
         return sorted(lines, key=lambda x: not _line_in_dirs(x, want))
 
+    def fill_leads(repo, t):
+        if (repo, t) in leads_by:
+            return
+        sig = repo_signals[repo]["signals"]
+        # A ledger entry (even an empty one) replaces computing leads.
+        wide = (ledger or {}).get((repo, t))
+        if wide is None:
+            wide = lead_refs_for(
+                t,
+                sig,
+                repo_signals[repo].get("t0"),
+                limit=1000 if prefer_dirs or ban_dirs else MAX_LEADS_PER_TYPE,
+                repo=repo,
+            )
+            if lead_ok:  # no ledger rows: still honor cooldown and story blocks
+                wide = [x for x in wide if lead_ok(x)]
+        ref_by[(repo, t)] = {x.text: x for x in wide}
+        leads_by[(repo, t)] = focused_first([x.text for x in wide])[:MAX_LEADS_PER_TYPE]
+
     learned = bool(category_shares) and evidence != 0  # no rewards: keep the default mix
     source = category_shares if learned else defaults.get("categories", {})
     cats = {k: w for k, w in source.items() if k in live}
+    # A category whose story types all need rated candidates is skipped when no repo has one:
+    # its cards go to the other categories.
+    leads_by: dict[tuple[str, str], list[str]] = {}
+    ref_by: dict[tuple[str, str], dict[str, Lead]] = {}  # lead text -> its coordinates
+
+    def starved(category) -> bool:
+        stories = stories_in[category]
+        if not all(t in CANDIDATE_STORIES for t in stories):
+            return False
+        for r in repo_signals:
+            for t in stories:
+                fill_leads(r, t)
+        return not any(leads_by[(r, t)] for r in repo_signals for t in stories)
+
+    cats = {k: w for k, w in cats.items() if not starved(k)} or cats
     if not cats:
         raise ValueError("active rules leave no category with a story type and format")
     quotas = largest_remainder(cats, count)
@@ -1176,8 +1240,6 @@ def build_brief(
     slot_allowed: list[list[str]] = []  # per slot: the formats its writer may pick from
     used: dict[str, int] = {}
     spent = 0
-    leads_by: dict[tuple[str, str], list[str]] = {}
-    ref_by: dict[tuple[str, str], dict[str, Lead]] = {}  # lead text -> its coordinates
     repo_total: dict[str, int] = {}
     for ci, (category, n) in enumerate(sorted(quotas.items(), key=lambda kv: (-kv[1], kv[0]))):
         if not n:
@@ -1227,8 +1289,18 @@ def build_brief(
         n -= cross_n
         # Split the category across repos; rotate the start so small quotas spread out.
         order = repo_names[ci % len(repo_names) :] + repo_names[: ci % len(repo_names)]
+        only_candidates = all(t in CANDIDATE_STORIES for t in stories_in[category])
+        for r in order:
+            for t in stories_in[category]:
+                fill_leads(r, t)
         per_repo = largest_remainder(
-            {r: repo_boost.get(r, 1.0) * group_boost.get(group_of.get(r), 1.0) for r in order}, n
+            {
+                r: 0.0  # no rated candidate in this repo: its share goes to the other repos
+                if only_candidates and not any(leads_by[(r, t)] for t in stories_in[category])
+                else repo_boost.get(r, 1.0) * group_boost.get(group_of.get(r), 1.0)
+                for r in order
+            },
+            n,
         )
         per_repo = _clip(
             per_repo, {r: max(0, c - repo_total.get(r, 0)) for r, c in repo_caps.items()}
@@ -1236,27 +1308,14 @@ def build_brief(
         for r, k in per_repo.items():
             repo_total[r] = repo_total.get(r, 0) + k
         for repo in order:
-            sig = repo_signals[repo]["signals"]
-            t0 = repo_signals[repo].get("t0")
             for t in stories_in[category]:
-                if (repo, t) not in leads_by:
-                    # A ledger entry (even an empty one) replaces computing leads.
-                    wide = (ledger or {}).get((repo, t))
-                    if wide is None:
-                        wide = lead_refs_for(
-                            t,
-                            sig,
-                            t0,
-                            limit=1000 if prefer_dirs or ban_dirs else MAX_LEADS_PER_TYPE,
-                            repo=repo,
-                        )
-                        if lead_ok:  # no ledger rows: still honor cooldown and story blocks
-                            wide = [x for x in wide if lead_ok(x)]
-                    ref_by[(repo, t)] = {x.text: x for x in wide}
-                    wide_text = [x.text for x in wide]
-                    leads_by[(repo, t)] = focused_first(wide_text)[:MAX_LEADS_PER_TYPE]
-            usable = [t for t in stories_in[category] if leads_by[(repo, t)]] or list(
-                stories_in[category]
+                fill_leads(repo, t)
+            has_leads = [t for t in stories_in[category] if leads_by[(repo, t)]]
+            # With no lead for any type, prefer types that do not need a candidate.
+            usable = (
+                has_leads
+                or [t for t in stories_in[category] if t not in CANDIDATE_STORIES]
+                or list(stories_in[category])
             )
             for _ in range(per_repo[repo]):
                 open_t = [
@@ -1326,7 +1385,9 @@ def build_brief(
             break
 
     # 1c. Intro slots: reserve a share of the cards for leads from the least-known dirs.
-    intro_at = _assign_intro(slots, variant_at, ref_by, novelty, intro_share, count)
+    intro_at = _assign_intro(
+        slots, variant_at, ref_by, novelty, intro_share, count, intro_prefer or {}
+    )
 
     # The image share is a soft target the packet states; no format is forced.
     image_share = float((defaults.get("visual_mix") or {}).get("image_min_share") or 0)
@@ -1430,13 +1491,16 @@ def build_brief(
 INTRO_MIN_NOVELTY = 0.5  # a dir this known or better is not "unseen": no intro slot for it
 
 
-def _assign_intro(slots, variant_at, ref_by, novelty, intro_share, count) -> dict:
+def _assign_intro(slots, variant_at, ref_by, novelty, intro_share, count, prefer=None) -> dict:
     """slot index -> (dir, Lead) for the intro slots.
 
     Dirs with leads are ranked by novelty (highest first, then by their best lead's rank) and
     dealt out one slot at a time, so a few dirs share the slots instead of one dir taking all.
-    A slot takes the best unused lead of its own repo and story type in the dir.
+    A slot takes the best unused lead of its own repo and story type in the dir. Only code dirs
+    count (`code_path`: no hidden, test, fixture, cassette, vendored, generated or docs dirs).
+    Dirs in `prefer[repo]` (they hold core or entry_point candidates) come first.
     """
+    prefer = prefer or {}
     if not novelty or intro_share <= 0 or not slots:
         return {}
     want = min(math.ceil(count * intro_share - 1e-9), len(slots))
@@ -1448,10 +1512,18 @@ def _assign_intro(slots, variant_at, ref_by, novelty, intro_share, count) -> dic
             continue
         for rank, ld in enumerate(by_text.values()):
             d, n = knowledge.lead_dir(ld.path, nmap)
-            if d and n >= INTRO_MIN_NOVELTY:
+            if d and n >= INTRO_MIN_NOVELTY and code_path(f"{d}/x"):
                 cands.setdefault((repo, d), []).append((rank, story, ld))
                 nov_of[(repo, d)] = n
-    order = sorted(cands, key=lambda k: (-nov_of[k], min(c[0] for c in cands[k]), k))
+    order = sorted(
+        cands,
+        key=lambda k: (
+            k[1] not in prefer.get(k[0], ()),
+            -nov_of[k],
+            min(c[0] for c in cands[k]),
+            k,
+        ),
+    )
     out: dict = {}
     used: set = set()
     free = [i for i, s in enumerate(slots) if s[4] is None and i not in variant_at]
