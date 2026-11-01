@@ -92,6 +92,22 @@ describe('Feed', () => {
 			return { events, io, el, container };
 		}
 
+		it('asks for more cards when a card near the end is on screen', () => {
+			vi.stubGlobal('IntersectionObserver', FakeIO);
+			const onNearEnd = vi.fn();
+			const { container } = render(Feed, {
+				cards: [1, 2, 3, 4, 5, 6, 7, 8].map(fakeCard),
+				onNearEnd
+			});
+			const io = observers[0];
+			const el = (id: string) => container.querySelector(`[data-card-id="${id}"]`)!;
+			io.fire(el('c_2'), true);
+			expect(onNearEnd).not.toHaveBeenCalled();
+			io.fire(el('c_2'), false);
+			io.fire(el('c_3'), true); // 5 cards left after it
+			expect(onNearEnd).toHaveBeenCalledTimes(1);
+		});
+
 		it('emits impression when a card becomes visible', () => {
 			const { events, io, el } = setup();
 			expect(io.options?.threshold).toBe(0.6);
@@ -117,7 +133,13 @@ describe('Feed', () => {
 			io.fire(el('c_1'), false);
 			expect(events.map((e) => e.type)).not.toContain('scroll_back');
 			io.fire(el('c_1'), true);
-			expect(events.map((e) => e.type)).toEqual(['impression', 'dwell', 'skip', 'impression', 'scroll_back']);
+			expect(events.map((e) => e.type)).toEqual([
+				'impression',
+				'dwell',
+				'skip',
+				'impression',
+				'scroll_back'
+			]);
 			io.fire(el('c_2'), true);
 			expect(events.filter((e) => e.type === 'scroll_back')).toHaveLength(1);
 		});
@@ -240,7 +262,10 @@ describe('Feed', () => {
 			vi.stubGlobal('IntersectionObserver', FakeIO);
 			const events: FeedEvent[] = [];
 			const card = { ...fakeCard(1), depth: [{ kind: 'explain' as const, text: 'x' }] };
-			const { container } = render(Feed, { cards: [card], onEvent: (e: FeedEvent) => events.push(e) });
+			const { container } = render(Feed, {
+				cards: [card],
+				onEvent: (e: FeedEvent) => events.push(e)
+			});
 			const row = container.querySelector('.panels') as HTMLElement;
 			Object.defineProperty(row, 'clientWidth', { value: 200, configurable: true });
 			row.scrollLeft = 200;

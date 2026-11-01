@@ -14,6 +14,8 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let fromCache = $state(false);
+	let nextCursor: string | null = null;
+	let loadingMore = false;
 	let stories = $state<Story[]>([]);
 	let openStory = $state<number | null>(null);
 	let chromeH = $state(0);
@@ -62,10 +64,29 @@
 			// Cards the server serves again are new or due for review: let them be answered again.
 			clearAnswers(fresh.map((c) => c.id));
 			cards = fresh;
+			nextCursor = feed.next_cursor;
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
 			loading = false;
+		}
+	}
+
+	// The next page, asked for by the feed near its end. Cards already shown are skipped.
+	async function loadMore() {
+		if (!nextCursor || loadingMore) return;
+		loadingMore = true;
+		try {
+			const feed = await fetchFeed(nextCursor);
+			const have = new Set(cards.map((c) => c.id));
+			const fresh = feed.cards.filter((c) => !have.has(c.id));
+			clearAnswers(fresh.map((c) => c.id));
+			cards = [...cards, ...fresh];
+			nextCursor = feed.next_cursor;
+		} catch {
+			// Keep the cursor; the next card near the end tries again.
+		} finally {
+			loadingMore = false;
 		}
 	}
 </script>
@@ -99,7 +120,7 @@
 	{:else if cards.length === 0}
 		<p class="status">No cards yet</p>
 	{:else}
-		<Feed {cards} onEvent={(e) => batcher.push(e)} />
+		<Feed {cards} onEvent={(e) => batcher.push(e)} onNearEnd={loadMore} />
 	{/if}
 </main>
 </div>

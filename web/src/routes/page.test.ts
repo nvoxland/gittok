@@ -26,7 +26,9 @@ describe('feed page', () => {
 			const key = Object.keys(map).find((k) => url.startsWith(k));
 			return {
 				ok: true,
-				headers: { get: (h: string) => (url.startsWith('/api/feed') ? feedHeaders[h] ?? null : null) },
+				headers: {
+					get: (h: string) => (url.startsWith('/api/feed') ? (feedHeaders[h] ?? null) : null)
+				},
 				json: async () => structuredClone(map[key ?? '/api/feed'])
 			};
 		});
@@ -39,20 +41,66 @@ describe('feed page', () => {
 				mascot: 'otter',
 				mascot_image: null,
 				seen: false,
-				commits: [{ sha: 'a'.repeat(40), short: 'aaaaaaa', ts: 1, author: 'Ann', subject: 'Fix it', files: 2 }]
+				commits: [
+					{
+						sha: 'a'.repeat(40),
+						short: 'aaaaaaa',
+						ts: 1,
+						author: 'Ann',
+						subject: 'Fix it',
+						files: 2
+					}
+				]
 			}
 		]
 	};
+
+	it('loads the next page near the end and appends only new cards', async () => {
+		let near: (() => void) | undefined;
+		class FakeIO {
+			constructor(public cb: (e: Partial<IntersectionObserverEntry>[]) => void) {}
+			observe(target: Element) {
+				if (target.getAttribute('data-card-id') === 'c_1')
+					near = () => this.cb([{ target, isIntersecting: true, intersectionRatio: 0.9 }]);
+			}
+			disconnect() {}
+		}
+		vi.stubGlobal('IntersectionObserver', FakeIO);
+		const card = (n: number) => fakeCard({ id: `c_${n}`, hook: `Hook ${n}` });
+		const first = { cards: [card(1), card(2)], next_cursor: 'cur1' };
+		const second = { cards: [card(2), card(3)], next_cursor: null };
+		fetchMock.mockImplementation(async (url: string) => ({
+			ok: true,
+			headers: { get: () => null },
+			json: async () =>
+				url.startsWith('/api/feed')
+					? structuredClone(url.includes('cursor=cur1') ? second : first)
+					: { notifications: [], unread: 0, stories: [] }
+		}));
+		render(Page);
+		await screen.findByText('Hook 1');
+		near!();
+		expect(await screen.findByText('Hook 3')).toBeInTheDocument();
+		expect(screen.getAllByRole('article')).toHaveLength(3);
+		expect(fetchMock.mock.calls.some(([u]) => String(u).includes('cursor=cur1'))).toBe(true);
+	});
 
 	it('has a bell linking to /notifications', async () => {
 		route({ '/api/feed': feed, '/api/notifications': { notifications: [], unread: 4 } });
 		render(Page);
 		expect(await screen.findByTestId('badge')).toHaveTextContent('4');
-		expect(screen.getByRole('link', { name: /Notifications/ })).toHaveAttribute('href', '/notifications');
+		expect(screen.getByRole('link', { name: /Notifications/ })).toHaveAttribute(
+			'href',
+			'/notifications'
+		);
 	});
 
 	it('puts stories, Saved and the bell in one top bar above the feed, not over it', async () => {
-		route({ '/api/feed': feed, '/api/stories': stories, '/api/notifications': { notifications: [], unread: 0 } });
+		route({
+			'/api/feed': feed,
+			'/api/stories': stories,
+			'/api/notifications': { notifications: [], unread: 0 }
+		});
 		const { container } = render(Page);
 		await screen.findByText('A hook');
 		const bar = await screen.findByRole('banner', { name: 'Top bar' });

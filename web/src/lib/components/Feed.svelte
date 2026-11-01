@@ -5,7 +5,14 @@
 	import { getSessionId } from '#lib/session.ts';
 	import { playStats } from '#lib/playStats.ts';
 
-	let { cards, onEvent }: { cards: Card[]; onEvent?: (e: FeedEvent) => void } = $props();
+	let {
+		cards,
+		onEvent,
+		onNearEnd
+	}: { cards: Card[]; onEvent?: (e: FeedEvent) => void; onNearEnd?: () => void } = $props();
+
+	// Ask for the next page while this many cards are still ahead, so the feed never runs out.
+	const NEAR_END = 5;
 
 	let root: HTMLElement | undefined = $state();
 	const visibleSince = new Map<string, number>();
@@ -64,7 +71,10 @@
 			const visible = entry.isIntersecting && entry.intersectionRatio >= 0.6;
 			if (visible) inView.add(id);
 			else inView.delete(id);
-			if (visible) activeId = id;
+			if (visible) {
+				activeId = id;
+				if (cards.findIndex((c) => c.id === id) >= cards.length - 1 - NEAR_END) onNearEnd?.();
+			}
 			else if (activeId === id) activeId = null;
 			if (document.visibilityState === 'hidden') continue; // timers restart when shown
 			if (visible && !visibleSince.has(id)) {
