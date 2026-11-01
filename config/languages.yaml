@@ -1,0 +1,132 @@
+# Per-language patterns for the candidate miners (src/codescroll/candidates.py).
+# All patterns are Python regexes, matched line by line. A language that is not listed
+# here produces no candidates. `thresholds` are the defaults; a language may override
+# any of them under its own `thresholds` key.
+thresholds:
+  long_function: 50        # lines
+  deep_nesting: 5          # levels
+  many_params: 6
+  many_branches: 12
+  long_line: 160           # characters
+  big_literal: 30          # lines
+  magic_numbers: 6         # per file
+  commented_out: 4         # consecutive lines
+  min_fan_in: 2            # imported by at least this many files to count as core
+  stable_fan_in: 3
+  god_fan_out: 5           # imports at least this many files
+  stable_days: 365
+  tested_jaccard: 0.6
+  regex_min_len: 8
+
+languages:
+  python:
+    extensions: [.py]
+    comment: "#"
+    block: indent
+    func_start: '^\s*(?:async\s+)?def\s+(\w+)'
+    entry_points:
+      - '^\s*@\w+(?:\.\w+)*\.(?:route|get|post|put|delete|patch|websocket|command|task|periodic_task|scheduled_job)\b'
+      - '^\s*@(?:click\.(?:command|group)|shared_task|app\.task)\b'
+      - '^if\s+__name__\s*==\s*[''"]__main__[''"]'
+      - '^(?:async\s+)?def\s+(?:main|handler|lambda_handler)\('
+    entry_paths: ['(^|/)migrations?/', '(^|/)__main__\.py$']
+    import_style: dotted
+    imports:
+      - '^\s*from\s+([.\w]+)\s+import\s+([\w, ]+)'
+      - '^\s*import\s+([\w.]+)'
+    public: '^(?:async\s+)?(?:def|class)\s+([A-Za-z]\w*)'
+    branch: '\b(?:if|elif|for|while|except|case|and|or)\b'
+    skipped_test:
+      - '@(?:pytest\.mark\.(?:skip|skipif|xfail)|unittest\.(?:skip|skipIf|skipUnless|expectedFailure))\b'
+      - '\bpytest\.skip\('
+    catch_all:
+      - '^\s*except\s*:'
+      - '^\s*except\s+(?:Base)?Exception\b[^:]*:'
+    sleep: '\b(?:time|asyncio)\.sleep\('
+    regex_literal: '\bre\.\w+\(\s*[rbuf]*([''"])(.{8,}?)\1'
+    bit_ops: '[\w)\]]\s*(?:<<|>>)\s*[\w(]|\w\s+&\s+\w|\w\s+\^\s+\w|~\w'
+    meta:
+      - '\bmetaclass\s*='
+      - '\bdef\s+(?:__getattr__|__getattribute__|__init_subclass__|__set_name__)\b'
+      - '\b(?:exec|eval)\('
+      - '\bsetattr\('
+    commented_code: '^\s*(?:[\w.\[\]]+\s*=[^=]|(?:def|class|return|import|from|if|for|while|print|raise|with)\b|[\w.]+\(.*\)$)'
+    test_file: '(^|/)tests?/|(^|/)test_[^/]*\.py$|_test\.py$'
+    thresholds:
+      god_fan_out: 8
+
+  clojure:
+    extensions: [.clj, .cljs, .cljc, .bb]
+    comment: ";"
+    block: parens
+    func_start: '^\s*\((?:defn|defn-|defmacro|defmulti|defmethod)\s+(?:\^\S+\s+)*([^\s\[\]()]+)'
+    entry_points:
+      - '^\s*\(defroutes\b'
+      - '^\s*\(\s*(?:[\w.]+/)?(?:GET|POST|PUT|DELETE|PATCH)\s+"/'
+      - '^\s*\(\s*(?:[\w.]+/)?defendpoint\b'
+      - '^\s*\(defn\s+-main\b'
+      - '^\s*\(\s*(?:[\w.]+/)?defjob\b'
+    entry_paths: ['(^|/)migrations?/', '(^|/)core\.cljs?$']
+    import_style: dotted
+    imports:
+      - '\[([a-zA-Z][\w.\-]*)\s+:(?:as|refer|only|exclude|rename)\b'
+      - '\(:require\s+\[?([a-zA-Z][\w.\-]*\.[\w.\-]+)\]?'
+    public: '^\((?:defn|def|defmacro|defmulti|defprotocol|defrecord|deftype)\s+(?:\^\S+\s+)*([^\s^\-][^\s()\[\]]*)'
+    branch: '\((?:if|if-not|if-let|if-some|when|when-not|when-let|when-some|cond|condp|case|and|or|catch)[\s)]'
+    skipped_test:
+      - '\^:(?:skip|ignore|disabled)\b'
+      - '#_\s*\(deftest\b'
+    catch_all:
+      - '\(catch\s+(?:Throwable|Exception|java\.lang\.(?:Throwable|Exception)|:default)\b'
+    sleep: 'Thread/sleep\b'
+    regex_literal: '#"((?:\\.|[^"\\]){8,})"'
+    bit_ops: '\((?:unsigned-)?bit-(?:and|or|xor|not|shift-left|shift-right|flip|test|set|clear)\b'
+    meta:
+      - '^\s*\(defmacro\b'
+      - '~@'
+      - '\((?:eval|resolve|intern|alter-var-root|with-redefs)\b'
+    commented_code: '^\s*\('
+    thresholds:
+      deep_nesting: 12   # paren depth, not indentation
+      long_function: 60
+      god_fan_out: 15
+    test_file: '(^|/)test/|_test\.clj[sc]?$'
+
+  typescript:
+    extensions: [.ts, .tsx, .js, .jsx, .mjs, .cjs, .svelte]
+    comment: "//"
+    block: indent
+    func_start: '^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\s*\*?\s*(\w+)|(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?(?:function\b|\())'
+    entry_points:
+      - '\b(?:app|router|server|api)\.(?:get|post|put|delete|patch|use|all)\('
+      - '^\s*export\s+(?:async\s+)?(?:function|const)\s+(?:GET|POST|PUT|DELETE|PATCH|load|actions|handle)\b'
+      - '\.command\('
+      - '\bcron\.schedule\('
+      - '^#!/usr/bin/env node'
+    entry_paths: ['(^|/)migrations?/', '(^|/)\+server\.\w+$', '(^|/)hooks\.server\.\w+$']
+    import_style: path
+    imports:
+      - '^\s*import\s[^''"]*?[''"]([^''"]+)[''"]'
+      - '^\s*export\s[^''"]*?from\s+[''"]([^''"]+)[''"]'
+      - '\brequire\(\s*[''"]([^''"]+)[''"]\s*\)'
+      - '\bimport\(\s*[''"]([^''"]+)[''"]\s*\)'
+    public: '^export\s+(?:default\s+)?(?:async\s+)?(?:function\*?|class|const|let|interface|type|enum)\s+(\w+)'
+    branch: '\b(?:if|else if|for|while|case|catch)\b|&&|\|\||\?\s'
+    skipped_test:
+      - '\b(?:it|test|describe)\.(?:skip|todo)\('
+      - '\b(?:xit|xtest|xdescribe)\('
+    catch_all:
+      - 'catch\s*(?:\(\s*\w*\s*\))?\s*\{\s*\}'
+    sleep: '\b(?:sleep|delay|setTimeout)\(\s*[\w.]*\s*,?\s*\d{3,}'
+    regex_literal: '(?:[=(,:!&|?]|return)\s*/(?![/*])((?:\\.|\[[^\]]*\]|[^/\n\\\[]){8,})/[gimsuy]*'
+    bit_ops: '[\w)\]]\s*(?:<<|>>>?)\s*[\w(]|\|\s*0\b|~~\w'
+    meta:
+      - '\bnew\s+Proxy\('
+      - '\bReflect\.\w+\('
+      - '\beval\('
+      - '\bnew\s+Function\('
+    commented_code: '^\s*(?:[\w.\[\]]+\s*=[^=]|(?:const|let|var|function|return|import|export|if|for|while|await)\b|[\w.]+\(.*\);?$|[})\]];?$)'
+    test_file: '(^|/)(tests?|__tests__)/|\.(test|spec)\.\w+$'
+    thresholds:
+      big_literal: 40
+      god_fan_out: 12

@@ -60,6 +60,9 @@ class AnalysisSettings:
     blame_max_files: int = 50
     blame_max_bytes: int = 2000000
     todo_max_hits: int = 150
+    candidates_per_tag: int = 40
+    candidate_max_file_bytes: int = 200000
+    candidate_max_files: int = 4000
 
 
 @dataclass(frozen=True)
@@ -146,6 +149,7 @@ class Config:
     personas: dict[str, Persona]
     mascots: dict[str, Mascot] = field(default_factory=dict)
     meme_templates: dict[str, MemeTemplate] = field(default_factory=dict)
+    languages: dict = field(default_factory=dict)  # config/languages.yaml
 
     def repo(self, name: str) -> Repo:
         try:
@@ -355,6 +359,40 @@ def _load_meme_templates(root: Path) -> dict[str, MemeTemplate]:
     return out
 
 
+_LANG_KEYS = {
+    "extensions", "comment", "block", "func_start", "entry_points", "entry_paths",
+    "import_style", "imports", "public", "branch", "skipped_test", "catch_all", "sleep",
+    "regex_literal", "bit_ops", "meta", "commented_code", "test_file", "thresholds",
+}  # fmt: skip
+
+
+def load_languages(root: Path | None = None) -> dict:
+    """config/languages.yaml as {"thresholds": {...}, "languages": {name: {...}}}."""
+    import re
+
+    root = project_root() if root is None else Path(root)
+    file = root / "config" / "languages.yaml"
+    data = _mapping(_read(file), "languages.yaml", file)
+    _check_keys(data, {"languages", "thresholds"}, "languages.yaml", file)
+    langs = _text_keys(_mapping(data.get("languages"), "languages", file), "language", file)
+    for name, raw in langs.items():
+        raw = _mapping(raw, f"language '{name}'", file)
+        _check_keys(raw, _LANG_KEYS, f"language '{name}'", file)
+        if not raw.get("extensions"):
+            raise ConfigError(f"language '{name}' is missing 'extensions' ({file})")
+        for key, val in raw.items():
+            if key in ("extensions", "comment", "block", "import_style", "thresholds"):
+                continue
+            for pat in [val] if isinstance(val, str) else val:
+                try:
+                    re.compile(pat)
+                except (re.error, TypeError) as e:
+                    raise ConfigError(
+                        f"bad pattern in language '{name}' {key}: {e} ({file})"
+                    ) from e
+    return {"thresholds": _mapping(data.get("thresholds"), "thresholds", file), "languages": langs}
+
+
 def load_config(root: Path | None = None) -> Config:
     root = project_root() if root is None else Path(root).resolve()
     repos, groups = _load_repos(root)
@@ -369,4 +407,5 @@ def load_config(root: Path | None = None) -> Config:
         personas=_load_personas(root),
         mascots=_load_mascots(root),
         meme_templates=_load_meme_templates(root),
+        languages=load_languages(root),
     )
