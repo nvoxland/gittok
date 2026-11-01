@@ -62,6 +62,8 @@ const templateParts: Record<string, (data: any) => Part[]> = {
 };
 
 export function partsFor(visual: Visual): Part[] {
+	if (visual.kind === 'comic')
+		return visual.panels.map((p, i) => ({ key: String(i), text: p.caption }));
 	if (visual.kind === 'text_meme') return visual.lines.map((l, i) => ({ key: String(i), text: l }));
 	if (visual.kind !== 'template') return [];
 	return templateParts[visual.template]?.(visual.data) ?? [];
@@ -76,8 +78,21 @@ function readMs(text: string): number {
 	return Math.min(MAX_MS, Math.max(MIN_MS, BASE_MS + MS_PER_CHAR * text.length));
 }
 
+// A comic panel is a picture plus a caption: give the eye time for both.
+const COMIC_MIN_MS = 2500;
+const COMIC_MAX_MS = 4000;
+const COMIC_PICTURE_MS = 1500;
+
+function beatMs(visual: Visual, text: string): number {
+	if (visual.kind !== 'comic') return readMs(text);
+	return Math.min(COMIC_MAX_MS, Math.max(COMIC_MIN_MS, readMs(text) + COMIC_PICTURE_MS));
+}
+
 export function beatsFor(visual: Visual): Beat[] {
-	return partsFor(visual).map((p, i) => ({ shown: i + 1, ms: Math.round(readMs(p.text) / speed) }));
+	return partsFor(visual).map((p, i) => ({
+		shown: i + 1,
+		ms: Math.round(beatMs(visual, p.text) / speed)
+	}));
 }
 
 export function totalMs(beats: Beat[]): number {

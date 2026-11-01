@@ -42,6 +42,18 @@ describe('ComicVisual', () => {
 		const { container } = render(ComicVisual, { visual: comicVisual(3), resolved: images(3) });
 		expect(container.querySelector('.grid')).toHaveClass('cols-3');
 	});
+	it('while playing, shows only the current panel, full width', () => {
+		const { container } = render(ComicVisual, {
+			visual: comicVisual(3),
+			resolved: images(3),
+			shown: 2
+		});
+		const panels = container.querySelectorAll('.panel');
+		expect(panels).toHaveLength(1);
+		expect(container.querySelector('.grid')).toHaveClass('cols-1');
+		expect(panels[0]).toHaveTextContent('Caption 1');
+		expect(panels[0].querySelector('img')!.getAttribute('src')).toBe(images(3).images[1]);
+	});
 	it('shows captions under the pictures, not over them', () => {
 		const { container } = render(ComicVisual, { visual: comicVisual(3), resolved: images(3) });
 		const panel = container.querySelector('.panel')!;

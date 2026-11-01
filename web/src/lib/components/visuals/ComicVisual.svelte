@@ -1,12 +1,22 @@
 <script lang="ts">
 	import type { ComicVisual, ResolvedImages } from '#lib/types.ts';
-	let { visual, resolved }: { visual: ComicVisual; resolved: ResolvedImages | null } = $props();
-	// 3 panels read as one strip; 2 or 4 as a 2-wide grid. Never one tall column: it runs off the front.
-	const cols = $derived(visual.panels.length === 3 ? 3 : 2);
+	let {
+		visual,
+		resolved,
+		shown = Infinity
+	}: { visual: ComicVisual; resolved: ResolvedImages | null; shown?: number } = $props();
+	// While the card plays (beats), one panel at a time fills the width, like a short video.
+	// Finished or static: every panel at once, 3 as one strip, 2 or 4 as a 2-wide grid.
+	const playing = $derived(Number.isFinite(shown));
+	const current = $derived(Math.min(Math.max(shown, 1), visual.panels.length) - 1);
+	const items = $derived(
+		visual.panels.map((p, i) => ({ p, i })).filter(({ i }) => !playing || i === current)
+	);
+	const cols = $derived(playing ? 1 : visual.panels.length === 3 ? 3 : 2);
 </script>
 
 <div class="grid cols-{cols}">
-	{#each visual.panels as p, i (i)}
+	{#each items as { p, i } (i)}
 		<figure class="panel">
 			{#if resolved?.images?.[i]}
 				<img
@@ -29,6 +39,12 @@
 	}
 	.cols-2 {
 		grid-template-columns: 1fr 1fr;
+	}
+	.cols-1 {
+		grid-template-columns: 1fr;
+	}
+	.cols-1 img {
+		max-height: 38dvh;
 	}
 	.cols-3 {
 		grid-template-columns: 1fr 1fr 1fr;

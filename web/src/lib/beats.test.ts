@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { beatsFor, revealOrder, setPlaybackSpeed, shownKeys, totalMs } from './beats.ts';
 import type { Visual } from './types.ts';
-import { templateFixtures, textMemeVisual as textMeme } from './components/fixtures.ts';
+import {
+	comicVisual,
+	templateFixtures,
+	textMemeVisual as textMeme
+} from './components/fixtures.ts';
 
 const chat = {
 	kind: 'template',
@@ -33,6 +37,12 @@ describe('beatsFor', () => {
 
 	it('gives an iceberg one beat per layer, surface first', () => {
 		expect(beatsFor(iceberg).map((b) => b.shown)).toEqual([1, 2, 3]);
+	});
+
+	it('plays a comic one panel per beat, each long enough to look at the picture', () => {
+		const beats = beatsFor(comicVisual(3) as Visual);
+		expect(beats.map((b) => b.shown)).toEqual([1, 2, 3]);
+		for (const b of beats) expect(b.ms).toBeGreaterThanOrEqual(2500);
 	});
 
 	it('gives static visuals no beats', () => {
