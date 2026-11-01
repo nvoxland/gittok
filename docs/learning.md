@@ -247,3 +247,35 @@ A story that did well can be told again in another format. The `story_key` stays
 The decision is `store.variant_blocker`. Two cards of one story in the same submission are always a duplicate.
 
 The brief offers variants. `ledger.variants` lists the stories that meet the reward and age conditions (liked first, then best reward). It adds the hook of the newest card; if gc deleted every card, the lead has the story type and sources only. `build_brief` uses a variant for a slot only when that slot has no fresh lead: its (repo, story type) has fewer leads than slots. The variant must be in the slot's repo and a story type of the slot's category. At most `floor(agent.variant_max_share x count)` slots (0.2) become variants. A variant slot keeps the story's story type and gets a format of the category that the story has not used. The packet lead reads `[variant] retell "<hook>" (<story type>, first told as <formats>) as a <format>; cite the same sources: <sources>`. Its `lead_refs` entry is `{"kind": "variant", "story_key", "sources"}`. A variant lead marks no ledger coverage.
+
+## 14. What the reader knows (knowledge model) — `src/codescroll/knowledge.py`
+
+The `knowledge` table (migration 0012) holds counts per `(repo, dir)`: `cards_seen`, `explains_opened`, `quiz_right`, `quiz_wrong`, `knew_it`, `teach_more`, `last_seen_ts`. `process_events` calls `knowledge.update_in_tx` after the rewards, in the same transaction.
+
+Events counted:
+
+| count | event |
+|---|---|
+| `cards_seen` | `impression`, once per card |
+| `explains_opened` | `depth_open` whose `panel` is the explain panel, once per card. Panel 0 is the visual; depth panel `i` is panel `i + 1`. The explain panel is the first depth panel of kind `explain`. |
+| `quiz_right`, `quiz_wrong` | `answer` with `correct` true or false (the server sets it). `null` counts nothing. |
+| `knew_it`, `teach_more` | events of the same name (the buttons come later; the API accepts them now) |
+
+Idempotent: each counted event is written to `knowledge_events(event_id, ts)`. An event already there is skipped, so reprocessing changes nothing. This is the same idea as `rewards.impression_event_id`.
+
+A card counts toward each repo in its `repo` features and each of its `dir` features, cut to the first 2 path levels: `a/b/c` counts toward `a` and `a/b`. A deeper dir is not tracked, because the reader learns an area, not a file. Cards with no dir count nothing.
+
+Novelty (0 = known, 1 = new), `knowledge.novelty(conn, repo, dir)`:
+
+```
+pos      = cards_seen + 2 explains_opened + 2 quiz_right + 4 knew_it
+struggle = quiz_wrong + teach_more
+n = 1 / (1 + pos / 4)                          # never seen: 1
+n = n + (1 - n) * struggle / (struggle + 2)    # wrong answers and "teach more" lift it
+n = n + (1 - n) * 0.3 * min(1, commits_30d / 10)   # others changed it lately (signals churn, 30 days)
+n = n * (1 - 0.25 * own_share)                 # only when settings.user.git_identities is set
+```
+
+A dir with no row has novelty 1. `commits_30d` comes from the stored churn signal (top 25 dirs per window; others count 0). `own_share` is the reader's share of changed lines in the top-level dir (signal `author_shares`, matched by name, case-insensitive). It lowers novelty by at most 25%, because the reader often studies code that other people wrote. `settings.user.git_identities` defaults to empty.
+
+`knowledge.novelty_map(conn, repo)` gives `{dir: novelty}` for every dir with counts or with a card. The `coverage` tool adds `novelty` to each top-level dir (1.0 when unknown). `get_profile` adds `knowledge`: the 10 most novel dirs.
