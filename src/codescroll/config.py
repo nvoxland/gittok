@@ -21,7 +21,14 @@ class Repo:
     ref: str = "HEAD"
     mascot: str | None = None
     group: str | None = None
+    fetch: bool = False  # refresh the remote-tracking ref before analysis (docs/install.md)
     url: str | None = None  # web URL of the repo (GitHub); None means derive it from `origin`
+
+
+def _as_bool(value: object, what: str, file: object) -> bool:
+    if not isinstance(value, bool):
+        raise ConfigError(f"{what} must be true or false ({file})")
+    return value
 
 
 @dataclass(frozen=True)
@@ -67,6 +74,7 @@ class AnalysisSettings:
     candidates_per_tag: int = 40
     candidate_max_file_bytes: int = 200000
     candidate_max_files: int = 4000
+    fetch_min_interval_s: int = 900  # at most one fetch per repo in this time
 
 
 @dataclass(frozen=True)
@@ -300,7 +308,9 @@ def _load_repos(root: Path) -> tuple[dict[str, Repo], dict[str, Group]]:
     repos: dict[str, Repo] = {}
     for rname, raw in raw_repos.items():
         raw = _mapping(raw, f"repo '{rname}'", file)
-        _check_keys(raw, {"path", "ref", "mascot", "group", "url"}, f"repo '{rname}'", file)
+        _check_keys(
+            raw, {"path", "ref", "mascot", "group", "url", "fetch"}, f"repo '{rname}'", file
+        )
         if not raw.get("path"):
             raise ConfigError(f"repo '{rname}' is missing 'path' ({file})")
         if raw.get("group") is not None:
@@ -315,6 +325,7 @@ def _load_repos(root: Path) -> tuple[dict[str, Repo], dict[str, Group]]:
             mascot=raw.get("mascot"),
             group=assigned.get(rname),
             url=raw.get("url"),
+            fetch=_as_bool(raw.get("fetch", False), f"repo '{rname}' fetch", file),
         )
 
     # repo-level group: keys add membership to the group

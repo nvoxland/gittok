@@ -231,3 +231,15 @@ def test_repos_allowed_roots_setting(tmp_path):
     roots = load_config(tmp_path).settings.repos.allowed_roots
     assert roots[1] == Path("/opt/code").resolve()
     assert roots[0] == (Path("~/src").expanduser()).resolve()
+
+
+def test_fetch_defaults_to_false_and_can_be_enabled(tmp_path):
+    write(
+        tmp_path,
+        "repos.yaml",
+        "repos:\n  a:\n    path: /x/a\n  b:\n    path: /x/b\n    fetch: true\n",
+    )
+    cfg = load_config(tmp_path)
+    assert cfg.repo("a").fetch is False
+    assert cfg.repo("b").fetch is True
+    assert cfg.settings.analysis.fetch_min_interval_s == 900

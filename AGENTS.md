@@ -107,6 +107,6 @@ CodeScroll (working name; see `SPEC.md`) is a personal TikTok-style feed of card
 
 ## Conventions & Patterns
 
-- `gitq.py` is the only module that spawns git. Analysis is read-only and never writes to user repos.
+- `gitq.py` is the only module that spawns git. Analysis is read-only and never writes to user repos. One exception: a repo with `fetch: true` in `repos.yaml` gets `fetch --no-tags` before analysis. It updates remote-tracking refs only (never the working tree, index or local branches), and only when the user turned it on.
 - Time windows are relative to the analyzed ref's last commit date, not wall-clock.
 - Tests build their own fixture git repo; unit tests never need network or a Claude session.

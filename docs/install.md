@@ -94,6 +94,20 @@ Notes:
 - The `codescroll-generate` skill pins models (Sonnet for the driver, Haiku or Sonnet for packets). This is Claude-specific. Codex users should run each work packet by hand on a small model.
 - Comparing Codex card quality with Claude card quality is tracked in beads. It spends ChatGPT quota, so the user runs it.
 
+## Keeping "today" fresh (optional fetch)
+
+Analysis reads your local clone, so "recent" means the last time you pulled. For a repo other people push to, set `fetch: true`. CodeScroll then fetches the branch of the configured ref before it reads the repo (`fetch --no-tags --quiet <remote> <branch>`):
+
+```yaml
+repos:
+  myapp:
+    path: ~/src/myapp
+    ref: origin/master   # must be a remote-tracking ref; remote and branch come from it
+    fetch: true          # default false
+```
+
+Fetch updates remote-tracking refs only. It never changes the working tree, the index or local branches. It runs with prompts off and a 60 s timeout. If it fails, CodeScroll logs it and uses the old ref. A ref that is not remote-tracking (for example `HEAD`) skips the fetch. At most one fetch per repo runs in each `analysis.fetch_min_interval_s` (default 900) seconds.
+
 ## LAN notes
 
 `codescroll serve --lan` and `codescroll mcp --ui --lan` (what the project `.mcp.json` runs) bind all interfaces. The feed and `/api/*` need a pairing cookie from non-loopback peers: open the `pair:` URL printed at start-up once on each device. The token lives in `<data_dir>/lan_token` (mode 0600). `/mcp` is loopback-only and refuses LAN peers. PWA install and offline mode need HTTPS, because service workers do not register on plain-HTTP LAN origins. See `docs/social.md`.

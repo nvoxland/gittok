@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import subprocess
 import threading
+import time
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 HEX_ID_PATTERN = r"[0-9a-f]{7,40}"
 _HEX_RE = re.compile(HEX_ID_PATTERN)
@@ -341,3 +345,66 @@ def paths_changed_since(repo: Path | str, ref: str, since_ts: int) -> set[str]:
         repo, "log", ref, "--no-renames", "--name-only", "--format=", f"--since=@{since_ts}", "--"
     )
     return {ln for ln in out.splitlines() if ln}
+
+
+FETCH_TIMEOUT_S = 60
+_last_fetch: dict[str, float] = {}  # repo path -> time.monotonic() of the last attempt
+_fetch_lock = threading.Lock()
+
+
+def _split_remote_ref(repo: Path | str, ref: str) -> tuple[str, str] | None:
+    """('origin', 'master') for the remote-tracking ref 'origin/master'; None for any other ref."""
+    if ref.startswith("-") or "/" not in ref:
+        return None
+    try:
+        remotes = run(repo, "remote").split()
+    except GitError:
+        return None
+    for remote in sorted(remotes, key=len, reverse=True):
+        prefix = remote + "/"
+        if ref.startswith(prefix) and len(ref) > len(prefix):
+            code, _ = run_bytes(
+                repo, "rev-parse", "--verify", "-q", f"refs/remotes/{ref}", ok_codes=(0, 1)
+            )
+            return (remote, ref[len(prefix) :]) if code == 0 else None
+    return None
+
+
+def fetch_ref(
+    repo: Path | str,
+    ref: str,
+    min_interval_s: int = 0,
+    timeout_s: int = FETCH_TIMEOUT_S,
+) -> str:
+    """Refresh the remote-tracking ref `ref` (e.g. 'origin/master') from its remote.
+
+    The one write gitq does, and only when the user turned `fetch` on for the repo. It updates
+    remote-tracking refs only: never the working tree, the index or local branches.
+    Never raises. Returns 'fetched', 'throttled', 'skipped' (not a remote-tracking ref) or 'failed'.
+    """
+    split = _split_remote_ref(repo, ref)
+    if split is None:
+        log.info("fetch skipped for %s: %s is not a remote-tracking ref", repo, ref)
+        return "skipped"
+    key = str(repo)
+    with _fetch_lock:
+        last = _last_fetch.get(key)
+        if last is not None and time.monotonic() - last < min_interval_s:
+            return "throttled"
+        _last_fetch[key] = time.monotonic()  # failures count too: a dead network is not retried hot
+    remote, branch = split
+    cmd = ["git", "-C", str(repo), "fetch", "--no-tags", "--quiet", remote, branch]
+    try:
+        subprocess.run(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            env=_env(),
+            timeout=timeout_s,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        detail = (getattr(e, "stderr", b"") or b"").decode(errors="replace").strip()
+        log.warning("fetch %s %s failed, using the old ref: %s %s", repo, ref, e, detail)
+        return "failed"
+    return "fetched"
