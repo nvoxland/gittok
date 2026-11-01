@@ -20,6 +20,7 @@ analysis:
   blame_max_files: 50
   blame_max_bytes: 2000000
   todo_max_hits: 150
+  why_min_words: 25            # commit bodies this long are attached as "why" evidence
 research:
   max_output_bytes: 200000
   max_read_lines: 300

@@ -263,6 +263,20 @@ def recent_commits(repo: Path | str, ref: str, since_ts: int) -> list[dict]:
     return commits
 
 
+def path_messages(repo: Path | str, ref: str, path: str, since_ts: int) -> list[dict]:
+    """Non-merge commits on `ref` touching `path` since `since_ts`, newest first, with bodies."""
+    _check_rev(ref)
+    out = run(
+        repo, "log", ref, "--no-merges", f"--since=@{since_ts}", "--date=short",
+        "--format=%x1e%H%x1f%ad%x1f%s%x1f%b", "--end-of-options", "--", path,
+    )  # fmt: skip
+    rows = []
+    for block in out.split("\x1e")[1:]:
+        sha, date, subject, body = block.split("\x1f", 3)
+        rows.append({"sha": sha, "date": date, "subject": subject, "body": body.strip()})
+    return rows
+
+
 def ls_tree_blobs(repo: Path | str, ref: str) -> dict[str, str]:
     """Path -> blob sha for every file at `ref`, in one call."""
     _check_rev(ref)

@@ -6,9 +6,10 @@ Everything here is read-only and goes through `gitq`. A lead is the `asdict` of 
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 
-from codescroll import gitq, research
+from codescroll import gitq, links, research
 from codescroll.brief import _useful
 
 LEAD_CAP = 4 * 1024  # bytes of materials per lead
@@ -19,6 +20,10 @@ LEADS_PER_TYPE = 2  # materials for the top leads of each story type; a writer u
 STAT_FILES = 15
 DIFF_LINES = 80
 WINDOW_LINES = 60
+WHY_LIMIT = 3
+WHY_BODY_CHARS = 600
+_ISSUE_REF = re.compile(r"#\d+|/(?:issues|pull)/\d+")
+_PR_REF = re.compile(r"\(#(\d+)\)")
 MARKER = "[truncated]"
 NOTE = "Materials attached for the leads below. Research only what is missing."
 
@@ -30,11 +35,84 @@ def _cap(text: str, limit: int) -> str:
     return raw[:limit].decode(errors="ignore").rstrip() + f"\n{MARKER}"
 
 
+def _trim_body(body: str) -> str:
+    body = body.strip()
+    if len(body) <= WHY_BODY_CHARS:
+        return body
+    return body[:WHY_BODY_CHARS].rstrip() + " …"
+
+
+def _pr_url(cfg, repo: str, subject: str) -> str | None:
+    m = _PR_REF.search(subject)
+    base = m and links.repo_url(cfg, repo)
+    return f"{base}/pull/{m.group(1)}" if base else None
+
+
+def why_commits(cfg, repo: str, path: str, limit: int = WHY_LIMIT) -> list[dict]:
+    """The commits touching `path` that most likely explain why it changed.
+
+    A commit counts when its body has at least `analysis.why_min_words` words or its subject
+    or body refers to an issue or PR (`#123`). Longest body first, then newest, inside the
+    analysis window counted back from the ref's last commit. Each item is
+    `{sha, date, subject, body, pr_url}` with `body` trimmed to WHY_BODY_CHARS and `pr_url`
+    set only when the subject has `(#N)` and the repo has a GitHub URL. [] on bad input.
+    """
+    if limit <= 0:
+        return []
+    try:
+        root, ref = research._resolve(cfg, repo, None)
+        an = cfg.settings.analysis
+        since = gitq.commit_time(root, ref) - an.history_window_days * 86400
+        rows = gitq.path_messages(root, ref, path, since)
+    except (research.ResearchError, gitq.GitError, ValueError):
+        return []
+    picked = [
+        r
+        for r in rows
+        if len(r["body"].split()) >= an.why_min_words
+        or _ISSUE_REF.search(r["subject"])
+        or _ISSUE_REF.search(r["body"])
+    ]
+    picked.sort(key=lambda r: len(r["body"]), reverse=True)  # stable: newest first among ties
+    return [
+        {
+            "sha": r["sha"],
+            "date": r["date"],
+            "subject": r["subject"],
+            "body": _trim_body(r["body"]),
+            "pr_url": _pr_url(cfg, repo, r["subject"]),
+        }
+        for r in picked[:limit]
+    ]
+
+
+def _why_entry(c: dict) -> str:
+    head = f"- {c['sha'][:7]} {c['date']}: {c['subject']}"
+    if c["pr_url"]:
+        head += f" ({c['pr_url']})"
+    body = "\n".join("  " + ln for ln in c["body"].splitlines())
+    return head + ("\n" + body if body else "")
+
+
+def _why_section(cfg, lead: dict, room: int) -> str:
+    """The "Why it changed" block, whole commits only, at most `room` bytes; "" if none fit."""
+    entries: list[str] = []
+    used = len("Why it changed:\n")
+    for c in why_commits(cfg, lead["repo"], lead["path"]):
+        e = _why_entry(c)
+        if used + len(e.encode()) + 1 > room:
+            break
+        entries.append(e)
+        used += len(e.encode()) + 1
+    return "Why it changed:\n" + "\n".join(entries) if entries else ""
+
+
 def _commit_materials(cfg, root, lead: dict) -> str:
     sha = gitq.rev_parse(root, lead["commit"])
     cap = cfg.settings.research.max_output_bytes
-    head = gitq.run(root, "show", "-s", "--date=short", "--format=%an%x1f%ad%x1f%s", sha)
-    author, date, subject = head.rstrip("\n").split("\x1f", 2)
+    head = gitq.run(root, "show", "-s", "--date=short", "--format=%an%x1f%ad%x1f%s%x1f%b", sha)
+    author, date, subject, body = head.rstrip("\n").split("\x1f", 3)
+    pr = _pr_url(cfg, lead["repo"], subject)
     stat = gitq.split_lines(
         gitq.run(root, "show", "--format=", "--stat", "--stat-width=100", sha, max_bytes=cap)
     )
@@ -44,6 +122,8 @@ def _commit_materials(cfg, root, lead: dict) -> str:
     )
     out = [
         f"commit {sha[:10]} by {author} on {date}: {subject}",
+        *([f"pull request: {pr}"] if pr else []),
+        *(["", _trim_body(body)] if body.strip() else []),
         "",
         "```",
         *shown,
@@ -115,7 +195,9 @@ def _path_materials(cfg, root, ref: str, lead: dict) -> str:
     dates = gitq.split_lines(gitq.run(root, "log", "--date=short", "--format=%ad", ref, "--", path))
     if dates:
         out.append(f"first commit touching it: {dates[-1]}; last: {dates[0]}")
-    return "\n".join(out)
+    text = "\n".join(out)
+    why = _why_section(cfg, lead, LEAD_CAP - len(text.encode()) - 2)
+    return text + "\n\n" + why if why else text
 
 
 def materials_for(cfg, lead: dict, cache: dict | None = None) -> str:

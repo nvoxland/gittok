@@ -60,6 +60,7 @@ class AnalysisSettings:
     blame_max_files: int = 50
     blame_max_bytes: int = 2000000
     todo_max_hits: int = 150
+    why_min_words: int = 25  # a commit body this long counts as an explanation
 
 
 @dataclass(frozen=True)
