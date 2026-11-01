@@ -25,10 +25,29 @@ def ensure_repo(conn, repo: Repo) -> int:
     return conn.execute("SELECT id FROM repos WHERE name = ?", (repo.name,)).fetchone()[0]
 
 
+def _card_dirs(card: dict) -> set[str]:
+    """The card's `dirs` plus the parent dir of every path it cites, each with all its prefixes."""
+    paths = [s["path"] for s in card.get("sources", []) if s.get("path")]
+    if card["visual"].get("path"):
+        paths.append(card["visual"]["path"])
+    paths += [
+        p["path"]
+        for p in card.get("depth", [])
+        if p.get("kind") in ("code", "code_diff") and p.get("path")
+    ]
+    dirs = [d.strip("/") for d in card.get("dirs", [])]
+    dirs += [p.strip("/").rpartition("/")[0] for p in paths]
+    out = set()
+    for d in dirs:
+        parts = [x for x in d.split("/") if x]
+        out |= {"/".join(parts[:i]) for i in range(1, len(parts) + 1)}
+    return out
+
+
 def _features(card: dict) -> set[tuple[str, str]]:
     feats = {(k, card[k]) for k in ("story_type", "format", "persona", "tone")}
     feats |= {("repo", r) for r in card["repos"]}
-    feats |= {("dir", d.rstrip("/")) for d in card.get("dirs", [])}
+    feats |= {("dir", d) for d in _card_dirs(card)}
     if card.get("difficulty") is not None:
         feats.add(("difficulty", str(card["difficulty"])))
     if "interaction" in card:
@@ -38,6 +57,24 @@ def _features(card: dict) -> set[tuple[str, str]]:
     if card["visual"]["kind"] == "template":
         feats.add(("template", card["visual"]["template"]))
     return feats
+
+
+def set_features(conn, card_id: str, card: dict) -> None:
+    """Replace a card's stored features (caller owns the transaction)."""
+    conn.execute("DELETE FROM card_features WHERE card_id = ?", (card_id,))
+    conn.executemany(
+        "INSERT INTO card_features(card_id, feature, value) VALUES (?, ?, ?)",
+        [(card_id, f, v) for f, v in sorted(_features(card))],
+    )
+
+
+def refeature(conn) -> int:
+    """Recompute card_features for every card from its stored spec. Returns the card count."""
+    rows = conn.execute("SELECT id, spec FROM cards").fetchall()
+    with conn:
+        for r in rows:
+            set_features(conn, r["id"], db.loads(r["spec"]))
+    return len(rows)
 
 
 RENDERED_KINDS = frozenset({"meme", "illustration", "comic"})

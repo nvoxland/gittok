@@ -78,8 +78,4 @@ def _replace(conn, card_id: str, acc, old: dict, status: str) -> None:
                 card_id,
             ),
         )
-        conn.execute("DELETE FROM card_features WHERE card_id = ?", (card_id,))
-        conn.executemany(
-            "INSERT INTO card_features(card_id, feature, value) VALUES (?, ?, ?)",
-            [(card_id, f, v) for f, v in sorted(store._features(card))],
-        )
+        store.set_features(conn, card_id, card)

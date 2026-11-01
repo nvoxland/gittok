@@ -414,7 +414,10 @@ def _repo_top_dirs(conn, repo) -> set[str]:
 
 
 def coverage(conn, cfg, repo: str | None = None) -> list[dict]:
-    """Per repo and top-level dir: impressions, cards, last_seen. Least covered first."""
+    """Per repo and top-level dir: depth, impressions, cards, last_seen. Least covered first.
+
+    A card has a `dir` feature per path prefix; each card counts once per top-level dir.
+    """
     if repo is not None and repo not in cfg.repos:
         raise SteeringError(f"Unknown repo '{repo}'. Known: {', '.join(cfg.repos) or 'none'}.")
     out = []
@@ -433,6 +436,8 @@ def coverage(conn, cfg, repo: str | None = None) -> list[dict]:
             if top is None:
                 continue
             s = stats.setdefault(top, {"impressions": 0, "cards": set(), "last": None})
+            if row["card_id"] in s["cards"]:
+                continue  # another prefix of the same card
             s["impressions"] += row["n"]
             s["cards"].add(row["card_id"])
             if row["last"] is not None:
@@ -446,6 +451,7 @@ def coverage(conn, cfg, repo: str | None = None) -> list[dict]:
                 {
                     "repo": name,
                     "dir": top,
+                    "depth": len(top.split("/")),
                     "impressions": s["impressions"],
                     "cards": len(s["cards"]),
                     "last_seen": last,

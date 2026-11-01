@@ -495,3 +495,27 @@ def test_format_factors_favor_better_rewarded_formats(conn, cfg):
     assert f["meme"] > 1 > f["chart"]
     put_weight(conn, cfg, "format", "meme", 450, 50)
     assert learning.format_factors(conn, cfg, now=NOW)["meme"] > f["meme"]
+
+
+def test_dir_prefixes_count_as_one_term_in_score(conn, cfg):
+    deep = add_card(conn, cfg, dirs=["a/b/c/d"])
+    feats = learning.card_features(conn, cfg, deep, now=NOW)
+    assert len([1 for f, _ in feats if f == "dir"]) == 4
+    rc = learning.load_reward_config(cfg)
+    seed = 3
+    s = learning.score_cards(conn, cfg, [deep], random.Random(seed), now=NOW)[deep]
+    rng = random.Random(seed)
+    draws = {key: rng.betavariate(*learning._prior(cfg, *key)) for key in sorted(feats)}
+    dir_avg = sum(d for k, d in draws.items() if k[0] == "dir") / 4
+    others = [(k, d) for k, d in draws.items() if k[0] != "dir"]
+    num = rc.importance["dir"] * dir_avg + sum(rc.importance[k[0]] * d for k, d in others)
+    den = rc.importance["dir"] + sum(rc.importance[k[0]] for k, _ in others)
+    assert s == pytest.approx(num / den)
+
+
+def test_reward_updates_every_prefix(conn, cfg):
+    a, b = add_card(conn, cfg, dirs=["x/y/z"]), add_card(conn, cfg)
+    liked_impression(conn, a, b)
+    learning.process_events(conn, cfg, now=at(5))
+    w = weights(conn)
+    assert {v for (f, v) in w if f == "dir"} >= {"x", "x/y", "x/y/z"}

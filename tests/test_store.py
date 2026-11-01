@@ -192,3 +192,38 @@ def test_template_feature_row(conn, cfg, fixture_repo):
     assert status == "ready"
     assert ("visual_kind", "template") in feats
     assert ("template", "hot_take") in feats
+
+
+def _dirs(card):
+    return {v for f, v in store._features(card) if f == "dir"}
+
+
+def test_dir_features_include_all_prefixes_and_source_dirs(fixture_repo):
+    card = example_card(fixture_repo, dirs=["src/app/"])
+    card["visual"]["path"] = "lib/core/x.py"
+    card["depth"] = [
+        {"kind": "code", "repo": "fixture", "path": "docs/guide/a.md"},
+        {"kind": "code_diff", "repo": "fixture", "commit": "abc", "path": "tools/b.py"},
+        {"kind": "explain", "text": "no path"},
+    ]
+    card["sources"] = [{"repo": "fixture", "path": "billing/deep/er/f.py"}, {"commit": "abc"}]
+    assert _dirs(card) == {
+        "src",
+        "src/app",
+        "lib",
+        "lib/core",
+        "docs",
+        "docs/guide",
+        "tools",
+        "billing",
+        "billing/deep",
+        "billing/deep/er",
+    }
+
+
+def test_root_file_adds_no_dir(fixture_repo):
+    card = example_card(fixture_repo, dirs=[])
+    card["visual"]["path"] = "README.md"
+    card["depth"] = []
+    card["sources"] = [{"repo": "fixture", "path": "setup.py"}]
+    assert _dirs(card) == set()

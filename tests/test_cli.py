@@ -557,3 +557,19 @@ def test_refit_export_and_apply_call_the_refit_module(cfg, monkeypatch, capsys, 
     out = capsys.readouterr().out
     assert "replaced 1" in out and "c2 too_long: x" in out
     assert seen == [("export", tmp_path), ("apply", tmp_path)]
+
+
+def test_refeature_rewrites_features(cfg, fixture_repo, capsys):
+    from codescroll import db
+
+    _seed_learning(cfg, fixture_repo)
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+        conn.execute("DELETE FROM card_features WHERE feature = 'dir'")
+        conn.execute("INSERT INTO card_features SELECT id, 'dir', 'stale' FROM cards")
+        conn.commit()
+    capsys.readouterr()
+    assert cli.main(["refeature"]) == 0
+    assert "refeatured 2" in capsys.readouterr().out
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+        dirs = {r[0] for r in conn.execute("SELECT value FROM card_features WHERE feature='dir'")}
+    assert "stale" not in dirs and {"billing", "src"} <= dirs

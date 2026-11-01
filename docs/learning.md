@@ -84,6 +84,9 @@ Rewards are written to `rewards` (one row per impression, idempotent on `impress
 - One Beta(α, β) per (feature, value) in `weights`. Prior: α0 = prior_strength · m, β0 = prior_strength · (1 − m), with m = 0.5 by default and, for features in the default mix (category via story type/format, tone), m = clip(0.5 · share / mean_share, 0.15, 0.85).
 - Update per reward r: decay first — the evidence part (α − α0, β − β0) is multiplied by 0.5^(Δdays / half_life_days) since `updated_at` — then α += r, β += 1 − r, for every feature value of the card.
 - Card score = Σ_f importance[f] · sample_f / Σ importance over the card's features, where sample_f ~ Beta(α, β). Importances in reward.yaml: story_type 1.0, format 1.0, tone 0.7, persona 0.5, repo 0.8, group 0.4, dir 0.6, visual_kind 0.5, template 0.5, recency 0.6, difficulty 0.3, has_comments 0.2.
+- `dir` features are path prefixes. A card gets the dirs it names, plus the parent dir of every path in its sources, its visual (when it has a path), and its `code` and `code_diff` depth panels. Each dir adds all its prefixes: `a/b/c` gives `a`, `a/b`, `a/b/c`. A file at the repo root adds no dir. Reward updates every prefix, so a parent dir learns from its children.
+- A card's `dir` prefixes count as one term in the score. The sampled values are averaged, and `importance.dir` is applied once. A deep card does not outweigh `format` or `story_type`.
+- `codescroll refeature` recomputes `card_features` for all cards from their stored specs. Run it after a change to how features are derived. `codescroll refit --apply` does the same for each card it rewrites.
 - `half_life_days` 21, `prior_strength` from `config/defaults.yaml` (10).
 
 Public API (`src/codescroll/learning.py`):

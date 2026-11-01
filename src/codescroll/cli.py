@@ -30,6 +30,7 @@ from codescroll import (
     signals,
     social,
     steering,
+    store,
     validator,
 )
 from codescroll import brief as brief_mod
@@ -459,6 +460,13 @@ def _refit(args) -> int:
     return 1 if res["rejected"] else 0
 
 
+def _refeature(args) -> int:
+    cfg = load_config()
+    with closing(db.open_db(_db_path(cfg))) as conn:
+        print(f"refeatured {store.refeature(conn)} card(s)")
+    return 0
+
+
 def _mcp(args) -> int:
     if args.ui:
         host, port = _bind(args)
@@ -522,6 +530,8 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--export", metavar="DIR", help="write cards that do not fit as JSON files")
     g.add_argument("--apply", metavar="DIR", help="validate rewritten files and replace cards")
     p.set_defaults(fn=_refit)
+    p = sub.add_parser("refeature", help="recompute stored card features from each card's spec")
+    p.set_defaults(fn=_refeature)
     p = sub.add_parser("notify", help="generate notifications once")
     p.set_defaults(fn=_notify)
     p = sub.add_parser("learn", help="turn new impressions into rewards and update weights once")

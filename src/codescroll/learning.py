@@ -380,6 +380,7 @@ def score_cards(
     """Thompson sample per call: one Beta draw per (feature, value), shared by all cards.
 
     Score = importance-weighted mean of the draws over the card's features. Reads only.
+    A card's `dir` prefixes count as one term: their draws are averaged first.
     """
     now, rc = _now(now), load_reward_config(cfg)
     feats = {cid: card_features(conn, cfg, cid, now=now) for cid in card_ids}
@@ -394,9 +395,13 @@ def score_cards(
         draws[key] = rng.betavariate(alpha, beta)
     out = {}
     for cid, f in feats.items():
-        total = sum(rc.importance.get(k[0], 0.0) for k in f)
+        dirs = [draws[k] for k in f if k[0] == "dir"]
+        terms = [(rc.importance.get(k[0], 0.0), draws[k]) for k in f if k[0] != "dir"]
+        if dirs:
+            terms.append((rc.importance.get("dir", 0.0), sum(dirs) / len(dirs)))
+        total = sum(w for w, _ in terms)
         if total > 0:
-            out[cid] = sum(rc.importance.get(k[0], 0.0) * draws[k] for k in f) / total
+            out[cid] = sum(w * d for w, d in terms) / total
     return out
 
 

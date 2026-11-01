@@ -734,3 +734,11 @@ def test_playback_speed_defaults_to_1_and_is_validated_and_audited(cfg, conn):
             steering.set_playback_speed(conn, cfg, bad)
     log = (cfg.settings.data_dir / "config_audit.log").read_text()
     assert '"set_playback_speed"' in log
+
+
+def test_coverage_rows_carry_depth_and_prefixes_do_not_double_count(conn, cfg):
+    card = add_card(conn, cfg, dirs=["billing/sub/deep"])
+    impress(conn, card, int(NOW.timestamp() * 1000))
+    rows = {r["dir"]: r for r in steering.coverage(conn, cfg)}
+    assert rows["billing"]["depth"] == 1
+    assert (rows["billing"]["impressions"], rows["billing"]["cards"]) == (1, 1)
