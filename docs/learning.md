@@ -213,11 +213,11 @@ A phone with an offline batch can still send events or an answer for a deleted c
 
 ## 12. Lead ledger
 
-A lead is a place to look: a commit, or a file at one blob. Each time `signals.analyze` recomputes a repo (a new HEAD), `ledger.refresh` stores every commit and path lead of every story type in the `leads` table. Leads of kind `none` (a directory, a pair) are not stored.
+A lead is a place to look: a commit, or a file. Each time `signals.analyze` recomputes a repo (a new HEAD), `ledger.refresh` stores every commit and path lead of every story type in the `leads` table. Leads of kind `none` (a directory, a pair) are not stored.
 
 What a row holds:
 
-- Identity: repo, story type, kind, path, commit sha, blob sha. A path lead carries the blob sha of the file at the analyzed ref. A changed file has a new blob, so it is a new row. The old row stays, and its `times_covered` shows it was told before.
+- Identity: repo, story type, `lead_key`. A commit lead is keyed by sha and path (`c:<sha>:<path>`), a path lead by its path (`p:<path>`), a lead with no repo identity by a synthetic key (`dir:src`, `pair:a|b`). An edit to a file keeps its row, so the cooldown and `times_covered` stay. The row also stores the kind, path, commit sha, and the blob sha at the analyzed ref (for information only).
 - `strength`: `1 / (1 + rank)` inside its story type, from the signal order.
 - `first_seen_at`, `last_seen_at`, `head_sha`: set again on each refresh.
 - `times_covered`, `last_covered_at`, `mean_reward`, `rewards_n`: see below.
@@ -227,6 +227,15 @@ What a row holds:
 `score = interest x strength x 0.5 ^ times_covered`
 
 `interest` is the mean of the `dir` posterior means (section 4) over the parent dir prefixes of the lead's path. An unknown prefix counts as 0.5. A lead with no path counts as 0.5. Ties go to the lower row id. `focus` and `ban` dir rules still filter the leads by text. If the repo has no ledger rows for a story type, the brief computes the leads from signals as before. If all rows of a type are in cooldown, the type has no leads.
+
+Dedup (`ledger.ranked`, `ledger.offerable`):
+
+- Subject cooldown: a card's subject is its visual's commit or path, else its first source's. A commit or path that was the subject of a ready (or `pending_render`) card made in the last `agent.subject_cooldown_days` (14) is not offered, in any story type. Server-made leads (`req:`, `notif:`) skip this filter.
+- Rejects: when `submit_cards(packet_id)` rejects a card (not for `over_quota` or `illustration_budget`) that cites a packet lead, the lead gets `times_rejected + 1` and `last_rejected_at`. In `score` it is multiplied by `0.5 ^ times_rejected` while `last_rejected_at` is inside the subject cooldown window. After the window the penalty is gone.
+- Packets: `build_brief` deals the leads of a (repo, story type) round robin over the packets that hold that type. An intro lead is only in its own packet. A commit or path is offered to one packet of a repo. So two packets of one repo never share a lead.
+- Cross-repo leads (recap, drift, ripple) have no ledger row, so they have no cooldown. A card cannot be tied to one of them (it cites commits of several repos and carries no lead id), so coverage would be a guess.
+
+Spot the Bug minimum: `agent.min_spot_the_bug_per_run` (0.125, one card per 8) of a brief's cards are `spot_the_bug` slots, reserved before the category quotas, when some repo has a lead for it. The interactive quota grows to hold them. The slotter places one unseen quiz card in each window of 8 cards of a batch, if one exists.
 
 Coverage marking: `submit_cards(packet_id)` finds the packet lead each accepted card used. The first lead whose commit is cited by the card (sources, visual, or depth panels) wins. Else the first lead whose path is cited. The card gets `cards.lead_id`. The lead gets `times_covered + 1` and `last_covered_at`. Cards submitted without a packet mark nothing.
 

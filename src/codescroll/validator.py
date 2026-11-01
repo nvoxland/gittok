@@ -54,12 +54,11 @@ def _short(err) -> str:
 # Git-backed checks
 # ---------------------------------------------------------------------------
 
-import hashlib  # noqa: E402
 from dataclasses import dataclass, field  # noqa: E402
 from datetime import UTC, datetime, timedelta, timezone  # noqa: E402
 from pathlib import PurePosixPath  # noqa: E402
 
-from codescroll import claims, gitq  # noqa: E402
+from codescroll import claims, gitq, storykey  # noqa: E402
 
 MAX_SPAN = 40
 # The card front must fit one phone screen without scrolling: on iOS a scrolling front takes
@@ -885,13 +884,12 @@ def _validate_one(card: dict, gc: _GitCache, ctx: _Ctx) -> tuple[dict, dict, str
         repo = gc.repo(src["repo"])
         if "commit" in src:
             src["commit"] = gc.commit(src["repo"], src["commit"])
-            keys.append(f"{src['repo']}:{src['commit']}")
+            keys.append(storykey.source_key(src["repo"], commit=src["commit"]))
         else:
             content = gc.file_lines(src["repo"], repo.ref, src["path"])
             if "lines" in src:
                 _check_range(src["lines"], len(content), src["path"])
-            span = "-".join(map(str, src.get("lines", [])))
-            keys.append(f"{src['repo']}:{src['path']}:{span}")
+            keys.append(storykey.source_key(src["repo"], path=src["path"], lines=src.get("lines")))
 
     _check_cross_repo(card, gc)
     _check_interactive_truth(card, gc)
@@ -909,9 +907,7 @@ def _validate_one(card: dict, gc: _GitCache, ctx: _Ctx) -> tuple[dict, dict, str
     _check_explain_floor(card, gc)  # last: other checks keep their own reasons
     _check_claims(card, resolved, gc, ctx)
 
-    story_key = hashlib.sha1(
-        (card["story_type"] + "|" + "|".join(sorted(keys))).encode()
-    ).hexdigest()[:16]
+    story_key = storykey.story_key_of(card["story_type"], keys)
     return card, resolved, story_key
 
 

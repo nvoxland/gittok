@@ -41,6 +41,7 @@ def test_migrate_twice_applies_nothing_second_time(tmp_path):
         "0013_lead_keys.sql",
         "0014_candidate_ratings.sql",
         "0015_requests.sql",
+        "0016_lead_rejects.sql",
         "0017_digests.sql",
         "0018_replies.sql",
     ]

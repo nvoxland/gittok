@@ -208,6 +208,7 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
                 variants=ledger.variants(conn, cfg, datetime.now(UTC)),
                 variant_max_share=cfg.settings.agent.variant_max_share,
                 intro_share=cfg.settings.agent.intro_share,
+                min_spot_the_bug=cfg.settings.agent.min_spot_the_bug_per_run,
                 novelty=knowledge.novelty_maps(conn, cfg, sorted(repo_signals)),
                 intro_prefer={r: candidate_leads.dirs_with_core(conn, r) for r in repo_signals},
                 **mix_inputs(conn, cfg),

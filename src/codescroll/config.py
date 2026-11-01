@@ -56,6 +56,8 @@ class AgentSettings:
     min_burn_per_day: int = 10
     min_run_count: int = 8
     lead_cooldown_days: int = 30
+    subject_cooldown_days: int = 14  # a commit or path is the subject of one card per window
+    min_spot_the_bug_per_run: float = 0.125  # share of a brief's cards reserved for spot_the_bug
     variant_min_reward: float = 0.6
     variant_after_days: int = 14
     variant_max_share: float = 0.2

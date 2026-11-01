@@ -230,6 +230,44 @@ class _StoryBlocks:
         return False
 
 
+def card_subject(spec: dict, default_repo: str = "") -> tuple[str, str | None, str | None]:
+    """(repo, commit, path) a card is mainly about: its visual's commit or path, else its first
+    source's. A visual with neither (a meme, a chart) falls back to the first source."""
+    vis = spec.get("visual") or {}
+    srcs = spec.get("sources") or []
+    for part in (vis, *srcs[:1]):
+        if part.get("commit") or part.get("path"):
+            repo = part.get("repo") or default_repo
+            return repo, part.get("commit") or None, part.get("path") or None
+    return default_repo, None, None
+
+
+class _Subjects:
+    """Commits and paths that were the subject of a card made in the subject cooldown window."""
+
+    def __init__(self, conn, cfg, now: datetime):
+        cutoff = iso(now - timedelta(days=cfg.settings.agent.subject_cooldown_days))
+        self.commits: dict[str, list[str]] = {}
+        self.paths: dict[str, set[str]] = {}
+        for r in conn.execute(
+            "SELECT spec FROM cards WHERE status IN ('ready', 'pending_render') "
+            "AND created_at >= ?",
+            (cutoff,),
+        ):
+            spec = db.loads(r["spec"])
+            repo, commit, path = card_subject(spec, (spec.get("repos") or [""])[0])
+            if commit:
+                self.commits.setdefault(repo, []).append(commit)
+            if path:
+                self.paths.setdefault(repo, set()).add(path)
+
+    def blocks(self, ld: brief.Lead) -> bool:
+        """True if the lead's commit or path is a recent card's subject."""
+        if ld.commit and any(_sha_match(ld.commit, c) for c in self.commits.get(ld.repo, ())):
+            return True
+        return bool(ld.path) and ld.path in self.paths.get(ld.repo, ())
+
+
 def offerable(conn, cfg, now: datetime) -> Callable[[brief.Lead], bool]:
     """Predicate for leads that did not come from the ledger (or came without a check).
 
@@ -241,9 +279,14 @@ def offerable(conn, cfg, now: datetime) -> Callable[[brief.Lead], bool]:
         for r in conn.execute("SELECT * FROM leads WHERE last_covered_at >= ?", (cutoff,))
     }
     blocks = _StoryBlocks(_blocked_stories(conn, cfg, now))
+    subjects = _Subjects(conn, cfg, now)
 
     def ok(ld: brief.Lead) -> bool:
-        return (ld.repo, ld.story_type, lead_key(ld)) not in covered and not blocks.blocks(ld)
+        return (
+            (ld.repo, ld.story_type, lead_key(ld)) not in covered
+            and not blocks.blocks(ld)
+            and not subjects.blocks(ld)
+        )
 
     return ok
 
@@ -258,11 +301,16 @@ def ranked(
     dir_means: dict | None = None,
     blocks: _StoryBlocks | None = None,
     nmap: dict | None = None,
+    subjects: _Subjects | None = None,
 ) -> list[brief.Lead]:
     """Current leads for one story type, best first, without leads still in their cooldown
     or whose story is blocked.
 
-    score = (0.5 + interest) x strength x novelty x 0.5 ** times_covered.
+    score = (0.5 + interest) x strength x novelty x 0.5 ** times_covered x 0.5 ** rejects.
+
+    `rejects` counts the cards rejected on the lead in the last `agent.subject_cooldown_days`.
+    A lead is also left out while its commit or path is the subject of a recent card (any
+    story type). Server-made leads (requests, notifications) skip both filters.
 
     Novelty (knowledge.lead_dir; 1.0 for an unknown dir) leads: what the reader has not learned
     comes first. Interest is a mild factor in [0.5, 1.5] so it only breaks near-ties; it stays
@@ -274,11 +322,14 @@ def ranked(
         dir_means = learning.posterior_means(conn, cfg, "dir", now)
     if blocks is None:
         blocks = _StoryBlocks(_blocked_stories(conn, cfg, now))
+    if subjects is None:
+        subjects = _Subjects(conn, cfg, now)
+    reject_cutoff = iso(now - timedelta(days=cfg.settings.agent.subject_cooldown_days))
     rows = [
         r
         for r in _current(conn, repo, story_type)
         if (r["last_covered_at"] is None or r["last_covered_at"] < cutoff)
-        and (_pinned(r) or not blocks.blocks(_lead(r)))
+        and (_pinned(r) or not (blocks.blocks(_lead(r)) or subjects.blocks(_lead(r))))
     ]
 
     if nmap is None:
@@ -287,7 +338,8 @@ def ranked(
     def score(r) -> float:
         nov = knowledge.lead_dir(r["path"], nmap)[1]
         interest = 0.5 + _interest(r["path"], dir_means)
-        return interest * r["strength"] * nov * 0.5 ** r["times_covered"]
+        rejects = r["times_rejected"] if (r["last_rejected_at"] or "") >= reject_cutoff else 0
+        return interest * r["strength"] * nov * 0.5 ** r["times_covered"] * 0.5**rejects
 
     # Follow-up requests go first: the reader asked for them.
     rows.sort(key=lambda r: (not _pinned(r), -score(r), r["id"]))
@@ -311,6 +363,7 @@ def for_brief(
             )
     dir_means = learning.posterior_means(conn, cfg, "dir", now)
     blocks = _StoryBlocks(_blocked_stories(conn, cfg, now))
+    subjects = _Subjects(conn, cfg, now)
     ids = cfg.settings.user.git_identities
     nmaps = {r: knowledge.novelty_map(conn, r, ids) for r in repos}
     types = dict.fromkeys(t for ts in brief.CATEGORY_STORIES.values() for t in ts)
@@ -319,7 +372,7 @@ def for_brief(
         for t in types:
             if _current(conn, repo, t):
                 out[(repo, t)] = ranked(
-                    conn, cfg, repo, t, now, limit, dir_means, blocks, nmaps[repo]
+                    conn, cfg, repo, t, now, limit, dir_means, blocks, nmaps[repo], subjects
                 )
     return out
 
@@ -398,6 +451,14 @@ def match_lead(card: dict, lead_refs: list[dict]) -> dict | None:
             if x["key"][4:] in dirs:
                 return x
     return None
+
+
+def mark_rejected(conn, lead_id: int, now: datetime) -> None:
+    """Count one rejected card on a lead; its rank drops for `agent.subject_cooldown_days`."""
+    conn.execute(
+        "UPDATE leads SET times_rejected = times_rejected + 1, last_rejected_at = ? WHERE id = ?",
+        (iso(now), lead_id),
+    )
 
 
 def mark_covered(conn, lead_id: int, now: datetime) -> None:

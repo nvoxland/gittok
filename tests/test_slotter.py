@@ -358,3 +358,23 @@ def test_followed_path_dir_boosts_its_cards(conn, cfg, monkeypatch):
     assert batch(conn, cfg, 2)[0] == a
     characters.set_follow(conn, "fixture", "billing/invoice.py", False)
     assert batch(conn, cfg, 2)[0] == b
+
+
+def test_unseen_quiz_is_placed_in_the_first_eight(conn, cfg, monkeypatch):
+    from tests.cards import quiz_card
+
+    posts = [add_card(conn, cfg, format=f"f{i}") for i in range(12)]
+    quiz = add_card_spec(conn, cfg, quiz_card(SimpleNamespace(shas={})))
+    fix_scores(monkeypatch, {**{p: 0.9 for p in posts}, quiz: 0.01})
+    out = batch(conn, cfg, limit=10)
+    assert len(out) == 10
+    assert quiz in out[:8]
+
+
+def test_no_quiz_slot_when_no_quiz_exists_or_batch_is_short(conn, cfg, monkeypatch):
+    from tests.cards import quiz_card
+
+    posts = [add_card(conn, cfg, format=f"f{i}") for i in range(6)]
+    quiz = add_card_spec(conn, cfg, quiz_card(SimpleNamespace(shas={})))
+    fix_scores(monkeypatch, {**{p: 0.9 for p in posts}, quiz: 0.01})
+    assert quiz not in batch(conn, cfg, limit=6)  # under 8 cards: no quiz guarantee

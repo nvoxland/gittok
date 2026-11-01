@@ -1556,3 +1556,39 @@ def test_ledger_leads_are_not_filtered_again_by_lead_ok():
         lead_ok=lambda lead: False,
     )
     assert any(r["id"] == 1 for p in b.packets for r in p.lead_refs)
+
+
+def _spot_slots(b):
+    return sum(t == "spot_the_bug" for p in b.packets for t in p.card_stories)
+
+
+def test_spot_the_bug_minimum_is_reserved_before_category_quotas():
+    assert brief.leads_for("spot_the_bug", signals(), T0)
+    b = build(count=16, min_spot_the_bug=0.125)
+    assert _spot_slots(b) >= 2
+    assert sum(b.quotas.values()) == 16
+
+
+def test_no_spot_the_bug_slot_without_leads():
+    sig = {k: v for k, v in signals().items() if k != "fix_chains"}
+    assert not brief.leads_for("spot_the_bug", sig, T0)
+    b = build(count=16, sig=sig, min_spot_the_bug=0.125)
+    assert _spot_slots(b) == 0
+
+
+def test_packets_of_one_repo_share_no_lead():
+    b = build(count=20, packet_size=2, ledger={})
+    assert len(b.packets) >= 6
+    texts = [r["text"] for p in b.packets for r in p.lead_refs if r["kind"] != "none" or r["id"]]
+    assert len(texts) > 5 and len(texts) == len(set(texts))
+    subjects = [
+        (p.id, r.get("commit") or r.get("path"))
+        for p in b.packets
+        for r in p.lead_refs
+        if r.get("commit") or r.get("path")
+    ]
+    owner: dict = {}
+    for pid, subject in subjects:
+        assert owner.setdefault(subject, pid) == pid, subject  # one subject, one packet
+    for p in b.packets:
+        assert len(p.leads) == len(p.lead_refs)

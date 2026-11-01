@@ -11,6 +11,8 @@ agent:
   min_burn_per_day: 10         # cards per day assumed at least, so a quiet week does not starve
   min_run_count: 8             # a run that is needed makes at least this many (start-up cost)
   lead_cooldown_days: 30       # a lead covered by a card is not offered again for this long
+  subject_cooldown_days: 14    # a commit or file is the main subject of at most one card per this many days, whatever the story type
+  min_spot_the_bug_per_run: 0.125  # share of a brief's cards reserved for spot_the_bug when it has leads (1 per 8)
   variant_min_reward: 0.6      # a story is retold in a new format only if its best reward is this high (or liked)
   variant_after_days: 14       # ...and its last card is at least this old
   variant_max_share: 0.2       # at most this share of a brief's cards are variants
