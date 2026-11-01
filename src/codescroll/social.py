@@ -257,11 +257,15 @@ class NotifyWorker:
             self._thread.join(timeout)
 
     def _run(self) -> None:
+        from codescroll import supply  # supply imports this module
+
         while not self._stop.is_set():
             try:
                 cfg = self._get_config()
                 with closing(db.open_db(cfg.settings.data_dir / "codescroll.db")) as conn:
-                    generate_notifications(conn, cfg, self._clock())
+                    now = self._clock()
+                    generate_notifications(conn, cfg, now)
+                    supply.notify_low_runway(conn, cfg, now)
             except Exception:
                 log.exception("notification pass failed")
             self._stop.wait(self._interval)

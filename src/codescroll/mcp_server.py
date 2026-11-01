@@ -16,7 +16,18 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from codescroll import brief as brief_mod
-from codescroll import db, gitq, learning, render, research, runs, signals, steering, validator
+from codescroll import (
+    db,
+    gitq,
+    learning,
+    render,
+    research,
+    runs,
+    signals,
+    steering,
+    supply,
+    validator,
+)
 from codescroll.config import Config, ConfigError, load_config
 
 INSTRUCTIONS = """\
@@ -136,10 +147,18 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
         Returns run_id, a short summary, and packets (id, repo, count, suggested_model).
         Give each packet id to one subagent on its suggested model; the subagent calls
         get_packet for its leads and guidance and submits its own cards.
+
+        Without `count`, makes as many cards as feed_health says the feed needs. When that is
+        none, returns nothing_to_do and the health numbers, and opens no run. An explicit
+        `count` always opens a run.
         """
-        count = count or cfg.settings.agent.default_count
         names = [cfg.repo(repo).name] if repo else sorted(cfg.repos)
         with _db(cfg) as conn:
+            if count is None:
+                health = supply.feed_health(conn, cfg, datetime.now(UTC))
+                if health["want"] == 0:
+                    return {"run_id": None, "nothing_to_do": True, "health": health}
+                count = health["want"]
             repo_signals: dict[str, dict] = {}
             skipped: list[dict] = []
             for n in names:
@@ -181,6 +200,12 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
             ],
             "skipped": skipped,
         }
+
+    @tool
+    def feed_health(cfg: Config) -> dict:
+        """How the feed is doing: unseen backlog, burn per day, runway, want, image share, sizes."""
+        with _db(cfg) as conn:
+            return supply.feed_health(conn, cfg, datetime.now(UTC))
 
     @tool
     def get_packet(cfg: Config, run_id: str, packet_id: str) -> dict:

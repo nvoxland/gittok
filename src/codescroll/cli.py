@@ -31,6 +31,7 @@ from codescroll import (
     social,
     steering,
     store,
+    supply,
     validator,
 )
 from codescroll import brief as brief_mod
@@ -204,6 +205,13 @@ def _notify(args) -> int:
     with closing(db.open_db(_db_path(cfg))) as conn:
         made = social.generate_notifications(conn, cfg, _now())
     print(" ".join(f"{k}={v}" for k, v in made.items()))
+    return 0
+
+
+def _health(args) -> int:
+    cfg = load_config()
+    with closing(db.open_db(_db_path(cfg))) as conn:
+        print(json.dumps(supply.feed_health(conn, cfg, _now()), indent=2))
     return 0
 
 
@@ -534,6 +542,10 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(fn=_refeature)
     p = sub.add_parser("notify", help="generate notifications once")
     p.set_defaults(fn=_notify)
+    p = sub.add_parser(
+        "health", help="print feed health (backlog, runway, how many to make) as JSON"
+    )
+    p.set_defaults(fn=_health)
     p = sub.add_parser("learn", help="turn new impressions into rewards and update weights once")
     p.set_defaults(fn=_learn)
     p = sub.add_parser("reset-weights", help="delete learned weights (all, or one feature)")

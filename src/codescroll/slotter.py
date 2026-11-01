@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import random
-from datetime import datetime, timedelta
+from datetime import datetime
 
-from codescroll import srs
+from codescroll import srs, supply
 
 SRS_MIN_POSITION = 3
 DEFAULT_KNOBS = {
@@ -102,21 +102,6 @@ def _dir_coverage(conn) -> dict[str, int]:
     return {r["dir"]: r["n"] for r in rows}
 
 
-def _candidates(conn, rc, served: set[str], now: datetime) -> list[str]:
-    repeat_days = _knobs(rc)["repeat_days"]
-    cutoff_ms = int((now - timedelta(days=repeat_days)).timestamp() * 1000)
-    recent = {
-        r[0]
-        for r in conn.execute(
-            "SELECT DISTINCT card_id FROM events WHERE type = 'impression' AND ts >= ? "
-            "AND card_id IS NOT NULL",
-            (cutoff_ms,),
-        )
-    }
-    rows = conn.execute("SELECT id FROM cards WHERE status = 'ready' ORDER BY id").fetchall()
-    return [r["id"] for r in rows if r["id"] not in served and r["id"] not in recent]
-
-
 def dir_matches(card_dir: str, rule_dir: str) -> bool:
     """Path-prefix match: `src` covers `src` and `src/api`, not `lib/src`."""
     d = rule_dir.strip("/")
@@ -150,7 +135,7 @@ def build_batch(conn, cfg, limit: int, served: set[str], seed: int, now: datetim
     rng = random.Random(seed)
     knobs = _knobs(rc)
     due = [d for d in srs.due_cards(conn, now) if d not in served]
-    ids = [i for i in _candidates(conn, rc, served, now) if i not in due]
+    ids = [i for i in supply.unseen_ready(conn, rc, now) if i not in served and i not in due]
     feats = {i: set(learning.card_features(conn, cfg, i, now=now)) for i in ids + due}
     rules = _active_rules(conn, now)
     for r in rules:

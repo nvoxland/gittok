@@ -121,6 +121,14 @@ On a wrong answer (`POST /api/answer`), upsert `srs(card_id)` with interval 1 da
 
 `brief.build_brief` takes optional `category_shares`. Quotas come from the shares instead of the raw default mix, with a floor: every renderable category gets at least 1 card when `count >= number of categories`. The `interactive` category is now renderable (story types `spot_the_bug`, `guess_who`, `guess_when`, `quiz`, `this_or_that`; format `quiz`; packets with interactive slots are sonnet).
 
+How many cards a run makes (`src/codescroll/supply.py`): `get_brief` without `count` uses `want`.
+
+- `backlog` = ready cards not shown in the last `repeat_days`.
+- `burn` = max(distinct cards shown per day, 7-day mean; `agent.min_burn_per_day`).
+- `want` = `ceil(agent.target_runway_days * burn) - backlog`, clamped to 0 to `agent.max_count`.
+
+When `want` is 0, `get_brief` returns `nothing_to_do` and opens no run. An explicit `count` skips this.
+
 ### Format factors
 
 `learning.format_factors` turns format rewards into a factor per format. For a format with evidence (mean `m`, count `n`, priors removed), `ref` is the plain mean of `m` over formats with evidence (0.5 if none):

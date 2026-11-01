@@ -12,9 +12,11 @@ Requires the `codescroll` MCP server (tools named `mcp__codescroll__*`). If thos
 
 ## Tools
 
-`get_profile`, `explain_weights(feature)`, `list_rules`, `add_rule`, `remove_rule`, `reset_defaults`, `coverage(repo)`, `recent_cards`, `card_stats`, `list_repos`. Config tools: `add_repo`, `set_group`, `set_mascot`, `edit_persona`, `set_playback_speed`.
+`get_profile`, `feed_health`, `explain_weights(feature)`, `list_rules`, `add_rule`, `remove_rule`, `reset_defaults`, `coverage(repo)`, `recent_cards`, `card_stats`, `list_repos`. Config tools: `add_repo`, `set_group`, `set_mascot`, `edit_persona`, `set_playback_speed`.
 
 ## Steps
+
+"How is the feed doing": call `feed_health` and report backlog, runway_days, and image_share.
 
 ### A. The user asks what the feed learned, or why they see X
 

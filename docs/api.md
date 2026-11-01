@@ -55,3 +55,22 @@ Response: `{ "stored": 3 }`. Unknown types are rejected with 422.
 ## GET /healthz
 
 `{ "ok": true }`
+
+## MCP: feed_health and get_brief
+
+`feed_health()` is a read-only MCP tool. `codescroll health` prints the same JSON.
+
+```json
+{ "backlog": 41, "burn_per_day": 12.0, "runway_days": 3.4, "target_days": 3,
+  "want": 0, "pending_render": 2, "render_failed": 0,
+  "image_share": { "ready": 0.02, "shown_7d": 0.0 }, "db_mb": 3.1, "assets_mb": 0.6 }
+```
+
+- `backlog`: ready cards with no impression in the last `repeat_days`.
+- `burn_per_day`: distinct cards shown per day, mean of 7 days, never below `agent.min_burn_per_day`.
+- `want`: how many cards to make so the backlog lasts `agent.target_runway_days` (0 to `agent.max_count`).
+- `image_share`: share of cards with a meme, illustration, comic, chart, or diagram visual.
+
+`get_brief(repo=None, count=None)`: without `count`, it makes `want` cards. When `want` is 0, it returns `{"run_id": null, "nothing_to_do": true, "health": {...}}`. It opens no run, analyzes no repo, and does not count toward `per_day_runs`. An explicit `count` always opens a run.
+
+Once per UTC day, when `runway_days < 1`, the notify worker adds a `low_runway` notification (`dedup_key` `low_runway:<date>`).

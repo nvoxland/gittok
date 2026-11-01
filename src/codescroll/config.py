@@ -43,6 +43,8 @@ class AgentSettings:
     max_count: int = 20
     per_day_runs: int = 4
     packet_size: int = 4
+    target_runway_days: int = 3
+    min_burn_per_day: int = 10
 
 
 @dataclass(frozen=True)

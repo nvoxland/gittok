@@ -201,3 +201,33 @@ def test_recent_stories_carry_format(fixture_repo, tmp_path):
     assert got == [
         {"story_type": spec["story_type"], "hook": spec["hook"], "format": spec["format"]}
     ]
+
+
+async def test_get_brief_without_count_is_noop_when_backlog_is_full(fixture_repo, tmp_path):
+    from types import SimpleNamespace
+
+    from codescroll import db, store
+
+    cfg = make_config(fixture_repo, tmp_path)
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+        conn.execute("INSERT INTO runs(id, status, started_at) VALUES ('r0', 'finished', 'x')")
+        for i in range(30):
+            acc = SimpleNamespace(card=text_card(fixture_repo), resolved={}, story_key=f"k{i}")
+            store.insert_card(conn, cfg, "r0", acc)
+        conn.commit()
+    server = mcp_server.build_server(lambda: cfg)
+    async with Client(server) as client:
+        out = data(await client.call_tool("get_brief", {}))
+        assert out["nothing_to_do"] is True and out["run_id"] is None
+        assert out["health"]["backlog"] == 30 and out["health"]["want"] == 0
+        assert data(await client.call_tool("feed_health", {}))["backlog"] == 30
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+        assert conn.execute("SELECT COUNT(*) FROM runs WHERE id != 'r0'").fetchone()[0] == 0
+
+
+async def test_explicit_count_still_opens_run(fixture_repo, tmp_path):
+    cfg = make_config(fixture_repo, tmp_path)
+    server = mcp_server.build_server(lambda: cfg)
+    async with Client(server) as client:
+        out = data(await client.call_tool("get_brief", {"count": 2}))
+        assert out["run_id"] and "nothing_to_do" not in out

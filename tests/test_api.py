@@ -565,7 +565,9 @@ def test_lifespan_runs_notify_worker_and_stops_it(social_cfg):
     with TestClient(app):
         for _ in range(200):
             with db.open_db(social_cfg.settings.data_dir / "codescroll.db") as conn:
-                n = conn.execute("SELECT COUNT(*) FROM notifications").fetchone()[0]
+                n = conn.execute(
+                    "SELECT COUNT(*) FROM notifications WHERE kind != 'low_runway'"
+                ).fetchone()[0]
             if n:
                 break
             time.sleep(0.02)
