@@ -78,7 +78,29 @@ def test_packet_materials_cap(fixture_repo, tmp_path):
     cfg = make_config(fixture_repo, tmp_path)
     one = materials.materials_for(cfg, _ref(kind="commit", commit=fixture_repo.shas["huge"]))
     assert len(one.encode()) <= materials.LEAD_CAP
-    refs = [_ref(kind="path", path="data/big.txt", lines=[i, i]) for i in range(1, 1200, 10)]
+    refs = [
+        _ref(story_type=f"t{i}", kind="path", path="data/big.txt", lines=[i, i])
+        for i in range(1, 1200, 10)
+    ]
     out = materials.packet_materials(cfg, refs)
     assert len(out.encode()) <= materials.PACKET_CAP + 100
     assert "[truncated]" in out
+
+
+def test_packet_materials_cover_only_top_leads_per_story_type(fixture_repo, tmp_path):
+    """A writer uses 1-2 leads per story type; materials for the rest only bloat get_packet."""
+    cfg = make_config(fixture_repo, tmp_path)
+    refs = [
+        _ref(story_type=t, kind="path", path="data/big.txt", lines=[i, i], text=f"{t} lead {i}")
+        for t in ("rip", "hot_spot")
+        for i in (1, 11, 21, 31, 41)
+    ]
+    out = materials.packet_materials(cfg, refs)
+    heads = [line for line in out.splitlines() if line.startswith("### ")]
+    assert heads == [
+        "### [rip] rip lead 1",
+        "### [rip] rip lead 11",
+        "### [hot_spot] hot_spot lead 1",
+        "### [hot_spot] hot_spot lead 11",
+    ]
+    assert len(out.encode()) <= materials.PACKET_CAP <= 12 * 1024

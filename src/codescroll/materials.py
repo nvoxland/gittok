@@ -11,8 +11,11 @@ from collections import Counter
 from codescroll import gitq, research
 from codescroll.brief import _useful
 
-LEAD_CAP = 6 * 1024  # bytes of materials per lead
-PACKET_CAP = 30 * 1024  # bytes of materials per packet
+LEAD_CAP = 4 * 1024  # bytes of materials per lead
+# bytes of materials per packet: get_packet must stay small enough for the harness to show it
+# inline (a ~50 KB reply was saved to a file the writer could not read).
+PACKET_CAP = 12 * 1024
+LEADS_PER_TYPE = 2  # materials for the top leads of each story type; a writer uses 1 or 2
 STAT_FILES = 15
 DIFF_LINES = 80
 WINDOW_LINES = 60
@@ -139,11 +142,15 @@ def materials_for(cfg, lead: dict, cache: dict | None = None) -> str:
 
 
 def packet_materials(cfg, refs: list[dict]) -> str:
-    """Materials for all of a packet's leads, at most PACKET_CAP bytes."""
+    """Materials for the top LEADS_PER_TYPE leads of each story type, at most PACKET_CAP bytes."""
     cache: dict = {}
     parts: list[str] = []
     used = 0
+    per_type: dict[str, int] = {}
     for lead in refs:
+        if per_type.get(lead["story_type"], 0) >= LEADS_PER_TYPE:
+            continue
+        per_type[lead["story_type"]] = per_type.get(lead["story_type"], 0) + 1
         body = materials_for(cfg, lead, cache)
         if not body:
             continue
