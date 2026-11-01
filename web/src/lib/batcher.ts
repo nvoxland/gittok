@@ -1,3 +1,4 @@
+import { randomId } from './session.ts';
 import type { FeedEvent } from './types.ts';
 
 export function createBatcher(
@@ -47,7 +48,7 @@ export function createBatcher(
 
 	return {
 		push(e: FeedEvent) {
-			queue.push({ ...e, data: { ...e.data, event_id: crypto.randomUUID() } });
+			queue.push({ ...e, data: { ...e.data, event_id: randomId() } });
 		},
 		flush,
 		start() {

@@ -1,7 +1,8 @@
 const KEY = 'codescroll.session';
 let memory: string | undefined;
 
-function randomId(): string {
+// crypto.randomUUID exists only in secure contexts (HTTPS, localhost), not on a LAN http:// page.
+export function randomId(): string {
 	try {
 		return crypto.randomUUID();
 	} catch {

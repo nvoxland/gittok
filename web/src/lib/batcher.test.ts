@@ -20,6 +20,22 @@ describe('createBatcher', () => {
 		expect(first.data?.event_id).toBe((post.mock.calls[0][0] as FeedEvent[])[0].data?.event_id);
 	});
 
+	it('still queues events on plain-HTTP LAN pages, where crypto.randomUUID is missing', async () => {
+		vi.stubGlobal('crypto', {});
+		try {
+			const post = vi.fn().mockResolvedValue(undefined);
+			const b = createBatcher(post, 5000);
+			b.push(ev(1));
+			b.push(ev(2));
+			await b.flush();
+			const [first, second] = post.mock.calls[0][0] as FeedEvent[];
+			expect(typeof first.data?.event_id).toBe('string');
+			expect(first.data?.event_id).not.toBe(second.data?.event_id);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
 	afterEach(() => vi.useRealTimers());
 
 	it('posts queued events every interval and not when empty', async () => {
