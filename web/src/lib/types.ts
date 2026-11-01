@@ -171,7 +171,13 @@ export type Card = {
 	resolved: Resolved;
 };
 
-export type FeedResponse = { cards: Card[]; next_cursor: string | null; fromCache?: boolean };
+export type FeedResponse = {
+	cards: Card[];
+	next_cursor: string | null;
+	// The card last seen, served first on a fresh load (null when there is none).
+	resume_card_id?: string | null;
+	fromCache?: boolean;
+};
 
 export type FeedEventType =
 	| 'impression'

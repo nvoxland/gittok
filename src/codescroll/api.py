@@ -425,12 +425,12 @@ def create_app(
         cfg = get_config()
         try:
             with conn() as c:
-                cards, next_cursor = feedmod.page(
+                cards, next_cursor, resume = feedmod.page(
                     c, cfg, limit, cursor, random.randrange(2**31), datetime.now(UTC)
                 )
         except InvalidCursor:
             raise HTTPException(400, "invalid cursor") from None
-        return {"cards": cards, "next_cursor": next_cursor}
+        return {"cards": cards, "next_cursor": next_cursor, "resume_card_id": resume}
 
     @app.get("/api/cards/{card_id}")
     def card(card_id: str):

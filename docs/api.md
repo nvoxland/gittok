@@ -7,9 +7,12 @@ All endpoints are served by `codescroll serve` (default `http://127.0.0.1:8008`)
 ```json
 {
   "cards": [Card, ...],
-  "next_cursor": "string or null"
+  "next_cursor": "string or null",
+  "resume_card_id": "string or null"
 }
 ```
+
+`resume_card_id` is set only when there is no `cursor`. It is the card of the newest `impression` event, if that card still exists and is `ready`. The server puts that card first, so a reload opens on the card you saw last. The page still has `limit` cards. The card is also in the served list of `next_cursor`, so it is not repeated. With a `cursor`, or with no impressions, the value is `null`.
 
 `Card` is the stored card spec (see `schema/card.schema.json`) plus server fields:
 

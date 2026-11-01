@@ -46,7 +46,7 @@ def test_feed_pages_with_cursor_without_repeats(cfg, client, fixture_repo):
     assert len(second["cards"]) == 1
     assert {first["cards"][0]["id"], second["cards"][0]["id"]} == set(ids)
     third = client.get("/api/feed", params={"limit": 1, "cursor": second["next_cursor"]}).json()
-    assert third == {"cards": [], "next_cursor": None}
+    assert third == {"cards": [], "next_cursor": None, "resume_card_id": None}
 
 
 def test_feed_cursor_is_base64_json_with_served_and_seed(cfg, client, fixture_repo):
@@ -691,3 +691,16 @@ def test_api_requests_are_logged_with_status(cfg, client):
     lines = (cfg.settings.data_dir / "logs" / "api.log").read_text().splitlines()
     assert lines[-2].endswith("POST /api/events 200")
     assert lines[-1].endswith("GET /api/feed 200")
+
+
+def test_feed_returns_resume_card_id(cfg, client, fixture_repo):
+    ids = seed(cfg, fixture_repo, [example_card(fixture_repo), text_card(fixture_repo)])
+    assert client.get("/api/feed").json()["resume_card_id"] is None
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as c:
+        c.execute(
+            "INSERT INTO events(card_id, type, ts, data, received_at) "
+            "VALUES (?, 'impression', 1, '{}', '2026-06-01T00:00:00Z')",
+            (ids[1],),
+        )
+    body = client.get("/api/feed").json()
+    assert body["resume_card_id"] == ids[1] and body["cards"][0]["id"] == ids[1]

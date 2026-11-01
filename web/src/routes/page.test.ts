@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Page from './+page.svelte';
 import { fakeCard } from '#lib/components/fixtures.ts';
+import { getAnswer, setAnswer } from '#lib/cardState.ts';
 
 const fetchMock = vi.fn();
 beforeEach(() => vi.stubGlobal('fetch', fetchMock));
@@ -83,6 +84,19 @@ describe('feed page', () => {
 		expect(await screen.findByText('Hook 3')).toBeInTheDocument();
 		expect(screen.getAllByRole('article')).toHaveLength(3);
 		expect(fetchMock.mock.calls.some(([u]) => String(u).includes('cursor=cur1'))).toBe(true);
+	});
+
+	it('keeps the answer of the resumed card and clears the other served ones', async () => {
+		setAnswer('c_1', 0);
+		setAnswer('c_2', 1);
+		const card = (n: number) => fakeCard({ id: `c_${n}`, hook: `Hook ${n}` });
+		route({
+			'/api/feed': { cards: [card(1), card(2)], next_cursor: null, resume_card_id: 'c_1' }
+		});
+		render(Page);
+		await screen.findByText('Hook 1');
+		expect(getAnswer('c_1')).toBe(0);
+		expect(getAnswer('c_2')).toBeUndefined();
 	});
 
 	it('has a bell linking to /notifications', async () => {

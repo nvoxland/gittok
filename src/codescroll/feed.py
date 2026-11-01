@@ -76,23 +76,43 @@ def decode_cursor(cursor: str) -> tuple[list[str], int]:
     return served, seed
 
 
+def last_seen_card(conn) -> str | None:
+    """The card of the newest impression that is still a ready card (None when there is none)."""
+    row = conn.execute(
+        "SELECT c.id FROM events e JOIN cards c ON c.id = e.card_id "
+        "WHERE e.type = 'impression' AND c.status = 'ready' ORDER BY e.ts DESC LIMIT 1"
+    ).fetchone()
+    return row[0] if row else None
+
+
 def page(
     conn, cfg, limit: int, cursor: str | None, seed: int, now: datetime
-) -> tuple[list[dict], str | None]:
-    """The next batch of public cards and the cursor for the one after (None when exhausted).
+) -> tuple[list[dict], str | None, str | None]:
+    """The next batch of public cards, the cursor for the one after (None when exhausted), and
+    the resume card id.
 
-    `seed` is used only when there is no cursor; a cursor carries its own seed.
+    `seed` is used only when there is no cursor; a cursor carries its own seed. Without a
+    cursor (a fresh load), the card last seen goes first so a reload resumes on it; that card
+    id is the third value, and it is None otherwise.
     """
     served: list[str] = []
+    resume = None
     if cursor:
         served, seed = decode_cursor(cursor)
+    else:
+        resume = last_seen_card(conn)
     seen = {token(t) for t in served}
     served_ids = (
         {r[0] for r in conn.execute("SELECT id FROM cards") if token(r[0]) in seen}
         if seen
         else set()
     )
-    ids = slotter.build_batch(conn, cfg, limit, served_ids, seed, now)
+    lead = [resume] if resume else []
+    ids = lead + (
+        slotter.build_batch(conn, cfg, limit - len(lead), served_ids | set(lead), seed, now)
+        if limit > len(lead)
+        else []
+    )
     rows = {
         r["id"]: r
         for r in conn.execute(f"SELECT * FROM cards WHERE id IN ({','.join('?' * len(ids))})", ids)
@@ -103,4 +123,4 @@ def page(
         if len(ids) >= limit
         else None
     )
-    return cards, next_cursor
+    return cards, next_cursor, resume

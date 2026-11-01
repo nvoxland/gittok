@@ -62,7 +62,8 @@
 			fromCache = !!feed.fromCache;
 			const fresh = feed.cards;
 			// Cards the server serves again are new or due for review: let them be answered again.
-			clearAnswers(fresh.map((c) => c.id));
+			// The resumed card is the one on screen before the reload: keep its answer.
+			clearAnswers(fresh.map((c) => c.id).filter((id) => id !== feed.resume_card_id));
 			cards = fresh;
 			nextCursor = feed.next_cursor;
 		} catch (e) {

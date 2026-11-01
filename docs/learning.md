@@ -102,7 +102,7 @@ def reset_weights(conn, feature: str | None = None) -> int
 
 ## 5. Slotting (SPEC §12.4) — `src/codescroll/slotter.py`
 
-`GET /api/feed?limit=20&cursor=...` builds the next batch:
+`GET /api/feed?limit=20&cursor=...` builds the next batch. A first page (no cursor) starts with the card of the newest impression, if it is still `ready`, so a reload resumes there (`resume_card_id`); the slots below fill the rest.
 1. Candidates: `ready` cards not impressed in the last `repeat_days` (7), not already served this feed session (the cursor carries served ids), plus due SRS cards.
 2. Rules from the `rules` table (M4 writes them; the slotter honors them now): `ban` removes, `boost`/`prefer` multiply the score, `focus` reserves `slots` per batch for matching cards, `limit` caps the matching share of the batch. `dir` rules use path-prefix matching (`src` covers `src` and `src/api`, not `lib/src`; a leading `repo/` is accepted).
 3. Exploration: `exploration_share` (0.18) of slots are filled uniformly at random from candidates outside the top half.
