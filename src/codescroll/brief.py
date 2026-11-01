@@ -886,7 +886,7 @@ def _variant_pair(v: dict, fmt: str) -> tuple[str, dict]:
     told = f'"{v["hook"]}" ' if v.get("hook") else ""
     line = (
         f"[variant] retell {told}({v['story_type']}, first told as "
-        f"{', '.join(v['formats_used'])}) as a {fmt}; cite the same sources: "
+        f"{', '.join(v['formats_used'])}) in format `{fmt}`; cite the same sources: "
         f"{', '.join(_source_ref(x) for x in v['sources'])}"
     )
     return line, {"kind": "variant", "story_key": v["story_key"], "sources": v["sources"]}
