@@ -80,14 +80,15 @@ def test_skip_is_zero_even_with_other_signals(conn, cfg):
     assert rewards(conn)[a] == 0.0
 
 
-def test_explicit_like_beats_skip(conn, cfg):
+@pytest.mark.parametrize("positive", ["like", "save"])
+def test_explicit_like_or_save_beats_skip(conn, cfg, positive):
     a, b = add_card(conn, cfg), add_card(conn, cfg)
     ev(conn, a, "impression", T0)
     ev(conn, a, "skip", T0 + 300, {"ms": 300})
-    ev(conn, a, "like", T0 + 400, {"on": True})
+    ev(conn, a, positive, T0 + 400, {"on": True})
     ev(conn, b, "impression", T0 + 1000)
     learning.process_events(conn, cfg, now=at(5))
-    assert rewards(conn)[a] == pytest.approx(learning.RewardConfig().weights["like"])
+    assert rewards(conn)[a] == pytest.approx(learning.RewardConfig().weights[positive])
 
 
 def test_process_events_updates_story_best_reward_and_liked(conn, cfg):
@@ -167,7 +168,7 @@ def test_engagement_sums_and_clips_to_one(conn, cfg):
         ("depth_open", {"panel": 1}),
         ("depth_open", {"panel": 2}),
         ("like", {"on": True}),
-        ("answer", {}),
+        ("save", {"on": True}),
         ("scroll_back", {}),
     ]:
         ev(conn, a, t, T0 + 9500, d)
@@ -256,12 +257,11 @@ def test_expected_ms_uses_default_for_unknown_format_and_caps():
 
 
 def test_reward_config_defaults_file_overrides_and_unknown_keys(cfg, tmp_path):
-    assert learning.load_reward_config(cfg).weights["like"] == 0.25
-    assert "save" not in learning.RewardConfig().weights
+    assert learning.load_reward_config(cfg).weights["save"] == 0.30
     (tmp_path / "config").mkdir()
-    (tmp_path / "config" / "reward.yaml").write_text("weights:\n  like: 0.5\nhalf_life_days: 7\n")
+    (tmp_path / "config" / "reward.yaml").write_text("weights:\n  save: 0.5\nhalf_life_days: 7\n")
     rc = learning.load_reward_config(cfg)
-    assert rc.weights["like"] == 0.5 and rc.weights["answer"] == 0.20 and rc.half_life_days == 7
+    assert rc.weights["save"] == 0.5 and rc.weights["like"] == 0.25 and rc.half_life_days == 7
     (tmp_path / "config" / "reward.yaml").write_text("bogus: 1\n")
     with pytest.raises(learning.RewardConfigError):
         learning.load_reward_config(cfg)

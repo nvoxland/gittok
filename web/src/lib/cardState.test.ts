@@ -1,12 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-	clearAnswers,
-	getAnswer,
-	getFlags,
-	resetCardStateForTest,
-	setAnswer,
-	setFlag
-} from './cardState.ts';
+import { clearAnswers, getAnswer, resetCardStateForTest, setAnswer } from './cardState.ts';
 
 describe('answers', () => {
 	beforeEach(() => {
@@ -40,22 +33,5 @@ describe('answers', () => {
 		expect(getAnswer('c_2')).toBe('b');
 		resetCardStateForTest();
 		expect(getAnswer('c_1')).toBeUndefined();
-	});
-});
-
-describe('flags', () => {
-	it('drops the old saved flag and keeps likes', () => {
-		localStorage.setItem(
-			'codescroll.card-state',
-			JSON.stringify({ c_1: { liked: true, saved: true }, c_2: { saved: true } })
-		);
-		resetCardStateForTest();
-		expect(getFlags('c_1')).toEqual({ liked: true });
-		expect(getFlags('c_2')).toEqual({});
-		setFlag('c_3', 'liked', true);
-		expect(JSON.parse(localStorage.getItem('codescroll.card-state')!)).toEqual({
-			c_1: { liked: true },
-			c_3: { liked: true }
-		});
 	});
 });

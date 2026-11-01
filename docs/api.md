@@ -47,7 +47,7 @@ One `Card`, or 404.
 ## POST /api/events
 
 ```json
-{ "events": [ { "card_id": "c_...", "type": "impression|dwell|skip|scroll_back|depth_open|like|explain_more|answer|source_tap", "ts": 1730000000000, "data": { "ms": 4200, "panel": 1 } } ] }
+{ "events": [ { "card_id": "c_...", "type": "impression|dwell|skip|scroll_back|depth_open|like|save|explain_more|answer|source_tap", "ts": 1730000000000, "data": { "ms": 4200, "panel": 1 } } ] }
 ```
 
 Response: `{ "stored": 3 }`. Unknown types are rejected with 422.

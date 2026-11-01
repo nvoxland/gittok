@@ -30,6 +30,7 @@ class RewardConfig:
             "depth_open": 0.15,
             "explain_more": 0.15,
             "like": 0.25,
+            "save": 0.30,
             "source_tap": 0.10,
             "scroll_back": 0.35,
             "answer": 0.20,
@@ -186,7 +187,7 @@ def _reward(rc: RewardConfig, spec: dict, events: list[tuple[str, dict]]) -> flo
     skipped = "skip" in types or (
         bool(dwell_events) and dwell_ms < rc.skip_ms and not types - {"dwell", "skip"}
     )
-    if skipped and not _toggled_on(events, "like"):
+    if skipped and not (_toggled_on(events, "like") or _toggled_on(events, "save")):
         return 0.0
     r = w["dwell"] * _watch_fraction(rc, spec, dwell_events, dwell_ms)
     for name in ("depth_open", "explain_more", "source_tap", "scroll_back"):
@@ -198,8 +199,9 @@ def _reward(rc: RewardConfig, spec: dict, events: list[tuple[str, dict]]) -> flo
         r += w["replay"]
     if "answer" in types:
         r += w["answer"]
-    if _toggled_on(events, "like"):
-        r += w["like"]
+    for name in ("like", "save"):
+        if _toggled_on(events, name):
+            r += w[name]
     return max(0.0, min(1.0, r))
 
 

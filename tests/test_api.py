@@ -456,11 +456,6 @@ def test_no_saved_endpoint(client):
     assert client.get("/api/saved").status_code == 404
 
 
-def test_save_events_are_rejected(client):
-    body = {"events": [{"card_id": "c_1", "type": "save", "ts": 1, "data": {"on": True}}]}
-    assert client.post("/api/events", json=body).status_code == 422
-
-
 def test_lifespan_runs_profile_worker_and_stops_it(cfg):
     import threading
     import time
