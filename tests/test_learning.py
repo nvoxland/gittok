@@ -481,3 +481,17 @@ def test_beat_tap_is_recorded_but_not_rewarded():
 def test_early_swipe_on_a_beat_card_is_a_skip():
     r = beat_reward(("dwell", {"ms": 1500, "ms_played": 1500, "total_ms": 6000}), ("skip", {}))
     assert r == 0.0
+
+
+def test_format_factors_empty_without_evidence(conn, cfg):
+    assert learning.format_factors(conn, cfg, now=NOW) == {}
+
+
+def test_format_factors_favor_better_rewarded_formats(conn, cfg):
+    put_weight(conn, cfg, "format", "meme", 45, 5)
+    put_weight(conn, cfg, "format", "chart", 5, 45)
+    f = learning.format_factors(conn, cfg, now=NOW)
+    assert set(f) == {"meme", "chart"}
+    assert f["meme"] > 1 > f["chart"]
+    put_weight(conn, cfg, "format", "meme", 450, 50)
+    assert learning.format_factors(conn, cfg, now=NOW)["meme"] > f["meme"]

@@ -141,10 +141,10 @@ def signals():
     }
 
 
-def build(count=10, packet_size=4, recent=None, sig=None, **kw):
+def build(count=10, packet_size=4, recent=None, sig=None, defaults=None, **kw):
     return brief.build_brief(
         repo_signals={"fixture": {"t0": T0, "head_sha": "9" * 40, "signals": sig or signals()}},
-        defaults=DEFAULTS,
+        defaults=defaults or DEFAULTS,
         personas=PERSONAS,
         count=count,
         packet_size=packet_size,
@@ -1256,3 +1256,70 @@ def test_story_types_rotate_away_from_recently_used_ones():
     first = drama(build(count=10))[0]
     recent = [{"story_type": first, "hook": f"h{i}", "format": "text_post"} for i in range(5)]
     assert drama(build(count=10, recent=recent))[0] != first
+
+
+def _fmts(b):
+    return [f for p in b.packets for f in p.formats]
+
+
+def _explainers(share=None):
+    d = {"categories": {"illustrated_explainers": 1.0}, "tones": DEFAULTS["tones"]}
+    return {**d, "visual_mix": {"image_min_share": share}} if share is not None else d
+
+
+def _image_share(b):
+    fs = _fmts(b)
+    return sum(f in brief.IMAGE_FORMATS for f in fs) / len(fs)
+
+
+def test_format_weights_move_picks_with_evidence():
+    d = {"categories": {"memes": 1.0}, "tones": DEFAULTS["tones"]}
+    assert _fmts(build(count=2, defaults=d)).count("text_meme") == 1
+    b = build(count=2, defaults=d, format_weights={"text_meme": 4.0})
+    assert _fmts(b) == ["text_meme", "text_meme"]
+
+
+def test_no_format_evidence_keeps_rotation():
+    base = _fmts(build(count=20))
+    assert _fmts(build(count=20, format_weights={})) == base
+    assert _fmts(build(count=20, format_weights=None)) == base
+
+
+def test_image_share_target_swaps_within_category():
+    low = build(count=8, defaults=_explainers())
+    assert _image_share(low) < 0.5
+    b = build(count=8, defaults=_explainers(0.5))
+    assert _image_share(b) >= 0.5
+    assert _illustration_cost(b) <= 4
+    assert set(_fmts(b)) <= set(brief.CATEGORY_FORMATS["illustrated_explainers"])
+    assert sum(p.count for p in b.packets) == 8
+
+
+def test_image_share_respects_budget_bans_and_unavailable():
+    # Budget 0: no illustrations, so only diagram can be swapped in.
+    b = build(count=8, defaults=_explainers(0.9), max_illustrations=0)
+    assert _illustration_cost(b) == 0
+    assert set(_fmts(b)) & {"mascot_scene", "comic"} == set()
+    # Banned and unavailable formats are never swapped in; the target is best effort.
+    b = build(
+        count=8,
+        defaults=_explainers(0.9),
+        rules=[rule("ban", "format", "diagram")],
+        unavailable_formats={"comic"},
+    )
+    assert not set(_fmts(b)) & {"diagram", "comic"}
+    assert _illustration_cost(b) <= 4
+    # A format cap is respected.
+    b = build(
+        count=8,
+        defaults=_explainers(0.9),
+        rules=[rule("limit", "format", "diagram", max_share=0.125)],
+    )
+    assert _fmts(b).count("diagram") <= 1
+    # Interactive quiz slots stay quiz.
+    d = {
+        "categories": {"interactive": 1.0},
+        "tones": DEFAULTS["tones"],
+        "visual_mix": {"image_min_share": 1.0},
+    }
+    assert set(_fmts(build(count=4, defaults=d))) == {"quiz"}

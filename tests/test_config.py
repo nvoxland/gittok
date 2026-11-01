@@ -167,7 +167,7 @@ def test_real_config_has_mascots_meme_templates_and_render_settings():
     assert cfg.mascots["otter"].seed == 4242
     assert "a small round otter" in cfg.mascots["otter"].style
     assert cfg.meme_templates["drake"].lines == 2
-    assert cfg.settings.render.max_illustrations_per_run == 4
+    assert cfg.settings.render.max_illustrations_per_run == 6
     assert cfg.settings.render.memegen_url.startswith("http://127.0.0.1")
 
 

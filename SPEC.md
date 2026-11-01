@@ -458,6 +458,8 @@ tones:
   chaotic-absurd: 0.15
   earnest-teacher: 0.15
 
+visual_mix:
+  image_min_share: 0.5   # least share of cards in an image format (meme, illustration, comic, chart, diagram)
 personas: uniform
 topics: uniform across repos and dirs, tilted toward recent commits
 exploration_share: 0.18

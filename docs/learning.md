@@ -118,6 +118,18 @@ On a wrong answer (`POST /api/answer`), upsert `srs(card_id)` with interval 1 da
 
 `brief.build_brief` takes optional `category_shares`. Quotas come from the shares instead of the raw default mix, with a floor: every renderable category gets at least 1 card when `count >= number of categories`. The `interactive` category is now renderable (story types `spot_the_bug`, `guess_who`, `guess_when`, `quiz`, `this_or_that`; format `quiz`; packets with interactive slots are sonnet).
 
+### Format factors
+
+`learning.format_factors` turns format rewards into a factor per format. For a format with evidence (mean `m`, count `n`, priors removed), `ref` is the plain mean of `m` over formats with evidence (0.5 if none):
+
+    factor = (prior_strength + n * m / ref) / (prior_strength + n)
+
+A format without evidence has no factor (1). `mix_inputs` passes the factors to `build_brief` as `format_weights`. `_pick_format` multiplies the factor into the rule boost. Rules still win: bans, caps and boosts work as before. With no evidence the picks do not change.
+
+### Image share target
+
+`config/defaults.yaml` has `visual_mix.image_min_share` (default 0.5). Image formats are the formats whose visual kind is `meme`, `illustration`, `comic`, `chart` or `diagram`. After the brief gives out slots, it swaps text formats for image formats until the image share meets the target. A swap stays in the same category. It skips cross-repo slots and `quiz` slots. It never uses a banned or unavailable format, a format at its cap, or an illustration that goes over `settings.render.max_illustrations_per_run` (default 6). If no legal swap remains, the brief keeps the lower share. Without `visual_mix` the target is 0.
+
 ## 8. Saved cards
 
 Removed. Like is the only reaction. Migration 0006 deleted the stored `save` events, and the API rejects new ones.

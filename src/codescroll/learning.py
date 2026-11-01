@@ -405,6 +405,30 @@ def score_cards(
 SHARE_FLOOR = 0.05
 
 
+def format_factors(conn, cfg, now: datetime | None = None) -> dict[str, float]:
+    """Learned per-format factor for the brief's format pick.
+
+    For a format with evidence (mean m over n decayed observations, priors removed), and ref
+    the plain mean of m over formats with evidence (0.5 if none):
+
+        factor = (prior_strength + n * m / ref) / (prior_strength + n)
+
+    Formats without evidence are absent, which counts as factor 1.
+    """
+    now, rc = _now(now), load_reward_config(cfg)
+    stats: dict[str, tuple[float, float]] = {}
+    for row in conn.execute("SELECT * FROM weights WHERE feature = 'format'"):
+        alpha, beta, a0, b0 = _decayed(rc, cfg, row, now)
+        ea, eb = alpha - a0, beta - b0
+        if ea + eb > 1e-9:
+            stats[row["value"]] = (ea / (ea + eb), ea + eb)
+    ref = sum(m for m, _ in stats.values()) / len(stats) if stats else 0.5
+    strength = _prior_strength(cfg)
+    if ref <= 0:
+        return {}
+    return {f: (strength + n * m / ref) / (strength + n) for f, (m, n) in stats.items()}
+
+
 def category_shares(conn, cfg, now: datetime | None = None) -> dict[str, float]:
     """Learned share per default-mix category, blended with the shipped prior.
 

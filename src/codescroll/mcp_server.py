@@ -42,9 +42,10 @@ def _db(cfg: Config):
 
 
 def mix_inputs(conn, cfg) -> dict:
-    """Learned category shares and the reward count behind them, as build_brief kwargs."""
+    """Learned category shares, format factors and the reward count, as build_brief kwargs."""
     return {
         "category_shares": learning.category_shares(conn, cfg),
+        "format_weights": learning.format_factors(conn, cfg),
         "evidence": conn.execute("SELECT COUNT(*) FROM rewards").fetchone()[0],
     }
 

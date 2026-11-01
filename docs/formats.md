@@ -97,7 +97,7 @@ A card may set `"account": "repo:path"`. The card is then shown as posted by tha
 
 ## Illustration budget
 
-`settings.render.max_illustrations_per_run` (default 4). An illustration costs 1, a comic costs one per panel (2 or 3). Cards past the budget are rejected with `illustration_budget`.
+`settings.render.max_illustrations_per_run` (default 6). An illustration costs 1, a comic costs one per panel (2 or 3). Cards past the budget are rejected with `illustration_budget`.
 
 ## Status and rendering
 

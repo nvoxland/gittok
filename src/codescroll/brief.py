@@ -10,6 +10,8 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 
+from codescroll import validator
+
 _DRAMA = (
     "commit_drama",
     "hot_spot",
@@ -61,6 +63,15 @@ CATEGORY_FORMATS_FLAT = tuple(dict.fromkeys(f for fs in CATEGORY_FORMATS.values(
 # Illustrations each format costs against settings.render.max_illustrations_per_run.
 # A comic has 2 or 3 panels (one illustration each); the brief reserves the worst case, 3.
 ILLUSTRATION_COST = {"mascot_scene": 1, "comic": 3}
+
+# Formats that draw an image (meme, illustration, comic, chart, diagram); the image share
+# target (defaults visual_mix.image_min_share) counts these.
+IMAGE_KINDS = frozenset({"meme", "illustration", "comic", "chart", "diagram"})
+IMAGE_FORMATS = frozenset(
+    f
+    for f, k in validator.FORMAT_KIND.items()
+    if IMAGE_KINDS & set((k,) if isinstance(k, str) else k)
+)
 
 # Formats a haiku can write when the story type is concrete. Everything else needs sonnet.
 HAIKU_FORMATS = frozenset(
@@ -732,14 +743,17 @@ def _pick_format(
     boost: dict[str, float] | None = None,
     caps: dict[str, int] | None = None,
     recent: dict[str, int] | None = None,
+    weights: dict[str, float] | None = None,
 ) -> str:
     """Least-used format of the category that still fits the illustration budget.
 
     A boost factor divides a format's use count, so boosted formats come up more often.
+    `weights` are learned per-format factors; they multiply into the boost.
     Ties go to the format used least in recent cards, so runs rotate through the list.
     """
     recent = recent or {}
     boost = boost or {}
+    weights = weights or {}
     caps = caps or {}
     options = [f for f in options if used.get(f, 0) < caps.get(f, 1 << 30)] or list(options)
     fits = (
@@ -750,7 +764,7 @@ def _pick_format(
     return min(
         fits,
         key=lambda f: (
-            (used.get(f, 0) + 1) / boost.get(f, 1.0),
+            (used.get(f, 0) + 1) / (boost.get(f, 1.0) * weights.get(f, 1.0)),
             recent.get(f, 0),
             options.index(f),
         ),
@@ -771,6 +785,7 @@ def build_brief(
     rules=None,
     unavailable_formats=frozenset(),
     groups: dict[str, list[str]] | None = None,
+    format_weights: dict[str, float] | None = None,
 ) -> Brief:
     if not repo_signals:
         raise ValueError("no repos to build a brief from")
@@ -928,6 +943,7 @@ def build_brief(
                         fmt_boost,
                         fmt_caps,
                         recent_fmt,
+                        format_weights,
                     )
                     used[fmt] = used.get(fmt, 0) + 1
                     spent += ILLUSTRATION_COST.get(fmt, 0)
@@ -967,6 +983,7 @@ def build_brief(
                     fmt_boost,
                     fmt_caps,
                     recent_fmt,
+                    format_weights,
                 )
                 used[fmt] = used.get(fmt, 0) + 1
                 spent += ILLUSTRATION_COST.get(fmt, 0)
@@ -983,6 +1000,42 @@ def build_brief(
                 )
                 story_used[story] = story_used.get(story, 0) + 1
                 slots.append((repo, category, story, fmt, None))
+
+    # 1b. Image share: swap text formats for image formats of the same category.
+    target = float((defaults.get("visual_mix") or {}).get("image_min_share") or 0)
+    image_n = sum(s[3] in IMAGE_FORMATS for s in slots)
+    while slots and image_n < target * len(slots):
+        for i, (repo, category, story, fmt, grp) in enumerate(slots):
+            if grp is not None or fmt in IMAGE_FORMATS or fmt == "quiz":
+                continue
+            room = spent - ILLUSTRATION_COST.get(fmt, 0)
+            options = [
+                f
+                for f in formats_in[category]
+                if f in IMAGE_FORMATS
+                and used.get(f, 0) < fmt_caps.get(f, 1 << 30)
+                and room + ILLUSTRATION_COST.get(f, 0) <= max_illustrations
+            ]
+            if not options:
+                continue
+            new = _pick_format(
+                options,
+                used,
+                room,
+                max_illustrations,
+                fmt_boost,
+                fmt_caps,
+                recent_fmt,
+                format_weights,
+            )
+            used[fmt] -= 1
+            used[new] = used.get(new, 0) + 1
+            spent = room + ILLUSTRATION_COST.get(new, 0)
+            slots[i] = (repo, category, story, new, None)
+            image_n += 1
+            break
+        else:
+            break  # no legal swap remains
 
     # 2. Pack slots into as few packets as possible per (repo or group, model tier).
     packets: list[Packet] = []
