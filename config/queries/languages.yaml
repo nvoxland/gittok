@@ -29,6 +29,11 @@ languages:
   python:
     extensions: {.py: python}
     comment: "#"
+    # facts.py: how an import names a file. module_sep splits a spec into path segments;
+    # import_spec_regex finds the spec in an import statement the query captures without @import.path.
+    module_sep: "."
+    index_names: [__init__]
+    import_spec_regex: '^\s*(?:from\s+(\.*[\w.]*)\s+import|import\s+([\w.]+))'
     nesting: [if_statement, for_statement, while_statement, try_statement, with_statement, match_statement]
     branch: [if_statement, elif_clause, for_statement, while_statement, except_clause, case_clause,
              boolean_operator, conditional_expression]
@@ -41,6 +46,8 @@ languages:
                  .cjs: javascript, .svelte: svelte}
     query_alias: {tsx: typescript}
     comment: "//"
+    index_names: [index]
+    alias_prefixes: ["$lib/", "@/", "~/", "src/"]   # facts.py: stripped, then matched by path suffix
     nesting: [if_statement, for_statement, for_in_statement, while_statement, do_statement,
               try_statement, switch_statement]
     flat: [[if_statement, else_clause]]
@@ -54,6 +61,8 @@ languages:
     extensions: {.clj: clojure, .cljs: clojure, .cljc: clojure, .bb: clojure}
     comment: ";"
     lisp: true
+    module_sep: "."
+    qualifier_sep: "/"   # facts.py: `alias/name` in a reference; the alias comes from the file's requires
     # head symbol -> kind of the definition it makes; `{{def_heads}}` in a query expands to these
     def_heads:
       function: [defn, defn-, defmacro, fn-traced]
@@ -89,6 +98,7 @@ languages:
   java:
     extensions: {.java: java}
     comment: "//"
+    module_sep: "."
     nesting: [if_statement, for_statement, enhanced_for_statement, while_statement, do_statement,
               try_statement, switch_expression, switch_statement]
     flat: [[if_statement, if_statement]]
@@ -101,6 +111,8 @@ languages:
   rust:
     extensions: {.rs: rust}
     comment: "//"
+    module_sep: "::"
+    drop_segments: [crate, self, super]
     nesting: [if_expression, for_expression, while_expression, loop_expression, match_expression]
     flat: [[if_expression, else_clause]]
     branch: [if_expression, for_expression, while_expression, match_arm]

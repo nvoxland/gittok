@@ -249,6 +249,54 @@ def changed_old_ranges(repo: Path | str, commit: str, path: str) -> list[tuple[i
     return ranges
 
 
+_NEW_HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+_RAW = re.compile(r"^:\d+ \d+ [0-9a-f]+ ([0-9a-f]+) [A-Z]\d*\t(.+)$")
+
+
+def log_new_hunks(
+    repo: Path | str, ref: str, since_ts: int | None, limit: int, paths: set[str] | None = None
+) -> list[dict]:
+    """The newest `limit` non-merge commits on `ref`, each with the new-side line ranges its diff
+    changed, per file: `{sha, ts, files: {path: {"blob": sha, "ranges": [(start, end)]}}}`.
+
+    One git call. A pure deletion reports the two lines around the cut. Deleted files and files
+    outside `paths` (when given) are left out."""
+    _check_rev(ref)
+    args = [
+        "log", ref, "--no-merges", "--no-renames", "-p", "--raw", "--no-abbrev", "-U0",
+        f"-n{int(limit)}", "--format=%x1e%H%x1f%at",
+    ]  # fmt: skip
+    if since_ts is not None:
+        args.append(f"--since=@{since_ts}")
+    out = run(repo, *args, "--")
+    commits = []
+    for rec in out.split("\x1e"):
+        if not rec.strip():
+            continue
+        head, _, body = rec.partition("\n")
+        sha, _, ts = head.partition("\x1f")
+        files: dict[str, dict] = {}
+        blobs: dict[str, str] = {}
+        cur = None
+        for line in body.split("\n"):
+            if m := _RAW.match(line):
+                if set(m.group(1)) != {"0"}:
+                    blobs[m.group(2)] = m.group(1)
+            elif line.startswith("+++ "):
+                p = line[6:] if line.startswith("+++ b/") else None
+                cur = p if p in blobs and (paths is None or p in paths) else None
+                if cur:
+                    files[cur] = {"blob": blobs[cur], "ranges": []}
+            elif cur and (m := _NEW_HUNK.match(line)):
+                start = int(m.group(1))
+                count = 1 if m.group(2) is None else int(m.group(2))
+                files[cur]["ranges"].append(
+                    (start, start + count - 1) if count else (start, start + 1)
+                )
+        commits.append({"sha": sha, "ts": int(ts), "files": files})
+    return commits
+
+
 def recent_commits(repo: Path | str, ref: str, since_ts: int) -> list[dict]:
     """Non-merge commits on `ref` newer than `since_ts`, newest first, with changed files."""
     _check_rev(ref)
