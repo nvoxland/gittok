@@ -126,6 +126,7 @@ def _validate(conn, cfg, run: dict, cards: list, lead_refs: list[dict] | None = 
         redact_secrets=cfg.settings.research.redact_secrets,
         facts_conn=conn,
         require_facts=cfg.settings.agent.require_facts,
+        require_claim_sources=cfg.settings.agent.require_claim_sources,
         lead_texts=[x["text"] for x in lead_refs if x.get("text")] if lead_refs else None,
         variant_formats=variants,
     )

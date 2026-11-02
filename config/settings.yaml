@@ -20,6 +20,7 @@ agent:
   scout_max: 60                # unrated candidates one scout_status call hands out
   scout_batch: 15              # candidates per scout subagent (haiku rates them)
   require_facts: false         # true: reject (fact_missing) a card whose backticked identifier in hook, learn, or the first explain is neither covered by a listed fact nor in the cited code; false: only warn in the submit result
+  require_claim_sources: false # true: reject (claim_unsourced) a card whose why-sentence in the first explain has no interpretive claim or fact behind it, or whose claim does not match its source; false: only warn
   claim_checks: true           # reject cards whose numbers, dates, shas, or names git does not back
 analysis:
   history_window_days: 720     # relative to the ref's last commit date

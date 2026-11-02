@@ -251,6 +251,9 @@
 						text={d.text}
 						sources={card.links?.sources ?? []}
 						learn={i === firstExplain ? card.learn : undefined}
+						claims={i === firstExplain ? (card.claims ?? []) : []}
+						claimUrls={card.links?.claims ?? []}
+						checked={i === firstExplain && (card.resolved.facts?.length ?? 0) > 0}
 					/>
 				{:else if d.kind === 'code'}
 					<CodePanel

@@ -58,7 +58,7 @@ from dataclasses import dataclass, field  # noqa: E402
 from datetime import UTC, datetime, timedelta, timezone  # noqa: E402
 from pathlib import PurePosixPath  # noqa: E402
 
-from codescroll import claims, config, factcheck, gitq, secrets, storykey  # noqa: E402
+from codescroll import claims, config, factcheck, gitq, interpret, secrets, storykey  # noqa: E402
 
 MAX_SPAN = 40
 # The card front must fit one phone screen without scrolling: on iOS a scrolling front takes
@@ -517,6 +517,7 @@ class _Ctx:
     redact_secrets: bool = True
     facts_conn: object = None  # connection holding the facts store; None = no store
     require_facts: bool = False
+    require_claim_sources: bool = False
 
 
 def _check_meme(card: dict, ctx: _Ctx) -> None:
@@ -943,6 +944,7 @@ def _validate_one(card: dict, gc: _GitCache, ctx: _Ctx) -> tuple[dict, dict, str
     card["dirs"] = dirs
     _check_explain_floor(card, gc)  # last: other checks keep their own reasons
     warnings = _check_facts(card, resolved, gc, ctx)
+    warnings += interpret.check(card, gc, ctx.facts_conn, ctx.require_claim_sources, _Reject)
     _check_claims(card, resolved, gc, ctx)
 
     story_key = storykey.story_key_of(card["story_type"], keys)
@@ -983,6 +985,7 @@ def validate_cards(
     redact_secrets: bool = True,
     facts_conn=None,
     require_facts: bool = False,
+    require_claim_sources: bool = False,
 ) -> tuple[list[Accepted], list[Rejection]]:
     """Validate agent cards against the schema and git. Never raises for bad cards."""
     gc = _GitCache(repos=repos, redact=redact_secrets)
@@ -998,6 +1001,7 @@ def validate_cards(
         redact_secrets=redact_secrets,
         facts_conn=facts_conn,
         require_facts=require_facts,
+        require_claim_sources=require_claim_sources,
     )
     accepted: list[Accepted] = []
     rejected: list[Rejection] = []

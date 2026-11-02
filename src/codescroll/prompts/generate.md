@@ -67,6 +67,15 @@ The server checks every citation against git and rejects the card if anything is
 - Do **not** include an `excerpt` unless you copy the lines exactly. The server reads the real code from git and shows that, so you only need coordinates.
 - `dirs` must be real directories.
 
+## Say why only with a source
+
+A sentence in the first explain panel that says why (because, so that, in order to, to avoid, to prevent, the reason) is an interpretation. Back it with a `claims` entry that cites where the reason is written: a commit message (`{"commit": sha}`), a comment (`{"comment": {"path", "line"}}`), a doc line (`{"doc": {...}}`), or a PR URL (`{"pr": url}`). The claim `text` (max 240 chars) must reuse words from that source: 4 words in a row from a commit message, or a quoted span of it. If no source says why, state only what the code does. The reader sees each claim tagged "per commit abc1234". A listed fact can also back a why-sentence.
+
+```json
+"claims": [{"text": "Replaced by util because the parser moved there",
+            "kind": "interpretive", "source": {"commit": "a1b2c3d"}}]
+```
+
 ## Cross-repo stories
 
 Some packets say "from repos `a`, `b`" and list `weekly_recap`, `drift_alert` or `ripple` story types. They connect repos of one configured group. Put all those repos in `repos`, and cite commits or paths in at least two of them in `sources`.

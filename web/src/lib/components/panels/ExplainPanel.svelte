@@ -1,12 +1,30 @@
 <script lang="ts">
 	import { parseMarkdown, type Inline } from '#lib/miniMarkdown.ts';
-	import type { CardLink } from '#lib/types.ts';
+	import type { CardLink, Claim } from '#lib/types.ts';
 
 	let {
 		text,
 		sources = [],
-		learn
-	}: { text: string; sources?: CardLink[]; learn?: string } = $props();
+		learn,
+		claims = [],
+		claimUrls = [],
+		checked = false
+	}: {
+		text: string;
+		sources?: CardLink[];
+		learn?: string;
+		claims?: Claim[];
+		claimUrls?: (string | null)[];
+		checked?: boolean;
+	} = $props();
+
+	function tag(c: Claim): string {
+		const s = c.source;
+		if ('commit' in s) return `per commit ${s.commit.slice(0, 7)}`;
+		if ('pr' in s) return 'per PR';
+		if ('doc' in s) return 'per doc';
+		return 'per comment';
+	}
 	const blocks = $derived(parseMarkdown(text));
 	const linked = $derived(sources.filter((s) => s.url));
 </script>
@@ -33,6 +51,25 @@
 			</ul>
 		{/if}
 	{/each}
+	{#if claims.length > 0}
+		<ul class="claims">
+			{#each claims as c, i (i)}
+				<li>
+					<span class="claim-text">{c.text}</span>
+					{#if claimUrls[i]}
+						<a class="claim-tag" href={claimUrls[i]} target="_blank" rel="noopener noreferrer"
+							>{tag(c)}</a
+						>
+					{:else}
+						<span class="claim-tag">{tag(c)}</span>
+					{/if}
+				</li>
+			{/each}
+		</ul>
+	{/if}
+	{#if checked}
+		<p class="checked" title="Facts in this card were checked against the code">✓ checked</p>
+	{/if}
 	{#if linked.length > 0}
 		<div class="sources">
 			<h3>Sources</h3>
@@ -79,6 +116,31 @@
 	}
 	strong {
 		color: var(--accent);
+	}
+	.claims {
+		list-style: none;
+		padding: 0;
+	}
+	.claim-text {
+		font-style: italic;
+	}
+	.claim-tag {
+		display: inline-block;
+		margin-left: 0.4em;
+		padding: 0 0.45em;
+		border: 1px solid var(--border);
+		border-radius: 999px;
+		font-size: 0.7rem;
+		color: var(--muted);
+		text-decoration: none;
+	}
+	a.claim-tag {
+		color: var(--accent);
+	}
+	.checked {
+		margin: 0 0 1em;
+		font-size: 0.75rem;
+		color: var(--muted);
 	}
 	.sources {
 		margin-top: 1.5rem;

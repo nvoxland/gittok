@@ -67,6 +67,7 @@ class AgentSettings:
     scout_batch: int = 15  # candidates per scout subagent
     claim_checks: bool = True  # reject cards whose numbers, dates, or names git does not back
     require_facts: bool = False  # reject cards with a backticked identifier no listed fact covers
+    require_claim_sources: bool = False  # reject (not warn) a why-sentence with no sourced claim
 
 
 @dataclass(frozen=True)
@@ -487,7 +488,7 @@ def load_scan_defaults(root: Path | None = None) -> dict:
 
 _FILE_TYPE_KEYS = {
     "highlight", "file_words", "source_extensions", "noise_basenames", "manifests",
-    "ast_grep_probe",
+    "ast_grep_probe", "why_words", "doc_extensions", "comment_prefixes",
 }  # fmt: skip
 
 

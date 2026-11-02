@@ -88,3 +88,40 @@ manifests:
 # config/queries/languages.yaml). The ones it accepts are reported by survey_repo.
 ast_grep_probe: [tsx, kotlin, c, cpp, csharp, swift, php, html, css, json, yaml, bash, lua, scala,
                  elixir, haskell]
+
+# Words that make a sentence in the first explain panel a why/intent statement. Such a sentence
+# needs an interpretive claim (card `claims`) or a listed fact behind it (interpret.py).
+why_words: [because, so that, in order to, to avoid, to prevent, the reason]
+
+# Extensions of files that are documentation: every line of one is a doc line (card `claims`
+# with a `doc` source).
+doc_extensions: [.md, .rst, .txt, .adoc]
+
+# Extension -> line prefixes (after stripping) that mark a comment line. A `comment` or `doc`
+# claim source must point at such a line. "*" covers the middle of a block comment.
+comment_prefixes:
+  .py: ["#"]
+  .sh: ["#"]
+  .rb: ["#"]
+  .yaml: ["#"]
+  .yml: ["#"]
+  .toml: ["#"]
+  .clj: [";"]
+  .cljs: [";"]
+  .cljc: [";"]
+  .edn: [";"]
+  .js: ["//", "/*", "*"]
+  .jsx: ["//", "/*", "*"]
+  .ts: ["//", "/*", "*"]
+  .tsx: ["//", "/*", "*"]
+  .svelte: ["//", "/*", "*", "<!--"]
+  .go: ["//", "/*", "*"]
+  .rs: ["//", "/*", "*"]
+  .java: ["//", "/*", "*"]
+  .kt: ["//", "/*", "*"]
+  .c: ["//", "/*", "*"]
+  .h: ["//", "/*", "*"]
+  .cpp: ["//", "/*", "*"]
+  .css: ["/*", "*"]
+  .html: ["<!--"]
+  .sql: ["--", "/*", "*"]

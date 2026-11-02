@@ -134,6 +134,8 @@ export type Resolved = {
 	visual: ResolvedCode | ResolvedImages | ResolvedChart | null;
 	account?: ResolvedAccount;
 	depth: (ResolvedCode | ResolvedDiff | null)[];
+	// Ids of the facts the validator checked against the facts store.
+	facts?: string[];
 };
 
 export type Comment = { persona: string; text: string; spoiler?: boolean };
@@ -163,11 +165,21 @@ export type AnswerResponse = {
 	explanation: string;
 };
 
+export type ClaimSource =
+	| { commit: string }
+	| { pr: string }
+	| { comment: { path: string; line: number } }
+	| { doc: { path: string; line: number } };
+// A why/intent statement the writer tied to a commit, comment, doc, or PR.
+export type Claim = { text: string; kind: 'interpretive'; source: ClaimSource };
+
 export type CardLink = { label: string; url: string | null };
 export type CardLinks = {
 	repo_url: string;
 	panels: (string | null)[];
 	sources: CardLink[];
+	// One URL (or null) per card.claims entry.
+	claims?: (string | null)[];
 };
 
 export type Card = {
@@ -186,6 +198,7 @@ export type Card = {
 	series?: Series | null;
 	interaction?: Interaction;
 	depth: DepthPanel[];
+	claims?: Claim[];
 	comments: Comment[];
 	replies?: Reply[];
 	sources: Source[];

@@ -55,6 +55,7 @@ def apply(conn, cfg, in_dir: Path) -> dict:
             redact_secrets=cfg.settings.research.redact_secrets,
             facts_conn=conn,
             require_facts=cfg.settings.agent.require_facts,
+            require_claim_sources=cfg.settings.agent.require_claim_sources,
         )
         if rejects:
             r = rejects[0]
