@@ -53,6 +53,8 @@ def apply(conn, cfg, in_dir: Path) -> dict:
             signals_for=lambda name: signals.load_signals(conn, name),
             claim_checks=cfg.settings.agent.claim_checks,
             redact_secrets=cfg.settings.research.redact_secrets,
+            facts_conn=conn,
+            require_facts=cfg.settings.agent.require_facts,
         )
         if rejects:
             r = rejects[0]

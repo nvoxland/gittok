@@ -58,7 +58,7 @@ from dataclasses import dataclass, field  # noqa: E402
 from datetime import UTC, datetime, timedelta, timezone  # noqa: E402
 from pathlib import PurePosixPath  # noqa: E402
 
-from codescroll import claims, config, gitq, secrets, storykey  # noqa: E402
+from codescroll import claims, config, factcheck, gitq, secrets, storykey  # noqa: E402
 
 MAX_SPAN = 40
 # The card front must fit one phone screen without scrolling: on iOS a scrolling front takes
@@ -91,6 +91,7 @@ class Accepted:
     card: dict
     resolved: dict
     story_key: str
+    warnings: list = field(default_factory=list)
 
 
 class _Reject(Exception):
@@ -514,6 +515,8 @@ class _Ctx:
     lead_texts: list | None = None  # lead text of the packet, when known at submit time
     variant_formats: frozenset = frozenset()  # (story_type, format) pairs a packet named
     redact_secrets: bool = True
+    facts_conn: object = None  # connection holding the facts store; None = no store
+    require_facts: bool = False
 
 
 def _check_meme(card: dict, ctx: _Ctx) -> None:
@@ -776,6 +779,32 @@ def _check_explain_floor(card: dict, gc: _GitCache) -> None:
     )
 
 
+def _check_facts(card: dict, resolved: dict, gc: _GitCache, ctx: _Ctx) -> list[str]:
+    """Listed facts must hold in the facts store; identifiers need a fact or cited text.
+
+    Returns warnings (an uncovered identifier while `require_facts` is off)."""
+    try:
+        v = factcheck.verify(ctx.facts_conn, card["repos"], card.get("facts") or [])
+    except factcheck.FactFalse as e:
+        raise _Reject("fact_false", str(e)) from None
+    if v.ids:
+        resolved["facts"] = v.ids
+    first = next(p["text"] for p in card["depth"] if p["kind"] == "explain")
+    missing = factcheck.unbacked(
+        [card["hook"], card["learn"], first],
+        v.covered,
+        lambda: _explain_haystack(card, gc, set()),
+    )
+    if missing and ctx.require_facts:
+        raise _Reject(
+            "fact_missing",
+            f"{', '.join(missing[:4])} named in the hook, learn, or first explain panel has no "
+            "fact behind it. List a fact that covers it (ids from who_calls, what_calls, "
+            "defined_where, symbol_history, facts_for) or cite the code that holds it",
+        )
+    return v.warnings + [f"fact_missing: `{m}` has no listed fact" for m in missing]
+
+
 def _check_claims(card: dict, resolved: dict, gc: _GitCache, ctx: _Ctx) -> None:
     """Numbers, dates, shas, names, and paths in the prose must match git (claims.py)."""
     if not ctx.claim_checks:
@@ -819,7 +848,7 @@ def _check_secrets(card: dict, ctx: _Ctx) -> None:
             )
 
 
-def _validate_one(card: dict, gc: _GitCache, ctx: _Ctx) -> tuple[dict, dict, str]:
+def _validate_one(card: dict, gc: _GitCache, ctx: _Ctx) -> tuple[dict, dict, str, list]:
     personas = ctx.personas
     ctx.card_repos = tuple(card.get("repos", ())) if isinstance(card, dict) else ()
     if isinstance(card, dict) and isinstance(card.get("learn"), str):
@@ -913,10 +942,11 @@ def _validate_one(card: dict, gc: _GitCache, ctx: _Ctx) -> tuple[dict, dict, str
             dirs.append(rel)
     card["dirs"] = dirs
     _check_explain_floor(card, gc)  # last: other checks keep their own reasons
+    warnings = _check_facts(card, resolved, gc, ctx)
     _check_claims(card, resolved, gc, ctx)
 
     story_key = storykey.story_key_of(card["story_type"], keys)
-    return card, resolved, story_key
+    return card, resolved, story_key, warnings
 
 
 def _dir_rel(gc: _GitCache, repo_name: str, d: str) -> str | None:
@@ -951,6 +981,8 @@ def validate_cards(
     lead_texts: list | None = None,
     variant_formats=frozenset(),
     redact_secrets: bool = True,
+    facts_conn=None,
+    require_facts: bool = False,
 ) -> tuple[list[Accepted], list[Rejection]]:
     """Validate agent cards against the schema and git. Never raises for bad cards."""
     gc = _GitCache(repos=repos, redact=redact_secrets)
@@ -964,19 +996,21 @@ def validate_cards(
         lead_texts=lead_texts,
         variant_formats=frozenset(variant_formats),
         redact_secrets=redact_secrets,
+        facts_conn=facts_conn,
+        require_facts=require_facts,
     )
     accepted: list[Accepted] = []
     rejected: list[Rejection] = []
     seen: set[str] = set()
     for i, card in enumerate(cards):
         try:
-            normalized, resolved, key = _validate_one(card, gc, ctx)
+            normalized, resolved, key, warnings = _validate_one(card, gc, ctx)
             if key in seen:
                 raise _Reject("duplicate_story", "same story_type and sources as an earlier card")
             seen.add(key)
             if ctx.budget is not None:
                 ctx.budget -= illustration_cost(normalized)
-            accepted.append(Accepted(i, normalized, resolved, key))
+            accepted.append(Accepted(i, normalized, resolved, key, warnings))
         except _Reject as r:
             rejected.append(Rejection(i, r.reason, r.detail))
         except gitq.GitError as e:

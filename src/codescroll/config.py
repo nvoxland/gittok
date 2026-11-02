@@ -66,6 +66,7 @@ class AgentSettings:
     scout_max: int = 60  # unrated candidates one scout_status call hands out
     scout_batch: int = 15  # candidates per scout subagent
     claim_checks: bool = True  # reject cards whose numbers, dates, or names git does not back
+    require_facts: bool = False  # reject cards with a backticked identifier no listed fact covers
 
 
 @dataclass(frozen=True)

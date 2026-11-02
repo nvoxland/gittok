@@ -124,6 +124,8 @@ def _validate(conn, cfg, run: dict, cards: list, lead_refs: list[dict] | None = 
         illustration_budget=max(0, max_images - run["meta"].get("illustrations", 0)),
         claim_checks=cfg.settings.agent.claim_checks,
         redact_secrets=cfg.settings.research.redact_secrets,
+        facts_conn=conn,
+        require_facts=cfg.settings.agent.require_facts,
         lead_texts=[x["text"] for x in lead_refs if x.get("text")] if lead_refs else None,
         variant_formats=variants,
     )
@@ -230,7 +232,10 @@ def submit(conn, cfg, run_id: str, cards: list | dict, packet_id: str | None = N
                     )
                     ledger.mark_covered(conn, used_lead["id"], datetime.now(UTC))
                     replies.answer(conn, used_lead["id"], card_id)
-                stored.append({"index": a.index, "card_id": card_id})
+                entry = {"index": a.index, "card_id": card_id}
+                if a.warnings:
+                    entry["warnings"] = a.warnings
+                stored.append(entry)
         rejected.sort(key=lambda r: r.index)
         # A card rejected for its own fault counts against the lead it cited.
         for r in rejected:
