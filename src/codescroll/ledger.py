@@ -146,8 +146,15 @@ def refresh_candidates(conn, repo: str, sig: dict, t0, head_sha: str, now: datet
     return len(rows)
 
 
-def _current(conn, repo: str, story_type: str) -> list:
-    """Rows seen in the repo's latest refresh, i.e. still present at its current head.
+def _in_files(r, files) -> bool:
+    """A stored row whose place the file set does not read (an old row, or a profile written
+    since) is dropped. Server-made pinned leads are exempt."""
+    return _pinned(r) or brief.place_ok(files, r["path"] or None, r["lead_key"])
+
+
+def _current(conn, repo: str, story_type: str, files=None) -> list:
+    """Rows seen in the repo's latest refresh, i.e. still present at its current head, and
+    inside the file set (`files`; the bootstrap set when None).
 
     Unserved follow-up requests ("req:" keys) always count: no refresh drops them.
     """
@@ -159,7 +166,7 @@ def _current(conn, repo: str, story_type: str) -> list:
     ).fetchall()
     if story_type in brief.CANDIDATE_STORIES:  # churn rows from before candidate leads are dead
         rows = [r for r in rows if r["lead_key"].startswith(("cand:", *_SERVER_PREFIXES))]
-    return rows
+    return [r for r in rows if _in_files(r, files)]
 
 
 def _interest(path: str, means: dict[str, tuple[float, float]]) -> float:
@@ -308,6 +315,7 @@ def ranked(
     blocks: _StoryBlocks | None = None,
     nmap: dict | None = None,
     subjects: _Subjects | None = None,
+    files=None,
 ) -> list[brief.Lead]:
     """Current leads for one story type, best first, without leads still in their cooldown
     or whose story is blocked.
@@ -333,7 +341,7 @@ def ranked(
     reject_cutoff = iso(now - timedelta(days=cfg.settings.agent.subject_cooldown_days))
     rows = [
         r
-        for r in _current(conn, repo, story_type)
+        for r in _current(conn, repo, story_type, files or cfg.fileset(repo))
         if (r["last_covered_at"] is None or r["last_covered_at"] < cutoff)
         and (_pinned(r) or not (blocks.blocks(_lead(r)) or subjects.blocks(_lead(r))))
     ]
@@ -353,14 +361,21 @@ def ranked(
 
 
 def for_brief(
-    conn, cfg, repos, now: datetime, limit: int = WIDE_LIMIT, analyses: dict | None = None
+    conn,
+    cfg,
+    repos,
+    now: datetime,
+    limit: int = WIDE_LIMIT,
+    analyses: dict | None = None,
+    filesets: dict | None = None,
 ) -> dict:
     """`build_brief(ledger=...)` input: (repo, story type) -> ranked leads.
 
     A pair is present when the repo has current ledger rows for the type, even if all are in
     cooldown (the list is then empty: nothing fresh to offer). Absent pairs fall back to
     computing leads from signals. `analyses` (repo -> signals.analyze result) lets the candidate
-    leads be redone first, so ratings made since the last refresh count.
+    leads be redone first, so ratings made since the last refresh count. `filesets` (repo ->
+    FileSet; default: the config's) drops stored rows outside the repo's file set.
     """
     for repo, a in (analyses or {}).items():
         if repo in repos:
@@ -375,10 +390,11 @@ def for_brief(
     types = dict.fromkeys(t for ts in brief.CATEGORY_STORIES.values() for t in ts)
     out = {}
     for repo in repos:
+        fs = (filesets or {}).get(repo) or cfg.fileset(repo)
         for t in types:
-            if _current(conn, repo, t):
+            if _current(conn, repo, t, fs):
                 out[(repo, t)] = ranked(
-                    conn, cfg, repo, t, now, limit, dir_means, blocks, nmaps[repo], subjects
+                    conn, cfg, repo, t, now, limit, dir_means, blocks, nmaps[repo], subjects, fs
                 )
     return out
 
