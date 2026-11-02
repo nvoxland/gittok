@@ -115,6 +115,36 @@ def round_robin(rows: list[dict], n: int) -> list[dict]:
     return out
 
 
+def _split_budget(conn, unrated: dict[str, int], budget: int) -> dict[str, int]:
+    """Share `budget` among repos with unrated candidates.
+
+    Repos with the fewest rated candidates come first. Each gets floor(budget / repos) (or all
+    its unrated, if fewer); leftovers go one at a time, round-robin, in the same order.
+    """
+    rated = {
+        r[0]: r[1]
+        for r in conn.execute("SELECT repo, COUNT(*) FROM candidate_ratings GROUP BY repo")
+    }
+    order = sorted(unrated, key=lambda n: (rated.get(n, 0), n))
+    grants = {n: 0 for n in order}
+    if not order:
+        return grants
+    quota = budget // len(order)
+    for n in order:
+        grants[n] = min(quota, unrated[n])
+    left = budget - sum(grants.values())
+    while left > 0:
+        moved = False
+        for n in order:
+            if left > 0 and grants[n] < unrated[n]:
+                grants[n] += 1
+                left -= 1
+                moved = True
+        if not moved:
+            break
+    return grants
+
+
 def status(conn, cfg: Config, repo: str | None = None, max_: int | None = None) -> dict:
     """Make batches of unrated candidates (at most `max_` in all). Returns ids and counts."""
     names = [cfg.repo(repo).name] if repo else sorted(cfg.repos)
@@ -125,6 +155,7 @@ def status(conn, cfg: Config, repo: str | None = None, max_: int | None = None) 
     batches: list[dict] = []
     skipped: list[dict] = []
     total = 0
+    pending: dict[str, tuple[str, list[dict]]] = {}
     for name in names:
         try:
             head = ensure_candidates(conn, cfg, cfg.repos[name])
@@ -133,8 +164,11 @@ def status(conn, cfg: Config, repo: str | None = None, max_: int | None = None) 
             continue
         todo = _unrated(conn, name, head)
         total += len(todo)
-        take = round_robin(todo, max(0, budget))
-        budget -= len(take)
+        if todo:
+            pending[name] = (head, todo)
+    grants = _split_budget(conn, {n: len(t) for n, (_, t) in pending.items()}, max(0, budget))
+    for name, (head, todo) in pending.items():
+        take = round_robin(todo, grants.get(name, 0))
         take.sort(key=lambda r: (-r["score"], r["path"], r["start"]))
         for i in range(0, len(take), size):
             chunk = take[i : i + size]

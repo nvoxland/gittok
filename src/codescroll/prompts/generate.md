@@ -34,7 +34,7 @@ Every card has: `story_type`, `format`, `persona`, `tone`, `repos` (repo names),
   - Images, charts, and diagrams have a fixed size; only their captions and callouts count.
   - Short beats long. Put the detail in `depth` panels: they scroll.
 - `hook`: one line. This is what makes someone stop scrolling. Be specific: names, numbers, dates.
-- `learn`: one sentence, 20 to 140 characters, that finishes "After this card you know ...". It names the fact the reader keeps, for example: "`validate_cards` rejects a card when a cited line is not in the file." Not "this file changes a lot".
+- `learn`: one sentence, 20 to 140 characters, that states only the fact the reader keeps, for example: "`validate_cards` rejects a card when a cited line is not in the file." Not "this file changes a lot". Do not start with "After this card you know" or "You'll learn": the app shows "You'll learn:" already, and the validator strips those words.
 - `visual` is one of the kinds below, or one of the kinds in the format sections:
   - `{"kind": "code", "repo", "path", "commit", "lines": [a, b], "callouts": [{"line", "text"}]}`: 1 to 12 lines from that file at that commit (a code depth panel may show up to 40), up to 3 callouts on lines inside the range; or
   - `{"kind": "text", "title", "body", "bullets"}`: within the front budget above.

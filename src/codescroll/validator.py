@@ -814,9 +814,23 @@ def _check_claims(card: dict, resolved: dict, gc: _GitCache, ctx: _Ctx) -> None:
         raise _Reject("claim_unverified", bad.detail())
 
 
+_LEARN_PREFIX = re.compile(
+    r"^\s*(?:after this card,?\s+you know|you(?:'ll| will)\s+learn)\s*:?\s*(?:that\b\s*)?",
+    re.IGNORECASE,
+)
+
+
+def normalize_learn(text: str) -> str:
+    """Drop a leading "After this card you know" / "You'll learn:" (the UI adds its own label)."""
+    out = _LEARN_PREFIX.sub("", text, count=1).strip()
+    return out[:1].upper() + out[1:] if out else text
+
+
 def _validate_one(card: dict, gc: _GitCache, ctx: _Ctx) -> tuple[dict, dict, str]:
     personas = ctx.personas
     ctx.card_repos = tuple(card.get("repos", ())) if isinstance(card, dict) else ()
+    if isinstance(card, dict) and isinstance(card.get("learn"), str):
+        card = {**card, "learn": normalize_learn(card["learn"])}
     errs = schema_errors(card, personas)
     if errs:
         raise _Reject("schema", "; ".join(errs[:3]))
