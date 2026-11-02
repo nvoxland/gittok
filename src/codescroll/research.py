@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from codescroll import gitq
+from codescroll import gitq, secrets
 
 
 class ResearchError(Exception):
@@ -74,7 +74,7 @@ def read_file(cfg, repo: str, path: str, ref=None, lines=None) -> str:
         raise ResearchError(f"path not found at {ref}: {path}") from e
     if b"\0" in data[:8192]:
         raise ResearchError(f"binary file: {path}")
-    text = data.decode(errors="replace")
+    text = secrets.guard(cfg, data.decode(errors="replace"))
     all_lines = gitq.split_lines(text)
     limit = cfg.settings.research.max_read_lines
     if lines is None:
@@ -145,7 +145,7 @@ def git_grep(
     extra = len(hits) - max_hits
     if extra > 0:
         hits = [*hits[:max_hits], f"… {extra} more"]
-    return "\n".join(hits)
+    return secrets.guard(cfg, "\n".join(hits))
 
 
 def git_log(
@@ -170,7 +170,7 @@ def git_log(
     args += [ref, "--"]
     if path and (spec := _clean_path(path)):
         args.append(spec)
-    return _git(cfg, root, *args).rstrip("\n") or "no commits"
+    return secrets.guard(cfg, _git(cfg, root, *args).rstrip("\n")) or "no commits"
 
 
 def git_show(cfg, repo: str, commit: str, path: str | None = None, stat: bool = False) -> str:
@@ -185,7 +185,7 @@ def git_show(cfg, repo: str, commit: str, path: str | None = None, stat: bool = 
     args += [sha, "--"]
     if path and (spec := _clean_path(path)):
         args.append(spec)
-    return _git(cfg, root, *args)
+    return secrets.guard(cfg, _git(cfg, root, *args))
 
 
 def limit_default(lines, limit: int):
@@ -211,4 +211,4 @@ def git_blame(cfg, repo: str, path: str, lines=None, ref=None) -> str:
         out = gitq.run(root, *args, max_bytes=cfg.settings.research.max_output_bytes)
     except gitq.GitError as e:
         raise ResearchError(f"path not found at {ref}: {path}") from e
-    return out.rstrip("\n")
+    return secrets.guard(cfg, out.rstrip("\n"))

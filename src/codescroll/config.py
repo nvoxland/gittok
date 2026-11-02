@@ -85,6 +85,7 @@ class AnalysisSettings:
 class ResearchSettings:
     max_output_bytes: int = 200000
     max_read_lines: int = 300
+    redact_secrets: bool = True  # UNSAFE to turn off: repo text goes out as it is
 
 
 @dataclass(frozen=True)

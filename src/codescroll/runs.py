@@ -123,6 +123,7 @@ def _validate(conn, cfg, run: dict, cards: list, lead_refs: list[dict] | None = 
         signals_for=lambda name: signals.load_signals(conn, name),
         illustration_budget=max(0, max_images - run["meta"].get("illustrations", 0)),
         claim_checks=cfg.settings.agent.claim_checks,
+        redact_secrets=cfg.settings.research.redact_secrets,
         lead_texts=[x["text"] for x in lead_refs if x.get("text")] if lead_refs else None,
         variant_formats=variants,
     )

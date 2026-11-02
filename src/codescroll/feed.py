@@ -7,7 +7,7 @@ import copy
 import json
 from datetime import datetime
 
-from codescroll import db, links, replies, slotter
+from codescroll import db, links, replies, secrets, slotter
 
 
 def card_json(row) -> dict:
@@ -37,6 +37,9 @@ def strip_answers(card: dict) -> dict:
 def public_card(row, cfg=None) -> dict:
     """The card for the client. With `cfg`, `links` holds GitHub URLs (None when there are none)."""
     card = strip_answers(card_json(row))
+    if cfg is None or cfg.settings.research.redact_secrets:
+        # cards stored before redaction existed may still hold a secret in their code
+        card["resolved"] = secrets.redact_value(card["resolved"])
     if cfg is not None:
         card["links"] = links.card_links(cfg, card)
     return card

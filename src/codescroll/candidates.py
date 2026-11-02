@@ -18,6 +18,7 @@ recursion, macros); stable_core, well_tested (quality).
 
 from __future__ import annotations
 
+import bisect
 import hashlib
 import math
 import posixpath
@@ -26,7 +27,7 @@ from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
 
-from . import config, db, detectors, gitq, structure
+from . import config, db, detectors, gitq, secrets, structure
 from .config import AnalysisSettings
 from .profiles import FileSet, Profile, fileset_for
 
@@ -719,11 +720,34 @@ def _shape(sf: SourceFile) -> list[dict]:
                     out.append(_cand(sf.path, _around(j + 1, total), "clever", why, 1))
                     break
     for i, ln in enumerate(lines):
-        if len(ln) > th["long_line"] and "http" not in ln:
+        if _long_line(ln, th) and "http" not in ln:
             why = f"line {i + 1} is {len(ln)} characters long"
             out.append(_cand(sf.path, _around(i + 1, total), "long_line", why, len(ln)))
     out += _big_literals(sf)
     return out
+
+
+def _long_line(ln: str, th: dict) -> bool:
+    """A line longer than the threshold, once its secrets are masked: a line that is long
+    only because of a token or a key is not teaching material."""
+    return len(ln) > th["long_line"] and len(secrets.redact(ln)[0]) > th["long_line"]
+
+
+def _lines_without_secrets(lines: list[str]) -> int:
+    """How many of `lines` hold no secret (a PEM block or a list of keys is not a big literal)."""
+    text = "\n".join(lines)
+    found = secrets.find(text)
+    if not found:
+        return len(lines)
+    starts = [0]
+    for m in re.finditer("\n", text):
+        starts.append(m.end())
+    hit: set[int] = set()
+    for f in found:
+        first = bisect.bisect_right(starts, f.start) - 1
+        last = bisect.bisect_right(starts, max(f.end - 1, f.start)) - 1
+        hit.update(range(first, last + 1))
+    return len(lines) - len(hit)
 
 
 def _big_literals(sf: SourceFile) -> list[dict]:
@@ -737,7 +761,10 @@ def _big_literals(sf: SourceFile) -> list[dict]:
         end = _scan_parens(lines, i)[0] if sf.lang.parens else _indent_end(lines, i, i)
         skip_to = end
         n = end - i + 1
-        if n >= th["big_literal"]:
+        if (
+            n >= th["big_literal"]
+            and _lines_without_secrets(lines[i : end + 1]) >= th["big_literal"]
+        ):
             why = f"literal of {n} lines starting at line {i + 1}"
             out.append(_cand(sf.path, _span(i + 1, end + 1), "big_literal", why, n))
     return out
@@ -876,7 +903,7 @@ def _text_candidates(sf: SourceFile) -> list[dict]:
     if sf.is_test:
         return out
     for i, ln in enumerate(lines):
-        if len(ln) > th["long_line"] and "http" not in ln:
+        if _long_line(ln, th) and "http" not in ln:
             why = f"line {i + 1} is {len(ln)} characters long"
             out.append(_cand(sf.path, _around(i + 1, total), "long_line", why, len(ln)))
     depth, at = _indent_depth(lines, prefixes, int(rules.get("indent_unit_max", 8)))

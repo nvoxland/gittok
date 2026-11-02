@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-from codescroll import candidates, gitq, links, research, structure
+from codescroll import candidates, gitq, links, research, secrets, structure
 from codescroll.brief import _useful
 from codescroll.profiles import fileset_for
 
@@ -355,7 +355,8 @@ def _path_materials(cfg, root, ref: str, lead: dict) -> str:
     if b"\0" in data[:8192]:
         return ""
     blob = gitq.run(root, "rev-parse", f"{ref}:{path}").strip()
-    lines = gitq.split_lines(data.decode(errors="replace"))
+    # whole file first, so a window that starts inside a key block is still masked
+    lines = gitq.split_lines(secrets.guard(cfg, data.decode(errors="replace")))
     total = len(lines)
     span = lead.get("lines")
     start = 1
@@ -443,7 +444,7 @@ def materials_for(cfg, lead: dict, cache: dict | None = None) -> str:
             text = _path_materials(cfg, root, ref, lead)
     except (research.ResearchError, gitq.GitError, KeyError, TypeError, ValueError, OSError):
         text = ""
-    text = _cap(text, EXPLAIN_LEAD_CAP if explain else LEAD_CAP)
+    text = _cap(secrets.guard(cfg, text), EXPLAIN_LEAD_CAP if explain else LEAD_CAP)
     if cache is not None:
         cache[key] = text
     return text

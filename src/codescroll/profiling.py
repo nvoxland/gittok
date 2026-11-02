@@ -21,7 +21,7 @@ from pathlib import Path
 
 import yaml
 
-from . import candidates, detectors, gitq, profiles, signals, structure
+from . import candidates, detectors, gitq, profiles, secrets, signals, structure
 from .config import ConfigError
 from .profiles import FileSet, Profile, fileset_for
 
@@ -326,6 +326,11 @@ def _ast_grep_info() -> dict:
     }
 
 
+def _redact_survey(cfg, out: dict) -> dict:
+    """The survey with every secret in its text (manifest deps, profile yaml, paths) masked."""
+    return secrets.redact_value(out) if cfg.settings.research.redact_secrets else out
+
+
 def survey(cfg, conn, repo_name: str) -> dict:
     repo = check_name(cfg, repo_name)
     res = signals.analyze(conn, repo, cfg.settings.analysis, profile=cfg.profile(repo_name))
@@ -381,7 +386,7 @@ def survey(cfg, conn, repo_name: str) -> dict:
             "manifests_changed": _manifests_changed(repo.path, prof.head_sha, shas),
             "yaml": text if len(text) <= PROFILE_YAML_CAP else text[:PROFILE_YAML_CAP] + "\n# …cut",
         }
-    return _cap(out)
+    return _cap(_redact_survey(cfg, out))
 
 
 def _structure_info(files, by_ext: dict) -> dict:
@@ -469,13 +474,15 @@ def _engine_error(d) -> str | None:
     return None
 
 
-def _window_text(sf, start: int, end: int) -> str:
-    rows = sf.lines[start - 1 : end][:SAMPLE_LINES]
+def _window_text(lines: list[str], start: int, end: int) -> str:
+    rows = lines[start - 1 : end][:SAMPLE_LINES]
     return "\n".join(f"{start + i}\t{ln}" for i, ln in enumerate(rows))
 
 
-def _samples(hits: list[dict], by_path: dict) -> list[dict]:
-    """Up to SAMPLES windows, one per file first, then more from the same files."""
+def _samples(hits: list[dict], by_path: dict, redact: bool = True) -> list[dict]:
+    """Up to SAMPLES windows, one per file first, then more from the same files. With `redact`
+    each file is masked as a whole first, so a window inside a key block is masked too."""
+    masked: dict[str, list[str]] = {}
     ordered = sorted(hits, key=lambda h: (h["path"], h["start"]))
     first, rest, seen = [], [], set()
     for h in ordered:
@@ -484,13 +491,17 @@ def _samples(hits: list[dict], by_path: dict) -> list[dict]:
     out = []
     for h in (first + rest)[:SAMPLES]:
         sf = by_path[h["path"]]
+        if h["path"] not in masked:
+            masked[h["path"]] = (
+                secrets.redact("\n".join(sf.lines))[0].split("\n") if redact else sf.lines
+            )
         out.append(
             {
                 "path": h["path"],
                 "start": h["start"],
                 "end": h["end"],
                 "why": h["why"],
-                "text": _window_text(sf, h["start"], h["end"]),
+                "text": _window_text(masked[h["path"]], h["start"], h["end"]),
             }
         )
     return out
@@ -567,7 +578,7 @@ def test_detector(cfg, repo_name: str, rule, scan=None, ignore=None) -> dict:
         "ok": not g["errors"],
         "errors": g["errors"],
         "hits": g["hits"],
-        "samples": _samples(g["raw"], by_path),
+        "samples": _samples(g["raw"], by_path, cfg.settings.research.redact_secrets),
         "elapsed_ms": g["elapsed_ms"],
         "timed_out_files": g["timed_out_files"],
     }

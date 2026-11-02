@@ -58,7 +58,7 @@ from dataclasses import dataclass, field  # noqa: E402
 from datetime import UTC, datetime, timedelta, timezone  # noqa: E402
 from pathlib import PurePosixPath  # noqa: E402
 
-from codescroll import claims, gitq, storykey  # noqa: E402
+from codescroll import claims, gitq, secrets, storykey  # noqa: E402
 
 MAX_SPAN = 40
 # The card front must fit one phone screen without scrolling: on iOS a scrolling front takes
@@ -138,6 +138,10 @@ class _GitCache:
     files: dict = field(default_factory=dict)
     diffs: dict = field(default_factory=dict)
     patches: dict = field(default_factory=dict)
+    redact: bool = True  # mask secrets in text read from the repo (research.redact_secrets)
+
+    def _mask(self, text: str) -> str:
+        return secrets.redact(text)[0] if self.redact else text
 
     def repo(self, name: str):
         if name not in self.repos:
@@ -183,7 +187,7 @@ class _GitCache:
                 raise _Reject("path_not_at_commit", f"{path} does not exist at {rev[:10]}") from e
             if b"\0" in data[:8192]:
                 raise _Reject("binary_path", f"{path} is binary")
-            self.files[key] = gitq.split_lines(data.decode(errors="replace"))
+            self.files[key] = gitq.split_lines(self._mask(data.decode(errors="replace")))
         return self.files[key]
 
     def diff(self, repo_name: str, full: str, path: str) -> str:
@@ -202,15 +206,17 @@ class _GitCache:
                 head = ["diff", f"{full}^1", full]
             else:
                 head = ["show", "--format=", full]
-            self.diffs[key] = gitq.run(
-                repo.path,
-                head[0],
-                "--no-color",
-                "--no-ext-diff",
-                *head[1:],
-                "--",
-                path,
-                max_bytes=200_000,
+            self.diffs[key] = self._mask(
+                gitq.run(
+                    repo.path,
+                    head[0],
+                    "--no-color",
+                    "--no-ext-diff",
+                    *head[1:],
+                    "--",
+                    path,
+                    max_bytes=200_000,
+                )
             )
         return self.diffs[key]
 
@@ -218,10 +224,12 @@ class _GitCache:
         """The whole patch of one commit (all files), for finding identifiers in a cited commit."""
         key = (repo_name, full)
         if key not in self.patches:
-            self.patches[key] = gitq.run(
-                self.repo(repo_name).path,
-                "show", "--format=", "--no-color", "--no-ext-diff", full,
-                max_bytes=200_000,
+            self.patches[key] = self._mask(
+                gitq.run(
+                    self.repo(repo_name).path,
+                    "show", "--format=", "--no-color", "--no-ext-diff", full,
+                    max_bytes=200_000,
+                )
             )  # fmt: skip
         return self.patches[key]
 
@@ -535,6 +543,7 @@ class _Ctx:
     claim_checks: bool = True
     lead_texts: list | None = None  # lead text of the packet, when known at submit time
     variant_formats: frozenset = frozenset()  # (story_type, format) pairs a packet named
+    redact_secrets: bool = True
 
 
 def _check_meme(card: dict, ctx: _Ctx) -> None:
@@ -826,6 +835,20 @@ def normalize_learn(text: str) -> str:
     return out[:1].upper() + out[1:] if out else text
 
 
+def _check_secrets(card: dict, ctx: _Ctx) -> None:
+    """No secret may appear in any text of the card (hook, learn, explain, comments, callouts)."""
+    if not ctx.redact_secrets:
+        return
+    for text in secrets.strings(card):
+        found = secrets.find(text)
+        if found:
+            raise _Reject(
+                "secret_in_card",
+                f"the card text holds a secret ({found[0].name}). Remove it; talk about "
+                "the key without quoting its value",
+            )
+
+
 def _validate_one(card: dict, gc: _GitCache, ctx: _Ctx) -> tuple[dict, dict, str]:
     personas = ctx.personas
     ctx.card_repos = tuple(card.get("repos", ())) if isinstance(card, dict) else ()
@@ -835,6 +858,7 @@ def _validate_one(card: dict, gc: _GitCache, ctx: _Ctx) -> tuple[dict, dict, str
     if errs:
         raise _Reject("schema", "; ".join(errs[:3]))
     card = copy.deepcopy(card)
+    _check_secrets(card, ctx)
     _check_format(card)
     _check_fit(card)
     _check_interaction_shape(card)
@@ -956,9 +980,10 @@ def validate_cards(
     claim_checks: bool = True,
     lead_texts: list | None = None,
     variant_formats=frozenset(),
+    redact_secrets: bool = True,
 ) -> tuple[list[Accepted], list[Rejection]]:
     """Validate agent cards against the schema and git. Never raises for bad cards."""
-    gc = _GitCache(repos=repos)
+    gc = _GitCache(repos=repos, redact=redact_secrets)
     ctx = _Ctx(
         personas=personas,
         meme_templates=meme_templates or {},
@@ -968,6 +993,7 @@ def validate_cards(
         claim_checks=claim_checks,
         lead_texts=lead_texts,
         variant_formats=frozenset(variant_formats),
+        redact_secrets=redact_secrets,
     )
     accepted: list[Accepted] = []
     rejected: list[Rejection] = []
