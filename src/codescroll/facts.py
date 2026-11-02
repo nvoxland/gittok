@@ -565,3 +565,45 @@ def get(conn, fact_id_: str) -> dict | None:
         return None
     rows = _rows(conn, f"SELECT * FROM {table} WHERE fact_id = ?", fact_id_)
     return rows[0] if rows else None
+
+
+def symbols_named(conn, repo: str, name: str) -> list[str]:
+    """Full symbols of every definition called `name` (a bare name or a full symbol)."""
+    return sorted({d["symbol"] for d in definitions(conn, repo, name)})
+
+
+def callers_of(conn, repo: str, name: str, limit: int = 200) -> list[dict]:
+    """Calls to `name`: resolved to any definition it names, plus unresolved calls by that
+    bare name (their `resolved` is 0)."""
+    symbols = symbols_named(conn, repo, name) or [name]
+    marks = ",".join("?" * len(symbols))
+    return _rows(
+        conn,
+        f"SELECT * FROM fact_calls WHERE repo_id = ? AND (callee_symbol IN ({marks})"
+        " OR (resolved = 0 AND callee_name = ?)) ORDER BY path, line LIMIT ?",
+        _repo_id(conn, repo), *symbols, name, limit,
+    )  # fmt: skip
+
+
+def callees_of(conn, repo: str, name: str, limit: int = 200) -> list[dict]:
+    """Calls made inside every definition `name` names."""
+    symbols = symbols_named(conn, repo, name) or [name]
+    marks = ",".join("?" * len(symbols))
+    return _rows(
+        conn,
+        f"SELECT * FROM fact_calls WHERE repo_id = ? AND caller_symbol IN ({marks})"
+        " ORDER BY caller_symbol, line LIMIT ?",
+        _repo_id(conn, repo), *symbols, limit,
+    )  # fmt: skip
+
+
+def touches_of(conn, repo: str, name: str, limit: int = 200) -> list[dict]:
+    """Touch rows of every definition `name` names, newest first."""
+    symbols = symbols_named(conn, repo, name) or [name]
+    marks = ",".join("?" * len(symbols))
+    return _rows(
+        conn,
+        f"SELECT * FROM fact_touched WHERE repo_id = ? AND symbol IN ({marks})"
+        " ORDER BY ts DESC, commit_sha LIMIT ?",
+        _repo_id(conn, repo), *symbols, limit,
+    )  # fmt: skip

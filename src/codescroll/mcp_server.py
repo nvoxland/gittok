@@ -20,6 +20,7 @@ from codescroll import (
     candidate_leads,
     characters,
     db,
+    fact_tools,
     gitq,
     knowledge,
     learning,
@@ -642,6 +643,51 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
             raise steering.SteeringError(f"Unknown repo '{repo}'. Known: {', '.join(cfg.repos)}.")
         with _db(cfg) as conn:
             return rule_stats_mod.rollup(conn, repo)
+
+    # ---- fact queries (read-only; rows carry fact_id and source) ----
+
+    @tool
+    def defined_where(
+        cfg: Config, repo: str, name: str, limit: int = 50, run_id: str | None = None
+    ) -> list[dict]:
+        """Definitions called `name` (bare name or full symbol): path, start, end, fact_id."""
+        return fact_tools.defined_where(cfg, repo, name, limit)
+
+    @tool
+    def who_calls(
+        cfg: Config, repo: str, symbol: str, limit: int = 50, run_id: str | None = None
+    ) -> list[dict]:
+        """Calls to `symbol` (bare name ok) with path, line, resolved (0 = matched by name only)
+        and fact_id. Prefer this to git_grep for finding callers."""
+        return fact_tools.who_calls(cfg, repo, symbol, limit)
+
+    @tool
+    def what_calls(
+        cfg: Config, repo: str, symbol: str, limit: int = 50, run_id: str | None = None
+    ) -> list[dict]:
+        """Calls made inside `symbol` (bare name ok): callee_name, path, line, resolved, fact_id."""
+        return fact_tools.what_calls(cfg, repo, symbol, limit)
+
+    @tool
+    def symbol_history(
+        cfg: Config, repo: str, symbol: str, limit: int = 50, run_id: str | None = None
+    ) -> list[dict]:
+        """Commits that touched `symbol` (bare name ok), newest first: sha, date, subject,
+        fact_id. Covers the bounded analysis window only."""
+        return fact_tools.symbol_history(cfg, repo, symbol, limit)
+
+    @tool
+    def facts_for(
+        cfg: Config,
+        repo: str,
+        path: str,
+        start: int,
+        end: int | None = None,
+        limit: int = 100,
+        run_id: str | None = None,
+    ) -> list[dict]:
+        """Every definition, call, and import in lines start..end of a file, with fact_ids."""
+        return fact_tools.facts_for(cfg, repo, path, start, end, limit)
 
     return server
 
