@@ -118,6 +118,86 @@ describe('feed page', () => {
 		expect(screen.queryByRole('region', { name: 'End of feed' })).toBeNull();
 	});
 
+	describe('returning to the page (e43)', () => {
+		const card = (n: number) => fakeCard({ id: `c_${n}`, hook: `Hook ${n}` });
+		const order = () => screen.getAllByRole('article').map((a) => a.textContent ?? '');
+		beforeEach(() => sessionStorage.clear());
+
+		// Fires the 60%-visible callback for a card, like a user scrolling it into view.
+		function fakeIO() {
+			const fire: Record<string, () => void> = {};
+			class FakeIO {
+				constructor(public cb: (e: Partial<IntersectionObserverEntry>[]) => void) {}
+				observe(target: Element) {
+					const id = target.getAttribute('data-card-id')!;
+					fire[id] = () => this.cb([{ target, isIntersecting: true, intersectionRatio: 0.9 }]);
+				}
+				disconnect() {}
+			}
+			vi.stubGlobal('IntersectionObserver', FakeIO);
+			return fire;
+		}
+
+		it('remembers the card on screen and turns browser scroll restoration off', async () => {
+			const fire = fakeIO();
+			route({ '/api/feed': { cards: [card(1), card(2), card(3)], next_cursor: 'm' } });
+			render(Page);
+			await screen.findByText('Hook 1');
+			fire['c_2']();
+			expect(sessionStorage.getItem('codescroll.current')).toBe('c_2');
+			expect(history.scrollRestoration).toBe('manual');
+		});
+
+		it('a reload with a changed feed puts the remembered card first; unseen cards stay below', async () => {
+			sessionStorage.setItem('codescroll.current', 'c_3');
+			// The server resumes on c_1 (its event log lags) and serves c_3 again further down.
+			route({
+				'/api/feed': { cards: [card(1), card(4), card(3), card(5)], next_cursor: 'm', resume_card_id: 'c_1' }
+			});
+			render(Page);
+			await screen.findByText('Hook 3');
+			const hooks = order();
+			expect(hooks[0]).toContain('Hook 3');
+			expect(hooks.filter((h) => h.includes('Hook 3'))).toHaveLength(1);
+			expect(hooks.some((h) => h.includes('Hook 4'))).toBe(true);
+			expect(hooks.some((h) => h.includes('Hook 5'))).toBe(true);
+		});
+
+		it('fetches the remembered card when the new batch does not hold it', async () => {
+			sessionStorage.setItem('codescroll.current', 'c_9');
+			fetchMock.mockImplementation(async (url: string) => ({
+				ok: true,
+				headers: { get: () => null },
+				json: async () =>
+					url.startsWith('/api/cards/c_9')
+						? card(9)
+						: url.startsWith('/api/feed')
+							? { cards: [card(1), card(4)], next_cursor: null, resume_card_id: 'c_1' }
+							: { notifications: [], unread: 0, stories: [] }
+			}));
+			render(Page);
+			await screen.findByText('Hook 9');
+			expect(order()[0]).toContain('Hook 9');
+		});
+
+		it('hidden then visible does not refetch or change the list', async () => {
+			route({ '/api/feed': { cards: [card(1), card(2)], next_cursor: null } });
+			render(Page);
+			await screen.findByText('Hook 1');
+			const feedCalls = () => fetchMock.mock.calls.filter(([u]) => String(u).startsWith('/api/feed')).length;
+			const before = feedCalls();
+			const vis = vi.spyOn(document, 'visibilityState', 'get');
+			vis.mockReturnValue('hidden');
+			document.dispatchEvent(new Event('visibilitychange'));
+			vis.mockReturnValue('visible');
+			document.dispatchEvent(new Event('visibilitychange'));
+			window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+			expect(feedCalls()).toBe(before);
+			expect(order()).toHaveLength(2);
+			vis.mockRestore();
+		});
+	});
+
 	it('the end card checks again and appends only new cards', async () => {
 		let calls = 0;
 		const old = fakeCard({ id: 'c_old', hook: 'Old card' });

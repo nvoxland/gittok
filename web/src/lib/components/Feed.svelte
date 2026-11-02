@@ -8,8 +8,14 @@
 	let {
 		cards,
 		onEvent,
-		onNearEnd
-	}: { cards: Card[]; onEvent?: (e: FeedEvent) => void; onNearEnd?: () => void } = $props();
+		onNearEnd,
+		onActive
+	}: {
+		cards: Card[];
+		onEvent?: (e: FeedEvent) => void;
+		onNearEnd?: () => void;
+		onActive?: (id: string) => void;
+	} = $props();
 
 	// Ask for the next page while this many cards are still ahead, so the feed never runs out.
 	const NEAR_END = 5;
@@ -73,6 +79,7 @@
 			else inView.delete(id);
 			if (visible) {
 				activeId = id;
+				onActive?.(id);
 				if (cards.findIndex((c) => c.id === id) >= cards.length - 1 - NEAR_END) onNearEnd?.();
 			}
 			else if (activeId === id) activeId = null;
