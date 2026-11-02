@@ -60,6 +60,22 @@ def _cited_commits(card: dict) -> dict[tuple[str, str], str]:
     return out
 
 
+def _claim_url(cfg: Config, card: dict, src: dict) -> str | None:
+    """The web URL of an interpretive claim's source, or None when there is no GitHub URL."""
+    if "pr" in src:
+        return src["pr"]
+    base = repo_url(cfg, card["repo"])
+    if base is None:
+        return None
+    if "commit" in src:
+        return f"{base}/commit/{src['commit']}"
+    ref = src.get("comment") or src.get("doc")
+    rev = _branch(cfg.repos[card["repo"]].ref) if card["repo"] in cfg.repos else None
+    if not (ref and rev):
+        return None
+    return f"{base}/blob/{rev}/{quote(ref['path'])}#L{ref['line']}"
+
+
 def card_links(cfg: Config, card: dict) -> dict | None:
     """`{"repo_url", "panels": [url|None per depth panel], "sources": [{"label", "url"}]}`.
 
@@ -88,4 +104,5 @@ def card_links(cfg: Config, card: dict) -> dict | None:
         rev = cited.get((s["repo"], s["path"])) or _branch(ref)
         url = b and rev and _blob(b, rev, s["path"], s.get("lines"))
         sources.append({"label": s["path"], "url": url or None})
-    return {"repo_url": base, "panels": panels, "sources": sources}
+    claims = [_claim_url(cfg, card, c.get("source") or {}) for c in card.get("claims") or []]
+    return {"repo_url": base, "panels": panels, "sources": sources, "claims": claims}

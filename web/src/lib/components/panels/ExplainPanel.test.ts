@@ -60,4 +60,33 @@ describe('ExplainPanel', () => {
 		expect(container.querySelector('.learn')).toBeNull();
 		expect(container.querySelector('p')?.textContent).toBe('Body.');
 	});
+
+	it('shows each interpretive claim with a source tag and link', () => {
+		const { container } = render(ExplainPanel, {
+			text: 'Body.',
+			claims: [
+				{ text: 'It was a stopgap.', kind: 'interpretive', source: { commit: 'abc1234def' } },
+				{
+					text: 'Noted in code.',
+					kind: 'interpretive',
+					source: { comment: { path: 'a.py', line: 3 } }
+				},
+				{ text: 'Merged for speed.', kind: 'interpretive', source: { pr: 'https://x/pull/2' } }
+			],
+			claimUrls: ['https://example.com/commit/abc1234def', null, 'https://x/pull/2']
+		});
+		const tags = [...container.querySelectorAll('.claim-tag')].map((t) => t.textContent);
+		expect(tags).toEqual(['per commit abc1234', 'per comment', 'per PR']);
+		expect(container.querySelector('a.claim-tag')?.getAttribute('href')).toBe(
+			'https://example.com/commit/abc1234def'
+		);
+		expect(container.textContent).toContain('It was a stopgap.');
+	});
+
+	it('shows a checked marker only when asked', () => {
+		const on = render(ExplainPanel, { text: 'Body.', checked: true });
+		expect(on.container.querySelector('.checked')?.textContent).toContain('checked');
+		const off = render(ExplainPanel, { text: 'Body.' });
+		expect(off.container.querySelector('.checked')).toBeNull();
+	});
 });

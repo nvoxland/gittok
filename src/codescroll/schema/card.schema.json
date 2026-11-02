@@ -263,6 +263,23 @@
         "type": "array", "minItems": 2, "maxItems": 2,
         "prefixItems": [{"type": "string", "minLength": 1, "maxLength": 300}, {"type": "integer", "minimum": 0, "maximum": 99}]}}}
     ]},
+    "claim": {
+      "type": "object", "additionalProperties": false, "required": ["text", "kind", "source"],
+      "properties": {
+        "text": {"type": "string", "minLength": 1, "maxLength": 240},
+        "kind": {"const": "interpretive"},
+        "source": {"oneOf": [
+          {"type": "object", "additionalProperties": false, "required": ["commit"], "properties": {"commit": {"$ref": "#/$defs/sha"}}},
+          {"type": "object", "additionalProperties": false, "required": ["pr"], "properties": {"pr": {"type": "string", "maxLength": 300}}},
+          {"type": "object", "additionalProperties": false, "required": ["comment"], "properties": {"comment": {"$ref": "#/$defs/claim_line"}}},
+          {"type": "object", "additionalProperties": false, "required": ["doc"], "properties": {"doc": {"$ref": "#/$defs/claim_line"}}}
+        ]}
+      }
+    },
+    "claim_line": {
+      "type": "object", "additionalProperties": false, "required": ["path", "line"],
+      "properties": {"path": {"$ref": "#/$defs/relpath"}, "line": {"type": "integer", "minimum": 1}}
+    },
     "str_pair": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "string", "minLength": 1, "maxLength": 300}},
     "card": {
       "type": "object",
@@ -289,6 +306,7 @@
         "verdict": {"enum": ["good", "bad", "clever", "cursed", "core"]},
         "hook": {"type": "string", "minLength": 1, "maxLength": 200},
         "facts": {"type": "array", "maxItems": 30, "items": {"$ref": "#/$defs/fact"}},
+        "claims": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/claim"}},
         "learn": {"type": "string", "minLength": 20, "maxLength": 140},
         "visual": {"oneOf": [
           {"$ref": "#/$defs/code_visual"}, {"$ref": "#/$defs/text_visual"}, {"$ref": "#/$defs/meme_visual"},

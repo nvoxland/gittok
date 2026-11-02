@@ -107,3 +107,17 @@ def test_cross_repo_sources_use_their_own_repo_url(cfg, fixture_repo):
         "https://github.com/acme/fixture/commit/abc1234",
         "https://github.com/acme/other/commit/def5678",
     ]
+
+
+def test_claim_links(cfg, fixture_repo):
+    sha = fixture_repo.shas["fix1"]
+    base = "https://github.com/acme/fixture"
+    claims = [
+        {"text": "a b c d", "kind": "interpretive", "source": {"commit": sha[:7]}},
+        {"text": "a", "kind": "interpretive", "source": {"pr": f"{base}/pull/3"}},
+        {"text": "b", "kind": "interpretive", "source": {"doc": {"path": "a b.md", "line": 4}}},
+    ]
+    out = links.card_links(cfg, card_of(example_card(fixture_repo, claims=claims)))
+    assert out["claims"][0] == f"{base}/commit/{sha[:7]}"
+    assert out["claims"][1] == f"{base}/pull/3"
+    assert out["claims"][2] == f"{base}/blob/main/a%20b.md#L4"
