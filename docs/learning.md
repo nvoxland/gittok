@@ -364,3 +364,18 @@ n = n * (1 - 0.25 * own_share)                 # only when settings.user.git_ide
 A dir with no row has novelty 1. `commits_30d` comes from the stored churn signal (top 25 dirs per window; others count 0). `own_share` is the reader's share of changed lines in the top-level dir (signal `author_shares`, matched by name, case-insensitive). It lowers novelty by at most 25%, because the reader often studies code that other people wrote. `settings.user.git_identities` defaults to empty.
 
 `knowledge.novelty_map(conn, repo)` gives `{dir: novelty}` for every dir with counts or with a card. The `coverage` tool adds `novelty` to each top-level dir (1.0 when unknown). `get_profile` adds `knowledge`: the 10 most novel dirs.
+
+### Knowledge per symbol
+
+The `knowledge_symbols` table (migration 0023) holds the same counts per `(repo, symbol)`: `seen`, `explains_opened`, `quiz_right`, `quiz_wrong`, `knew_it`, `teach_more`, `last_seen`. The symbol is `fact_defines.symbol` from the syntax facts. It is updated in the same pass as the dir counts (same events, same once-per-card rule, same `knowledge_events` guard, so reprocessing changes nothing).
+
+A card's symbols (`knowledge.card_symbols`): the symbols named by `resolved["facts"]` when the card has them; else the innermost definitions that overlap the lines of its code visual and code panels, plus backticked names (`` `name` `` or `` `name()` ``) that match at most 3 definitions in the card's repos.
+
+`knowledge.symbol_novelty` uses the dir formula without churn and authorship. Lead ranking multiplies the dir novelty by a symbol factor (`knowledge.SymbolContext.factor`), from the innermost definitions in the lead's window:
+
+```
+f = 0.5 + 0.5 * max(novelty(symbol))       # all symbols seen: down to 0.5
+f = f * 1.3                                # the window defines an unseen symbol that calls or is called by a seen one
+```
+
+A window with no known definitions, or a repo with no symbol knowledge, has factor 1. The repo map API adds `files`: for the 15 files with most functions, methods and classes, `symbols_defined` and `symbols_seen`. The UI shows "4 of 12 functions seen".

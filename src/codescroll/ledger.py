@@ -329,7 +329,9 @@ def ranked(
     Novelty (knowledge.lead_dir; 1.0 for an unknown dir) leads: what the reader has not learned
     comes first. Interest is a mild factor in [0.5, 1.5] so it only breaks near-ties; it stays
     because the learned dir reward is still the best signal of what the reader enjoys. Novelty
-    already falls as cards are seen, so `times_covered` is the only other repeat brake.
+    already falls as cards are seen, and a symbol factor (knowledge.SymbolContext) damps leads
+    whose definitions are all seen and boosts "next door" ones, so `times_covered` is the only
+    other repeat brake.
     """
     cutoff = iso(now - timedelta(days=cfg.settings.agent.lead_cooldown_days))
     if dir_means is None:
@@ -349,8 +351,11 @@ def ranked(
     if nmap is None:
         nmap = knowledge.novelty_map(conn, repo, cfg.settings.user.git_identities)
 
+    symbols = knowledge.SymbolContext(conn, repo)
+
     def score(r) -> float:
         nov = knowledge.lead_dir(r["path"], nmap)[1]
+        nov *= symbols.factor(r["path"], json.loads(r["lines"]) if r["lines"] else None)
         interest = 0.5 + _interest(r["path"], dir_means)
         rejects = r["times_rejected"] if (r["last_rejected_at"] or "") >= reject_cutoff else 0
         return interest * r["strength"] * nov * 0.5 ** r["times_covered"] * 0.5**rejects

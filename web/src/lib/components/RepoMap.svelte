@@ -35,6 +35,19 @@
 				</li>
 			{/each}
 		</ul>
+		{#if map.files && map.files.length > 0}
+			<h2>Files</h2>
+			<ul>
+				{#each map.files as f (f.path)}
+					<li class="file" data-testid="map-file-{f.path}" style="--depth: 0">
+						<span class="path">{f.path}</span>
+						<span class="known">
+							{f.symbols_seen} of {f.symbols_defined} functions seen
+						</span>
+					</li>
+				{/each}
+			</ul>
+		{/if}
 	{/if}
 </main>
 
@@ -52,6 +65,16 @@
 	h1 {
 		margin: 0.5rem 0;
 		font-size: 1.4rem;
+	}
+	h2 {
+		margin: 1rem 0 0.25rem;
+		font-size: 1.05rem;
+	}
+	.file {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		min-height: 44px;
 	}
 	ul {
 		list-style: none;

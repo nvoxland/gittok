@@ -7,7 +7,9 @@ own-authorship prior, into a number in [0, 1]: 1 means "the reader has not learn
 
 from __future__ import annotations
 
-from codescroll import db, signals
+import re
+
+from codescroll import db, facts, signals
 from codescroll.profiles import fileset_for
 
 MAX_DEPTH = 2  # a card counts toward its dirs and their parents, at most 2 path levels deep
@@ -16,6 +18,10 @@ STRUGGLE_SCALE = 2.0  # struggle events that take the "struggle" lift to one hal
 CHURN_COMMITS = 10  # commits in 30 days that count as "changed a lot"
 CHURN_WEIGHT = 0.3
 OWN_WEIGHT = 0.25
+NEXT_DOOR_BOOST = 1.3  # a lead defines an unseen symbol that calls or is called by a seen one
+SEEN_FLOOR = 0.5  # a lead whose symbols are all fully seen keeps this share of its score
+MAX_NAME_DEFS = 3  # a backticked name that matches more definitions than this is too vague
+_TICKS = re.compile(r"`([^`\s]{2,80})`")
 
 _COUNT = {
     "seen": "cards_seen",
@@ -59,6 +65,99 @@ def _kind(conn, row, data: dict) -> str | None:
     return t  # knew_it, teach_more
 
 
+_SYMBOL_COL = {"cards_seen": "seen"}
+
+
+def _count_symbols(conn, row, col: str) -> None:
+    col = _SYMBOL_COL.get(col, col)
+    for repo, symbol in card_symbols(conn, row["card_id"]):
+        conn.execute(
+            f"INSERT INTO knowledge_symbols(repo, symbol, {col}, last_seen) VALUES (?, ?, 1, ?) "
+            f"ON CONFLICT(repo, symbol) DO UPDATE SET {col} = {col} + 1, "
+            "last_seen = MAX(COALESCE(last_seen, 0), excluded.last_seen)",
+            (repo, symbol, row["ts"]),
+        )
+
+
+def _strings(node):
+    if isinstance(node, str):
+        yield node
+    elif isinstance(node, dict):
+        for v in node.values():
+            yield from _strings(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _strings(v)
+
+
+def _innermost_defs(conn, repo_id: int, path: str, start: int, end: int) -> list[dict]:
+    """Definitions overlapping lines start..end that hold no other overlapping definition."""
+    defs = [
+        dict(r)
+        for r in conn.execute(
+            'SELECT symbol, start, "end" FROM fact_defines '
+            'WHERE repo_id = ? AND path = ? AND start <= ? AND "end" >= ? ORDER BY start',
+            (repo_id, path, end, start),
+        )
+    ]
+    return [
+        d
+        for d in defs
+        if not any(
+            o is not d
+            and o["start"] >= d["start"]
+            and o["end"] <= d["end"]
+            and (o["start"], o["end"]) != (d["start"], d["end"])
+            for o in defs
+        )
+    ]
+
+
+def _repo_ids(conn) -> dict[str, int]:
+    return {r["name"]: r["id"] for r in conn.execute("SELECT id, name FROM repos")}
+
+
+def card_symbols(conn, card_id: str) -> list[tuple[str, str]]:
+    """(repo, symbol) pairs a card teaches.
+
+    From `resolved["facts"]` (fact ids) when the card has them and they name symbols. Else
+    derived: definitions overlapping the lines of its code visual and code panels, plus
+    backticked names that match few definitions in the card's repos.
+    """
+    row = conn.execute("SELECT spec, resolved FROM cards WHERE id = ?", (card_id,)).fetchone()
+    if row is None:
+        return []
+    spec, resolved = db.loads(row["spec"]), db.loads(row["resolved"]) if row["resolved"] else {}
+    ids = _repo_ids(conn)
+    names = {v: k for k, v in ids.items()}
+    out: dict[tuple[str, str], None] = {}
+    for fid in (resolved or {}).get("facts") or []:
+        fact = facts.get(conn, fid)
+        if fact is None or fact.get("repo_id") not in names:
+            continue
+        for key in ("symbol", "caller_symbol", "callee_symbol"):
+            if fact.get(key):
+                out[(names[fact["repo_id"]], fact[key])] = None
+    if out:
+        return list(out)
+    panels = [spec.get("visual") or {}, *(spec.get("depth") or [])]
+    for p in panels:
+        if p.get("kind") == "code" and p.get("path") and p.get("lines") and p.get("repo") in ids:
+            lo, hi = p["lines"][0], p["lines"][-1]
+            for d in _innermost_defs(conn, ids[p["repo"]], p["path"], lo, hi):
+                out[(p["repo"], d["symbol"])] = None
+    texts = [t for key in ("hook", "learn", "visual", "depth") for t in _strings(spec.get(key))]
+    for m in dict.fromkeys(x for t in texts for x in _TICKS.findall(t)):
+        name = m.removesuffix("()")
+        for repo in spec.get("repos") or []:
+            if repo not in ids:
+                continue
+            found = facts.definitions(conn, repo, name)
+            if 0 < len(found) <= MAX_NAME_DEFS:
+                out.update({(repo, d["symbol"]): None for d in found})
+    return list(out)
+
+
 def update_in_tx(conn) -> int:
     """Count events not counted before. The caller owns the transaction. Returns the count."""
     marks = ",".join("?" * len(_TYPES))
@@ -93,6 +192,7 @@ def update_in_tx(conn) -> int:
         n += 1
         if repeat:
             continue
+        _count_symbols(conn, row, col=_COUNT[kind])
         feats = conn.execute(
             "SELECT feature, value FROM card_features WHERE card_id = ? "
             "AND feature IN ('repo', 'dir')",
@@ -127,7 +227,11 @@ def combine(row, commits_30d: int = 0, own_share: float | None = None) -> float:
             return 0
 
     pos = (
-        get("cards_seen") + 2 * get("explains_opened") + 2 * get("quiz_right") + 4 * get("knew_it")
+        get("cards_seen")
+        + get("seen")
+        + 2 * get("explains_opened")
+        + 2 * get("quiz_right")
+        + 4 * get("knew_it")
     )
     struggle = get("quiz_wrong") + get("teach_more")
     nov = 1 / (1 + pos / POS_SCALE)
@@ -136,6 +240,85 @@ def combine(row, commits_30d: int = 0, own_share: float | None = None) -> float:
     if own_share:
         nov *= 1 - OWN_WEIGHT * min(1.0, max(0.0, own_share))
     return round(max(0.0, min(1.0, nov)), 4)
+
+
+def symbol_novelty(conn, repo: str, symbol: str) -> float:
+    """Novelty of one symbol, the dir formula without churn and authorship (1.0 when unknown)."""
+    row = conn.execute(
+        "SELECT * FROM knowledge_symbols WHERE repo = ? AND symbol = ?", (repo, symbol)
+    ).fetchone()
+    return combine(row or {})
+
+
+class SymbolContext:
+    """What the reader has seen in one repo's symbols, for ranking leads.
+
+    `factor(path, lines)` is 1.0 for a window with no known definitions. Otherwise it is
+    `SEEN_FLOOR + (1 - SEEN_FLOOR) * novelty` of the window's most novel symbol (fully seen
+    symbols damp the lead), times `NEXT_DOOR_BOOST` when the window defines an unseen symbol
+    that calls or is called by a seen one ("next door" learning).
+    """
+
+    def __init__(self, conn, repo: str):
+        self.conn, self.repo = conn, repo
+        self.repo_id = _repo_ids(conn).get(repo)
+        self.rows = {
+            r["symbol"]: r
+            for r in conn.execute("SELECT * FROM knowledge_symbols WHERE repo = ?", (repo,))
+        }
+        self.seen = {s for s, r in self.rows.items() if r["seen"] > 0}
+        self.next_door: set[str] = set()
+        if self.seen and self.repo_id is not None:
+            q = (
+                "SELECT c.{a} AS s FROM fact_calls c JOIN knowledge_symbols k ON k.repo = ? "
+                "AND k.symbol = c.{b} AND k.seen > 0 WHERE c.repo_id = ? AND c.{a} IS NOT NULL"
+            )
+            both = q.format(a="callee_symbol", b="caller_symbol")
+            both += " UNION " + q.format(a="caller_symbol", b="callee_symbol")
+            args = (repo, self.repo_id, repo, self.repo_id)
+            self.next_door = {r["s"] for r in conn.execute(both, args)} - self.seen
+
+    @property
+    def active(self) -> bool:
+        return bool(self.rows) and self.repo_id is not None
+
+    def factor(self, path: str | None, lines=None) -> float:
+        if not self.active or not path:
+            return 1.0
+        lo, hi = (lines[0], lines[-1]) if lines else (1, 10**9)
+        syms = [d["symbol"] for d in _innermost_defs(self.conn, self.repo_id, path, lo, hi)]
+        if not syms:
+            return 1.0
+        nov = max(combine(self.rows.get(s) or {}) for s in syms)
+        f = SEEN_FLOOR + (1 - SEEN_FLOOR) * nov
+        if any(s in self.next_door for s in syms):
+            f *= NEXT_DOOR_BOOST
+        return f
+
+
+def map_files(conn, cfg, repo: str, limit: int = 15) -> list[dict]:
+    """Per-file symbol coverage for the files with most callable definitions.
+
+    `symbols_seen` counts callable definitions (function, method, class) with a card seen.
+    """
+    rid = _repo_ids(conn).get(repo)
+    if rid is None:
+        return []
+    files = cfg.fileset(repo)
+    marks = ",".join("?" * len(facts.CALLABLE))
+    rows = conn.execute(
+        "SELECT d.path AS path, COUNT(*) AS defined, "
+        "SUM(COALESCE(k.seen, 0) > 0) AS seen FROM fact_defines d "
+        "LEFT JOIN knowledge_symbols k ON k.repo = ? AND k.symbol = d.symbol "
+        f"WHERE d.repo_id = ? AND d.kind IN ({marks}) GROUP BY d.path",
+        (repo, rid, *sorted(facts.CALLABLE)),
+    ).fetchall()
+    rows = [r for r in rows if _visible(r["path"].rpartition("/")[0] or "", files)]
+    rows.sort(key=lambda r: (-r["defined"], r["path"]))
+    return [
+        {"path": r["path"], "symbols_defined": r["defined"], "symbols_seen": r["seen"] or 0}
+        for r in rows[:limit]
+    ]
 
 
 def _churn_30d(conn, repo: str) -> dict[str, int]:
