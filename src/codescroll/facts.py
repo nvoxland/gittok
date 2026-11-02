@@ -12,7 +12,7 @@ This module holds NO language rules. What is language specific is data:
   `import_spec_regex`, `import_unit` and `qualifier_sep` say how an import names a file and how a
   reference is qualified. A language that sets none of them gets the plain rules (a spec is a
   path, a reference is a bare name).
-- later, facts that an agent submits (another source value).
+- facts that an agent submits from an analyzer it ran (`submit_analyzer`, further down).
 
 What is stored:
 
@@ -53,6 +53,7 @@ _TABLES = {
     "call": "fact_calls",
     "imp": "fact_imports",
     "tch": "fact_touched",
+    "sch": "fact_schema",
 }
 _MAX_RANGE_LINES = 2000
 
@@ -446,6 +447,11 @@ def refresh(
     with db.immediate(conn):
         for table in _TABLES.values():
             conn.execute(f"DELETE FROM {table} WHERE repo_id = ?", (repo_id,))
+        # Analyzer facts went with the rows above. Keep their record, but no longer current.
+        conn.execute(
+            "UPDATE fact_analyzers SET head_sha = '' WHERE repo_id = ? AND head_sha = ?",
+            (repo_id, head),
+        )
         conn.executemany(
             "INSERT OR IGNORE INTO fact_defines(fact_id, repo_id, path, symbol, name, kind, start,"
             ' "end", size, params, depth, branches, public) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
@@ -607,3 +613,298 @@ def touches_of(conn, repo: str, name: str, limit: int = 200) -> list[dict]:
         " ORDER BY ts DESC, commit_sha LIMIT ?",
         _repo_id(conn, repo), *symbols, limit,
     )  # fmt: skip
+
+
+# ---------- facts an agent supplies from an analyzer ----------
+#
+# The user's agent runs an analyzer in its own session and converts the output to the generic
+# facts below. CodeScroll never runs the analyzer. It checks each fact against the file text at
+# the head (a cited name must stand on the cited line) and stores what passes. No stack is named
+# here: the only rules are about lines and words.
+
+MAX_SUBMIT = 5000
+MAX_REJECTS = 50
+_KINDS = ("defines", "imports", "calls", "returns", "accepts")  # also the order of processing
+_SEP = re.compile(r"[./:#>\\]+")
+
+
+class FactsError(ValueError):
+    """A whole submission is refused (stale head, bad size or label)."""
+
+
+class _Reject(Exception):
+    pass
+
+
+def _last(name: str) -> str:
+    return next((p for p in reversed(_SEP.split(name)) if p), name)
+
+
+def _has_word(line: str, name: str) -> bool:
+    return bool(name) and re.search(rf"(?<!\w){re.escape(name)}(?!\w)", line) is not None
+
+
+def _text(fact: dict, key: str, required: bool = True) -> str | None:
+    v = fact.get(key)
+    if v is None and not required:
+        return None
+    if not isinstance(v, str) or not v.strip() or len(v) > 500:
+        raise _Reject(f"{key} must be a short non-empty string")
+    return v
+
+
+def _int(fact: dict, key: str, required: bool = True) -> int | None:
+    v = fact.get(key)
+    if v is None and not required:
+        return None
+    if isinstance(v, bool) or not isinstance(v, int) or v < 1:
+        raise _Reject(f"{key} must be a positive integer")
+    return v
+
+
+class _Files:
+    """File lines at one head, read once each."""
+
+    def __init__(self, repo_path, head: str):
+        self.repo_path, self.head, self.cache = repo_path, head, {}
+
+    def lines(self, path: str) -> list[str]:
+        if path not in self.cache:
+            try:
+                data = gitq.show_file(self.repo_path, self.head, path)
+            except gitq.GitError:
+                raise _Reject(f"{path} is not a file at {self.head[:12]}") from None
+            self.cache[path] = data.decode("utf-8", errors="replace").splitlines()
+        return self.cache[path]
+
+    def line(self, path: str, n: int, above: int = 0) -> str:
+        ls = self.lines(path)
+        if n > len(ls):
+            raise _Reject(f"{path} has {len(ls)} lines, not {n}")
+        return "\n".join(ls[max(0, n - 1 - above) : n])
+
+
+def _enclosing(conn, rid: int, path: str, line: int):
+    return conn.execute(
+        "SELECT symbol, name FROM fact_defines"
+        ' WHERE repo_id = ? AND path = ? AND start <= ? AND "end" >= ?'
+        ' ORDER BY start DESC, "end" LIMIT 1',
+        (rid, path, line, line),
+    ).fetchone()
+
+
+def _store_define(conn, rid, repo, src, f, files):
+    path, name, line = _text(f, "path"), _text(f, "name"), _int(f, "line")
+    end = _int(f, "end_line", False) or line
+    if end < line:
+        raise _Reject("end_line is before line")
+    if not _has_word(files.line(path, line), _last(name)):
+        raise _Reject(f"{name} is not on line {line} of {path}")
+    kind = _text(f, "kind", False) or "function"
+    params = f.get("params")
+    n_params = len(params) if isinstance(params, list) else 0
+    old = conn.execute(
+        "SELECT fact_id, symbol FROM fact_defines"
+        " WHERE repo_id = ? AND path = ? AND start = ? AND kind = ? AND name = ?",
+        (rid, path, line, kind, _last(name)),
+    ).fetchone()
+    symbol = old["symbol"] if old else f"{path}:{name}"
+    if old:
+        conn.execute("DELETE FROM fact_defines WHERE fact_id = ?", (old["fact_id"],))
+    fid = fact_id("def", repo, "a", path, symbol, kind, line)
+    conn.execute(
+        "INSERT OR REPLACE INTO fact_defines(fact_id, repo_id, path, symbol, name, kind, start,"
+        ' "end", size, params, depth, branches, public, source)'
+        " VALUES (?,?,?,?,?,?,?,?,?,?,0,0,1,?)",
+        (fid, rid, path, symbol, _last(name), kind, line, end, end - line + 1, n_params, src),
+    )
+
+
+def _store_import(conn, rid, repo, src, f, files):
+    path, module, line = _text(f, "path"), _text(f, "module"), _int(f, "line")
+    text = files.line(path, line)
+    if module not in text and not _has_word(text, _last(module)):
+        raise _Reject(f"{module} is not on line {line} of {path}")
+    conn.execute(
+        "DELETE FROM fact_imports WHERE repo_id = ? AND path = ? AND line = ?"
+        " AND source = 'syntax'",
+        (rid, path, line),
+    )
+    fid = fact_id("imp", repo, "a", path, line, module)
+    conn.execute(
+        "INSERT OR REPLACE INTO fact_imports(fact_id, repo_id, path, line, module_text,"
+        " resolved_path, source) VALUES (?,?,?,?,?,?,?)",
+        (fid, rid, path, line, module, _text(f, "resolved_path", False), src),
+    )
+
+
+def _store_call(conn, rid, repo, src, f, files):
+    path, caller, callee = _text(f, "path"), _text(f, "caller"), _text(f, "callee")
+    line, cpath = _int(f, "line"), _text(f, "callee_path", False)
+    name = _last(callee)
+    if not _has_word(files.line(path, line), name):
+        raise _Reject(f"callee {callee} is not on line {line} of {path}")
+    enc = _enclosing(conn, rid, path, line)
+    if enc and _last(caller) != enc["name"]:
+        raise _Reject(f"caller {caller} is not the enclosing definition {enc['name']}")
+    caller_symbol = enc["symbol"] if enc else caller
+    callee_symbol = None
+    if cpath:
+        d = conn.execute(
+            "SELECT symbol FROM fact_defines WHERE repo_id = ? AND path = ? AND name = ?"
+            " ORDER BY start LIMIT 1",
+            (rid, cpath, name),
+        ).fetchone()
+        callee_symbol = d["symbol"] if d else f"{cpath}:{callee}"
+    same = "repo_id = ? AND path = ? AND line = ? AND callee_name = ? AND source = 'syntax'"
+    args = (rid, path, line, name)
+    if callee_symbol is None:  # do not weaken a call that the syntax layer already resolved
+        if conn.execute(f"SELECT 1 FROM fact_calls WHERE {same} AND resolved = 1", args).fetchone():
+            return
+    conn.execute(f"DELETE FROM fact_calls WHERE {same}", args)
+    fid = fact_id("call", repo, "a", path, line, caller_symbol, callee)
+    conn.execute(
+        "INSERT OR REPLACE INTO fact_calls(fact_id, repo_id, caller_symbol, callee_name, path,"
+        " line, resolved, callee_symbol, source) VALUES (?,?,?,?,?,?,?,?,?)",
+        (
+            fid,
+            rid,
+            caller_symbol,
+            name,
+            path,
+            line,
+            int(callee_symbol is not None),
+            callee_symbol,
+            src,
+        ),
+    )
+
+
+def _store_schema(kind):
+    def store(conn, rid, repo, src, f, files):
+        path, symbol, line = _text(f, "path"), _text(f, "symbol"), _int(f, "line")
+        if not _has_word(files.line(path, line, above=3), _last(symbol)):
+            raise _Reject(f"{symbol} is not on line {line} (or 3 above) of {path}")
+        typ, params = None, None
+        if kind == "returns":
+            typ = _text(f, "type")
+        else:
+            params = f.get("params")
+            if not isinstance(params, list) or not all(isinstance(p, str | dict) for p in params):
+                raise _Reject("params must be a list")
+            params = db.dumps(params)
+        fid = fact_id("sch", repo, kind, path, line, symbol)
+        conn.execute(
+            "INSERT OR REPLACE INTO fact_schema(fact_id, repo_id, kind, path, line, symbol, type,"
+            " params, source) VALUES (?,?,?,?,?,?,?,?,?)",
+            (fid, rid, kind, path, line, symbol, typ, params, "schema:" + src.split(":", 1)[1]),
+        )
+
+    return store
+
+
+_STORE = {
+    "defines": _store_define,
+    "imports": _store_import,
+    "calls": _store_call,
+    "returns": _store_schema("returns"),
+    "accepts": _store_schema("accepts"),
+}
+
+
+def submit_analyzer(
+    conn, repo_name: str, repo_path, current_head: str, head_sha: str, tool: str, items: list
+) -> dict:
+    """Check agent-supplied facts against the file text at `head_sha` and store the good ones.
+
+    `current_head` is the repo's analyzed head; a different `head_sha` is refused whole. Returns
+    `{accepted: {kind: n}, rejected: [{index, fact, reason}], rejected_count, head_sha, tool}`.
+    A call may be sent in several chunks; a repeated fact replaces itself."""
+    if not isinstance(tool, str) or not tool.strip() or len(tool) > 60 or not tool.isprintable():
+        raise FactsError("tool must be a short label such as 'name 1.2'")
+    tool = tool.strip()
+    if head_sha != current_head:
+        raise FactsError(
+            f"stale head_sha {head_sha[:12]}: the repo is at {current_head[:12]}. "
+            "Run the analyzer again."
+        )
+    if not isinstance(items, list) or len(items) > MAX_SUBMIT:
+        raise FactsError(f"send a list of at most {MAX_SUBMIT} facts per call")
+    rid = _repo_id(conn, repo_name)
+    if rid is None:
+        raise FactsError(f"{repo_name} has not been analyzed yet; wait for its first analysis")
+    parsed: list[tuple[int, str, dict]] = []
+    rejected: list[dict] = []
+    n_rejected = 0
+
+    def reject(i, kind, why):
+        nonlocal n_rejected
+        n_rejected += 1
+        if len(rejected) < MAX_REJECTS:
+            rejected.append({"index": i, "fact": kind, "reason": why})
+
+    for i, it in enumerate(items):
+        if not isinstance(it, dict) or len(it) != 1:
+            reject(i, None, "a fact is an object with exactly one key")
+            continue
+        ((kind, body),) = it.items()
+        if kind not in _STORE or not isinstance(body, dict):
+            reject(i, kind, f"unknown fact kind; use one of {', '.join(_KINDS)}")
+            continue
+        parsed.append((i, kind, body))
+    parsed.sort(key=lambda t: _KINDS.index(t[1]))  # defines first: calls check against them
+    files, accepted, src = _Files(repo_path, head_sha), {}, f"analyzer:{tool}"
+    with db.immediate(conn):
+        for i, kind, body in parsed:
+            try:
+                _STORE[kind](conn, rid, repo_name, src, body, files)
+            except _Reject as e:
+                reject(i, kind, str(e))
+                continue
+            accepted[kind] = accepted.get(kind, 0) + 1
+        conn.execute(
+            "DELETE FROM fact_analyzers WHERE repo_id = ? AND head_sha != ?", (rid, head_sha)
+        )
+        old = conn.execute(
+            "SELECT counts FROM fact_analyzers WHERE repo_id = ? AND tool = ?", (rid, tool)
+        ).fetchone()
+        total = dict(db.loads(old["counts"]) if old else {})
+        for k, n in accepted.items():
+            total[k] = total.get(k, 0) + n
+        conn.execute(
+            "INSERT OR REPLACE INTO fact_analyzers(repo_id, tool, head_sha, submitted_at, counts)"
+            " VALUES (?,?,?,?,?)",
+            (rid, tool, head_sha, db.now_iso(), db.dumps(total)),
+        )
+    rejected.sort(key=lambda r: r["index"])
+    return {
+        "tool": tool,
+        "head_sha": head_sha,
+        "accepted": accepted,
+        "rejected_count": n_rejected,
+        "rejected": rejected,
+    }
+
+
+def stale_analyzer_repos(conn, heads: dict[str, str]) -> list[str]:
+    """Repos of `heads` (name -> current head) with analyzer facts checked at another head."""
+    out = []
+    for name, head in heads.items():
+        rid = _repo_id(conn, name)
+        if rid is None:
+            continue
+        if conn.execute(
+            "SELECT 1 FROM fact_analyzers WHERE repo_id = ? AND head_sha != ?", (rid, head)
+        ).fetchone():
+            out.append(name)
+    return out
+
+
+def analyzer_hint(stale: list[str]) -> str | None:
+    """One line for the SessionStart hook, or None when no repo has stale analyzer facts."""
+    if not stale:
+        return None
+    return (
+        f"CodeScroll: analyzer facts are stale for {', '.join(stale)}; "
+        "offer to refresh with /codescroll-profile-repo."
+    )

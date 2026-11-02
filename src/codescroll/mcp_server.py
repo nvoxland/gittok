@@ -36,6 +36,7 @@ from codescroll import (
     supply,
     validator,
 )
+from codescroll import facts as facts_mod
 from codescroll import (
     rule_stats as rule_stats_mod,
 )
@@ -688,6 +689,40 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
     ) -> list[dict]:
         """Every definition, call, and import in lines start..end of a file, with fact_ids."""
         return fact_tools.facts_for(cfg, repo, path, start, end, limit)
+
+    # ---- agent-supplied analyzer facts. CodeScroll never runs the analyzer:
+    # the agent runs it under the user's permission prompts and submits the converted output.
+
+    @tool
+    def submit_facts(
+        cfg: Config, repo: str, head_sha: str, tool: str, facts: list[dict[str, Any]]
+    ) -> dict:
+        """Submit facts from an analyzer you ran yourself. CodeScroll checks each one against the
+        file text at head_sha and stores what passes. head_sha must be the repo's current head
+        (get it from survey_repo); a stale one is refused. `tool` is a short label, such as
+        "name 1.2". Send up to 5000 facts per call; send more calls for more. Each fact is an
+        object with one key (lines are 1-based):
+        {"defines": {path, name, line, end_line?, kind?, params?}},
+        {"calls": {path, line, caller, callee, callee_path?}},
+        {"imports": {path, line, module, resolved_path?}},
+        {"returns": {path, line, symbol, type}},
+        {"accepts": {path, line, symbol, params: [...]}}.
+        Checks: the path exists at head_sha; a defines name, a calls callee (last name segment) or
+        an imports module is on the cited line; a calls caller matches the definition that holds
+        the line when one is stored; a returns/accepts symbol is on the line or 3 lines above.
+        Returns {accepted: {kind: n}, rejected_count, rejected: [{index, fact, reason}, ...]}
+        (the list is capped). Fix the reasons and send the rejected facts again.
+        """
+        if repo not in cfg.repos:
+            raise ToolError(f"Unknown repo '{repo}'. Known: {', '.join(cfg.repos)}.")
+        r = cfg.repos[repo]
+        with _db(cfg) as conn:
+            try:
+                return facts_mod.submit_analyzer(
+                    conn, repo, r.path, gitq.rev_parse(r.path, r.ref), head_sha, tool, facts
+                )
+            except facts_mod.FactsError as e:
+                raise ToolError(str(e)) from e
 
     return server
 

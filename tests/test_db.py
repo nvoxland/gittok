@@ -46,6 +46,7 @@ def test_migrate_twice_applies_nothing_second_time(tmp_path):
         "0018_replies.sql",
         "0019_candidate_rule_id.sql",
         "0020_syntax_facts.sql",
+        "0022_analyzer_facts.sql",
         "0023_knowledge_symbols.sql",
     ]
     assert db.migrate(conn) == []
