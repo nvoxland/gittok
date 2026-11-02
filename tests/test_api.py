@@ -793,3 +793,22 @@ def test_feed_dir_filter_matches_subdirs_but_not_prefix_names(cfg, client, fixtu
     assert len(client.get("/api/feed", params={"dir": "billing/sub"}).json()["cards"]) == 1
     assert client.get("/api/feed", params={"dir": "bill"}).json()["cards"] == []
     assert client.get("/api/feed", params={"dir": "billing/su"}).json()["cards"] == []
+
+
+def test_repo_map_returns_per_file_symbol_coverage(cfg, client, fixture_repo):
+    seed(cfg, fixture_repo, [text_card(fixture_repo)])
+    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+        rid = conn.execute("SELECT id FROM repos WHERE name = 'fixture'").fetchone()[0]
+        for i, name in enumerate(("f", "g")):
+            conn.execute(
+                "INSERT INTO fact_defines(fact_id, repo_id, path, symbol, name, kind, start, "
+                '"end", size, params, depth, branches, public) '
+                "VALUES (?, ?, 'src/a.py', ?, ?, 'function', ?, ?, 3, 0, 0, 0, 1)",
+                (f"def-{name}", rid, f"src/a.py::{name}", name, i * 10 + 1, i * 10 + 3),
+            )
+        conn.execute(
+            "INSERT INTO knowledge_symbols(repo, symbol, seen) VALUES ('fixture', 'src/a.py::f', 1)"
+        )
+        conn.commit()
+    files = client.get("/api/repos/fixture/map").json()["files"]
+    assert files == [{"path": "src/a.py", "symbols_defined": 2, "symbols_seen": 1}]

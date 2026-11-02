@@ -599,7 +599,11 @@ def create_app(
         if name not in cfg.repos:
             raise HTTPException(404, f"unknown repo {name}")
         with conn() as c:
-            return {"name": name, "dirs": knowledge.repo_map(c, cfg, name)}
+            return {
+                "name": name,
+                "dirs": knowledge.repo_map(c, cfg, name),
+                "files": knowledge.map_files(c, cfg, name),
+            }
 
     @app.post("/api/events")
     def events(batch: EventBatch):

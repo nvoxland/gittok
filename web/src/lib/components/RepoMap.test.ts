@@ -28,6 +28,13 @@ const map = (): Map => ({
 });
 
 describe('RepoMap', () => {
+	it('shows symbol coverage per file when present', () => {
+		render(RepoMap, {
+			map: { ...map(), files: [{ path: 'billing/a.py', symbols_defined: 12, symbols_seen: 4 }] }
+		});
+		expect(screen.getByTestId('map-file-billing/a.py')).toHaveTextContent('4 of 12 functions seen');
+	});
+
 	it('shows known-ness and verdict chips per dir', () => {
 		render(RepoMap, { map: map() });
 		const row = screen.getByTestId('map-billing');

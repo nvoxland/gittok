@@ -242,7 +242,8 @@ export type MapDir = {
 	novelty: number;
 	verdicts: Record<string, number>;
 };
-export type RepoMap = { name: string; dirs: MapDir[] };
+export type MapFile = { path: string; symbols_defined: number; symbols_seen: number };
+export type RepoMap = { name: string; dirs: MapDir[]; files?: MapFile[] };
 
 export type FeedFilter = { repo?: string; dir?: string };
 
