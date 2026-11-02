@@ -32,10 +32,22 @@ CLEVER_TAGS = frozenset(
         "sleep",
         "magic_number",
         "big_literal",
+        "convention_mismatch",
+        "nil_contract",
     }
 )
 # Tags and verdicts that make an "any window" story type (snippets, quizzes) happier.
-PREFER_TAGS = frozenset({"clever", "core", "entry_point", "smell", "god_file"})
+PREFER_TAGS = frozenset(
+    {
+        "clever",
+        "core",
+        "entry_point",
+        "smell",
+        "god_file",
+        "convention_mismatch",
+        "nil_contract",
+    }
+)
 PREFER_VERDICTS = frozenset({"clever", "cursed", "bad", "core"})
 
 
