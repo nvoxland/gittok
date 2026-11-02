@@ -1052,3 +1052,28 @@ def test_good_verdict_needs_no_defence(fixture_repo, repos):
     del card["comments"]
     accepted, rejected = check([card], repos)
     assert rejected == [] and len(accepted) == 1
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "After this card you know that `total` rounds the sum to two places.",
+        "after this card, you know `total` rounds the sum to two places.",
+        "You'll learn: `total` rounds the sum to two places.",
+        "You will learn that `total` rounds the sum to two places.",
+        "`total` rounds the sum to two places.",
+    ],
+)
+def test_learn_prefix_is_stripped(fixture_repo, repos, raw):
+    accepted, rejected = check([example_card(fixture_repo, learn=raw)], repos)
+    assert rejected == []
+    assert accepted[0].card["learn"] == "`total` rounds the sum to two places."
+
+
+def test_learn_is_capitalised_and_length_checked_after_stripping(fixture_repo, repos):
+    ok = "after this card you know the retry loop stops after three tries."
+    accepted, _ = check([example_card(fixture_repo, learn=ok)], repos)
+    assert accepted[0].card["learn"] == "The retry loop stops after three tries."
+    short = "After this card you know it is fast."
+    _, rejected = check([example_card(fixture_repo, learn=short)], repos)
+    assert reasons(rejected) == ["schema"]
