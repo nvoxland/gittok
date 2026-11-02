@@ -51,7 +51,11 @@ def _validate(args) -> int:
     data = json.loads(Path(args.file).read_text(encoding="utf-8"))
     cards = data["cards"] if isinstance(data, dict) else data
     accepted, rejected = validator.validate_cards(
-        cards, cfg.repos, list(cfg.personas), claim_checks=cfg.settings.agent.claim_checks
+        cards,
+        cfg.repos,
+        list(cfg.personas),
+        claim_checks=cfg.settings.agent.claim_checks,
+        redact_secrets=cfg.settings.research.redact_secrets,
     )
     print(f"accepted: {len(accepted)}")
     for r in rejected:

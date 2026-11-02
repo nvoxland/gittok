@@ -30,6 +30,7 @@ analysis:
 research:
   max_output_bytes: 200000
   max_read_lines: 300
+  redact_secrets: true         # mask secrets in repo text sent out (JWTs, keys, ...); false is UNSAFE
 render:
   # Illustrations need mflux (uv sync --group images). Save a quantized copy once with
   # `mflux-save --model z-image-turbo --quantize 4 --path ~/.cache/mflux/z-image-turbo-q4`

@@ -11,6 +11,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 
 from . import candidates, db, gitq, signals
+from . import secrets as redaction
 from .config import Config
 
 VERDICTS = ("good", "bad", "clever", "cursed", "core")
@@ -166,11 +167,12 @@ def batch_candidates(conn, cfg: Config, batch_id: str) -> dict:
     out = []
     for it in b["items"]:
         try:
-            lines = (
-                gitq.show_file(repo.path, b["head_sha"], it["path"])
-                .decode("utf-8", errors="replace")
-                .splitlines()
-            )
+            lines = redaction.guard(
+                cfg,
+                gitq.show_file(repo.path, b["head_sha"], it["path"]).decode(
+                    "utf-8", errors="replace"
+                ),
+            ).splitlines()
         except gitq.GitError:
             lines = []
         end = min(it["end"], it["start"] + SHOW_LINES - 1)
