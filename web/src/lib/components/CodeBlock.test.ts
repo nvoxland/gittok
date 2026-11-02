@@ -33,6 +33,37 @@ describe('CodeBlock', () => {
 		expect(container.querySelector('.codeblock')).toHaveClass('wrap');
 	});
 
+	it('fit reports when the fitted font is too small to read', () => {
+		const sizes: Array<() => void> = [];
+		vi.stubGlobal(
+			'ResizeObserver',
+			class {
+				constructor(cb: () => void) {
+					sizes.push(cb);
+				}
+				observe() {}
+				disconnect() {}
+			}
+		);
+		const onShrunk = vi.fn();
+		// 56 chars + gutter = 59 cols; in a 300px box the font is about 8px
+		render(CodeBlock, { code: 'x'.repeat(56), fit: true, onShrunk });
+		vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(300);
+		sizes.forEach((cb) => cb());
+		expect(onShrunk).toHaveBeenLastCalledWith(true);
+		vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(900);
+		sizes.forEach((cb) => cb());
+		expect(onShrunk).toHaveBeenLastCalledWith(false);
+		vi.restoreAllMocks();
+		vi.unstubAllGlobals();
+	});
+
+	it('large drops fit and uses the big font class', () => {
+		const { container } = render(CodeBlock, { code: 'a', large: true });
+		expect(container.querySelector('.codeblock')).toHaveClass('large');
+		expect(container.querySelector('.codeblock')).not.toHaveClass('fit');
+	});
+
 	it('wraps long lines only when asked', () => {
 		const { container } = render(CodeBlock, { code: 'a', wrap: true });
 		expect(container.querySelector('.codeblock')).toHaveClass('wrap');

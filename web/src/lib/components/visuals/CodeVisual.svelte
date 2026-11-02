@@ -3,7 +3,18 @@
 	import SourceLine from '../panels/SourceLine.svelte';
 	import type { CodeVisual, ResolvedCode } from '#lib/types.ts';
 
-	let { visual, resolved }: { visual: CodeVisual; resolved: ResolvedCode | null } = $props();
+	let {
+		visual,
+		resolved,
+		full = false,
+		onShrunk
+	}: {
+		visual: CodeVisual;
+		resolved: ResolvedCode | null;
+		/** Lightbox: natural size, no fit. */
+		full?: boolean;
+		onShrunk?: (shrunk: boolean) => void;
+	} = $props();
 	const callouts = $derived(visual.callouts ?? []);
 </script>
 
@@ -15,7 +26,9 @@
 			language={resolved.language}
 			startLine={resolved.start_line}
 			highlight={callouts.map((c) => c.line)}
-			fit
+			fit={!full}
+			large={full}
+			{onShrunk}
 		/>
 	{:else}
 		<p class="missing">Code unavailable</p>

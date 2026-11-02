@@ -3,6 +3,7 @@ skip_ms: 1000
 weights:
   dwell: 0.45                  # x watch fraction: beat cards by time played, static by dwell/expected
   depth_open: 0.15
+  lightbox_open: 0.15          # tapped a visual open full screen (counts once)
   explain_more: 0.15
   like: 0.25
   save: 0.30

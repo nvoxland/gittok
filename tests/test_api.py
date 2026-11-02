@@ -118,6 +118,11 @@ def test_events_accept_the_beat_player_types(client):
     assert client.post("/api/events", json={"events": events}).json() == {"stored": 3}
 
 
+def test_events_accept_lightbox_open(client):
+    events = [{"card_id": "c_1", "type": "lightbox_open", "ts": 1, "data": {"kind": "code"}}]
+    assert client.post("/api/events", json={"events": events}).json() == {"stored": 1}
+
+
 def test_events_reject_unknown_type(client):
     bad = {"events": [{"card_id": "c_1", "type": "teleport", "ts": 1}]}
     assert client.post("/api/events", json=bad).status_code == 422

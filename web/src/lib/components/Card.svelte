@@ -6,6 +6,8 @@
 	import ExplainPanel from './panels/ExplainPanel.svelte';
 	import Avatar from './Avatar.svelte';
 	import Quiz from './Quiz.svelte';
+	import Lightbox from './Lightbox.svelte';
+	import { isClipped } from '#lib/lightbox.ts';
 	import Poster from './Poster.svelte';
 	import { visuals } from './visuals/index.ts';
 	import { getAnswer, getFlags, setFlag } from '#lib/cardState.ts';
@@ -60,6 +62,36 @@
 		if (next === panel) return;
 		panel = next;
 		onPanelChange?.(next);
+	}
+
+	// Lightbox: the visual at natural size. Beat cards keep tap = skip a beat,
+	// so they open it from the corner button only.
+	let lightboxOpen = $state(false);
+	let visualEl: HTMLElement | undefined = $state();
+	let clipped = $state(false);
+	let shrunk = $state(false);
+	const hint = $derived(clipped || shrunk);
+
+	$effect(() => {
+		const el = visualEl;
+		if (!el || typeof ResizeObserver === 'undefined') return;
+		const measure = () => (clipped = isClipped(el.scrollHeight, el.clientHeight));
+		measure();
+		const ro = new ResizeObserver(measure);
+		ro.observe(el);
+		return () => ro.disconnect();
+	});
+
+	function openLightbox() {
+		if (lightboxOpen) return;
+		lightboxOpen = true;
+		onAction?.('lightbox_open', { kind: card.visual.kind });
+	}
+
+	function tapVisual(e: MouseEvent) {
+		if (beats.length) return;
+		if ((e.target as Element | null)?.closest?.('a, button, input, label')) return;
+		openLightbox();
 	}
 
 	const Visual = $derived(visuals[card.visual.kind]);
@@ -165,7 +197,9 @@
 	</header>
 	<div class="panels" bind:this={row} onscroll={onScroll}>
 		<section data-panel="0" class="front">
-			<div class="visual">
+			<!-- Keyboard and screen reader users open it with the Expand button. -->
+			<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+			<div class="visual" bind:this={visualEl} onclick={tapVisual}>
 				{#if Visual}
 					<Beats cardId={card.id} {beats} active={!!active} onAction={(t, d) => onAction?.(t, d)}>
 						{#snippet children(shown: number)}
@@ -174,9 +208,14 @@
 								resolved={card.resolved.visual}
 								persona={card.persona}
 								{shown}
+								onShrunk={(v: boolean) => (shrunk = v)}
 							/>
 						{/snippet}
 					</Beats>
+					{#if hint}
+						<div class="fade" aria-hidden="true"><span class="pill-hint">Tap to expand</span></div>
+					{/if}
+					<button type="button" class="expand" aria-label="Expand" onclick={openLightbox}>⤢</button>
 				{:else}
 					<p class="unsupported">Unsupported card type: {card.visual.kind}</p>
 				{/if}
@@ -244,6 +283,9 @@
 			</section>
 		{/if}
 	</div>
+	{#if lightboxOpen && Visual}
+		<Lightbox {card} {Visual} onClose={() => (lightboxOpen = false)} />
+	{/if}
 	<div class="actions">
 		<button type="button" aria-pressed={liked} aria-label="Like" onclick={() => toggle('liked')}>
 			<span class="icon" aria-hidden="true">{liked ? '♥' : '♡'}</span>
@@ -368,9 +410,48 @@
 		gap: 0.75rem;
 	}
 	.visual {
+		position: relative;
 		flex: 0 1 auto;
 		min-height: 0;
 		overflow: hidden;
+	}
+	.expand {
+		position: absolute;
+		top: 0;
+		right: 0;
+		z-index: 2;
+		width: 32px;
+		height: 32px;
+		padding: 0;
+		border: 0;
+		border-radius: 8px;
+		background: color-mix(in srgb, var(--surface) 75%, transparent);
+		color: var(--muted);
+		font-size: 1rem;
+		line-height: 1;
+		cursor: pointer;
+	}
+	.fade {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		z-index: 1;
+		height: 4rem;
+		display: flex;
+		align-items: flex-end;
+		justify-content: center;
+		padding-bottom: 0.4rem;
+		pointer-events: none;
+		background: linear-gradient(to bottom, transparent, var(--bg) 85%);
+	}
+	.pill-hint {
+		padding: 0.15rem 0.7rem;
+		border-radius: 999px;
+		border: 1px solid var(--border);
+		background: var(--surface);
+		color: var(--muted);
+		font-size: 0.75rem;
 	}
 	h2 {
 		flex: none;

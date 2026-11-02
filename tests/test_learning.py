@@ -189,6 +189,16 @@ def test_depth_open_counts_once_and_like_toggle_off_does_not_count(conn, cfg):
     assert rewards(conn)[a] == pytest.approx(0.15)
 
 
+def test_lightbox_open_counts_once_with_the_depth_open_weight(conn, cfg):
+    a, b = add_card(conn, cfg), add_card(conn, cfg)
+    ev(conn, a, "impression", T0)
+    ev(conn, a, "lightbox_open", T0 + 100, {"kind": "code"})
+    ev(conn, a, "lightbox_open", T0 + 200, {"kind": "code"})
+    ev(conn, b, "impression", T0 + 1000)
+    learning.process_events(conn, cfg, now=at(5))
+    assert rewards(conn)[a] == pytest.approx(0.15)
+
+
 def test_open_window_is_not_scored_until_next_impression_or_30_minutes(conn, cfg):
     a, b = add_card(conn, cfg), add_card(conn, cfg)
     ev(conn, a, "impression", T0)
