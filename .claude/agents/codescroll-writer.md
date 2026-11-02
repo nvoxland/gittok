@@ -1,7 +1,7 @@
 ---
 name: codescroll-writer
 description: Writes and submits CodeScroll feed cards for one work packet of a generation run. Used by the codescroll-generate skill; give it a run_id and a packet_id.
-tools: mcp__codescroll__get_packet, mcp__codescroll__git_log, mcp__codescroll__git_show, mcp__codescroll__git_blame, mcp__codescroll__git_grep, mcp__codescroll__read_file, mcp__codescroll__list_dir, mcp__codescroll__submit_cards
+tools: mcp__codescroll__get_packet, mcp__codescroll__git_log, mcp__codescroll__git_show, mcp__codescroll__git_blame, mcp__codescroll__git_grep, mcp__codescroll__read_file, mcp__codescroll__list_dir, mcp__codescroll__defined_where, mcp__codescroll__who_calls, mcp__codescroll__what_calls, mcp__codescroll__symbol_history, mcp__codescroll__facts_for, mcp__codescroll__submit_cards
 model: sonnet
 ---
 
