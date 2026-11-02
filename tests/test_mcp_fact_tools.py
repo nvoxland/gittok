@@ -111,3 +111,18 @@ def test_writer_lists_tools():
     text = (Path(__file__).parents[1] / ".claude/agents/codescroll-writer.md").read_text()
     for t in ("defined_where", "who_calls", "what_calls", "symbol_history", "facts_for"):
         assert f"mcp__codescroll__{t}" in text
+
+
+@needs_grammars
+async def test_rows_carry_rank_and_sort_analyzer_first(setup):
+    cfg, r = setup
+    conn = db.open_db(cfg.settings.data_dir / "codescroll.db")
+    conn.execute(
+        "UPDATE fact_defines SET source = 'analyzer:x' WHERE name = 'run' AND path = 'b.py'"
+    )
+    conn.commit()
+    conn.close()
+    rows = await call(cfg, "defined_where", repo="fixture", name="run")
+    assert [x["rank"] for x in rows] == sorted(x["rank"] for x in rows)
+    assert rows[0]["source"] == "analyzer:x" and rows[0]["rank"] == 0
+    assert all(x["rank"] == 3 for x in rows[1:])

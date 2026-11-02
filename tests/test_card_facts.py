@@ -160,3 +160,94 @@ def test_cited_code_covers_identifier(fixture_repo, repos, conn):
 
 def test_default_setting_off():
     assert AgentSettings().require_facts is False
+
+
+# ---------- source ranking: typed claims need schema or analyzer facts (67v.8) ----------
+
+
+def _schema(conn, fixture_repo, items):
+    from codescroll import facts, gitq
+
+    conn.execute("UPDATE repos SET path = ?", (str(fixture_repo.path),))
+    head = gitq.rev_parse(fixture_repo.path, "main")
+    return facts.submit_analyzer(conn, "fixture", fixture_repo.path, head, head, "lint 1.0", items)
+
+
+def _ret(typ="number"):
+    return {"returns": {"path": "billing/invoice.py", "line": 1, "symbol": "total", "type": typ}}
+
+
+def test_schema_fact_backs_returns(fixture_repo, repos, conn):
+    assert _schema(conn, fixture_repo, [_ret()])["accepted"] == {"returns": 1}
+    c = card_with(fixture_repo, [{"returns": ["total", "number"]}])
+    acc, rej = run(c, repos, conn)
+    assert rej == [] and len(acc[0].resolved["facts"]) == 1
+    assert acc[0].resolved["facts"][0].startswith("sch-")
+
+
+def test_accepts_and_may_be_nil(fixture_repo, repos, conn):
+    item = {
+        "accepts": {"path": "billing/invoice.py", "line": 1, "symbol": "total", "params": ["items"]}
+    }
+    _schema(conn, fixture_repo, [item, _ret("number | None")])
+    fs = [{"accepts": ["total", ["items"]]}, {"may_be_nil": ["total"]}]
+    acc, rej = run(card_with(fixture_repo, fs), repos, conn)
+    assert rej == []
+
+
+def test_wrong_typed_value_is_false(fixture_repo, repos, conn):
+    _schema(conn, fixture_repo, [_ret()])
+    acc, rej = run(card_with(fixture_repo, [{"returns": ["total", "str"]}]), repos, conn)
+    assert [r.reason for r in rej] == ["fact_false"]
+    acc, rej = run(card_with(fixture_repo, [{"may_be_nil": ["total"]}]), repos, conn)
+    assert [r.reason for r in rej] == ["fact_false"]
+
+
+def test_typed_fact_with_only_syntax_rows_is_weak(fixture_repo, repos, conn):
+    acc, rej = run(card_with(fixture_repo, [{"returns": ["total", "number"]}]), repos, conn)
+    assert [r.reason for r in rej] == ["fact_weak"]
+    assert "total" in rej[0].detail and "syntax" in rej[0].detail
+
+
+def test_typed_fact_with_no_rows_is_false(fixture_repo, repos, conn):
+    acc, rej = run(card_with(fixture_repo, [{"returns": ["zzz", "number"]}]), repos, conn)
+    assert [r.reason for r in rej] == ["fact_false"]
+
+
+def test_convention_rows_never_back_a_fact(fixture_repo, repos, conn):
+    conn.execute("UPDATE fact_defines SET source = 'convention'")
+    c = card_with(fixture_repo, [{"defines": ["billing/invoice.py", "total"]}])
+    acc, rej = run(c, repos, conn)
+    assert [r.reason for r in rej] == ["fact_false"]
+    acc, rej = run(card_with(fixture_repo, ["def-aaaaaaaaaaaa"]), repos, conn)
+    assert [r.reason for r in rej] == ["fact_false"]
+
+
+def _typed_prose(fixture_repo, **kw):
+    c = example_card(fixture_repo, **kw)
+    c["hook"] = "`total` returns a number nobody checks."
+    return c
+
+
+def test_typed_phrase_without_typed_fact_warns_when_lenient(fixture_repo, repos, conn):
+    acc, rej = run(_typed_prose(fixture_repo), repos, conn)
+    assert rej == [] and any("fact_weak" in w and "total" in w for w in acc[0].warnings)
+
+
+def test_typed_phrase_without_typed_fact_rejected_when_strict(fixture_repo, repos, conn):
+    acc, rej = run(_typed_prose(fixture_repo), repos, conn, require=True)
+    assert [r.reason for r in rej] == ["fact_weak"] and "total" in rej[0].detail
+
+
+def test_typed_phrase_with_typed_fact_passes(fixture_repo, repos, conn):
+    _schema(conn, fixture_repo, [_ret()])
+    c = _typed_prose(fixture_repo, facts=[{"returns": ["total", "number"]}])
+    acc, rej = run(c, repos, conn, require=True)
+    assert rej == [] and not any("fact_weak" in w for w in acc[0].warnings)
+
+
+def test_rank_order():
+    from codescroll import factcheck
+
+    assert factcheck.rank("analyzer:x") < factcheck.rank("schema:x") < factcheck.rank("macro")
+    assert factcheck.rank("macro") < factcheck.rank("syntax") < factcheck.rank("convention")

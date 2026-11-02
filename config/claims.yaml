@@ -1,0 +1,24 @@
+# Typed-claim trigger phrases. Data, not code: edit here to change what counts.
+#
+# When the hook or the first explain panel says one of these about a `backticked` symbol, the card
+# must list a typed fact (returns / accepts / may_be_nil) for that symbol. Such a fact is backed
+# only by schema or analyzer rows. Each entry is a regular expression, matched case-insensitively
+# right after the backticked symbol.
+typed_phrases:
+  returns:
+    - '\s+(?:always\s+)?returns?\b'
+    - '\s+gives\s+back\b'
+  may_be_nil:
+    - '\s+(?:can|may|might)\s+(?:be|return|give)\s+(?:nil|null|none|nothing)\b'
+    - '\s+(?:can|may|might)\s+be\s+(?:nil|null|none)\b'
+  accepts:
+    - '\s+(?:accepts?|takes?)\s+(?:an?|the|two|three|one)\b'
+
+# A `returns` type that contains one of these words counts as "may be nil" for a may_be_nil fact.
+nilable_words:
+  - nil
+  - null
+  - none
+  - optional
+  - maybe
+  - "?"

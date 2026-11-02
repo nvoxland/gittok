@@ -6,7 +6,7 @@ research tools. An unknown symbol gives `[]`, an unknown repo raises ResearchErr
 
 from __future__ import annotations
 
-from . import db, facts, gitq, secrets
+from . import db, factcheck, facts, gitq, secrets
 from .research import ResearchError
 
 DEFAULT_LIMIT = 50
@@ -27,7 +27,12 @@ def _open(cfg, repo: str):
 
 
 def _out(cfg, rows: list[dict]):
-    rows = [{k: v for k, v in r.items() if k != "repo_id"} for r in rows]
+    """Drop repo_id, add `rank` (0 analyzer, 1 schema, 2 macro, 3 syntax), best source first."""
+    rows = [
+        {**{k: v for k, v in r.items() if k != "repo_id"}, "rank": factcheck.rank(r.get("source"))}
+        for r in rows
+    ]
+    rows.sort(key=lambda r: r["rank"])  # stable: the query's own order holds within a rank
     return rows if not cfg.settings.research.redact_secrets else secrets.redact_value(rows)
 
 
@@ -65,7 +70,15 @@ def symbol_history(cfg, repo: str, symbol: str, limit: int = DEFAULT_LIMIT) -> l
 def facts_for(cfg, repo: str, path: str, start: int, end: int | None = None, limit: int = 100):
     n = _limit(limit)
     with _open(cfg, repo) as conn:
-        return _out(cfg, facts.facts_in(conn, repo, path, start, end)[:n])
+        rows = facts.facts_in(conn, repo, path, start, end)
+        rid = facts._repo_id(conn, repo)
+        rows += facts._rows(
+            conn,
+            "SELECT * FROM fact_schema WHERE repo_id = ? AND path = ? AND line BETWEEN ? AND ?"
+            " ORDER BY line",
+            rid, path, start, start if end is None else end,
+        )  # fmt: skip
+        return _out(cfg, rows)[:n]
 
 
 def _iso(ts: int) -> str:

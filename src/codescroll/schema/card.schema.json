@@ -259,6 +259,13 @@
       {"type": "object", "additionalProperties": false, "required": ["defines"], "properties": {"defines": {"$ref": "#/$defs/str_pair"}}},
       {"type": "object", "additionalProperties": false, "required": ["touched"], "properties": {"touched": {"$ref": "#/$defs/str_pair"}}},
       {"type": "object", "additionalProperties": false, "required": ["imports"], "properties": {"imports": {"$ref": "#/$defs/str_pair"}}},
+      {"type": "object", "additionalProperties": false, "required": ["returns"], "properties": {"returns": {"$ref": "#/$defs/str_pair"}}},
+      {"type": "object", "additionalProperties": false, "required": ["accepts"], "properties": {"accepts": {
+        "type": "array", "minItems": 2, "maxItems": 2,
+        "prefixItems": [{"type": "string", "minLength": 1, "maxLength": 300},
+                        {"type": "array", "maxItems": 20, "items": {"type": "string", "minLength": 1, "maxLength": 100}}]}}},
+      {"type": "object", "additionalProperties": false, "required": ["may_be_nil"], "properties": {"may_be_nil": {
+        "type": "array", "minItems": 1, "maxItems": 1, "items": {"type": "string", "minLength": 1, "maxLength": 300}}}},
       {"type": "object", "additionalProperties": false, "required": ["params"], "properties": {"params": {
         "type": "array", "minItems": 2, "maxItems": 2,
         "prefixItems": [{"type": "string", "minLength": 1, "maxLength": 300}, {"type": "integer", "minimum": 0, "maximum": 99}]}}}

@@ -788,6 +788,8 @@ def _check_facts(card: dict, resolved: dict, gc: _GitCache, ctx: _Ctx) -> list[s
         v = factcheck.verify(ctx.facts_conn, card["repos"], card.get("facts") or [])
     except factcheck.FactFalse as e:
         raise _Reject("fact_false", str(e)) from None
+    except factcheck.FactWeak as e:
+        raise _Reject("fact_weak", str(e)) from None
     if v.ids:
         resolved["facts"] = v.ids
     first = next(p["text"] for p in card["depth"] if p["kind"] == "explain")
@@ -803,7 +805,19 @@ def _check_facts(card: dict, resolved: dict, gc: _GitCache, ctx: _Ctx) -> list[s
             "fact behind it. List a fact that covers it (ids from who_calls, what_calls, "
             "defined_where, symbol_history, facts_for) or cite the code that holds it",
         )
-    return v.warnings + [f"fact_missing: `{m}` has no listed fact" for m in missing]
+    weak = factcheck.typed_unbacked([card["hook"], first], v.typed)
+    if weak and ctx.require_facts:
+        raise _Reject(
+            "fact_weak",
+            f"{', '.join(weak[:4])} gets a typed claim (returns, may be nil, accepts) in the hook "
+            "or first explain panel with no returns/accepts/may_be_nil fact behind it. Typed "
+            "facts need a schema or analyzer source (submit_facts), or drop the claim",
+        )
+    return (
+        v.warnings
+        + [f"fact_missing: `{m}` has no listed fact" for m in missing]
+        + [f"fact_weak: `{m}` has a typed claim with no typed fact" for m in weak]
+    )
 
 
 def _check_claims(card: dict, resolved: dict, gc: _GitCache, ctx: _Ctx) -> None:
