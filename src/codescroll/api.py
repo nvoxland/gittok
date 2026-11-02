@@ -47,6 +47,7 @@ EventType = Literal[
     "skip",
     "scroll_back",
     "depth_open",
+    "lightbox_open",
     "like",
     "save",
     "explain_more",

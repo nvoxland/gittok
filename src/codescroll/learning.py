@@ -28,6 +28,7 @@ class RewardConfig:
         default_factory=lambda: {
             "dwell": 0.45,
             "depth_open": 0.15,
+            "lightbox_open": 0.15,
             "explain_more": 0.15,
             "like": 0.25,
             "save": 0.30,
@@ -192,7 +193,7 @@ def _reward(rc: RewardConfig, spec: dict, events: list[tuple[str, dict]]) -> flo
     if skipped and not (_toggled_on(events, "like") or _toggled_on(events, "save")):
         return 0.0
     r = w["dwell"] * _watch_fraction(rc, spec, dwell_events, dwell_ms)
-    for name in ("depth_open", "explain_more", "source_tap", "scroll_back"):
+    for name in ("depth_open", "lightbox_open", "explain_more", "source_tap", "scroll_back"):
         if name in types:
             r += w[name]
     if "beats_done" in types:

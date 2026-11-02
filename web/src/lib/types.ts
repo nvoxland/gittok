@@ -208,6 +208,7 @@ export type FeedEventType =
 	| 'skip'
 	| 'scroll_back'
 	| 'depth_open'
+	| 'lightbox_open'
 	| 'like'
 	| 'save'
 	| 'knew_it'
