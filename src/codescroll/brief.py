@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 from functools import cache
 
-from codescroll import config, knowledge, validator
+from codescroll import config, knowledge, quizfacts, validator
 from codescroll.profiles import FileSet, fileset_for
 
 _DRAMA = (
@@ -1069,6 +1069,7 @@ def build_brief(
     intro_prefer: dict[str, set[str]] | None = None,
     filesets: dict[str, FileSet] | None = None,
     min_spot_the_bug: float = 0.0,
+    facts_conn=None,
 ) -> Brief:
     """Build the brief.
 
@@ -1506,6 +1507,8 @@ def build_brief(
                     if (subject := _subject(ld)) and claimed.setdefault((repo, subject), pi) != pi:
                         continue
                     pairs.append((f"[{t}] {line}", ld))
+        if facts_conn is not None and not grp:
+            pairs = quizfacts.annotate(facts_conn, repo, pairs)  # fact-based question seeds
         intro_pairs = []
         for i in chunk_ix:
             if i in intro_at:

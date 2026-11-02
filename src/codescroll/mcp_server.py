@@ -217,6 +217,7 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
                 variant_max_share=cfg.settings.agent.variant_max_share,
                 intro_share=cfg.settings.agent.intro_share,
                 min_spot_the_bug=cfg.settings.agent.min_spot_the_bug_per_run,
+                facts_conn=conn,
                 novelty=knowledge.novelty_maps(conn, cfg, sorted(repo_signals)),
                 intro_prefer={r: candidate_leads.dirs_with_core(conn, r) for r in repo_signals},
                 filesets={r: cfg.fileset(r) for r in repo_signals},
