@@ -253,6 +253,17 @@
         "explanation": {"type": "string", "minLength": 1, "maxLength": 400}
       }
     },
+    "fact": {"oneOf": [
+      {"type": "string", "pattern": "^[a-z]{2,5}-[0-9a-f]{12}$"},
+      {"type": "object", "additionalProperties": false, "required": ["calls"], "properties": {"calls": {"$ref": "#/$defs/str_pair"}}},
+      {"type": "object", "additionalProperties": false, "required": ["defines"], "properties": {"defines": {"$ref": "#/$defs/str_pair"}}},
+      {"type": "object", "additionalProperties": false, "required": ["touched"], "properties": {"touched": {"$ref": "#/$defs/str_pair"}}},
+      {"type": "object", "additionalProperties": false, "required": ["imports"], "properties": {"imports": {"$ref": "#/$defs/str_pair"}}},
+      {"type": "object", "additionalProperties": false, "required": ["params"], "properties": {"params": {
+        "type": "array", "minItems": 2, "maxItems": 2,
+        "prefixItems": [{"type": "string", "minLength": 1, "maxLength": 300}, {"type": "integer", "minimum": 0, "maximum": 99}]}}}
+    ]},
+    "str_pair": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "string", "minLength": 1, "maxLength": 300}},
     "card": {
       "type": "object",
       "additionalProperties": false,
@@ -277,6 +288,7 @@
         "difficulty": {"type": "integer", "minimum": 1, "maximum": 3},
         "verdict": {"enum": ["good", "bad", "clever", "cursed", "core"]},
         "hook": {"type": "string", "minLength": 1, "maxLength": 200},
+        "facts": {"type": "array", "maxItems": 30, "items": {"$ref": "#/$defs/fact"}},
         "learn": {"type": "string", "minLength": 20, "maxLength": 140},
         "visual": {"oneOf": [
           {"$ref": "#/$defs/code_visual"}, {"$ref": "#/$defs/text_visual"}, {"$ref": "#/$defs/meme_visual"},
