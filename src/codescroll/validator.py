@@ -58,7 +58,7 @@ from dataclasses import dataclass, field  # noqa: E402
 from datetime import UTC, datetime, timedelta, timezone  # noqa: E402
 from pathlib import PurePosixPath  # noqa: E402
 
-from codescroll import claims, gitq, secrets, storykey  # noqa: E402
+from codescroll import claims, config, gitq, secrets, storykey  # noqa: E402
 
 MAX_SPAN = 40
 # The card front must fit one phone screen without scrolling: on iOS a scrolling front takes
@@ -70,39 +70,9 @@ ITEM_COST = 25
 MAX_FRONT_CODE_LINES = 12
 _NOT_SHOWN = {"kind", "template", "repo", "path", "commit", "from", "tier", "prompt", "excerpt"}
 
-LANGUAGES = {
-    ".py": "python",
-    ".clj": "clojure",
-    ".cljs": "clojure",
-    ".cljc": "clojure",
-    ".edn": "clojure",
-    ".js": "javascript",
-    ".jsx": "jsx",
-    ".ts": "typescript",
-    ".tsx": "tsx",
-    ".svelte": "svelte",
-    ".go": "go",
-    ".rs": "rust",
-    ".java": "java",
-    ".kt": "kotlin",
-    ".rb": "ruby",
-    ".sh": "bash",
-    ".sql": "sql",
-    ".yaml": "yaml",
-    ".yml": "yaml",
-    ".json": "json",
-    ".md": "markdown",
-    ".html": "html",
-    ".css": "css",
-    ".toml": "toml",
-    ".c": "c",
-    ".h": "c",
-    ".cpp": "cpp",
-}
-
 
 def language_for(path: str) -> str | None:
-    return LANGUAGES.get(PurePosixPath(path).suffix.lower())
+    return config.file_types()["highlight"].get(PurePosixPath(path).suffix.lower())
 
 
 @dataclass(frozen=True)

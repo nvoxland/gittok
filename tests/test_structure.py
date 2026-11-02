@@ -236,3 +236,12 @@ def test_check_query_accepts_good_and_rejects_bad_queries():
 def test_check_query_says_so_without_the_pack(monkeypatch):
     monkeypatch.setattr(structure, "available", lambda: False)
     assert "structure" in structure.check_query("go", "(identifier) @reference")
+
+
+def test_language_rules_are_data():
+    assert structure.embedded_grammars("svelte") == ["typescript"]
+    assert structure.embedded_grammars("python") == []
+    assert structure.resolve_rules("typescript")["strip_suffix"]
+    assert structure.resolve_rules("clojure")["namespace_edges"] is True
+    assert "x_y".translate(structure.path_translation()) == "x_y"
+    assert "x-y".translate(structure.path_translation()) == "x_y"

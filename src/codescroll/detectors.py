@@ -51,13 +51,16 @@ def _ast_language_ok(language: str) -> bool:
 
 @cache
 def ast_grep_languages() -> tuple[str, ...]:
-    """Languages from a fixed probe list that ast-grep accepts. Empty without ast-grep-py."""
+    """Languages that ast-grep accepts, probed at run time. The names to try come from the
+    structure layer's grammars and `ast_grep_probe` in file_types.yaml. Empty without
+    ast-grep-py."""
     if not ast_grep_available():
         return ()
-    probe = (
-        "python typescript tsx javascript java go rust ruby kotlin c cpp csharp swift php "
-        "html css json yaml bash lua scala elixir haskell"
-    ).split()
+    from . import config, structure
+
+    names = {g for _, g in structure._by_ext().values()} | set(structure.spec()["languages"])
+    names |= set(config.file_types().get("ast_grep_probe") or ())
+    probe = sorted(names)
     return tuple(x for x in probe if _ast_language_ok(x))
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field, fields
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -438,7 +439,7 @@ def _load_meme_templates(root: Path) -> dict[str, MemeTemplate]:
 _LANG_KEYS = {
     "extensions", "comment", "block", "func_start", "entry_points", "entry_paths",
     "import_style", "imports", "public", "branch", "skipped_test", "catch_all", "sleep",
-    "regex_literal", "bit_ops", "meta", "commented_code", "thresholds",
+    "regex_literal", "bit_ops", "meta", "commented_code", "thresholds", "def_patterns",
 }  # fmt: skip
 
 
@@ -481,6 +482,62 @@ def load_scan_defaults(root: Path | None = None) -> dict:
     data = _mapping(_read(file, required=True), "scan_defaults.yaml", file)
     _check_keys(data, _SCAN_KEYS, "scan_defaults.yaml", file)
     return data
+
+
+_FILE_TYPE_KEYS = {
+    "highlight", "file_words", "source_extensions", "noise_basenames", "manifests",
+    "ast_grep_probe",
+}  # fmt: skip
+
+
+def load_file_types(root: Path | None = None) -> dict:
+    """config/file_types.yaml: extension tables, noise file names, manifest names."""
+    root = project_root() if root is None else Path(root)
+    file = root / "config" / "file_types.yaml"
+    if not file.is_file():  # a test root without the file: use the shipped one
+        file = Path(__file__).parents[2] / "config" / "file_types.yaml"
+    data = _mapping(_read(file, required=True), "file_types.yaml", file)
+    _check_keys(data, _FILE_TYPE_KEYS, "file_types.yaml", file)
+    return data
+
+
+def file_types() -> dict:
+    """The shipped file types (cached; the project root when there is one)."""
+    return _file_types_cached()
+
+
+@cache
+def _file_types_cached() -> dict:
+    try:
+        return load_file_types()
+    except ConfigError:
+        return load_file_types(Path(__file__).parents[2])
+
+
+@cache
+def language_extensions() -> frozenset[str]:
+    """Every extension (with its dot) that config/languages.yaml or config/queries/ maps to a
+    language."""
+    from . import structure
+
+    try:
+        langs = load_languages()
+    except ConfigError:
+        langs = load_languages(Path(__file__).parents[2])
+    out = {e for raw in langs["languages"].values() for e in raw["extensions"]}
+    out |= set(structure._by_ext())
+    return frozenset(out)
+
+
+def source_extensions() -> frozenset[str]:
+    """Extensions of source-like files: language extensions and `source_extensions`."""
+    return language_extensions() | frozenset(file_types().get("source_extensions") or ())
+
+
+def file_word_extensions() -> frozenset[str]:
+    """Extensions (no dot) that make a word look like a file name in a claim."""
+    exts = language_extensions() | set(file_types().get("highlight") or ())
+    return frozenset(e.lstrip(".") for e in exts) | frozenset(file_types().get("file_words") or ())
 
 
 def load_config(root: Path | None = None) -> Config:

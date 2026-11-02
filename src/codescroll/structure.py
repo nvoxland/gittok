@@ -300,7 +300,7 @@ def _text(src: bytes, n) -> str:
 
 
 def _sym(src: bytes, n) -> str:
-    """Text of a Clojure symbol without its metadata: `ns/name`."""
+    """Text of a Lisp symbol without its metadata: `ns/name`."""
     name = n.child_by_field_name("name")
     ns = n.child_by_field_name("namespace")
     if name is None:
@@ -328,8 +328,9 @@ def parse(path: str, text: str, queries: dict | None = None) -> FileFacts | None
         return None
     language = language_for(path) or grammar
     try:
-        if grammar == "svelte":
-            return _parse_svelte(language, text.encode(), queries or {})
+        emb = (spec().get("embedded") or {}).get(grammar)
+        if emb:
+            return _parse_embedded(language, grammar, emb, text.encode(), queries or {})
         return _analyze(language, grammar, text.encode(), queries or {}, 0)
     except Exception:
         return None
@@ -342,19 +343,21 @@ def _query_text(grammar: str, language: str, queries: dict) -> str | None:
     return _expand(q, _rules(language)) if q else None
 
 
-def _parse_svelte(language: str, src: bytes, queries: dict) -> FileFacts | None:
-    root = _parser("svelte").parse(src).root_node
-    facts = FileFacts(language, "svelte", thresholds=dict(_rules(language).get("thresholds") or {}))
-    if not ready("typescript"):
+def _parse_embedded(language: str, grammar: str, emb: dict, src: bytes, queries: dict):
+    """Files whose code sits inside container nodes (data: `embedded` in languages.yaml)."""
+    inner = emb["grammar"]
+    root = _parser(grammar).parse(src).root_node
+    facts = FileFacts(language, grammar, thresholds=dict(_rules(language).get("thresholds") or {}))
+    if not ready(inner):
         return None
     for el in root.children:
-        if el.type != "script_element":
+        if el.type != emb["container"]:
             continue
-        raw = next((c for c in el.children if c.type == "raw_text"), None)
+        raw = next((c for c in el.children if c.type == emb["body"]), None)
         if raw is None:
             continue
         part = _analyze(
-            language, "typescript", src[raw.start_byte : raw.end_byte], queries, raw.start_point[0]
+            language, inner, src[raw.start_byte : raw.end_byte], queries, raw.start_point[0]
         )
         if part is None:
             return None
@@ -363,6 +366,23 @@ def _parse_svelte(language: str, src: bytes, queries: dict) -> FileFacts | None:
         facts.comments += part.comments
         facts.imports += part.imports
     return facts
+
+
+def embedded_grammars(grammar: str) -> list[str]:
+    """Grammars needed besides `grammar` to read its files (data: `embedded`)."""
+    emb = (spec().get("embedded") or {}).get(grammar)
+    return [emb["grammar"]] if emb else []
+
+
+def resolve_rules(language: str) -> dict:
+    """Import resolution rules of a language (data: `resolve` in languages.yaml)."""
+    return dict((spec()["languages"].get(language) or {}).get("resolve") or {})
+
+
+@cache
+def path_translation() -> dict[int, str]:
+    """str.translate table that folds path characters (data: `path_normalize`)."""
+    return str.maketrans(spec().get("path_normalize") or {})
 
 
 def _analyze(language, grammar, src: bytes, queries: dict, off: int) -> FileFacts | None:
@@ -423,8 +443,8 @@ def _analyze(language, grammar, src: bytes, queries: dict, off: int) -> FileFact
             if (line, sp) not in seen_imports:
                 seen_imports.add((line, sp))
                 facts.imports.append(Import(line, _text(src, n), sp))
-                if language == "clojure" and rules.get("lisp"):
-                    _clojure_ns(src, n, facts)
+                if rules.get("lisp") and rules.get("namespace"):
+                    _lisp_ns(src, n, facts, rules["namespace"])
     _finish_defs(src, found.values(), rules, facts, off)
     facts.defs.sort(key=lambda d: (d.start, d.end))
     return facts
@@ -571,10 +591,10 @@ def _shape(node, is_nest, is_branch, off: int) -> tuple[int, int, int]:
     return max(best, 1), at, branches
 
 
-# ---------- Clojure namespaces ----------
+# ---------- Lisp namespaces ----------
 
 
-def _clojure_ns(src: bytes, form, facts: FileFacts) -> None:
+def _lisp_ns(src: bytes, form, facts: FileFacts, keys: dict) -> None:
     kids = [c for c in form.named_children if c.type != "comment"]
     if len(kids) < 2:
         return
@@ -586,16 +606,16 @@ def _clojure_ns(src: bytes, form, facts: FileFacts) -> None:
         if c.type != "list_lit":
             continue
         items = [x for x in c.named_children if x.type != "comment"]
-        if not items or items[0].type != "kwd_lit" or _text(src, items[0]) != ":require":
+        if not items or items[0].type != "kwd_lit" or _text(src, items[0]) != keys["require_key"]:
             continue
         for item in items[1:]:
             if item.type == "sym_lit":
                 facts.requires.append(Require(_sym(src, item)))
             elif item.type == "vec_lit":
-                _require_vec(src, item, facts)
+                _require_vec(src, item, facts, keys)
 
 
-def _require_vec(src: bytes, vec, facts: FileFacts) -> None:
+def _require_vec(src: bytes, vec, facts: FileFacts, keys: dict) -> None:
     parts = [x for x in vec.named_children if x.type != "comment"]
     if not parts or parts[0].type != "sym_lit":
         return
@@ -604,12 +624,12 @@ def _require_vec(src: bytes, vec, facts: FileFacts) -> None:
     while i < len(parts):
         key = _text(src, parts[i]) if parts[i].type == "kwd_lit" else None
         val = parts[i + 1] if i + 1 < len(parts) else None
-        if key in (":as", ":as-alias") and val is not None and val.type == "sym_lit":
+        if key in keys["alias_keys"] and val is not None and val.type == "sym_lit":
             req.alias = _sym(src, val)
-        elif key == ":refer" and val is not None:
+        elif key == keys["refer_key"] and val is not None:
             if val.type == "vec_lit":
                 req.refers += [_sym(src, x) for x in val.named_children if x.type == "sym_lit"]
             else:
-                req.refer_all = _text(src, val) == ":all"
+                req.refer_all = _text(src, val) == keys["refer_all"]
         i += 2
     facts.requires.append(req)

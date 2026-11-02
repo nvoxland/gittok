@@ -11,8 +11,9 @@ import re
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
+from functools import cache
 
-from codescroll import knowledge, validator
+from codescroll import config, knowledge, validator
 from codescroll.profiles import FileSet, fileset_for
 
 _DRAMA = (
@@ -555,21 +556,20 @@ def _recap_leads(members: dict[str, dict]) -> list[str]:
 
 _ROUTE = re.compile(r"/api/[\w\-]+(?:/[\w\-{}:]+)*")
 _ENV_KEY = re.compile(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b")
-_GENERIC_BASENAMES = frozenset(
-    """readme.md changelog.md license package.json package-lock.json tsconfig.json pyproject.toml
-    setup.py setup.cfg __init__.py index.js index.ts index.py main.py main.js main.ts makefile
-    dockerfile .gitignore .gitattributes .env.example conftest.py settings.json config.json
-    cargo.toml go.mod deps.edn project.clj""".split()
-)
 
 
 def _identifiers(subject: str) -> set[str]:
     return set(_ROUTE.findall(subject)) | {k for k in _ENV_KEY.findall(subject) if len(k) >= 6}
 
 
+@cache
+def _noise_basenames() -> frozenset[str]:
+    return frozenset(config.file_types().get("noise_basenames") or ())
+
+
 def _contract_file(path: str) -> bool:
     base = path.rsplit("/", 1)[-1]
-    return _useful(path) and not test_or_doc(path) and base.lower() not in _GENERIC_BASENAMES
+    return _useful(path) and not test_or_doc(path) and base.lower() not in _noise_basenames()
 
 
 def _files_text(c: dict) -> str:

@@ -33,17 +33,6 @@ MAX_CALLERS = 10
 MAX_IMPORTS = 15
 MIN_SYMBOL_LEN = 3
 LINE_CLIP = 120
-# extra definition patterns per language name, beside the language's `func_start`
-_EXTRA_DEFS = {
-    "python": [r"^\s*class\s+(\w+)"],
-    "clojure": [
-        r"^\s*\((?:def|defonce|defprotocol|defrecord|deftype)\s+(?:\^\S+\s+)*([^\s\[\]()]+)"
-    ],
-    "typescript": [
-        r"^\s*(?:export\s+)?(?:default\s+)?(?:abstract\s+)?(?:class|interface|enum)\s+(\w+)",
-        r"^\s*export\s+(?:const|let|var)\s+(\w+)",
-    ],
-}
 # bytes of materials per packet: get_packet must stay small enough for the harness to show it
 # inline (a ~50 KB reply was saved to a file the writer could not read).
 PACKET_CAP = 12 * 1024
@@ -148,7 +137,7 @@ def _lang_for(path: str):
 
 
 def _def_patterns(lang) -> list[re.Pattern]:
-    pats = [re.compile(p) for p in _EXTRA_DEFS.get(lang.name, [])]
+    pats = [re.compile(p) for p in lang.raw.get("def_patterns") or ()]
     return ([lang.func_start] if lang.func_start else []) + pats
 
 
