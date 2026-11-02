@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from codescroll import candidates, db, gitq, ledger, profiles
+from codescroll import candidates, config, db, gitq, ledger, profiles
 from codescroll.config import AnalysisSettings, Repo
 
 
@@ -459,12 +459,6 @@ def todo_ages(repo: Path | str, ref: str, max_hits=150) -> list[dict]:
     return rows
 
 
-_SOURCE_EXTS = frozenset(
-    ".py .clj .cljs .cljc .js .ts .tsx .jsx .go .rs .java .kt .rb .sh .sql"
-    " .svelte .c .h .cpp".split()
-)
-
-
 def _source_files(repo: Path | str, ref: str, max_bytes: int) -> list[str]:
     """Source-like files at `ref` no bigger than `max_bytes`, in ls-tree order."""
     out = gitq.run(repo, "ls-tree", "-r", "-l", ref)
@@ -476,7 +470,7 @@ def _source_files(repo: Path | str, ref: str, max_bytes: int) -> list[str]:
             continue
         if int(parts[3]) > max_bytes:
             continue
-        if Path(path).suffix in _SOURCE_EXTS:
+        if Path(path).suffix in config.source_extensions():
             paths.append(path)
     return paths
 

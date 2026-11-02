@@ -1,0 +1,90 @@
+# File-type facts used by several modules. Data, not code: edit here to add a language or stack.
+
+# Extension -> name a card's code view highlights with (validator, card visuals).
+highlight:
+  .py: python
+  .clj: clojure
+  .cljs: clojure
+  .cljc: clojure
+  .edn: clojure
+  .js: javascript
+  .jsx: jsx
+  .ts: typescript
+  .tsx: tsx
+  .svelte: svelte
+  .go: go
+  .rs: rust
+  .java: java
+  .kt: kotlin
+  .rb: ruby
+  .sh: bash
+  .sql: sql
+  .yaml: yaml
+  .yml: yaml
+  .json: json
+  .md: markdown
+  .html: html
+  .css: css
+  .toml: toml
+  .c: c
+  .h: c
+  .cpp: cpp
+
+# Extensions (no dot) that make a word in a claim look like a file name, besides the
+# highlight table and the extensions of config/languages.yaml and config/queries.
+file_words: [txt, lock, cfg, ini, xml]
+
+# Source-like extensions read by the age-of-lines signal, besides the extensions of
+# config/languages.yaml and config/queries.
+source_extensions: [.kt, .sh, .sql, .c, .h, .cpp]
+
+# File names (lowercase) that say nothing about a change: a commit that touches only these
+# is not a contract change.
+noise_basenames:
+  - readme.md
+  - changelog.md
+  - license
+  - package.json
+  - package-lock.json
+  - tsconfig.json
+  - pyproject.toml
+  - setup.py
+  - setup.cfg
+  - __init__.py
+  - index.js
+  - index.ts
+  - index.py
+  - main.py
+  - main.js
+  - main.ts
+  - makefile
+  - dockerfile
+  - .gitignore
+  - .gitattributes
+  - .env.example
+  - conftest.py
+  - settings.json
+  - config.json
+  - cargo.toml
+  - go.mod
+  - deps.edn
+  - project.clj
+
+# Files that name a project's dependencies or build. survey_repo lists them with their first
+# lines; the agent reads them. Globs on the file name.
+manifests:
+  - deps.edn
+  - project.clj
+  - package.json
+  - pyproject.toml
+  - Gemfile
+  - go.mod
+  - Cargo.toml
+  - pom.xml
+  - "requirements*.txt"
+  - "build.gradle*"
+
+# Language names to try against ast-grep at run time (besides the grammars of
+# config/queries/languages.yaml). The ones it accepts are reported by survey_repo.
+ast_grep_probe: [tsx, kotlin, c, cpp, csharp, swift, php, html, css, json, yaml, bash, lua, scala,
+                 elixir, haskell]

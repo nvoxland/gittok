@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from functools import cached_property
 
-from codescroll import gitq
+from codescroll import config, gitq
 
 MIN_COUNT = 13  # smaller numbers are not checked
 DATE_SLACK_DAYS = 1  # timezone
@@ -44,11 +44,6 @@ _HEDGES = (
     ">",
     "<",
 )
-_FILE_EXT = {
-    "py", "clj", "cljs", "cljc", "edn", "js", "jsx", "ts", "tsx", "svelte", "go", "rs", "java",
-    "kt", "rb", "sh", "sql", "yaml", "yml", "json", "md", "html", "css", "toml", "c", "h", "cpp",
-    "txt", "lock", "cfg", "ini", "xml",
-}  # fmt: skip
 
 _CODE_SPAN = re.compile(r"`([^`\n]+)`")
 _URL = re.compile(r"https?://\S+")
@@ -228,7 +223,7 @@ def _is_path(name: str) -> bool:
     if name.endswith("/"):
         return True
     ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
-    return ext in _FILE_EXT
+    return ext in config.file_word_extensions()
 
 
 # ---------------------------------------------------------------------------

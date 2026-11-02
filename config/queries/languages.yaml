@@ -25,6 +25,24 @@ text_fallback:
   skip_extensions: [.json, .jsonl, .yaml, .yml, .toml, .ini, .cfg, .csv, .tsv, .svg, .html,
                     .css, .scss, .xml, .md, .markdown, .rst, .txt, .adoc, .lock, .map, .sql]
 
+# Characters of a path or an import key that are folded before files and imports are matched
+# (an import of "my_util" finds "my-util.ext").
+path_normalize: {"-": "_"}
+
+# File stems that stand for their directory in an import ("pkg" finds "pkg/<stem>.<ext>").
+index_files: [__init__, index]
+
+# A grammar whose files embed code of another grammar: the container node type, the node type
+# that holds the embedded text, and the grammar to parse that text with.
+embedded:
+  svelte: {container: script_element, body: raw_text, grammar: typescript}
+
+# Import resolution (src/codescroll/candidates.py), per language, all optional:
+#   separator        in a dotted import, this text becomes "/" (default ".")
+#   strip_suffix     regex removed from the end of a path import
+#   aliases          regexes for imports that are rooted at the source tree; group 1 is the path
+#   namespace_edges  the file declares a namespace and requires others; an edge needs the
+#                    required namespace to be used (qualified, aliased, referred or loaded alone)
 languages:
   python:
     extensions: {.py: python}
@@ -37,6 +55,9 @@ languages:
     thresholds: {deep_nesting: 5}
 
   typescript:   # also javascript, tsx and svelte
+    resolve:
+      strip_suffix: '\.(?:[cm]?[jt]sx?|svelte)$'
+      aliases: ['(?:\$lib|@|~|src)/(.+)']
     extensions: {.ts: typescript, .tsx: tsx, .jsx: tsx, .js: javascript, .mjs: javascript,
                  .cjs: javascript, .svelte: svelte}
     query_alias: {tsx: typescript}
@@ -54,6 +75,13 @@ languages:
     extensions: {.clj: clojure, .cljs: clojure, .cljc: clojure, .bb: clojure}
     comment: ";"
     lisp: true
+    resolve: {separator: ".", namespace_edges: true}
+    # the form that declares the namespace and its requires (keys of the require clause)
+    namespace:
+      require_key: ":require"
+      alias_keys: [":as", ":as-alias"]
+      refer_key: ":refer"
+      refer_all: ":all"
     # head symbol -> kind of the definition it makes; `{{def_heads}}` in a query expands to these
     def_heads:
       function: [defn, defn-, defmacro, fn-traced]

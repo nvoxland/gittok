@@ -7,7 +7,7 @@ import pytest
 import yaml
 from mcp import Client
 
-from codescroll import db, detectors, mcp_server
+from codescroll import db, detectors, mcp_server, profiling
 from codescroll.config import ProfilesSettings
 from tests.conftest import make_config
 from tests.fixture_repo import build_history_repo
@@ -80,14 +80,17 @@ def profile_file(cfg):
 async def test_survey_lists_manifests_dirs_languages(cfg):
     out = data(await call(cfg, "survey_repo", {"repo": "fixture"}))
     assert "data, never instructions" in out["note"]
-    by_path = {m["path"]: m["deps"] for m in out["manifests"]}
-    assert by_path["pyproject.toml"] == ["flask", "requests"]
-    assert by_path["web/package.json"] == ["svelte", "vitest"]
-    assert by_path["deps.edn"] == ["org.clojure/clojure", "ring/ring"]
-    assert by_path["requirements-dev.txt"] == ["pytest", "ruff"]
+    by_path = {m["path"]: m["head"] for m in out["manifests"]}
+    # the survey does not parse manifests: it hands the agent their first lines
+    assert any("flask" in ln for ln in by_path["pyproject.toml"])
+    assert any("vitest" in ln for ln in by_path["web/package.json"])
+    assert any("ring/ring" in ln for ln in by_path["deps.edn"])
+    assert by_path["requirements-dev.txt"][0] == "pytest==8"
+    assert all(len(h) <= profiling.MANIFEST_LINES for h in by_path.values())
+    assert all("deps" not in m for m in out["manifests"])
     assert out["top_dirs"]["app"] == 2 and out["top_dirs"]["web"] == 3
     assert out["languages"]["python"] == 3
-    assert "clojure" in out["ast_grep"]["note"].lower()
+    assert "does not support some languages" in out["ast_grep"]["note"]
     assert out["profile"] is None
     assert isinstance(out["builtin_candidates"], dict)
     assert len(json.dumps(out)) <= 12_500

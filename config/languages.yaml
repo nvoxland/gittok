@@ -34,6 +34,9 @@ languages:
     imports:
       - '^\s*from\s+([.\w]+)\s+import\s+([\w, ]+)'
       - '^\s*import\s+([\w.]+)'
+    # more definition lines beside func_start (used to find the names a lead defines)
+    def_patterns:
+      - '^\s*class\s+(\w+)'
     public: '^(?:async\s+)?(?:def|class)\s+([A-Za-z]\w*)'
     branch: '\b(?:if|elif|for|while|except|case|and|or)\b'
     skipped_test:
@@ -70,6 +73,8 @@ languages:
     imports:
       - '\[([a-zA-Z][\w.\-]*)\s+:(?:as|refer|only|exclude|rename)\b'
       - '\(:require\s+\[?([a-zA-Z][\w.\-]*\.[\w.\-]+)\]?'
+    def_patterns:
+      - '^\s*\((?:def|defonce|defprotocol|defrecord|deftype)\s+(?:\^\S+\s+)*([^\s\[\]()]+)'
     public: '^\((?:defn|def|defmacro|defmulti|defprotocol|defrecord|deftype)\s+(?:\^\S+\s+)*([^\s^\-][^\s()\[\]]*)'
     branch: '\((?:if|if-not|if-let|if-some|when|when-not|when-let|when-some|cond|condp|case|and|or|catch)[\s)]'
     skipped_test:
@@ -108,6 +113,9 @@ languages:
       - '^\s*export\s[^''"]*?from\s+[''"]([^''"]+)[''"]'
       - '\brequire\(\s*[''"]([^''"]+)[''"]\s*\)'
       - '\bimport\(\s*[''"]([^''"]+)[''"]\s*\)'
+    def_patterns:
+      - '^\s*(?:export\s+)?(?:default\s+)?(?:abstract\s+)?(?:class|interface|enum)\s+(\w+)'
+      - '^\s*export\s+(?:const|let|var)\s+(\w+)'
     public: '^export\s+(?:default\s+)?(?:async\s+)?(?:function\*?|class|const|let|interface|type|enum)\s+(\w+)'
     branch: '\b(?:if|else if|for|while|case|catch)\b|&&|\|\||\?\s'
     skipped_test:

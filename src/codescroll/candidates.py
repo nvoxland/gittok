@@ -284,7 +284,7 @@ def _read_files(
 
 
 def _norm(s: str) -> str:
-    return s.replace("-", "_")
+    return s.translate(structure.path_translation())
 
 
 class _Index:
@@ -294,7 +294,8 @@ class _Index:
         self.full: dict[tuple[str, str], str] = {}
         self.suffix: dict[tuple[str, str], set[str]] = {}
         self.dirs: dict[tuple[str, str], dict[str, SourceFile]] = {}
-        self.ns: dict[str, str] = {}  # Clojure namespace -> path
+        self.ns: dict[str, str] = {}  # declared namespace -> path
+        index_names = set(structure.spec().get("index_files") or ())
         for sf in files:
             if sf.is_test:
                 continue
@@ -307,7 +308,7 @@ class _Index:
             stem = _norm(posixpath.splitext(sf.path)[0])
             parts = stem.split("/")
             variants = [parts]
-            if parts[-1] in ("__init__", "index") and len(parts) > 1:
+            if parts[-1] in index_names and len(parts) > 1:
                 variants.append(parts[:-1])
             for v in variants:
                 self.full.setdefault((sf.lang.name, "/".join(v)), sf.path)
@@ -382,17 +383,21 @@ def _resolve(sf: SourceFile, spec: str, names: list[str], idx: _Index) -> set[st
         hit = _resolve_module(sf, spec, idx)
         hit.discard(sf.path)
         return hit
+    rules = structure.resolve_rules(lang)
     if style == "path":
-        spec = re.sub(r"\.(?:[cm]?[jt]sx?|svelte)$", "", spec)
+        if rules.get("strip_suffix"):
+            spec = re.sub(rules["strip_suffix"], "", spec)
         if spec.startswith("."):
             whole.append((posixpath.normpath(posixpath.join(here, spec)), True))
         else:
-            alias = re.match(r"(?:\$lib|@|~|src)/(.+)", spec)
-            if alias:
-                whole.append((alias.group(1), False))
+            for rx in rules.get("aliases") or ():
+                alias = re.match(rx, spec)
+                if alias:
+                    whole.append((alias.group(1), False))
+                    break
     else:
         dots = len(spec) - len(spec.lstrip("."))
-        rest = spec.lstrip(".").replace(".", "/")
+        rest = spec.lstrip(".").replace(rules.get("separator", "."), "/")
         exact = bool(dots)
         if dots:
             base = here
@@ -411,7 +416,7 @@ def _resolve(sf: SourceFile, spec: str, names: list[str], idx: _Index) -> set[st
 
 
 def _resolve_module(sf: SourceFile, spec: str, idx: _Index) -> set[str]:
-    """A module spec of a language that has no regex patterns (Go, Ruby, Java, Rust, ...).
+    """A module spec of a language that has no regex patterns.
 
     Relative specs ("./lib/util") are exact. Others are matched by the end of the path: segments
     are trimmed from the front (a Go module prefix, a Java root) and then from the back (a Rust
@@ -438,10 +443,10 @@ def _resolve_module(sf: SourceFile, spec: str, idx: _Index) -> set[str]:
     return set()
 
 
-def _clojure_edges(sf: SourceFile, idx: _Index) -> set[str]:
-    """Files a Clojure file requires AND uses: `alias/name`, a referred name, `ns/name`, or a
-    plain require with no alias or refer (loaded for effect). An alias that is never used does
-    not count."""
+def _namespace_edges(sf: SourceFile, idx: _Index, sep: str) -> set[str]:
+    """Files a file requires AND uses (a language that declares namespaces): `alias/name`, a
+    referred name, `ns/name`, or a plain require with no alias or refer (loaded for effect). An
+    alias that is never used does not count."""
     facts = sf.facts
     names = {n for n, _ in facts.refs}
     prefixes = {n.split("/", 1)[0] for n in names if "/" in n and not n.startswith("/")}
@@ -456,7 +461,7 @@ def _clojure_edges(sf: SourceFile, idx: _Index) -> set[str]:
         )
         if not used:
             continue
-        target = idx.ns.get(req.ns) or idx.lookup(sf.lang.name, req.ns.replace(".", "/"), False)
+        target = idx.ns.get(req.ns) or idx.lookup(sf.lang.name, req.ns.replace(sep, "/"), False)
         if target and target != sf.path:
             out.add(target)
     return out
@@ -470,8 +475,9 @@ def _fan(files: list[SourceFile]) -> tuple[dict[str, set[str]], dict[str, set[st
     for sf in files:
         if sf.is_test:
             continue
-        if sf.facts is not None and sf.lang.name == "clojure" and sf.facts.namespace:
-            targets = _clojure_edges(sf, idx)
+        rules = structure.resolve_rules(sf.lang.name)
+        if sf.facts is not None and rules.get("namespace_edges") and sf.facts.namespace:
+            targets = _namespace_edges(sf, idx, rules.get("separator", "."))
         else:
             targets = {t for spec, names in _specs(sf) for t in _resolve(sf, spec, names, idx)}
         for target in targets:
