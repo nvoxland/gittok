@@ -55,6 +55,18 @@ class Detector:
 
 
 @dataclass(frozen=True)
+class Sink:
+    pattern: str
+    kind: str = "other"
+
+
+@dataclass(frozen=True)
+class Convention:
+    name_regex: str
+    means: str  # effectful | pure
+
+
+@dataclass(frozen=True)
 class Profile:
     stack: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()  # free text, e.g. which analyzer made the submitted facts
@@ -65,6 +77,10 @@ class Profile:
     kinds: dict[str, tuple[str, ...]] | None = None
     generated_markers: tuple[str, ...] | None = None
     queries: dict[str, str] = field(default_factory=dict)  # grammar -> tree-sitter tags query
+    sinks: tuple[Sink, ...] = ()  # calls with an effect (conventions.py)
+    conventions: tuple[Convention, ...] = ()
+    nil_guards: tuple[str, ...] = ()  # regexes that count as a nil check
+    nil_markers: tuple[str, ...] = ()  # plain text in a returns type that means "may be nil"
     version: int = 1
     written_at: str | None = None
     head_sha: str | None = None
@@ -258,6 +274,13 @@ def _check_glob(repo: str, where: str, glob: str) -> None:
         _fail(repo, where, f"{e} ({glob!r})")
 
 
+def _check_regex(repo: str, where: str, rx: str) -> None:
+    try:
+        regex.compile(rx)
+    except regex.error as e:
+        _fail(repo, where, f"bad regex: {e} ({rx!r})")
+
+
 def _check_why(repo: str, where: str, why: str) -> None:
     for _, name, spec, conv in string.Formatter().parse(why):
         if name is not None and (name not in WHY_FIELDS or spec or conv):
@@ -321,6 +344,13 @@ def parse(raw, repo: str) -> Profile:
         except re.error as e:
             _fail(repo, "generated_markers", f"bad regex: {e} ({rx!r})")
 
+    for i, sk in enumerate(raw.get("sinks") or []):
+        _check_regex(repo, f"sinks[{i}]", sk["pattern"])
+    for i, cv in enumerate(raw.get("conventions") or []):
+        _check_regex(repo, f"conventions[{i}]", cv["name_regex"])
+    for rx in raw.get("nil_guards") or []:
+        _check_regex(repo, "nil_guards", rx)
+
     def opt(key):
         return tuple(raw[key] or ()) if raw.get(key) is not None else None
 
@@ -336,6 +366,12 @@ def parse(raw, repo: str) -> Profile:
         ),
         generated_markers=opt("generated_markers"),
         queries=dict(raw.get("queries") or {}),
+        sinks=tuple(Sink(s["pattern"], s.get("kind", "other")) for s in raw.get("sinks") or ()),
+        conventions=tuple(
+            Convention(c["name_regex"], c["means"]) for c in raw.get("conventions") or ()
+        ),
+        nil_guards=tuple(raw.get("nil_guards") or ()),
+        nil_markers=tuple(raw.get("nil_markers") or ()),
         version=raw.get("version", 1),
         written_at=raw.get("written_at"),
         head_sha=raw.get("head_sha"),

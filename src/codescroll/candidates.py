@@ -1095,6 +1095,10 @@ def mine(
     return _bound(out, settings.candidates_per_tag)
 
 
+# Tags that conventions.py stores itself, after the facts are built. refresh() leaves them alone.
+FACT_TAGS = ("convention_mismatch", "nil_contract")
+
+
 def window_hash(lines: list[str]) -> str:
     return hashlib.sha1("\n".join(lines).encode()).hexdigest()
 
@@ -1161,6 +1165,8 @@ def refresh(
         for r in conn.execute(
             "SELECT id, path, line_start, tag FROM candidates WHERE repo = ?", (repo,)
         ).fetchall():
+            if r["tag"] in FACT_TAGS:
+                continue
             if (r["path"], r["line_start"], r["tag"]) not in keep:
                 conn.execute("DELETE FROM candidates WHERE id = ?", (r["id"],))
     return len(found)
@@ -1172,7 +1178,7 @@ def load_candidates(
     """Stored candidates for `repo`, best score first."""
     sql = (
         "SELECT path, line_start AS start, line_end AS end, tag, why, score, head_sha, "
-        "first_seen_at, last_seen_at, rule_id FROM candidates WHERE repo = ?"
+        "first_seen_at, last_seen_at, rule_id, fact_ids FROM candidates WHERE repo = ?"
     )
     args: list = [repo]
     if tag:
@@ -1182,7 +1188,13 @@ def load_candidates(
     if limit:
         sql += " LIMIT ?"
         args.append(limit)
-    return [dict(r) for r in conn.execute(sql, args).fetchall()]
+    return [_ids(dict(r)) for r in conn.execute(sql, args).fetchall()]
+
+
+def _ids(row: dict) -> dict:
+    """Decode the stored `fact_ids` JSON (the fact path of a conventions.py candidate)."""
+    row["fact_ids"] = db.loads(row["fact_ids"]) if row.get("fact_ids") else []
+    return row
 
 
 def load_rated(
@@ -1196,7 +1208,8 @@ def load_rated(
     """Current candidates joined to their scout rating (same window text), best rated first."""
     sql = (
         "SELECT c.id, c.path, c.line_start AS start, c.line_end AS end, c.tag, c.why AS reason, "
-        "c.score, c.head_sha, c.rule_id, r.teachable, r.verdict, r.concept, r.why, r.rated_at "
+        "c.score, c.head_sha, c.rule_id, c.fact_ids, r.teachable, r.verdict, r.concept, r.why, "
+        "r.rated_at "
         "FROM candidates c JOIN candidate_ratings r ON r.repo = c.repo AND r.path = c.path "
         "AND r.line_start = c.line_start AND r.tag = c.tag AND r.window_hash = c.window_hash "
         "WHERE c.repo = ? AND r.teachable >= ?"
@@ -1210,4 +1223,4 @@ def load_rated(
     if limit:
         sql += " LIMIT ?"
         args.append(limit)
-    return [dict(r) for r in conn.execute(sql, args).fetchall()]
+    return [_ids(dict(r)) for r in conn.execute(sql, args).fetchall()]

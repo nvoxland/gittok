@@ -546,6 +546,27 @@ def _query_gate(parsed: Profile, files) -> tuple[dict[str, dict], dict[str, list
     return stats, errors
 
 
+def _conventions_preview(conn, repo_name: str, profile) -> dict:
+    """Candidates the fact miner (conventions.py) finds with the saved sinks, conventions and
+    nil data, so the agent can see whether they fit this stack. Empty when the profile has none."""
+    if not (profile.sinks or profile.conventions or profile.nil_guards or profile.nil_markers):
+        return {}
+    found = {tag: [] for tag in candidates.FACT_TAGS}
+    for c in candidates.load_candidates(conn, repo_name):
+        if c["tag"] in found:
+            found[c["tag"]].append(c)
+    return {
+        "conventions": {
+            **{tag: len(rows) for tag, rows in found.items()},
+            "samples": [
+                {"tag": c["tag"], "path": c["path"], "start": c["start"], "why": c["why"]}
+                for rows in found.values()
+                for c in rows[:3]
+            ],
+        }
+    }
+
+
 def save_profile(cfg, conn, repo_name: str, profile) -> dict:
     repo = check_name(cfg, repo_name)
     target = profile_path(cfg, repo_name)
@@ -605,5 +626,6 @@ def save_profile(cfg, conn, repo_name: str, profile) -> dict:
         "head_sha": head,
         "hits": counts,
         **({"queries": query_stats} if query_stats else {}),
+        **_conventions_preview(conn, repo_name, new),
         "path": f"config/profiles/{repo_name}.yaml",
     }

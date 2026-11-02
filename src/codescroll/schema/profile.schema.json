@@ -41,7 +41,47 @@
       "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 6000},
       "maxProperties": 8
     },
-    "detectors": {"type": "array", "items": {"$ref": "#/$defs/detector"}, "maxItems": 60}
+    "detectors": {"type": "array", "items": {"$ref": "#/$defs/detector"}, "maxItems": 60},
+    "sinks": {
+      "type": "array",
+      "description": "Calls that have an effect (regex on a callee name or symbol, or on a line of a definition body)",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["pattern"],
+        "properties": {
+          "pattern": {"type": "string", "minLength": 1, "maxLength": 200},
+          "kind": {"type": "string", "minLength": 1, "maxLength": 40}
+        }
+      },
+      "maxItems": 60
+    },
+    "conventions": {
+      "type": "array",
+      "description": "Naming conventions of this codebase: a definition name regex and what it promises",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name_regex", "means"],
+        "properties": {
+          "name_regex": {"type": "string", "minLength": 1, "maxLength": 200},
+          "means": {"enum": ["effectful", "pure"]}
+        }
+      },
+      "maxItems": 20
+    },
+    "nil_guards": {
+      "type": "array",
+      "description": "Regexes that count as a nil check around the result of a call",
+      "items": {"type": "string", "minLength": 1, "maxLength": 200},
+      "maxItems": 30
+    },
+    "nil_markers": {
+      "type": "array",
+      "description": "Words in a returns type that mean the value may be nil (matched as plain text)",
+      "items": {"type": "string", "minLength": 1, "maxLength": 60},
+      "maxItems": 20
+    }
   },
   "$defs": {
     "slug": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,39}$"},

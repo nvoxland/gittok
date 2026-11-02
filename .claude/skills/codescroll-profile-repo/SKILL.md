@@ -26,6 +26,7 @@ Requires the `codescroll` MCP server (tools named `mcp__codescroll__*`). If thos
 The profile owns the file set. A key you write REPLACES the bootstrap default (`config/scan_defaults.yaml`); a key you leave out falls back to it. No merging: if you write `ignore`, list every ignore you need, including `node_modules/**`.
 - `queries` (optional): `{grammar: tags query text}` for a language CodeScroll has no shipped query for (see step 5b).
 - `notes` (optional): free-text lines for the next agent, such as the analyzer command (step 2b).
+- `sinks`, `conventions`, `nil_guards`, `nil_markers` (optional): data for the convention miner (step 6b).
 - `detectors`: rules with `id`, `tag`, `match` (`regex` or `ast_grep`, `paths`, optional `exclude`), `weight` (0.1 to 3), optional `verdict_hint` (good, bad, clever, cursed, core), `window` (lines, 1 to 40), and `why`.
 
 ## Steps
@@ -52,6 +53,12 @@ The profile owns the file set. A key you write REPLACES the bootstrap default (`
    - Conventions that belong to this codebase only.
 
    Each rule gets a `tag` (a lowercase slug), a `weight` (1 is normal; 2 to 3 for the real core; 0.3 to 0.7 for minor), a `window` that fits the construct, and a `why` that says in one sentence what a reader learns here. Prefer anchored, specific regexes with narrow `paths`. Use `ast_grep` only when `survey_repo` says it is available and the language is in `ast_grep.languages`. For any other language use `regex`.
+6b. **Conventions vs reality (optional).** CodeScroll can flag a function whose name promises something the code does not do, using the call graph. It needs your data, written for THIS stack from what you read in step 3. Nothing is shipped. Without `sinks` it finds nothing.
+   - `sinks`: `[{pattern, kind}]`. `pattern` is a regex on a callee name or on a line of a function body. `kind` is a word such as `db_write`, `http`, `file_io`, `state`, `sleep`, `other`. List the calls that change the world outside the function (database writes, HTTP calls, file writes, state changes, sleeps). Anchor the regex.
+   - `conventions`: `[{name_regex, means}]`. `means` is `effectful` or `pure`. Only write a convention you SAW used in the code, with `git_grep` to check that the names agree with it (a name suffix, a prefix, a name word).
+   - `nil_guards`: regexes for the nil checks of this stack, as they look on the line of a call or two lines below it.
+   - `nil_markers`: plain text in a return type that means the value may be nil. This only helps when analyzer facts with `returns` types were submitted (step 2b).
+   After `save_profile`, read `conventions` in its result: the count per tag and sample reasons. If the samples are false alarms (for example a sink that is too wide, or a convention the code does not follow), tighten the data and save again. If a count is 0, check the sink patterns with `git_grep`. Drop data that gives mostly noise.
 7. Test each detector with `test_detector(repo, rule)`. For a rule over files outside the current `scan`, pass the draft `scan` (and `ignore`) too: `test_detector(repo, rule, scan=[...])`. Fix it until it passes the gates and its samples show the right code. If the samples are mostly noise, drop the rule. Do not keep a weak rule. Change one thing at a time: tighten the regex, narrow `paths`, add `exclude`.
 8. Revise mode (a profile exists): call `rule_stats(repo)` first. Drop or rework each rule with `factor` under 0.8 that has many `found` but few `rated` or `cards`. Keep good rules unchanged. Add rules for areas the old profile missed, and update `roles` and `stack` if the manifests changed.
 9. Call `save_profile(repo, profile)` with the whole profile. If it returns errors by rule id, fix those rules and call it once more. Then stop.

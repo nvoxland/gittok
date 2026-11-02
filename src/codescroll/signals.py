@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from codescroll import candidates, config, db, facts, gitq, ledger, profiles
+from codescroll import candidates, config, conventions, db, facts, gitq, ledger, profiles
 from codescroll.config import AnalysisSettings, Repo
 
 
@@ -620,6 +620,7 @@ def analyze(
         cached = _cached(conn, row["id"], head)
         if cached is not None:
             facts.refresh(conn, repo.name, repo.path, head, t0, settings, profile)
+            conventions.refresh(conn, repo.name, repo.path, head, settings, profile)
             return {**meta, "cached": True, "signals": cached}
 
     # All git work happens first, with no write transaction open.
@@ -691,6 +692,7 @@ def analyze(
         profiles.fileset_for(profile),
     )
     facts.refresh(conn, repo.name, path, head, t0, settings, profile)
+    conventions.refresh(conn, repo.name, path, head, settings, profile)
     return {**meta, "cached": False, "signals": result}
 
 
