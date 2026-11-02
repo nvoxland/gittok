@@ -57,6 +57,7 @@ class Detector:
 @dataclass(frozen=True)
 class Profile:
     stack: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()  # free text, e.g. which analyzer made the submitted facts
     roles: dict[str, str] = field(default_factory=dict)
     detectors: tuple[Detector, ...] = ()
     ignore: tuple[str, ...] | None = None  # None: not set, the bootstrap ignore applies
@@ -325,6 +326,7 @@ def parse(raw, repo: str) -> Profile:
 
     return Profile(
         stack=tuple(raw.get("stack") or ()),
+        notes=tuple(raw.get("notes") or ()),
         roles=dict(raw.get("roles") or {}),
         detectors=tuple(dets),
         ignore=opt("ignore"),

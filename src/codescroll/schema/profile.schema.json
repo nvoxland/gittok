@@ -10,6 +10,7 @@
     "written_at": {"type": "string", "minLength": 1, "maxLength": 40},
     "head_sha": {"type": "string", "pattern": "^[0-9a-f]{7,40}$"},
     "stack": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 60}, "maxItems": 20},
+    "notes": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 500}, "maxItems": 20},
     "roles": {
       "type": "object",
       "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 200},

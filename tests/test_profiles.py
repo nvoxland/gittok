@@ -142,3 +142,8 @@ def test_config_exposes_profiles_and_role_for(tmp_path):
     assert cfg.profile("nope").detectors == ()  # no profile: built-ins only
     assert cfg.role_for("demo", "src/api/a.clj") == "HTTP route tables"
     assert cfg.role_for("nope", "src/api/a.clj") is None
+
+
+def test_profile_keeps_free_text_notes():
+    p = profiles.parse({"version": 1, "notes": ["facts: clj-kondo --lint src, converted"]}, "x")
+    assert p.notes == ("facts: clj-kondo --lint src, converted",)
