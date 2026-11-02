@@ -15,7 +15,7 @@
 			language={resolved.language}
 			startLine={resolved.start_line}
 			highlight={callouts.map((c) => c.line)}
-			wrap
+			fit
 		/>
 	{:else}
 		<p class="missing">Code unavailable</p>

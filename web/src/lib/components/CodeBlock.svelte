@@ -4,16 +4,29 @@
 		language,
 		startLine = 1,
 		highlight = [],
-		wrap = false
+		wrap = false,
+		fit = false
 	}: {
 		code: string;
 		language?: string;
 		startLine?: number;
 		highlight?: number[];
 		wrap?: boolean;
+		/** Card front: shrink the font so the longest line fits the width; wrap only past MAX_FIT_COLS. */
+		fit?: boolean;
 	} = $props();
 
+	// Above this many columns the shrunk font would be too small to read, so lines wrap instead.
+	const MAX_FIT_COLS = 64;
+
 	const lines = $derived(code.replace(/\n$/, '').split('\n'));
+	// Columns the widest line needs: its text (tabs as 4) plus the line-number gutter and margin.
+	const cols = $derived(
+		Math.max(...lines.map((l) => l.replace(/\t/g, '    ').length)) +
+			String(startLine + lines.length - 1).length +
+			2
+	);
+	const folds = $derived(wrap || (fit && cols > MAX_FIT_COLS));
 
 	let html = $state<string | null>(null);
 
@@ -58,15 +71,19 @@
 	});
 </script>
 
-{#if html}
-	<div class="codeblock shiki-wrap" class:wrap>{@html html}</div>
-{:else}
-<pre class="codeblock" class:wrap><code
-		>{#each lines as line, i (i)}<span class="line" class:hl={highlight.includes(startLine + i)}
-				><span class="ln">{startLine + i}</span><span class="src">{line}</span></span
-			>{/each}</code
-	></pre>
-{/if}
+<div class:fit-box={fit}>
+	{#if html}
+		<div class="codeblock shiki-wrap" class:wrap={folds} class:fit style:--cols={fit ? cols : null}>
+			{@html html}
+		</div>
+	{:else}
+		<pre class="codeblock" class:wrap={folds} class:fit style:--cols={fit ? cols : null}><code
+				>{#each lines as line, i (i)}<span class="line" class:hl={highlight.includes(startLine + i)}
+						><span class="ln">{startLine + i}</span><span class="src">{line}</span></span
+					>{/each}</code
+			></pre>
+	{/if}
+</div>
 
 <style>
 	.codeblock {
@@ -104,6 +121,15 @@
 		display: block;
 		padding-right: 0.75rem;
 		white-space: pre;
+	}
+	/* fit: the font shrinks until the widest line (--cols characters) fills the box width,
+	   between 0.55rem and 0.8rem, so code on the card front neither scrolls nor wraps. */
+	.fit-box {
+		container-type: inline-size;
+	}
+	.codeblock.fit {
+		overflow-x: hidden;
+		font-size: max(0.55rem, min(0.8rem, calc(100cqw / (var(--cols) * 0.62))));
 	}
 	/* wrap: long lines fold instead of scrolling sideways (used on the card front). */
 	.codeblock.wrap {

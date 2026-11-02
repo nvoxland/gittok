@@ -17,6 +17,22 @@ describe('CodeBlock', () => {
 		expect(nums).toEqual(['10', '11', '12']);
 	});
 
+	it('fit sizes the font to the longest line instead of wrapping', () => {
+		const code = 'short\n' + 'x'.repeat(50) + '\n\tindented';
+		const { container } = render(CodeBlock, { code, startLine: 87, fit: true });
+		const block = container.querySelector('.codeblock') as HTMLElement;
+		expect(block).toHaveClass('fit');
+		expect(block).not.toHaveClass('wrap');
+		// 50 chars + a 2-digit line number gutter (2 + 2 spaces of margin)
+		expect(block.style.getPropertyValue('--cols')).toBe('54');
+		expect(block.parentElement).toHaveClass('fit-box');
+	});
+
+	it('fit falls back to wrapping when lines are too long to shrink into view', () => {
+		const { container } = render(CodeBlock, { code: 'y'.repeat(120), fit: true });
+		expect(container.querySelector('.codeblock')).toHaveClass('wrap');
+	});
+
 	it('wraps long lines only when asked', () => {
 		const { container } = render(CodeBlock, { code: 'a', wrap: true });
 		expect(container.querySelector('.codeblock')).toHaveClass('wrap');

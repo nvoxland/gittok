@@ -253,19 +253,6 @@
 			<span class="icon" aria-hidden="true">{saved ? '★' : '☆'}</span>
 			<span class="label" aria-hidden="true">Save</span>
 		</button>
-		<button type="button" aria-pressed={knewIt} aria-label="Knew it" onclick={() => signal('knewIt')}>
-			<span class="icon" aria-hidden="true">{knewIt ? '✔' : '✓'}</span>
-			<span class="label" aria-hidden="true">Knew it</span>
-		</button>
-		<button
-			type="button"
-			aria-pressed={teachMore}
-			aria-label="Teach me more"
-			onclick={() => signal('teachMore')}
-		>
-			<span class="icon" aria-hidden="true">{teachMore ? '⊕' : '＋'}</span>
-			<span class="label" aria-hidden="true">More</span>
-		</button>
 		{#if showComments}
 			<!-- Jumps to the comments panel; the panel change itself is the depth_open signal. -->
 			<button
@@ -278,10 +265,33 @@
 			</button>
 		{/if}
 	</div>
-	<div class="dots">
-		{#each { length: count } as _, i (i)}
-			<span class="dot" class:active={i === panel}></span>
-		{/each}
+	<!-- Knowledge signals ride in the dots row so the side column stays short. -->
+	<div class="bottom-row">
+		<button
+			type="button"
+			class="pill"
+			aria-pressed={knewIt}
+			aria-label="Knew it"
+			onclick={() => signal('knewIt')}
+		>
+			<span class="icon" aria-hidden="true">{knewIt ? '✔' : '✓'}</span>
+			<span class="label" aria-hidden="true">Knew it</span>
+		</button>
+		<div class="dots">
+			{#each { length: count } as _, i (i)}
+				<span class="dot" class:active={i === panel}></span>
+			{/each}
+		</div>
+		<button
+			type="button"
+			class="pill"
+			aria-pressed={teachMore}
+			aria-label="Teach me more"
+			onclick={() => signal('teachMore')}
+		>
+			<span class="icon" aria-hidden="true">{teachMore ? '⊕' : '＋'}</span>
+			<span class="label" aria-hidden="true">More</span>
+		</button>
 	</div>
 </article>
 
@@ -365,7 +375,7 @@
 	h2 {
 		flex: none;
 		margin: 0;
-		padding-right: 60px; /* clear of the like/save/explain buttons */
+		padding-right: 52px; /* clear of the side buttons (44px + gap) */
 		font-size: 1.25rem;
 		display: -webkit-box;
 		-webkit-box-orient: vertical;
@@ -396,7 +406,7 @@
 		flex: none;
 		list-style: none;
 		margin: 0;
-		padding: 0 60px 0 0;
+		padding: 0 52px 0 0; /* clear of the side buttons */
 		font-size: 0.85rem;
 		color: var(--muted);
 	}
@@ -493,15 +503,15 @@
 	}
 	.actions {
 		position: absolute;
-		right: 12px;
-		bottom: 2.5rem;
+		right: 10px;
+		bottom: 3.5rem; /* above the bottom row */
 		display: flex;
 		flex-direction: column;
-		gap: 0.5rem;
+		gap: 0.35rem;
 	}
 	.actions button {
-		width: 52px;
-		min-height: 52px;
+		width: 44px;
+		min-height: 44px;
 		padding: 2px 0;
 		display: flex;
 		flex-direction: column;
@@ -509,12 +519,39 @@
 		justify-content: center;
 		gap: 1px;
 		line-height: 1;
-		border-radius: 14px;
-		border: 1px solid var(--border);
-		background: var(--surface);
+		border-radius: 50%;
+		border: none;
+		background: color-mix(in srgb, var(--surface) 70%, transparent);
 		color: inherit;
 		font-size: 1.2rem;
 		cursor: pointer;
+	}
+	.bottom-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.5rem;
+	}
+	.bottom-row .pill {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		min-height: 36px;
+		padding: 0 0.75rem;
+		border-radius: 999px;
+		border: 1px solid var(--border);
+		background: var(--surface);
+		color: inherit;
+		font-size: 0.8rem;
+		cursor: pointer;
+	}
+	.bottom-row .pill .label {
+		color: var(--muted);
+	}
+	.bottom-row .pill[aria-pressed='true'] {
+		color: var(--accent);
+		border-color: var(--accent);
+		background: color-mix(in srgb, var(--accent) 18%, var(--surface));
 	}
 	.actions .icon {
 		font-size: 1.2rem;

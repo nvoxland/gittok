@@ -89,7 +89,7 @@ describe('Card', () => {
 		expect(front).toHaveClass('front');
 		expect(container.querySelector('section[data-panel="1"]')).not.toHaveClass('front');
 		// Front code wraps (no sideways scroller fighting the panel swipe); depth code does not.
-		expect(front.querySelector('.codeblock')).toHaveClass('wrap');
+		expect(front.querySelector('.codeblock')).toHaveClass('fit'); // shrinks to fit; never scrolls or overflows
 		expect(container.querySelector('section[data-panel="2"] .codeblock')).not.toHaveClass('wrap');
 	});
 
@@ -212,6 +212,16 @@ describe('Card actions', () => {
 		expect(btn).toHaveAttribute('aria-pressed', 'true');
 		expect(calls).toEqual([['save', { on: true }]]);
 		expect(JSON.parse(localStorage.getItem('codescroll.card-state')!).c_save.saved).toBe(true);
+	});
+
+	it('keeps the side column short: Knew it and More sit in the bottom row with the dots', () => {
+		const { container } = render(Card, { card: fakeCard({ id: 'c_rows' }) });
+		const side = container.querySelector('.actions') as HTMLElement;
+		const bottom = container.querySelector('.bottom-row') as HTMLElement;
+		expect(side.querySelectorAll('button').length).toBeLessThanOrEqual(3);
+		expect(bottom).toContainElement(screen.getByRole('button', { name: 'Knew it' }));
+		expect(bottom).toContainElement(screen.getByRole('button', { name: 'Teach me more' }));
+		expect(bottom).toContainElement(container.querySelector('.dots') as HTMLElement);
 	});
 
 	it('shows visible labels under the action icons', () => {
