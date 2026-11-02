@@ -58,7 +58,7 @@ from dataclasses import dataclass, field  # noqa: E402
 from datetime import UTC, datetime, timedelta, timezone  # noqa: E402
 from pathlib import PurePosixPath  # noqa: E402
 
-from codescroll import claims, config, factcheck, gitq, secrets, storykey  # noqa: E402
+from codescroll import claims, config, factcheck, gitq, quizfacts, secrets, storykey  # noqa: E402
 
 MAX_SPAN = 40
 # The card front must fit one phone screen without scrolling: on iOS a scrolling front takes
@@ -503,6 +503,19 @@ def _check_interactive_truth(card: dict, gc: _GitCache) -> None:
                 raise _Reject("ambiguous_answer", f"choice {other!r} also contains {year}")
 
 
+def _check_answer_fact(card: dict, ctx) -> None:
+    """A quiz that names `answer_fact` is checked against the facts store (quizfacts.py)."""
+    inter = card.get("interaction") or {}
+    if "answer_fact" not in inter or ctx.facts_conn is None:
+        return
+    if card["story_type"] != "quiz":
+        raise _Reject("invalid_answer_index", "answer_fact is only for story type 'quiz'")
+    try:
+        quizfacts.check(ctx.facts_conn, card["repos"], inter)
+    except quizfacts.QuizReject as e:
+        raise _Reject(e.reason, e.detail) from e
+
+
 @dataclass
 class _Ctx:
     personas: list
@@ -930,6 +943,7 @@ def _validate_one(card: dict, gc: _GitCache, ctx: _Ctx) -> tuple[dict, dict, str
 
     _check_cross_repo(card, gc)
     _check_interactive_truth(card, gc)
+    _check_answer_fact(card, ctx)
     if "interaction" in card:
         resolved["interaction"] = {"answer_index": card["interaction"].get("answer_index")}
 

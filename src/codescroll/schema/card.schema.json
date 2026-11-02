@@ -250,6 +250,14 @@
         "question": {"type": "string", "minLength": 1, "maxLength": 200},
         "choices": {"type": "array", "minItems": 2, "maxItems": 4, "items": {"type": "string", "minLength": 1, "maxLength": 120}},
         "answer_index": {"type": "integer", "minimum": 0, "maximum": 3},
+        "answer_fact": {
+          "type": "object", "additionalProperties": false, "required": ["seed", "subject", "fact_ids"],
+          "properties": {
+            "seed": {"enum": ["first_call", "caller_count", "introduced_in", "defined_in", "calls_which"]},
+            "subject": {"type": "string", "minLength": 1, "maxLength": 300},
+            "fact_ids": {"type": "array", "maxItems": 12, "items": {"type": "string", "pattern": "^[a-z]{2,5}-[0-9a-f]{12}$"}}
+          }
+        },
         "explanation": {"type": "string", "minLength": 1, "maxLength": 400}
       }
     },
