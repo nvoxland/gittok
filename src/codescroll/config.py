@@ -79,6 +79,11 @@ class AnalysisSettings:
     candidate_max_file_bytes: int = 200000
     candidate_max_files: int = 4000
     fetch_min_interval_s: int = 900  # at most one fetch per repo in this time
+    facts_max_files: int = 4000  # syntax facts (facts.py): files read at head
+    facts_max_commits: int = 300  # commits whose diffs map to definitions (newest first)
+    facts_max_defs: int = 100000  # rows kept per repo, per table
+    facts_max_calls: int = 400000
+    facts_max_blob_bytes: int = 200000  # larger files are not parsed
 
 
 @dataclass(frozen=True)
