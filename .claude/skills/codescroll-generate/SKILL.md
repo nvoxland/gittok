@@ -12,7 +12,9 @@ Requires the `codescroll` MCP server (tools named `mcp__codescroll__*`). If thos
 
 ## Steps
 
-0. **Scout.** Call `scout_status` (with `repo` only if the user gave one). If `batches` is empty, go to step 1. Otherwise launch one scout per batch, all as parallel Agent calls in one message:
+0. **Analyzer facts.** If the SessionStart hint (or `uv run codescroll health --hint`) says analyzer facts are stale for a repo, read the `notes` of that repo's profile (`survey_repo(repo)["profile"]["yaml"]`) for the tool and command, run it again, and send the result with `submit_facts` as the codescroll-profile-repo skill says (step 2b). If you cannot find the notes or the user declines the command, skip this and say so in one line. Never block card generation on it.
+
+0b. **Scout.** Call `scout_status` (with `repo` only if the user gave one). If `batches` is empty, go to step 1. Otherwise launch one scout per batch, all as parallel Agent calls in one message:
    - `subagent_type`: `codescroll-scout`
    - `model`: `haiku`
    - `prompt`: exactly `batch_id: <id>` and nothing else.

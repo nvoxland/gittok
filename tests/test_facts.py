@@ -156,3 +156,128 @@ def test_facts_module_names_no_language():
     for n in names:
         assert not re.search(rf"\b{n}\b", src), n
     assert not re.search(r"""["']\.(py|clj|ts|js|go|rb|rs)["']""", src)
+
+
+# ---------- agent-supplied analyzer facts ----------
+
+SRC = "def parse(s, sep):\n    return s.split(sep)\n\n\ndef main():\n    return parse('a', ',')\n"
+AC = "analyzer:lint 1.0"
+
+
+@pytest.fixture
+def arepo(tmp_path, conn):
+    r = build_history_repo(tmp_path / "ar", [("one", {"m.txt": SRC, "n.txt": "import os\n"}, D1)])
+    conn.execute("INSERT INTO repos(name, path, ref) VALUES ('fx', ?, 'main')", (str(r.path),))
+    r.head = gitq.rev_parse(r.path, "main")
+    return r
+
+
+def submit(conn, r, items, head=None, tool="lint 1.0", current=None):
+    return facts.submit_analyzer(conn, "fx", r.path, current or r.head, head or r.head, tool, items)
+
+
+def rows(conn, table):
+    return [dict(x) for x in conn.execute(f"SELECT * FROM {table}")]
+
+
+def dfn(name, line, end=None):
+    return {"defines": {"path": "m.txt", "name": name, "line": line, "end_line": end or line}}
+
+
+def call(line, caller, callee, **kw):
+    return {"calls": {"path": "m.txt", "line": line, "caller": caller, "callee": callee, **kw}}
+
+
+def test_matching_facts_are_stored_with_analyzer_source(conn, arepo):
+    got = submit(
+        conn,
+        arepo,
+        [
+            dfn("parse", 1, 2),
+            dfn("main", 5, 6),
+            call(6, "main", "parse", callee_path="m.txt"),
+            {"imports": {"path": "n.txt", "line": 1, "module": "os"}},
+            {"returns": {"path": "m.txt", "line": 1, "symbol": "parse", "type": "list"}},
+            {"accepts": {"path": "m.txt", "line": 2, "symbol": "sep", "params": ["s"]}},
+        ],
+    )
+    assert got["accepted"] == {"defines": 2, "calls": 1, "imports": 1, "returns": 1, "accepts": 1}
+    assert got["rejected"] == []
+    assert {r["source"] for r in rows(conn, "fact_defines")} == {AC}
+    (c,) = rows(conn, "fact_calls")
+    assert c["source"] == AC and c["resolved"] == 1
+    assert c["callee_symbol"] == "m.txt:parse" and c["caller_symbol"] == "m.txt:main"
+    assert {r["source"] for r in rows(conn, "fact_schema")} == {"schema:lint 1.0"}
+    assert rows(conn, "fact_imports")[0]["module_text"] == "os"
+    (a,) = rows(conn, "fact_analyzers")
+    assert a["tool"] == "lint 1.0" and a["head_sha"] == arepo.head
+
+
+def test_call_whose_callee_is_not_on_the_line_is_rejected(conn, arepo):
+    got = submit(conn, arepo, [call(6, "main", "nope")])
+    assert got["accepted"] == {}
+    assert got["rejected"][0]["fact"] == "calls" and "nope" in got["rejected"][0]["reason"]
+    assert rows(conn, "fact_calls") == []
+
+
+def test_stale_head_is_rejected(conn, arepo):
+    with pytest.raises(facts.FactsError, match="stale"):
+        submit(conn, arepo, [], head="0" * 40)
+    with pytest.raises(facts.FactsError, match="stale"):
+        submit(conn, arepo, [], current="1" * 40)
+
+
+def test_missing_path_and_bad_line_are_rejected(conn, arepo):
+    gone = {"defines": {"path": "gone.txt", "name": "x", "line": 1}}
+    got = submit(conn, arepo, [gone, dfn("parse", 99), dfn("other", 1), {"bogus": {}}])
+    assert got["accepted"] == {} and got["rejected_count"] == 4
+
+
+def test_caller_must_match_enclosing_definition(conn, arepo):
+    submit(conn, arepo, [dfn("main", 5, 6)])
+    got = submit(conn, arepo, [call(6, "wrong", "parse")])
+    assert got["accepted"] == {} and "main" in got["rejected"][0]["reason"]
+
+
+def test_analyzer_call_supersedes_unresolved_syntax_call(conn, arepo):
+    rid = conn.execute("SELECT id FROM repos").fetchone()[0]
+    conn.execute(
+        "INSERT INTO fact_defines VALUES ('def-aaaaaaaaaaaa', ?, 'm.txt', 'm.txt:main', 'main',"
+        " 'function', 5, 6, 2, 0, 0, 0, 1, 'syntax')", (rid,)
+    )  # fmt: skip
+    conn.execute(
+        "INSERT INTO fact_calls VALUES ('call-aaaaaaaaaaaa', ?, 'm.txt:main', 'parse', 'm.txt',"
+        " 6, 0, NULL, 'syntax')", (rid,)
+    )  # fmt: skip
+    got = submit(conn, arepo, [call(6, "main", "parse", callee_path="m.txt")])
+    assert got["accepted"] == {"calls": 1}
+    (c,) = rows(conn, "fact_calls")
+    assert c["resolved"] == 1 and c["callee_symbol"] == "m.txt:parse"
+    assert c["source"] == AC and c["caller_symbol"] == "m.txt:main"
+
+
+def test_chunks_add_and_a_resubmit_does_not_duplicate(conn, arepo):
+    submit(conn, arepo, [dfn("parse", 1)])
+    imp = {"imports": {"path": "n.txt", "line": 1, "module": "os"}}
+    submit(conn, arepo, [dfn("parse", 1), imp])
+    assert len(rows(conn, "fact_defines")) == 1
+    (a,) = rows(conn, "fact_analyzers")
+    assert db.loads(a["counts"])["imports"] == 1
+
+
+def test_too_many_facts_in_one_call_is_an_error(conn, arepo):
+    with pytest.raises(facts.FactsError, match="at most"):
+        submit(conn, arepo, [{"x": 1}] * (facts.MAX_SUBMIT + 1))
+
+
+def test_refresh_at_new_head_drops_analyzer_facts_and_hint_says_stale(conn, arepo, monkeypatch):
+    submit(conn, arepo, [dfn("parse", 1)])
+    assert facts.stale_analyzer_repos(conn, {"fx": arepo.head}) == []
+    assert facts.stale_analyzer_repos(conn, {"fx": "2" * 40}) == ["fx"]
+    monkeypatch.setattr(structure, "available", lambda: True)
+    monkeypatch.setattr(facts, "_build", lambda *a: facts._Built())
+    facts.refresh(conn, "fx", arepo.path, "2" * 40, 0, AnalysisSettings())
+    assert rows(conn, "fact_defines") == []
+    assert facts.stale_analyzer_repos(conn, {"fx": "2" * 40}) == ["fx"]
+    assert "stale for fx" in facts.analyzer_hint(["fx"])
+    assert facts.analyzer_hint([]) is None

@@ -286,3 +286,23 @@ async def test_second_brief_on_same_head_skips_covered_leads(fixture_repo, tmp_p
         second = data(await client.call_tool("get_brief", {"count": 6}))
         second_ids = await _lead_ids(client, second)
         assert not first_ids & second_ids
+
+
+async def test_submit_facts_checks_against_the_head_and_rejects_stale(fixture_repo, tmp_path):
+    from codescroll import gitq
+
+    cfg = make_config(fixture_repo, tmp_path)
+    server = mcp_server.build_server(lambda: cfg)
+    head = gitq.rev_parse(fixture_repo.path, "main")
+    async with Client(server) as client:
+        data(await client.call_tool("get_brief", {"count": 1}))  # analyzes the repo
+        good = {"defines": {"path": "src/app.py", "name": "main", "line": 1}}
+        bad = {"calls": {"path": "src/app.py", "line": 2, "caller": "main", "callee": "zzz"}}
+        args = {"repo": "fixture", "head_sha": head, "tool": "lint 1.0", "facts": [good, bad]}
+        got = data(await client.call_tool("submit_facts", args))
+        assert got["accepted"] == {"defines": 1} and got["rejected_count"] == 1
+        assert "zzz" in got["rejected"][0]["reason"]
+        stale = await client.call_tool("submit_facts", {**args, "head_sha": "0" * 40})
+        assert stale.is_error and "stale" in stale.content[0].text
+        unknown = await client.call_tool("submit_facts", {**args, "repo": "nope"})
+        assert unknown.is_error

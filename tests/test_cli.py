@@ -652,3 +652,28 @@ def test_repos_add_prints_the_profile_next_step(cfg, fixture_repo, capsys, monke
     monkeypatch.setattr(cli.steering, "add_repo", lambda *a, **k: out)
     assert cli.main(["repos", "add", "zed", str(fixture_repo.path)]) == 0
     assert "/codescroll-profile-repo zed" in capsys.readouterr().out
+
+
+def test_health_hint_says_analyzer_facts_are_stale(cfg, capsys, monkeypatch):
+    from contextlib import closing
+
+    from codescroll import gitq, profiling
+
+    _quiet_feed(monkeypatch)
+    monkeypatch.setattr(profiling, "profile_hint", lambda cfg: None)
+    monkeypatch.setattr(profiling, "structure_hint", lambda cfg: None)
+    assert cli.main(["health", "--hint"]) == 0
+    assert capsys.readouterr().out == ""
+    head = gitq.rev_parse(cfg.repos["fixture"].path, "main")
+    with closing(db.open_db(cli._db_path(cfg))) as conn:
+        conn.execute("INSERT INTO repos(name, path, ref) VALUES ('fixture', ?, 'main')", ("x",))
+        rid = conn.execute("SELECT id FROM repos").fetchone()[0]
+        for h in (head, "0" * 40):
+            conn.execute(
+                "INSERT OR REPLACE INTO fact_analyzers VALUES (?, 'lint 1.0', ?, 'now', '{}')",
+                (rid, h),
+            )
+            conn.commit()
+            assert cli.main(["health", "--hint"]) == 0
+            out = capsys.readouterr().out
+            assert ("stale for fixture" in out) == (h != head)

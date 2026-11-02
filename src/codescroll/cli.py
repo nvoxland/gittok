@@ -22,7 +22,9 @@ from codescroll import (
     avatars,
     candidate_leads,
     db,
+    facts,
     gc,
+    gitq,
     install,
     knowledge,
     learning,
@@ -255,6 +257,7 @@ def _health(args) -> int:
     cfg = load_config()
     with closing(db.open_db(_db_path(cfg))) as conn:
         h = supply.feed_health(conn, cfg, _now())
+        stale = [] if not args.hint else _stale_analyzer_repos(conn, cfg)
     if not args.hint:
         print(json.dumps(h, indent=2))
     else:
@@ -270,7 +273,20 @@ def _health(args) -> int:
         line = profiling.structure_hint(cfg)
         if line:
             print(line)
+        line = facts.analyzer_hint(stale)
+        if line:
+            print(line)
     return 0
+
+
+def _stale_analyzer_repos(conn, cfg) -> list[str]:
+    heads = {}
+    for name, repo in cfg.repos.items():
+        try:
+            heads[name] = gitq.rev_parse(repo.path, repo.ref)
+        except gitq.GitError:
+            continue
+    return facts.stale_analyzer_repos(conn, heads)
 
 
 def _structure(args) -> int:
