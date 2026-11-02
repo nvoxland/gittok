@@ -5,7 +5,7 @@
 	import StoryViewer from '#lib/components/StoryViewer.svelte';
 	import CatchUp from '#lib/components/CatchUp.svelte';
 	import NotificationBell from '#lib/components/NotificationBell.svelte';
-	import { fetchFeed, fetchPrefs, fetchStories, markStoriesSeen, postEvents } from '#lib/api.ts';
+	import { fetchCard, fetchFeed, fetchPrefs, fetchStories, markStoriesSeen, postEvents } from '#lib/api.ts';
 	import { setPlaybackSpeed } from '#lib/beats.ts';
 	import { createBatcher } from '#lib/batcher.ts';
 	import { clearAnswers } from '#lib/cardState.ts';
@@ -47,9 +47,49 @@
 	let catchingUp = $state(false);
 	let chromeH = $state(0);
 
+	// The card on screen, kept for this tab so a reload (iOS drops background pages) resumes on it
+	// even when the server's event log has not caught up.
+	const CURRENT_KEY = 'codescroll.current';
+	function rememberCurrent(id: string) {
+		try {
+			sessionStorage.setItem(CURRENT_KEY, id);
+		} catch {
+			// storage unavailable: the server resume card still applies
+		}
+	}
+	function readCurrent(): string | null {
+		try {
+			return sessionStorage.getItem(CURRENT_KEY);
+		} catch {
+			return null;
+		}
+	}
+
+	// Put the remembered card first, so nothing unseen sits above the view. Drops the server's
+	// resume card when the remembered one is newer.
+	async function resumeOn(fresh: Card[], resumeId: string | null | undefined): Promise<Card[]> {
+		const id = readCurrent();
+		if (!id || filtered || fresh[0]?.id === id) return fresh;
+		let card = fresh.find((c) => c.id === id);
+		if (!card) {
+			try {
+				card = await fetchCard(id);
+			} catch {
+				return fresh; // gone: the server's resume card (first) stays
+			}
+		}
+		return [card, ...fresh.filter((c) => c.id !== id && c.id !== resumeId)];
+	}
+
 	const batcher = createBatcher(postEvents, 5000);
 
 	onMount(() => {
+		// The browser would restore the old scroll offset against a rebuilt list.
+		try {
+			history.scrollRestoration = 'manual';
+		} catch {
+			// not supported
+		}
 		batcher.start();
 		const onVis = () => {
 			if (document.visibilityState === 'hidden') void batcher.flush();
@@ -87,10 +127,10 @@
 			const [feed, prefs] = await Promise.all([fetchFeed(undefined, 20, filter), fetchPrefs().catch(() => null)]);
 			if (prefs) setPlaybackSpeed(prefs.playback_speed);
 			fromCache = !!feed.fromCache;
-			const fresh = feed.cards;
+			const fresh = await resumeOn(feed.cards, feed.resume_card_id);
 			// Cards the server serves again are new or due for review: let them be answered again.
 			// The resumed card is the one on screen before the reload: keep its answer.
-			clearAnswers(fresh.map((c) => c.id).filter((id) => id !== feed.resume_card_id));
+			clearAnswers(fresh.map((c) => c.id).filter((id) => id !== feed.resume_card_id && id !== readCurrent()));
 			cards = fresh;
 			nextCursor = feed.next_cursor;
 			atEnd = nextCursor === null;
@@ -179,7 +219,7 @@
 		<p class="status">Loading...</p>
 	{:else}
 		{#if cards.length > 0}
-			<Feed {cards} onEvent={(e) => batcher.push(e)} onNearEnd={loadMore} />
+			<Feed {cards} onEvent={(e) => batcher.push(e)} onNearEnd={loadMore} onActive={rememberCurrent} />
 		{/if}
 		{#if atEnd}
 			<section class="end" aria-label="End of feed">
