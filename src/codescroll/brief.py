@@ -208,6 +208,46 @@ def _real_dir(d: str, files: FileSet | None = None) -> bool:
     return d not in ("", ".") and code_path(f"{d}/x", files)
 
 
+def place_ok(files: FileSet | None, path: str | None, key: str | None = None) -> bool:
+    """True when the place a lead names is inside the file set.
+
+    A file (or the first file of a "pair:" key, and the second) must be read by the profile and
+    not of kind generated, vendored or fixture. A "dir:" key must name a code dir. A lead with
+    neither has no place to check."""
+    fs = _fs(files)
+    paths = [path] if path else []
+    if key and key.startswith("pair:"):
+        paths += key[5:].split("|")
+    if any(not fs.reads(p) or not fs.mined(p) for p in paths):
+        return False
+    return not (key and key.startswith("dir:")) or _real_dir(key[4:], fs)
+
+
+def _commit_paths(sig: dict) -> dict[str, list[str]]:
+    """sha -> paths that commit touched, for the signals that carry them."""
+    out: dict[str, list[str]] = {}
+    for c in sig.get("recent_commits") or []:
+        out.setdefault(c["sha"], c.get("files") or [])
+    for c in (sig.get("commit_times") or {}).get("late_night") or []:
+        if c.get("paths"):
+            out[c["sha"]] = c["paths"]
+    for c in sig.get("huge_diffs") or []:
+        if c.get("paths"):
+            out[c["sha"]] = c["paths"]
+    return {sha: ps for sha, ps in out.items() if ps}
+
+
+def lead_in_files(ld: Lead, files: FileSet | None, touched: list[str] | None = None) -> bool:
+    """False when a signal lead sits outside the repo's file set. `touched` holds the paths of
+    a commit lead with no path of its own: it goes when none of them is in the file set (an
+    unknown list keeps it)."""
+    if not place_ok(files, ld.path, ld.key):
+        return False
+    if ld.path is None and touched:
+        return any(place_ok(files, p) for p in touched)
+    return True
+
+
 def _old(ts, t0) -> bool:
     return t0 is None or (ts or t0) <= t0 - ANCIENT_DAYS * 86400
 
@@ -426,7 +466,9 @@ def lead_refs_for(
                 )
             )
     # CANDIDATE_STORIES come from rated candidates (candidate_leads), not from churn.
-    return out[:limit]
+    fs = _fs(files)
+    known = _commit_paths(sig)
+    return [x for x in out if lead_in_files(x, fs, known.get(x.commit or ""))][:limit]
 
 
 # --- Cross-repo leads (SPEC 6.4) -------------------------------------------
@@ -1560,6 +1602,7 @@ def _assign_intro(
             d, n = knowledge.lead_dir(ld.path, nmap)
             fs = (filesets or {}).get(repo)
             code = code_file(ld.path, fs) if ld.path else code_path(f"{d}/x", fs)
+            code = code and place_ok(fs, ld.path, ld.key)  # the profile reads the file
             if d and n >= INTRO_MIN_NOVELTY and code and code_path(f"{d}/x", fs):
                 cands.setdefault((repo, d), []).append((rank, story, ld))
                 nov_of[(repo, d)] = n

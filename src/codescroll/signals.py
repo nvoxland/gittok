@@ -186,6 +186,7 @@ def commit_times(commits: list[Commit]) -> dict:
                     "local_hour": c.local_hour,
                     "subject": c.subject,
                     "ts": c.ts,
+                    "paths": [f.path for f in c.files][:50],
                 }
             )
     return {"hour_histogram": hist, "late_night": late[:20], "late_by_author": by_author}
@@ -201,6 +202,7 @@ def huge_diffs(commits: list[Commit], threshold=1000, top=10) -> list[dict]:
             "ts": c.ts,
             "lines": sum(_lines(f) for f in c.files),
             "files": len(c.files),
+            "paths": [f.path for f in c.files][:50],
         }
         for c in commits
     ]

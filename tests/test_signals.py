@@ -92,6 +92,7 @@ def test_commit_times_finds_late_night(fixture_repo):
             "local_hour": 2,
             "subject": "Speed up parsing",
             "ts": 1768185000,
+            "paths": ["src/app.py", "src/util.py"],
         }
     ]
     assert out["late_by_author"] == {"Alice Archer": 1}
