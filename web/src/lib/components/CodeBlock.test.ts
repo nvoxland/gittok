@@ -101,3 +101,14 @@ describe('CodeBlock', () => {
 		expect(container.querySelector('.src')?.textContent).toBe('abc');
 	});
 });
+
+describe('CodeBlock indentation', () => {
+	it('shows deeply nested code without the indent its lines share', () => {
+		const { container } = render(CodeBlock, {
+			props: { code: '\t\t\t\thold(on) {\n\t\t\t\t\treturn;\n\t\t\t\t}', startLine: 96 }
+		});
+		const src = [...container.querySelectorAll('.src')].map((e) => e.textContent);
+		expect(src).toEqual(['hold(on) {', '  return;', '}']);
+		expect(container.querySelector('.ln')?.textContent).toBe('96');
+	});
+});

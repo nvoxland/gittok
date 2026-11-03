@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { dedent } from '#lib/dedent.ts';
 	import { isShrunk } from '#lib/lightbox.ts';
 	let {
 		code,
@@ -27,7 +28,9 @@
 	// Above this many columns the shrunk font would be too small to read, so lines wrap instead.
 	const MAX_FIT_COLS = 64;
 
-	const lines = $derived(code.replace(/\n$/, '').split('\n'));
+	// Deeply nested code loses its shared indent, so narrow screens show code, not whitespace.
+	const shown = $derived(dedent(code));
+	const lines = $derived(shown.split('\n'));
 	// Columns the widest line needs: its text (tabs as 4) plus the line-number gutter and margin.
 	const cols = $derived(
 		Math.max(...lines.map((l) => l.replace(/\t/g, '    ').length)) +
@@ -50,7 +53,7 @@
 	});
 
 	$effect(() => {
-		const src = code.replace(/\n$/, '');
+		const src = shown;
 		const first = startLine;
 		const hl = new Set(highlight);
 		const lang = language ?? 'text';
@@ -141,6 +144,7 @@
 	}
 	.codeblock :global(.line) {
 		display: block;
+		tab-size: 2;
 		padding-right: 0.75rem;
 		white-space: pre;
 	}
