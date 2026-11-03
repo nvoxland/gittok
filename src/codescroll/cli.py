@@ -295,8 +295,12 @@ def _feed_watch(args) -> int:
     if args.hint:
         print(FEED_WATCH_HINT)
         return 0
-    path = load_config().settings.data_dir / supply.WANTS_FILE
+    cfg = load_config()
+    path = cfg.settings.data_dir / supply.WANTS_FILE
     start = path.stat().st_size if path.exists() else 0
+    if start and _unanswered_signal(cfg, path):
+        last = path.read_bytes().rstrip(b"\n").rsplit(b"\n", 1)[-1]
+        start -= len(last) + 1  # read the last line again: no run has answered it
     while True:
         size = path.stat().st_size if path.exists() else 0
         if size < start:  # the file was replaced: read it from the top
@@ -308,6 +312,21 @@ def _feed_watch(args) -> int:
             print(f"{new}\nThe feed wants cards: run /codescroll-generate, then restart the watch.")
             return 0
         time.sleep(args.poll)
+
+
+def _unanswered_signal(cfg, path: Path) -> bool:
+    """True when the last line of the wants file is newer than the newest run start."""
+    lines = path.read_text().split()
+    try:
+        signal_at = datetime.fromisoformat(lines[-4])
+    except (IndexError, ValueError):
+        return False
+    with closing(db.open_db(_db_path(cfg))) as conn:
+        row = conn.execute("SELECT MAX(started_at) FROM runs").fetchone()
+    if not row[0]:
+        return True
+    started = datetime.strptime(row[0], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    return signal_at > started
 
 
 def _stale_analyzer_repos(conn, cfg) -> list[str]:

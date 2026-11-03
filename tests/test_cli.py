@@ -746,3 +746,20 @@ def test_feed_watch_hint_tells_the_session_to_arm_the_watch(cfg, capsys):
     out = capsys.readouterr().out.strip().splitlines()
     assert len(out) == 1
     assert "run_in_background" in out[0] and "codescroll feed-watch" in out[0]
+
+
+def test_feed_watch_fires_at_once_for_a_signal_no_run_answered(cfg, capsys):
+    """A line written while no watch ran is not lost: it is newer than the last run start."""
+    from contextlib import closing
+    from datetime import UTC, datetime, timedelta
+
+    from codescroll import db, runs, supply
+
+    log = cfg.settings.data_dir / supply.WANTS_FILE
+    log.parent.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(UTC)
+    with closing(db.open_db(cli._db_path(cfg))) as conn:
+        runs.open_run(conn, cfg, repo=None, brief="b", requested=5, now=now - timedelta(hours=2))
+    log.write_text(f"{(now - timedelta(hours=1)).isoformat()} want 20 cards\n")
+    assert cli.main(["feed-watch", "--poll", "0.05"]) == 0
+    assert "want 20 cards" in capsys.readouterr().out
