@@ -677,3 +677,43 @@ def test_health_hint_says_analyzer_facts_are_stale(cfg, capsys, monkeypatch):
             assert cli.main(["health", "--hint"]) == 0
             out = capsys.readouterr().out
             assert ("stale for fixture" in out) == (h != head)
+
+
+def _head(cfg):
+    from codescroll import gitq
+
+    r = cfg.repos["fixture"]
+    return gitq.rev_parse(r.path, r.ref)
+
+
+def test_submit_facts_reads_files_and_stores_analyzer_facts(cfg, tmp_path, capsys):
+    """large analyzer results go through a file, not inline MCP arguments."""
+    from contextlib import closing
+
+    good = [{"defines": {"path": "src/app.py", "name": "main", "line": 1}}]
+    bad = [{"defines": {"path": "src/app.py", "name": "nothere", "line": 1}}]
+    f1, f2 = tmp_path / "a.json", tmp_path / "b.json"
+    f1.write_text(json.dumps(good))
+    f2.write_text(json.dumps(bad))
+    head = _head(cfg)
+    code = cli.main(
+        ["submit-facts", "--repo", "fixture", "--head", head, "--tool", "kit 1", str(f1), str(f2)]
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "defines=1" in out and "rejected=1" in out
+    with closing(db.open_db(cfg.settings.data_dir / "codescroll.db")) as conn:
+        row = conn.execute(
+            "SELECT source FROM fact_defines WHERE name = 'main' AND source LIKE 'analyzer:%'"
+        ).fetchone()
+    assert row is not None and row[0] == "analyzer:kit 1"
+
+
+def test_submit_facts_refuses_stale_head(cfg, tmp_path, capsys):
+    f = tmp_path / "a.json"
+    f.write_text("[]")
+    code = cli.main(
+        ["submit-facts", "--repo", "fixture", "--head", "0" * 40, "--tool", "kit 1", str(f)]
+    )
+    assert code == 1
+    assert "stale head_sha" in capsys.readouterr().err

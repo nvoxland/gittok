@@ -96,6 +96,15 @@ async def test_survey_lists_manifests_dirs_languages(cfg):
     assert len(json.dumps(out)) <= 12_500
 
 
+async def test_survey_head_sha_is_the_ref_commit(cfg):
+    """Regression: the manifest loop shadowed `head`, so head_sha held lines."""
+    from codescroll import gitq
+
+    out = data(await call(cfg, "survey_repo", {"repo": "fixture"}))
+    repo = cfg.repos["fixture"]
+    assert out["head_sha"] == gitq.rev_parse(repo.path, repo.ref)
+
+
 async def test_survey_shows_profile_and_manifest_change(cfg):
     saved = data(
         await call(cfg, "save_profile", {"repo": "fixture", "profile": {"detectors": [RULE]}})

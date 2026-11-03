@@ -12,6 +12,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections import Counter
 from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
@@ -46,6 +47,8 @@ from codescroll import brief as brief_mod
 from codescroll.api import create_app
 from codescroll.config import ConfigError, load_config
 from codescroll.steering import SteeringError
+
+FACTS_CHUNK = 5000  # the same per-call cap as the submit_facts MCP tool
 
 
 def _validate(args) -> int:
@@ -594,6 +597,47 @@ def _mcp(args) -> int:
     return 0
 
 
+def _submit_facts(args) -> int:
+    """Store analyzer facts from JSON files (each a list of facts). Same checks as submit_facts."""
+    cfg = load_config()
+    r = cfg.repo(args.repo)
+    items: list = []
+    for f in args.files:
+        data = json.loads(Path(f).read_text())
+        if not isinstance(data, list):
+            print(f"{f}: expected a JSON list of facts", file=sys.stderr)
+            return 1
+        items.extend(data)
+    current = gitq.rev_parse(r.path, r.ref)
+    accepted: Counter = Counter()
+    rejected: list = []
+    rejected_count = 0
+    with closing(db.open_db(_db_path(cfg))) as conn:
+        signals.analyze(conn, r, cfg.settings.analysis, profile=cfg.profile(r.name))  # cached
+        for start in range(0, max(len(items), 1), FACTS_CHUNK):
+            try:
+                res = facts.submit_analyzer(
+                    conn,
+                    r.name,
+                    r.path,
+                    current,
+                    args.head,
+                    args.tool,
+                    items[start : start + FACTS_CHUNK],
+                )
+            except facts.FactsError as e:
+                print(str(e), file=sys.stderr)
+                return 1
+            accepted.update(res["accepted"])
+            rejected_count += res["rejected_count"]
+            rejected.extend({**x, "index": x["index"] + start} for x in res["rejected"])
+    counts = " ".join(f"{k}={n}" for k, n in sorted(accepted.items()))
+    print(f"{r.name} tool={args.tool} {counts} rejected={rejected_count}")
+    for x in rejected[:10]:
+        print(f"  #{x['index']} {x['reason']}: {json.dumps(x['fact'])[:160]}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="codescroll")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -621,6 +665,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--repo")
     p.add_argument("--force", action="store_true")
     p.set_defaults(fn=_analyze)
+    p = sub.add_parser(
+        "submit-facts", help="store analyzer facts from JSON files (same checks as submit_facts)"
+    )
+    p.add_argument("--repo", required=True)
+    p.add_argument("--head", required=True, help="the head sha the analyzer ran on")
+    p.add_argument("--tool", required=True, help="tool label, such as 'clj-kondo 2026.05.25'")
+    p.add_argument("files", nargs="+")
+    p.set_defaults(fn=_submit_facts)
     p = sub.add_parser("brief", help="print the brief without opening a run")
     p.add_argument("--repo")
     p.add_argument("--count", type=int)

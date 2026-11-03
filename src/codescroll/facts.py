@@ -703,14 +703,22 @@ def _store_define(conn, rid, repo, src, f, files):
     kind = _text(f, "kind", False) or "function"
     params = f.get("params")
     n_params = len(params) if isinstance(params, list) else 0
+    # The same definition as a stored one: same file, start line and name. Kind labels differ
+    # between tools ('defn' vs 'function'), so the stored symbol and kind win: queries and the
+    # call graph then see one row per definition.
     old = conn.execute(
-        "SELECT fact_id, symbol FROM fact_defines"
-        " WHERE repo_id = ? AND path = ? AND start = ? AND kind = ? AND name = ?",
-        (rid, path, line, kind, _last(name)),
+        "SELECT fact_id, symbol, kind FROM fact_defines"
+        " WHERE repo_id = ? AND path = ? AND start = ? AND name = ?"
+        " ORDER BY source = 'syntax' DESC",
+        (rid, path, line, _last(name)),
     ).fetchone()
     symbol = old["symbol"] if old else f"{path}:{name}"
     if old:
-        conn.execute("DELETE FROM fact_defines WHERE fact_id = ?", (old["fact_id"],))
+        kind = old["kind"]
+        conn.execute(
+            "DELETE FROM fact_defines WHERE repo_id = ? AND path = ? AND start = ? AND name = ?",
+            (rid, path, line, _last(name)),
+        )
     fid = fact_id("def", repo, "a", path, symbol, kind, line)
     conn.execute(
         "INSERT OR REPLACE INTO fact_defines(fact_id, repo_id, path, symbol, name, kind, start,"
@@ -756,12 +764,20 @@ def _store_call(conn, rid, repo, src, f, files):
             (rid, cpath, name),
         ).fetchone()
         callee_symbol = d["symbol"] if d else f"{cpath}:{callee}"
-    same = "repo_id = ? AND path = ? AND line = ? AND callee_name = ? AND source = 'syntax'"
-    args = (rid, path, line, name)
-    if callee_symbol is None:  # do not weaken a call that the syntax layer already resolved
-        if conn.execute(f"SELECT 1 FROM fact_calls WHERE {same} AND resolved = 1", args).fetchone():
-            return
-    conn.execute(f"DELETE FROM fact_calls WHERE {same}", args)
+    # Syntax calls on this line to the same name; the syntax layer may keep a module alias on
+    # the callee name, so compare last segments.
+    same = [
+        r
+        for r in conn.execute(
+            "SELECT fact_id, callee_name, resolved FROM fact_calls"
+            " WHERE repo_id = ? AND path = ? AND line = ? AND source = 'syntax'",
+            (rid, path, line),
+        )
+        if _last(r["callee_name"]) == name
+    ]
+    if callee_symbol is None and any(r["resolved"] for r in same):
+        return  # do not weaken a call that the syntax layer already resolved
+    conn.executemany("DELETE FROM fact_calls WHERE fact_id = ?", [(r["fact_id"],) for r in same])
     fid = fact_id("call", repo, "a", path, line, caller_symbol, callee)
     conn.execute(
         "INSERT OR REPLACE INTO fact_calls(fact_id, repo_id, caller_symbol, callee_name, path,"

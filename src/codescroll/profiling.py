@@ -266,8 +266,8 @@ def survey(cfg, conn, repo_name: str) -> dict:
     for p in manifest_paths:
         raw = blobs.get(shas[p])
         big = raw is None or size.get(p, 0) > MAX_MANIFEST_BYTES
-        head = [] if big else raw.decode("utf-8", errors="replace").splitlines()[:MANIFEST_LINES]
-        manifests.append({"path": p, "bytes": size.get(p, 0), "head": head})
+        lines = [] if big else raw.decode("utf-8", errors="replace").splitlines()[:MANIFEST_LINES]
+        manifests.append({"path": p, "bytes": size.get(p, 0), "head": lines})
     rows = conn.execute(
         "SELECT tag, COUNT(*) AS n FROM candidates WHERE repo = ? AND rule_id IS NULL GROUP BY tag",
         (repo_name,),

@@ -281,3 +281,40 @@ def test_refresh_at_new_head_drops_analyzer_facts_and_hint_says_stale(conn, arep
     assert facts.stale_analyzer_repos(conn, {"fx": "2" * 40}) == ["fx"]
     assert "stale for fx" in facts.analyzer_hint(["fx"])
     assert facts.analyzer_hint([]) is None
+
+
+def _syntax_rows(conn):
+    """Syntax facts as the structure layer writes them: a qualified symbol, a kind of its own,
+    and a callee name with the module alias still on it."""
+    rid = conn.execute("SELECT id FROM repos").fetchone()[0]
+    for sym, name, start, end in (("mod/parse", "parse", 1, 2), ("mod/main", "main", 5, 6)):
+        conn.execute(
+            "INSERT INTO fact_defines VALUES (?, ?, 'm.txt', ?, ?, 'function', ?, ?, 2, 0, 0, 0,"
+            " 1, 'syntax')", (f"def-{name}", rid, sym, name, start, end)
+        )  # fmt: skip
+    conn.execute(
+        "INSERT INTO fact_calls VALUES ('call-bbbbbbbbbbbb', ?, 'mod/main', 'm/parse', 'm.txt',"
+        " 6, 1, 'mod/parse', 'syntax')", (rid,)
+    )  # fmt: skip
+
+
+def test_analyzer_define_reuses_syntax_symbol_whatever_its_kind_label(conn, arepo):
+    """An analyzer says kind 'defn', the syntax layer
+    'function'; the analyzer row got a new path:name symbol and both rows stayed."""
+    _syntax_rows(conn)
+    got = submit(
+        conn, arepo, [{"defines": {"path": "m.txt", "name": "main", "line": 5, "kind": "defn"}}]
+    )
+    assert got["accepted"] == {"defines": 1}
+    mains = [r for r in rows(conn, "fact_defines") if r["name"] == "main"]
+    assert len(mains) == 1
+    assert mains[0]["symbol"] == "mod/main" and mains[0]["source"] == AC
+
+
+def test_analyzer_call_replaces_syntax_call_whose_name_carries_an_alias(conn, arepo):
+    _syntax_rows(conn)
+    got = submit(conn, arepo, [call(6, "main", "parse", callee_path="m.txt")])
+    assert got["accepted"] == {"calls": 1}
+    (c,) = rows(conn, "fact_calls")
+    assert c["source"] == AC
+    assert c["caller_symbol"] == "mod/main" and c["callee_symbol"] == "mod/parse"
