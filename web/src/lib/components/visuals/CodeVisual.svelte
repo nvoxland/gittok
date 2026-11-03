@@ -28,6 +28,7 @@
 			highlight={callouts.map((c) => c.line)}
 			fit={!full}
 			large={full}
+			wrap={full}
 			{onShrunk}
 		/>
 	{:else}

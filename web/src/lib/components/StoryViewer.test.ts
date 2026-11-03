@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/svelte';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import StoryViewer from './StoryViewer.svelte';
 import type { Story } from '#lib/types.ts';
 
@@ -120,42 +120,6 @@ describe('StoryViewer', () => {
 		expect(screen.getAllByTestId('progress')).toHaveLength(3);
 		expect(onSeen).not.toHaveBeenCalled();
 		await fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-		expect(screen.getByText('First fix')).toBeInTheDocument();
-	});
-});
-
-describe('StoryViewer autoplay', () => {
-	afterEach(() => vi.useRealTimers());
-
-	it('advances every 5 seconds and ends with onEnd', async () => {
-		vi.useFakeTimers();
-		const onEnd = vi.fn();
-		const onClose = vi.fn();
-		setup({ autoplay: true, onEnd, onClose });
-		expect(screen.getByText('First fix')).toBeInTheDocument();
-		await vi.advanceTimersByTimeAsync(5000);
-		expect(screen.getByText('Second fix')).toBeInTheDocument();
-		await vi.advanceTimersByTimeAsync(5000);
-		expect(onEnd).toHaveBeenCalledTimes(1);
-		expect(onClose).not.toHaveBeenCalled();
-	});
-
-	it('pauses while held', async () => {
-		vi.useFakeTimers();
-		setup({ autoplay: true });
-		const dialog = screen.getByRole('dialog');
-		await fireEvent.pointerDown(dialog);
-		await vi.advanceTimersByTimeAsync(20000);
-		expect(screen.getByText('First fix')).toBeInTheDocument();
-		await fireEvent.pointerUp(dialog);
-		await vi.advanceTimersByTimeAsync(5000);
-		expect(screen.getByText('Second fix')).toBeInTheDocument();
-	});
-
-	it('does not advance by itself without autoplay', async () => {
-		vi.useFakeTimers();
-		setup();
-		await vi.advanceTimersByTimeAsync(30000);
 		expect(screen.getByText('First fix')).toBeInTheDocument();
 	});
 });

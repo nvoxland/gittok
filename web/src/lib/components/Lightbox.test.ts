@@ -62,6 +62,20 @@ describe('Card lightbox', () => {
 		expect(onAction).toHaveBeenCalledWith('lightbox_open', { kind: 'code' });
 	});
 
+	it('expanded code wraps long lines instead of cutting them off (phone readability)', async () => {
+		const { container } = render(Card, { card: codeCard(), onAction: vi.fn() });
+		await fireEvent.click(container.querySelector('.visual')!);
+		const block = screen.getByRole('dialog').querySelector('.codeblock');
+		expect(block).toHaveClass('wrap');
+		expect(block).toHaveClass('large');
+	});
+
+	it('the app stops iOS from inflating text in wide code blocks', async () => {
+		const { readFileSync } = await import('node:fs');
+		const css = readFileSync(`${process.cwd()}/src/app.css`, 'utf8');
+		expect(css).toMatch(/-webkit-text-size-adjust:\s*100%/);
+	});
+
 	it('Escape and the close button close it', async () => {
 		const { container } = render(Card, { card: codeCard() });
 		await fireEvent.click(container.querySelector('.visual')!);

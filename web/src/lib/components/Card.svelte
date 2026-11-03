@@ -286,7 +286,7 @@
 			</section>
 		{/if}
 	</div>
-	{#if lightboxOpen && Visual}
+	{#if lightboxOpen}
 		<Lightbox {card} {Visual} onClose={() => (lightboxOpen = false)} />
 	{/if}
 	<div class="actions">

@@ -127,6 +127,9 @@
 	}
 	.shiki-wrap :global(code) {
 		display: block;
+		/* Shiki puts a newline between its block-level .line spans; under pre each one became a
+		   blank row. Lines keep white-space: pre themselves. */
+		white-space: normal;
 	}
 	.shiki-wrap :global(span:not(.ln)) {
 		color: var(--shiki-light);
@@ -164,6 +167,13 @@
 	.wrap :global(.line) {
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
+		/* Hanging indent: a wrapped part starts under the code, not under the line number
+		   (.ln is 3ch + 1ch margin + 0.5rem padding). */
+		padding-left: calc(4ch + 0.5rem);
+		text-indent: calc(-4ch - 0.5rem);
+	}
+	.wrap :global(.ln) {
+		text-indent: 0;
 	}
 	.codeblock :global(.line.hl) {
 		background: color-mix(in srgb, var(--accent) 18%, transparent);

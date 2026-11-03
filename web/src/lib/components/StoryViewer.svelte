@@ -6,20 +6,14 @@
 		story,
 		onClose,
 		onSeen,
-		onEnd,
-		autoplay = false,
 		now = Date.now() / 1000
 	}: {
 		story: Story;
 		onClose: () => void;
 		onSeen?: (repo: string, shas: string[]) => void;
-		/** Called instead of onClose when the last page is done (catch-up plays several repos). */
-		onEnd?: () => void;
-		autoplay?: boolean;
 		now?: number;
 	} = $props();
 
-	const PAGE_MS = 5000;
 	// The digest card, when there is one, is the first page.
 	type Page = { digest: NonNullable<Story['digest']> } | { commit: StoryCommit };
 	const pages: Page[] = $derived([
@@ -28,7 +22,6 @@
 	]);
 
 	let index = $state(0);
-	let held = $state(false);
 	const shown = new Set<string>();
 	const page = $derived(pages[index]);
 	const commit = $derived(page && 'commit' in page ? page.commit : undefined);
@@ -42,16 +35,10 @@
 	});
 
 	function next() {
-		if (index >= pages.length - 1) (onEnd ?? onClose)();
+		if (index >= pages.length - 1) onClose();
 		else index += 1;
 	}
 
-	$effect(() => {
-		if (!autoplay || held) return;
-		void index;
-		const t = setTimeout(next, PAGE_MS);
-		return () => clearTimeout(t);
-	});
 	function prev() {
 		if (index > 0) index -= 1;
 	}
@@ -81,9 +68,6 @@
 	tabindex="-1"
 	ontouchstart={onTouchStart}
 	ontouchend={onTouchEnd}
-	onpointerdown={() => (held = true)}
-	onpointerup={() => (held = false)}
-	onpointercancel={() => (held = false)}
 >
 	<div class="bars">
 		{#each pages as p, i ('commit' in p ? p.commit.sha : 'digest')}

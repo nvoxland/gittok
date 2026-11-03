@@ -12,6 +12,9 @@
 	--bad-bg: #fbe7e9;
 	--news: #c8102e;
 	color-scheme: light dark;
+	/* iOS inflates text in blocks wider than the screen (wide code); keep sizes as written. */
+	-webkit-text-size-adjust: 100%;
+	text-size-adjust: 100%;
 }
 
 @media (prefers-color-scheme: dark) {
