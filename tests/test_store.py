@@ -93,7 +93,10 @@ def test_store_card_writes_features(conn, cfg, fixture_repo):
     }
 
 
-def test_interactive_card_gets_interactive_feature_with_story_type(conn, cfg, fixture_repo):
+def test_interactive_card_gets_interactive_feature_with_story_type(
+    conn, cfg, fixture_repo, monkeypatch
+):
+    monkeypatch.setattr(store, "SHUFFLE", True)  # the real store path shuffles
     _insert_run(conn)
     acc = _accept(cfg, guess_who_card(fixture_repo))
     card_id = store.store_card(conn, cfg, "r_1", acc)
@@ -103,9 +106,29 @@ def test_interactive_card_gets_interactive_feature_with_story_type(conn, cfg, fi
     }
     assert ("interactive", "guess_who") in feats
     assert ("story_type", "guess_who") in feats
-    assert db.loads(
-        conn.execute("SELECT resolved FROM cards WHERE id = ?", (card_id,)).fetchone()[0]
-    )["interaction"] == {"answer_index": 0}
+    row = conn.execute("SELECT spec, resolved FROM cards WHERE id = ?", (card_id,)).fetchone()
+    spec, resolved = db.loads(row["spec"]), db.loads(row["resolved"])
+    right = acc.card["interaction"]["choices"][0]  # the fixture's answer is first
+    assert spec["interaction"]["choices"][spec["interaction"]["answer_index"]] == right
+    assert resolved["interaction"] == {"answer_index": spec["interaction"]["answer_index"]}
+
+
+def test_stored_quiz_choices_are_shuffled_so_the_answer_is_not_always_first():
+    """Live: writers put the answer at index 0 or 1 on every spot_the_bug card."""
+    card = {"interaction": {"question": "q", "choices": ["a", "b", "c", "d"], "answer_index": 0}}
+    resolved = {"interaction": {"answer_index": 0}}
+    positions = set()
+    for n in range(40):
+        c, r = store.shuffle_choices(card, resolved, f"c_{n}")
+        inter = c["interaction"]
+        assert inter["choices"][inter["answer_index"]] == "a"
+        assert sorted(inter["choices"]) == ["a", "b", "c", "d"]
+        assert r["interaction"]["answer_index"] == inter["answer_index"]
+        positions.add(inter["answer_index"])
+    assert positions == {0, 1, 2, 3}
+    assert card["interaction"]["choices"] == ["a", "b", "c", "d"]  # input untouched
+    tot = {"interaction": {"question": "q", "choices": ["x", "y"]}}  # this_or_that: no answer
+    assert store.shuffle_choices(tot, {}, "c_1") == (tot, {})
 
 
 def test_plain_card_has_no_interactive_feature(conn, cfg, fixture_repo):

@@ -49,3 +49,11 @@ def make_config(fixture_repo, tmp_path, **agent):
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
+
+
+@pytest.fixture(autouse=True)
+def _fixed_choice_order(monkeypatch):
+    """Most tests pin quiz answers to the positions the card was written with."""
+    from codescroll import store
+
+    monkeypatch.setattr(store, "SHUFFLE", False)

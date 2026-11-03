@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 import secrets
 import time
 from datetime import UTC, datetime, timedelta
@@ -89,10 +90,41 @@ def store_card(conn, cfg, run_id: str, acc, now: str | None = None) -> str:
         return insert_card(conn, cfg, run_id, acc, now)
 
 
+# Tests that pin choice positions turn this off (tests/conftest.py); the app always shuffles.
+SHUFFLE = True
+
+
+def shuffle_choices(card: dict, resolved: dict, seed: str) -> tuple[dict, dict]:
+    """Copies of a validated card with its quiz choices in a seeded random order, the answer
+    index (in the spec and in `resolved`) following the right choice. Writers tend to put the
+    answer first or second; the reader should not learn that instead of the code."""
+    inter = card.get("interaction")
+    if not inter or inter.get("answer_index") is None:
+        return card, resolved
+    order = list(range(len(inter["choices"])))
+    random.Random(seed).shuffle(order)
+    answer = order.index(inter["answer_index"])
+    card = {
+        **card,
+        "interaction": {
+            **inter,
+            "choices": [inter["choices"][i] for i in order],
+            "answer_index": answer,
+        },
+    }
+    resolved = {
+        **resolved,
+        "interaction": {**resolved.get("interaction", {}), "answer_index": answer},
+    }
+    return card, resolved
+
+
 def insert_card(conn, cfg, run_id: str, acc, now: str | None = None) -> str:
     """Insert a card and its features without committing (caller owns the transaction)."""
-    card = acc.card
     card_id = new_card_id()
+    card, resolved = (
+        shuffle_choices(acc.card, acc.resolved, card_id) if SHUFFLE else (acc.card, acc.resolved)
+    )
     status = "pending_render" if card["visual"]["kind"] in RENDERED_KINDS else "ready"
     repo_id = ensure_repo(conn, cfg.repos[card["repos"][0]])
     conn.execute(
@@ -108,7 +140,7 @@ def insert_card(conn, cfg, run_id: str, acc, now: str | None = None) -> str:
             card["persona"],
             card["tone"],
             db.dumps(card),
-            db.dumps(acc.resolved),
+            db.dumps(resolved),
             status,
             acc.story_key,
             now or db.now_iso(),
