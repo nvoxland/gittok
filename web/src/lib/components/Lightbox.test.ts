@@ -121,6 +121,17 @@ describe('Card lightbox', () => {
 		expect(onAction).toHaveBeenCalledWith('lightbox_open', { kind: 'template' });
 	});
 
+	it('the Tap to expand pill is a button that opens the lightbox, even on a beat card', async () => {
+		const onAction = vi.fn();
+		const card = fakeCard({ visual: templateFixtures.thread });
+		const { container } = render(Card, { card, active: true, onAction });
+		size(container.querySelector('.visual')!, 600, 300);
+		const pill = await vi.waitFor(() => screen.getByRole('button', { name: 'Tap to expand' }));
+		await fireEvent.click(pill);
+		expect(screen.getByRole('dialog')).toBeInTheDocument();
+		expect(onAction).toHaveBeenCalledWith('lightbox_open', { kind: 'template' });
+	});
+
 	it('an image visual opens full width', async () => {
 		const card = fakeCard({ visual: memeVisual(), resolved: { visual: images(), depth: [] } });
 		const { container } = render(Card, { card });

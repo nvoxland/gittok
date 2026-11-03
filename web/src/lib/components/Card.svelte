@@ -65,7 +65,7 @@
 	}
 
 	// Lightbox: the visual at natural size. Beat cards keep tap = skip a beat,
-	// so they open it from the corner button only.
+	// so they open it from the Tap to expand pill or the corner button only.
 	let lightboxOpen = $state(false);
 	let visualEl: HTMLElement | undefined = $state();
 	let clipped = $state(false);
@@ -213,7 +213,9 @@
 						{/snippet}
 					</Beats>
 					{#if hint}
-						<div class="fade" aria-hidden="true"><span class="pill-hint">Tap to expand</span></div>
+						<div class="fade">
+							<button type="button" class="pill-hint" onclick={openLightbox}>Tap to expand</button>
+						</div>
 					{/if}
 					<button type="button" class="expand" aria-label="Expand" onclick={openLightbox}>⤢</button>
 				{:else}
@@ -418,9 +420,10 @@
 		min-height: 0;
 		overflow: hidden;
 	}
+	/* Bottom right: the top right holds the beat progress bar and Replay button. */
 	.expand {
 		position: absolute;
-		top: 0;
+		bottom: 0;
 		right: 0;
 		z-index: 2;
 		width: 32px;
@@ -449,7 +452,11 @@
 		background: linear-gradient(to bottom, transparent, var(--bg) 85%);
 	}
 	.pill-hint {
-		padding: 0.15rem 0.7rem;
+		pointer-events: auto; /* the fade lets taps through; the pill itself is a button */
+		min-height: 32px;
+		cursor: pointer;
+		font: inherit;
+		padding: 0.15rem 0.9rem;
 		border-radius: 999px;
 		border: 1px solid var(--border);
 		background: var(--surface);
