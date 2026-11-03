@@ -54,6 +54,7 @@ class AgentSettings:
     per_day_runs: int = 4
     packet_size: int = 2
     target_runway_days: int = 3
+    wake_cooldown_hours: int = 4  # least time between two feed-watch signals
     min_burn_per_day: int = 10
     min_run_count: int = 8
     lead_cooldown_days: int = 30

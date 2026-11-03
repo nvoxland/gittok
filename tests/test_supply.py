@@ -106,3 +106,26 @@ def test_feed_health_reports_last_gc_pass(conn, cfg):
     cfg.settings.data_dir.mkdir(parents=True, exist_ok=True)
     (cfg.settings.data_dir / gc.LAST_FILE).write_text('{"at": "x", "counts": {"seen": 3}}')
     assert supply.feed_health(conn, cfg, NOW)["gc"] == {"at": "x", "counts": {"seen": 3}}
+
+
+def test_wants_cards_signal_appends_a_fixed_line_with_cooldown(conn, cfg):
+    log = cfg.settings.data_dir / supply.WANTS_FILE
+    assert supply.signal_wants_cards(conn, cfg, NOW) == 1  # empty backlog wants cards
+    assert log.read_text().splitlines() == [f"{NOW.isoformat()} want 20 cards"]
+    assert supply.signal_wants_cards(conn, cfg, NOW + timedelta(hours=1)) == 0  # cooldown
+    later = NOW + timedelta(hours=cfg.settings.agent.wake_cooldown_hours, minutes=1)
+    assert supply.signal_wants_cards(conn, cfg, later) == 1
+    assert len(log.read_text().splitlines()) == 2
+
+
+def test_wants_cards_signal_is_silent_while_a_run_is_open_or_feed_is_full(conn, cfg):
+    from codescroll import runs
+
+    log = cfg.settings.data_dir / supply.WANTS_FILE
+    runs.open_run(conn, cfg, repo=None, brief="b", requested=5, now=NOW)
+    assert supply.signal_wants_cards(conn, cfg, NOW) == 0
+    conn.execute("UPDATE runs SET status = 'finished'")
+    conn.commit()
+    fill(conn, cfg, 30)
+    assert supply.signal_wants_cards(conn, cfg, NOW) == 0
+    assert not log.exists()

@@ -269,7 +269,7 @@ def _health(args) -> int:
         if h["want"] > 0:
             print(
                 f"CodeScroll feed is low: {h['backlog']} unseen cards ({h['runway_days']} days). "
-                f"It wants {h['want']} more: offer to run /codescroll-generate."
+                f"It wants {h['want']} more: run /codescroll-generate."
             )
         line = profiling.profile_hint(cfg)
         if line:
@@ -281,6 +281,33 @@ def _health(args) -> int:
         if line:
             print(line)
     return 0
+
+
+FEED_WATCH_HINT = (
+    "CodeScroll feed watch: start `uv run --quiet codescroll feed-watch` with Bash "
+    "run_in_background now (once per session). When it exits, run /codescroll-generate, "
+    "then start the watch again."
+)
+
+
+def _feed_watch(args) -> int:
+    """Block until the server appends a line to the wants file; print it and exit."""
+    if args.hint:
+        print(FEED_WATCH_HINT)
+        return 0
+    path = load_config().settings.data_dir / supply.WANTS_FILE
+    start = path.stat().st_size if path.exists() else 0
+    while True:
+        size = path.stat().st_size if path.exists() else 0
+        if size < start:  # the file was replaced: read it from the top
+            start = 0
+        if size > start:
+            with path.open() as f:
+                f.seek(start)
+                new = f.read().strip()
+            print(f"{new}\nThe feed wants cards: run /codescroll-generate, then restart the watch.")
+            return 0
+        time.sleep(args.poll)
 
 
 def _stale_analyzer_repos(conn, cfg) -> list[str]:
@@ -703,6 +730,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--hint", action="store_true", help="one reminder line if cards are wanted")
     p.set_defaults(fn=_health)
+    p = sub.add_parser(
+        "feed-watch", help="wait until the server says the feed wants cards, then exit"
+    )
+    p.add_argument("--hint", action="store_true", help="print the line that arms the watch")
+    p.add_argument("--poll", type=float, default=10.0, help="seconds between file checks")
+    p.set_defaults(fn=_feed_watch)
     p = sub.add_parser(
         "structure", help="tree-sitter structure layer: status, and --prefetch for its grammars"
     )

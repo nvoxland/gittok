@@ -434,6 +434,7 @@ class NotifyWorker:
                     generate_notifications(conn, cfg, now)
                     generate_digests(conn, cfg, now)
                     supply.notify_low_runway(conn, cfg, now)
+                    supply.signal_wants_cards(conn, cfg, now)
             except Exception:
                 log.exception("notification pass failed")
             self._stop.wait(self._interval)

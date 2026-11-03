@@ -12,6 +12,7 @@ from codescroll import gc, social
 
 IMAGE_KINDS = ("meme", "illustration", "comic", "chart", "diagram")
 MB = 1024 * 1024
+WANTS_FILE = "feed-wants-cards.log"  # the server appends; `codescroll feed-watch` waits on it
 
 
 def unseen_ready(conn, rc, now: datetime) -> list[str]:
@@ -110,3 +111,29 @@ def notify_low_runway(conn, cfg, now: datetime) -> int:
     made = social._add(conn, "low_runway", text, f"low_runway:{now.date()}", now)
     conn.commit()
     return made
+
+
+def signal_wants_cards(conn, cfg, now: datetime) -> int:
+    """Append one fixed line to WANTS_FILE when the feed wants cards. Returns 1 if written.
+
+    No line while a run started in the cooldown is still open, or within the cooldown of
+    the last line. The line holds only a time and a count, never repo text.
+    """
+    agent = cfg.settings.agent
+    cooldown = timedelta(hours=agent.wake_cooldown_hours)
+    path = cfg.settings.data_dir / WANTS_FILE
+    if path.exists() and now.timestamp() - path.stat().st_mtime < cooldown.total_seconds():
+        return 0
+    since = (now - cooldown).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if conn.execute(
+        "SELECT 1 FROM runs WHERE status = 'open' AND started_at > ?", (since,)
+    ).fetchone():
+        return 0
+    want = feed_health(conn, cfg, now)["want"]
+    if want <= 0:
+        return 0
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a") as f:
+        f.write(f"{now.isoformat()} want {want} cards\n")
+    os.utime(path, (now.timestamp(), now.timestamp()))
+    return 1

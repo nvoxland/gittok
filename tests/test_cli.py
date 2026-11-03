@@ -717,3 +717,32 @@ def test_submit_facts_refuses_stale_head(cfg, tmp_path, capsys):
     )
     assert code == 1
     assert "stale head_sha" in capsys.readouterr().err
+
+
+def test_feed_watch_exits_with_the_new_line_when_the_server_signals(cfg, capsys):
+    import threading
+    import time
+
+    from codescroll import supply
+
+    log = cfg.settings.data_dir / supply.WANTS_FILE
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text("old want 3 cards\n")  # lines from before the watch started do not count
+
+    def signal():
+        time.sleep(0.3)
+        with log.open("a") as f:
+            f.write("new want 20 cards\n")
+
+    threading.Thread(target=signal).start()
+    assert cli.main(["feed-watch", "--poll", "0.05"]) == 0
+    out = capsys.readouterr().out
+    assert "new want 20 cards" in out and "old" not in out
+    assert "/codescroll-generate" in out
+
+
+def test_feed_watch_hint_tells_the_session_to_arm_the_watch(cfg, capsys):
+    assert cli.main(["feed-watch", "--hint"]) == 0
+    out = capsys.readouterr().out.strip().splitlines()
+    assert len(out) == 1
+    assert "run_in_background" in out[0] and "codescroll feed-watch" in out[0]
