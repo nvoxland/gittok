@@ -150,3 +150,41 @@ def test_explain_lead_cap_is_larger_and_respected(tmp_path):
         cfg, _ref(story_type="what_it_does", kind="path", path="lib/tax.py")
     )
     assert len(text.encode()) <= materials.EXPLAIN_LEAD_CAP > materials.LEAD_CAP
+
+
+def _store_facts(cfg, repo_path):
+    """A definition and a call in billing/invoice.py lines 1-3, as the facts store holds them."""
+    from contextlib import closing
+
+    from codescroll import db
+
+    with closing(db.open_db(cfg.settings.data_dir / "codescroll.db")) as conn:
+        conn.execute(
+            "INSERT INTO repos(name, path, ref) VALUES ('fixture', ?, 'main')", (str(repo_path),)
+        )
+        rid = conn.execute("SELECT id FROM repos WHERE name = 'fixture'").fetchone()[0]
+        conn.execute(
+            "INSERT INTO fact_defines VALUES ('def-aaaaaaaaaaaa', ?, 'billing/invoice.py',"
+            " 'invoice/total', 'total', 'function', 1, 3, 3, 1, 0, 0, 1, 'analyzer:kit 1')", (rid,)
+        )  # fmt: skip
+        conn.execute(
+            "INSERT INTO fact_calls VALUES ('call-bbbbbbbbbbbb', ?, 'invoice/total', 'round',"
+            " 'billing/invoice.py', 2, 0, NULL, 'syntax')", (rid,)
+        )  # fmt: skip
+        conn.commit()
+
+
+def test_path_lead_lists_fact_ids_for_its_window(fixture_repo, tmp_path):
+    """writers never called the fact tools, so the packet hands them the ids."""
+    cfg = make_config(fixture_repo, tmp_path)
+    _store_facts(cfg, fixture_repo.path)
+    text = materials.materials_for(cfg, _ref(kind="path", path="billing/invoice.py", lines=[1, 3]))
+    assert "Facts in these lines" in text
+    assert "def-aaaaaaaaaaaa" in text and "total" in text
+    assert "call-bbbbbbbbbbbb" in text and "round" in text
+
+
+def test_path_lead_without_stored_facts_has_no_facts_section(fixture_repo, tmp_path):
+    cfg = make_config(fixture_repo, tmp_path)
+    text = materials.materials_for(cfg, _ref(kind="path", path="billing/invoice.py", lines=[1, 3]))
+    assert "Facts in these lines" not in text

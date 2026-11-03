@@ -336,6 +336,39 @@ def _commit_materials(cfg, root, lead: dict) -> str:
     return "\n".join(out)
 
 
+FACTS_IN_WINDOW = 12  # fact rows listed per cited window
+
+
+def _fact_line(r: dict) -> str:
+    fid, src = r.get("fact_id", "?"), r.get("source", "")
+    if "callee_name" in r:
+        what = f"`{r.get('caller_symbol')}` calls `{r['callee_name']}` at L{r.get('line')}"
+    elif "start" in r and "symbol" in r:
+        what = f"defines `{r['symbol']}` L{r['start']}-{r.get('end')}"
+    elif "module_text" in r:
+        what = f"imports `{r['module_text']}` at L{r.get('line')}"
+    else:
+        what = f"{r.get('kind', 'fact')} `{r.get('symbol', '')}` at L{r.get('line')}"
+    return f"- {fid} {what} ({src})"
+
+
+def _facts_section(cfg, repo: str | None, path: str, start: int, end: int) -> str:
+    """Stored facts inside the cited window, with their ids, so the writer can list them in
+    `facts` without a tool call. "" when the store has none."""
+    from codescroll import fact_tools  # local: fact_tools imports research too
+
+    if not repo or end < start:
+        return ""
+    try:
+        rows = fact_tools.facts_for(cfg, repo, path, start, end, FACTS_IN_WINDOW)
+    except Exception:  # noqa: BLE001 - facts are a bonus; materials never fail on them
+        return ""
+    if not rows:
+        return ""
+    head = "Facts in these lines (list the ids your card relies on in `facts`):"
+    return "\n".join([head, *(_fact_line(r) for r in rows)])
+
+
 def _path_materials(cfg, root, ref: str, lead: dict) -> str:
     path = lead["path"]
     if gitq.object_type(root, ref, path) != "blob":
@@ -372,6 +405,10 @@ def _path_materials(cfg, root, ref: str, lead: dict) -> str:
     dates = gitq.split_lines(gitq.run(root, "log", "--date=short", "--format=%ad", ref, "--", path))
     if dates:
         out.append(f"first commit touching it: {dates[-1]}; last: {dates[0]}")
+    known = lead.get("repo") in getattr(cfg, "repos", {})
+    fact_block = _facts_section(cfg, lead.get("repo") if known else None, path, start, end)
+    if fact_block:
+        out.append(fact_block)
     text = "\n".join(out)
     explain = lead.get("story_type") in EXPLAIN_TYPES
     files = cfg.fileset(lead["repo"]) if lead.get("repo") in getattr(cfg, "repos", {}) else None
