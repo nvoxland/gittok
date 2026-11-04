@@ -21,10 +21,19 @@
           {
             "type": "command",
             "command": "uv run --quiet codescroll health --hint 2>/dev/null || true"
+          },
+          {
+            "type": "command",
+            "command": "uv run --quiet codescroll feed-watch --hint 2>/dev/null || true"
           }
         ],
         "matcher": ""
       }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(uv run --quiet codescroll feed-watch)"
     ]
   }
 }
