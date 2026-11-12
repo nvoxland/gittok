@@ -2,7 +2,6 @@
 
 A personal, TikTok/Instagram-style feed for understanding the codebases you work in every day. A local server on your Mac generates cards from your repos and their git history, and you scroll them on your phone as an installed web app. The feed learns what you engage with, and you can ask the coding agent what it has learned and tell it how to adjust.
 
-*Formerly Blamescroll, and before that CodeScroll.*
 
 ---
 

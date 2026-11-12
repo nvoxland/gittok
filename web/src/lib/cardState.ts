@@ -1,6 +1,5 @@
 // Per-card like/save state and per-session quiz answers.
 // Memory first; localStorage / sessionStorage are best-effort.
-import { getItemWithLegacy } from './legacyKey';
 
 const KEY = 'gittok.card-state';
 const ANSWER_KEY = 'gittok.answers';
@@ -23,7 +22,7 @@ const answersMap = () =>
 
 function load<T>(store: () => Storage, key: string): T {
 	try {
-		return JSON.parse(getItemWithLegacy(store(), key) ?? '{}') as T;
+		return JSON.parse(store().getItem(key) ?? '{}') as T;
 	} catch {
 		return {} as T;
 	}
@@ -48,8 +47,7 @@ export function setFlag(id: string, flag: keyof CardFlags, on: boolean): void {
 
 export function getAnswer<T>(id: string): T | undefined {
 	const stored = answersMap()[id];
-	// Entries from older versions have no timestamp: treat them as expired.
-	if (!stored || typeof stored.at !== 'number' || Date.now() - stored.at > ANSWER_TTL_MS) {
+	if (!stored || Date.now() - stored.at > ANSWER_TTL_MS) {
 		return undefined;
 	}
 	return stored.value as T;

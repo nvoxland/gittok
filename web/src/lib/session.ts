@@ -1,5 +1,3 @@
-import { getItemWithLegacy } from './legacyKey';
-
 const KEY = 'gittok.session';
 let memory: string | undefined;
 
@@ -15,7 +13,7 @@ export function randomId(): string {
 export function getSessionId(): string {
 	if (memory) return memory;
 	try {
-		const stored = getItemWithLegacy(sessionStorage, KEY);
+		const stored = sessionStorage.getItem(KEY);
 		if (stored) {
 			memory = stored;
 			return stored;

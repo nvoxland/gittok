@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { getItemWithLegacy } from '#lib/legacyKey';
 	import { onMount } from 'svelte';
 	import Feed from '#lib/components/Feed.svelte';
 	import StoriesRow from '#lib/components/StoriesRow.svelte';
@@ -59,7 +58,7 @@
 	}
 	function readCurrent(): string | null {
 		try {
-			return getItemWithLegacy(localStorage, CURRENT_KEY);
+			return localStorage.getItem(CURRENT_KEY);
 		} catch {
 			return null;
 		}

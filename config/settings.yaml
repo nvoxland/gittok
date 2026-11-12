@@ -48,7 +48,7 @@ render:
   max_illustrations_per_run: 6
 repos:
   # add_repo (the MCP tool and CLI) only accepts a git repo root inside one of these directories.
-  # Empty = the parent directories of the repos in config/repos.yaml. To allow a new place,
+  # Empty = the parent directories of the repos in local/repos.yaml. To allow a new place,
   # add its directory here, for example: allowed_roots: [~/src, ~/work]
   allowed_roots: []
 gc:

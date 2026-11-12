@@ -1,6 +1,5 @@
 import re
 import sqlite3
-from contextlib import closing
 
 import pytest
 
@@ -278,43 +277,3 @@ def test_saved_cards_migration_backfills_latest_on_saves(tmp_path):
     assert conn.execute("SELECT saved_at FROM saved_cards WHERE card_id='c1'").fetchone()[0] == (
         "1970-01-01T00:00:01Z"
     )
-
-
-@pytest.mark.parametrize("legacy_name", ["blamescroll", "codescroll"])
-def test_open_db_migrates_legacy_files(tmp_path, legacy_name):
-    old = tmp_path / f"{legacy_name}.db"
-    with closing(db.open_db(old)) as conn:
-        conn.execute("CREATE TABLE marker (v TEXT)")
-        conn.execute("INSERT INTO marker VALUES ('kept')")
-        conn.commit()
-    for suffix in ("-wal", "-shm", ".migrate.lock"):
-        (tmp_path / f"{legacy_name}.db{suffix}").write_text("x")
-    new = tmp_path / "gittok.db"
-    with closing(db.open_db(new)) as conn:
-        assert conn.execute("SELECT v FROM marker").fetchone()[0] == "kept"
-    assert not old.exists()
-    assert not (tmp_path / f"{legacy_name}.db-wal").exists()
-    assert not (tmp_path / f"{legacy_name}.db.migrate.lock").exists()
-
-
-def test_open_db_prefers_blamescroll_over_codescroll(tmp_path):
-    for name in ("blamescroll", "codescroll"):
-        with closing(db.open_db(tmp_path / f"{name}.db")) as conn:
-            conn.execute("CREATE TABLE marker (v TEXT)")
-            conn.execute("INSERT INTO marker VALUES (?)", (name,))
-            conn.commit()
-    with closing(db.open_db(tmp_path / "gittok.db")) as conn:
-        assert conn.execute("SELECT v FROM marker").fetchone()[0] == "blamescroll"
-    assert (tmp_path / "codescroll.db").exists()
-
-
-def test_open_db_keeps_existing_new_db(tmp_path):
-    with closing(db.open_db(tmp_path / "gittok.db")) as conn:
-        conn.execute("CREATE TABLE marker (v TEXT)")
-        conn.commit()
-    (tmp_path / "blamescroll.db").write_text("legacy")
-    (tmp_path / "codescroll.db").write_text("legacy")
-    with closing(db.open_db(tmp_path / "gittok.db")) as conn:
-        conn.execute("SELECT * FROM marker")
-    assert (tmp_path / "blamescroll.db").read_text() == "legacy"
-    assert (tmp_path / "codescroll.db").read_text() == "legacy"

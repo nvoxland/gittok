@@ -122,7 +122,7 @@ def _brief(args) -> int:
             personas=list(cfg.personas),
             count=args.count or cfg.settings.agent.default_count,
             packet_size=cfg.settings.agent.packet_size,
-            recent=mcp_server.recent_cards(conn),
+            recent=mcp_server.recent_stories(conn),
             meme_templates=cfg.meme_templates,
             template_weights=mcp_server.template_weights(conn, cfg),
             rules=steering.list_rules(conn),

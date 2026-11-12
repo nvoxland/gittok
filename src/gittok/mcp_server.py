@@ -102,10 +102,6 @@ def recent_stories(conn, days: int = 30, limit: int = 30) -> list[dict]:
     return out
 
 
-# Kept for callers that import the old name.
-recent_cards = recent_stories
-
-
 def unavailable_formats(cfg) -> frozenset[str]:
     """Formats whose renderer cannot run now, so the agent does not write unrenderable cards."""
     renderers = render.default_renderers(cfg)

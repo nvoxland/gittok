@@ -8,30 +8,11 @@ from datetime import UTC, datetime
 from importlib import resources
 from pathlib import Path
 
-LEGACY_DB_NAMES = ("blamescroll.db", "codescroll.db")  # newest first
-
-
-def _migrate_legacy_files(path: Path) -> None:
-    """Product renames: move an old DB (and its side files) to gittok.db, once."""
-    if path.name != "gittok.db" or path.exists():
-        return
-    legacy = next(
-        (path.with_name(n) for n in LEGACY_DB_NAMES if path.with_name(n).exists()), None
-    )
-    if legacy is None:
-        return
-    # Main file last: if this stops half way, the next call sees no gittok.db and resumes.
-    for suffix in ("-wal", "-shm", ".migrate.lock", ""):
-        src = legacy.with_name(legacy.name + suffix)
-        if src.exists():
-            src.rename(path.with_name(path.name + suffix))
-
 
 def connect(path: Path | str) -> sqlite3.Connection:
     memory = str(path) == ":memory:"
     if not memory:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        _migrate_legacy_files(Path(path))
     conn = sqlite3.connect(str(path), timeout=5.0)
     conn.row_factory = sqlite3.Row
     # busy_timeout first, so switching to WAL waits instead of failing under contention.
