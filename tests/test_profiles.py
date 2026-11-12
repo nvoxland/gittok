@@ -111,8 +111,8 @@ def test_glob_matching():
 
 
 def _root(tmp_path, name="demo", data=VALID):
-    (tmp_path / "config" / "profiles").mkdir(parents=True)
-    (tmp_path / "config" / "profiles" / f"{name}.yaml").write_text(yaml.safe_dump(data))
+    (tmp_path / "local" / "profiles").mkdir(parents=True)
+    (tmp_path / "local" / "profiles" / f"{name}.yaml").write_text(yaml.safe_dump(data))
     return tmp_path
 
 
@@ -136,7 +136,7 @@ def test_real_repo_profiles_load():
 
 def test_config_exposes_profiles_and_role_for(tmp_path):
     root = _root(tmp_path)
-    (root / "config" / "repos.yaml").write_text("repos:\n  demo:\n    path: /x\n")
+    (root / "local" / "repos.yaml").write_text("repos:\n  demo:\n    path: /x\n")
     cfg = config.load_config(root)
     assert cfg.profile("demo").detectors[0].id == "route-table"
     assert cfg.profile("nope").detectors == ()  # no profile: built-ins only

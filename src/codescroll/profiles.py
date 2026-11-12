@@ -1,6 +1,6 @@
 """Repo profiles: per-repo detector rules kept as data.
 
-A profile lives in `config/profiles/<repo>.yaml` inside CodeScroll, never in the user's repo.
+A profile lives in `local/profiles/<repo>.yaml` inside CodeScroll, never in the user's repo.
 It holds the stack, a role per directory, detector rules, and the file set: `scan` globs (files
 that are read), `ignore` globs (never read) and `kinds` (test, fixture, generated, docs,
 vendored). `FileSet` is the one classifier; the bootstrap values for a repo with no profile
@@ -379,8 +379,8 @@ def parse(raw, repo: str) -> Profile:
 
 
 def load_profiles(root: Path) -> dict[str, Profile]:
-    """Every `config/profiles/<repo>.yaml` under `root`, by repo name."""
-    folder = Path(root) / "config" / "profiles"
+    """Every `local/profiles/<repo>.yaml` under `root`, by repo name."""
+    folder = Path(root) / "local" / "profiles"
     out: dict[str, Profile] = {}
     if not folder.is_dir():
         return out

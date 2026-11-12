@@ -10,6 +10,16 @@
 
 With no part flag, all three run. Host and port come from `config/settings.yaml` (`server.host`, `server.port`).
 
+## Local config
+
+Settings that belong to one machine live in `local/`. This directory is in `.gitignore` and is never committed. `config/` keeps only shared product data. All parts are optional; a missing `local/` means no repos.
+
+- `local/repos.yaml`: the repos and groups to analyze.
+- `local/profiles/<repo>.yaml`: the profile of each repo.
+- `local/settings.yaml`: merged over `config/settings.yaml`, key by key inside each section.
+- `local/personas.yaml` and `local/mascots.yaml`: merged over the shared files, per name and field by field. The edit tools write only here.
+- `local/.edit.lock`: the lock file of the edit tools.
+
 ## Dry run is the default
 
 ```bash
@@ -42,7 +52,7 @@ CodeScroll reads code structure (definitions, imports, comments) with tree-sitte
 ```bash
 uv sync --group structure          # tree-sitter-language-pack 1.22.x, about 2 MB
 uv run codescroll structure        # status: installed, grammars needed, grammars missing (JSON)
-uv run codescroll structure --prefetch   # download the grammars for the repos in config/repos.yaml
+uv run codescroll structure --prefetch   # download the grammars for the repos in local/repos.yaml
 ```
 
 The package holds no grammars. They are a bundle of about 26 MB (12 languages) that the pack downloads from GitHub on first use into `~/Library/Caches/tree-sitter-language-pack/` (Linux: `~/.cache/`). `--prefetch` does this once, on purpose, so a mining run never waits on the network. A grammar that is not in the cache is not used; `codescroll health --hint` (the SessionStart hook) prints one line naming the missing grammars. Offline, run `--prefetch` on a machine with network and copy the cache dir. Shipped queries: python, typescript/tsx/javascript/svelte, clojure, go, ruby, java, rust. Another stack: let the profile skill write a `queries` entry (docs/learning.md, "The structure layer").
@@ -74,7 +84,7 @@ uv sync --group images
 uv run mflux-save --model z-image-turbo --quantize 4 --path ~/.cache/mflux/z-image-turbo-q4
 ```
 
-Then point the renderer at the folder in `config/settings.yaml`:
+Then point the renderer at the folder in `config/settings.yaml` (or `local/settings.yaml`):
 
 ```yaml
 render:

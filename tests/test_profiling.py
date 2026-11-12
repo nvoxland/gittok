@@ -74,7 +74,7 @@ async def call(cfg, tool, args):
 
 
 def profile_file(cfg):
-    return cfg.root / "config" / "profiles" / "fixture.yaml"
+    return cfg.root / "local" / "profiles" / "fixture.yaml"
 
 
 async def test_survey_lists_manifests_dirs_languages(cfg):

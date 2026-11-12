@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://codescroll.local/profile.schema.json",
-  "title": "CodeScroll repo profile (config/profiles/<repo>.yaml)",
+  "title": "CodeScroll repo profile (local/profiles/<repo>.yaml)",
   "description": "Rules are data. CodeScroll never runs code from a profile.",
   "type": "object",
   "additionalProperties": false,

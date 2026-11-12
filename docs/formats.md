@@ -41,7 +41,7 @@ A format/kind mismatch is rejected with reason `format_kind_mismatch`.
 ```
 - `prompt`: the scene only, at most 400 characters. **No text, letters, or logos in the image.** The mascot's fixed style prompt is prepended by the server.
 - `caption`: at most 140 characters. The client overlays it; captions are never baked into images.
-- `mascots`: optional, 1 to 3 names from `config/mascots.yaml`. Default: the mascot of the card's first repo.
+- `mascots`: optional, 1 to 3 names from `config/mascots.yaml` (edits go to `local/mascots.yaml`). Default: the mascot of the card's first repo.
 
 ### comic
 ```json
@@ -142,7 +142,7 @@ The client shows `explain` text as a small markdown subset: paragraphs (blank li
 
 Each card from the feed, `/api/cards/{id}`, `/api/saved`, and the repo profile has `links`: `{"repo_url", "panels": [url | null], "sources": [{"label", "url"}]}`, or `null`.
 
-- `links` is `null` when the card's repo has no GitHub URL. Set `url:` on the repo in `config/repos.yaml`, or let CodeScroll read it from `git remote get-url origin`. Only github.com URLs make links.
+- `links` is `null` when the card's repo has no GitHub URL. Set `url:` on the repo in `local/repos.yaml`, or let CodeScroll read it from `git remote get-url origin`. Only github.com URLs make links.
 - `panels` has one entry per `depth` panel. A `code` panel links to `{repo_url}/blob/{commit}/{path}#L{a}-L{b}`. A `code_diff` panel links to `{repo_url}/commit/{commit}`. An `explain` panel is `null`.
 - `sources` has one entry per card source, each with its own repo's URL. A commit source links to `/commit/{sha}`. A path source links to `/blob/{rev}/{path}`, where `rev` is the commit the card cites for that file, else the repo `ref` if it is a branch name (`origin/master` gives `master`). Otherwise `url` is `null`.
 - The client opens these links in a new tab (`target="_blank"`, `rel="noopener noreferrer"`). The source line on a code or diff panel uses the panel URL. The explain panel ends with a Sources list.
@@ -169,7 +169,7 @@ Each card from the feed, `/api/cards/{id}`, `/api/saved`, and the repo profile h
 
 ## Cross-repo stories (SPEC section 6.4)
 
-Story types `weekly_recap`, `drift_alert` and `ripple` connect repos of one configured group (`config/repos.yaml`, `groups:` or a repo's `group:`). They work with any text or template format; the brief suggests `breaking_news`, `text_post`, `listicle`, `thread`, `iceberg` and `group_chat` (a `group_chat` may use `repo:path` code accounts from every repo in the card).
+Story types `weekly_recap`, `drift_alert` and `ripple` connect repos of one configured group (`local/repos.yaml`, `groups:` or a repo's `group:`). They work with any text or template format; the brief suggests `breaking_news`, `text_post`, `listicle`, `thread`, `iceberg` and `group_chat` (a `group_chat` may use `repo:path` code accounts from every repo in the card).
 
 | story | meaning | extra rule |
 |---|---|---|

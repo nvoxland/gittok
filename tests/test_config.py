@@ -6,7 +6,7 @@ from codescroll.config import ConfigError, load_config, project_root
 
 
 def write(root: Path, name: str, text: str) -> None:
-    p = root / "config" / name
+    p = root / ("local" if name == "repos.yaml" else "config") / name
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(text)
 
@@ -136,7 +136,7 @@ def test_project_root_env(tmp_path, monkeypatch):
 
 def test_project_root_walks_up(tmp_path, monkeypatch):
     monkeypatch.delenv("CODESCROLL_ROOT", raising=False)
-    write(tmp_path, "repos.yaml", "repos: {}\n")
+    write(tmp_path, "settings.yaml", "{}\n")
     deep = tmp_path / "a" / "b"
     deep.mkdir(parents=True)
     assert project_root(deep) == tmp_path.resolve()
@@ -189,7 +189,8 @@ def test_mascot_with_unknown_key_is_an_error(tmp_path):
     from codescroll.config import ConfigError, load_config
 
     (tmp_path / "config").mkdir()
-    (tmp_path / "config" / "repos.yaml").write_text("repos: {r: {path: /tmp/r}}\n")
+    (tmp_path / "local").mkdir()
+    (tmp_path / "local" / "repos.yaml").write_text("repos: {r: {path: /tmp/r}}\n")
     (tmp_path / "config" / "mascots.yaml").write_text(
         "mascots: {crow: {repo: r, style: s, seed: 1, color: red}}\n"
     )
@@ -243,3 +244,63 @@ def test_fetch_defaults_to_false_and_can_be_enabled(tmp_path):
     assert cfg.repo("a").fetch is False
     assert cfg.repo("b").fetch is True
     assert cfg.settings.analysis.fetch_min_interval_s == 900
+
+
+def wl(root: Path, name: str, text: str) -> None:
+    p = root / "local" / name
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text)
+
+
+def test_missing_local_repos_means_no_repos(tmp_path):
+    write(tmp_path, "settings.yaml", "{}\n")
+    cfg = load_config(tmp_path)
+    assert cfg.repos == {} and cfg.groups == {}
+
+
+def test_local_settings_merge_over_config_by_key(tmp_path):
+    write(
+        tmp_path,
+        "settings.yaml",
+        "server:\n  port: 9000\n  host: 0.0.0.0\nagent:\n  max_count: 7\n",
+    )
+    wl(tmp_path, "settings.yaml", "server:\n  port: 9100\ndata_dir: elsewhere\n")
+    cfg = load_config(tmp_path)
+    assert cfg.settings.server.port == 9100
+    assert cfg.settings.server.host == "0.0.0.0"
+    assert cfg.settings.agent.max_count == 7
+    assert cfg.settings.data_dir == (tmp_path / "elsewhere").resolve()
+
+
+def test_local_settings_unknown_key_names_the_local_file(tmp_path):
+    write(tmp_path, "settings.yaml", "{}\n")
+    wl(tmp_path, "settings.yaml", "agent:\n  nope: 1\n")
+    with pytest.raises(ConfigError, match=r"nope.*local/settings.yaml"):
+        load_config(tmp_path)
+    wl(tmp_path, "settings.yaml", "bogus: 1\n")
+    with pytest.raises(ConfigError, match=r"bogus.*local/settings.yaml"):
+        load_config(tmp_path)
+
+
+def test_local_personas_merge_field_by_field(tmp_path):
+    write(
+        tmp_path,
+        "personas.yaml",
+        "personas:\n  a:\n    name: A\n    voice: v\n    bio: hi\n"
+        "  b:\n    name: B\n    voice: w\n",
+    )
+    wl(
+        tmp_path,
+        "personas.yaml",
+        "personas:\n  a:\n    voice: new\n  c:\n    name: C\n    voice: z\n",
+    )
+    got = load_config(tmp_path).personas
+    assert (got["a"].name, got["a"].voice, got["a"].bio) == ("A", "new", "hi")
+    assert got["b"].voice == "w" and got["c"].name == "C"
+
+
+def test_local_mascots_merge_over_config(tmp_path):
+    write(tmp_path, "mascots.yaml", "mascots:\n  m: {style: s, seed: 1}\n")
+    wl(tmp_path, "mascots.yaml", "mascots:\n  m: {seed: 5}\n  n: {style: t}\n")
+    got = load_config(tmp_path).mascots
+    assert got["m"].style == "s" and got["m"].seed == 5 and got["n"].style == "t"

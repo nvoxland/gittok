@@ -695,7 +695,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("repos", help="list configured repos (or: add, group)")
     p.set_defaults(fn=_repos, repos_fn=None)
     rsub = p.add_subparsers(dest="repos_cmd")
-    q = rsub.add_parser("add", help="add a git repo to config/repos.yaml")
+    q = rsub.add_parser("add", help="add a git repo to local/repos.yaml")
     q.add_argument("name")
     q.add_argument("path")
     q.add_argument("--ref")

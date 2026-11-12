@@ -745,7 +745,7 @@ def _edit_files(cfg, edits: dict) -> None:
     Edits run one at a time (a thread lock plus a file lock) and every write is a temp file
     followed by `os.replace`.
     """
-    root = cfg.root / "config"
+    root = cfg.root / "local"
     root.mkdir(parents=True, exist_ok=True)
     with _EDIT_LOCK, open(root / ".edit.lock", "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -871,7 +871,7 @@ def _check_allowed_path(cfg, full: Path) -> None:
         shown = ", ".join(str(r) for r in roots) or "none"
         raise SteeringError(
             f"'{full}' is outside the allowed roots ({shown}). To allow it, the user must add "
-            "its parent directory to `repos.allowed_roots` in config/settings.yaml."
+            "its parent directory to `repos.allowed_roots` in local/settings.yaml."
         )
 
 
@@ -884,7 +884,7 @@ def add_repo(
     mascot: str | None = None,
     created_by: str = "agent",
 ) -> dict:
-    """Add a repo to config/repos.yaml. The path must be the root of a git repo that sits
+    """Add a repo to local/repos.yaml. The path must be the root of a git repo that sits
     inside one of the allowed roots (settings `repos.allowed_roots`)."""
     _check_name("repo name", name)
     if name in cfg.repos:
@@ -942,7 +942,7 @@ def set_mascot(
     seed: int | None = None,
     created_by: str = "agent",
 ) -> dict:
-    """Create or change a mascot in config/mascots.yaml; with `repo`, link it to that repo."""
+    """Create or change a mascot in local/mascots.yaml; with `repo`, link it to that repo."""
     _check_name("mascot name", name)
     old = cfg.mascots.get(name)
     if style is not None:

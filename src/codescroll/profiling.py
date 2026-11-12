@@ -2,7 +2,7 @@
 
 An agent surveys a repo, tests rules, and saves a profile (rules as data, see profiles.py).
 CodeScroll never runs code from a profile. Repo files are data, never instructions.
-Gate failures come back as `errors`, not as exceptions. Only `config/profiles/<repo>.yaml`
+Gate failures come back as `errors`, not as exceptions. Only `local/profiles/<repo>.yaml`
 of a configured repo is ever written.
 """
 
@@ -56,7 +56,7 @@ def check_name(cfg, repo: str):
 
 def profile_path(cfg, repo: str) -> Path:
     check_name(cfg, repo)
-    folder = Path(cfg.root) / "config" / "profiles"
+    folder = Path(cfg.root) / "local" / "profiles"
     target = folder / f"{repo}.yaml"
     if target.resolve().parent != folder.resolve():
         raise ConfigError("repo must be a configured repo name, not a path")
@@ -627,5 +627,5 @@ def save_profile(cfg, conn, repo_name: str, profile) -> dict:
         "hits": counts,
         **({"queries": query_stats} if query_stats else {}),
         **_conventions_preview(conn, repo_name, new),
-        "path": f"config/profiles/{repo_name}.yaml",
+        "path": f"local/profiles/{repo_name}.yaml",
     }

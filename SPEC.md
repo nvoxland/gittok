@@ -69,7 +69,7 @@ A personal, TikTok/Instagram-style feed for understanding the codebases you work
 
 ## 5. Repos and groups
 
-Configured in `config/repos.yaml`:
+Configured in `local/repos.yaml`:
 
 ```yaml
 groups:
@@ -235,7 +235,7 @@ Git data about teammates (names, commit messages, timestamps, authorship) is fai
 
 ## 8. Mascots
 
-- **One mascot per repo**, configured in `repos.yaml` or proposed by the agent when a repo is added.
+- **One mascot per repo**, configured in `local/repos.yaml` or proposed by the agent when a repo is added.
 - Each mascot has a fixed **style prompt** (species, look, palette, art style) and seed set in `config/mascots.yaml`, reused in every illustration for consistency.
 - Cross-repo cards can feature multiple mascots together.
 - Later: train a small LoRA per mascot if prompt-only consistency isn't good enough.

@@ -763,3 +763,12 @@ def test_feed_watch_fires_at_once_for_a_signal_no_run_answered(cfg, capsys):
     log.write_text(f"{(now - timedelta(hours=1)).isoformat()} want 20 cards\n")
     assert cli.main(["feed-watch", "--poll", "0.05"]) == 0
     assert "want 20 cards" in capsys.readouterr().out
+
+
+def test_install_dry_run_works_without_a_local_dir(tmp_path, monkeypatch, capsys):
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "settings.yaml").write_text("{}\n")
+    monkeypatch.setenv("CODESCROLL_ROOT", str(tmp_path))
+    assert not (tmp_path / "local").exists()
+    assert cli.main(["install", "--launchd"]) == 0
+    assert not (tmp_path / "local").exists()

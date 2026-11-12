@@ -6,13 +6,13 @@ model: sonnet
 
 # Profile a repo for CodeScroll
 
-A profile is data in `config/profiles/<repo>.yaml`. It tells CodeScroll which code in this repo a new reader should see. CodeScroll runs the rules and scores the hits. You write the data. You never write code. Do the work yourself. Do not launch subagents.
+A profile is data in `local/profiles/<repo>.yaml`. It tells CodeScroll which code in this repo a new reader should see. CodeScroll runs the rules and scores the hits. You write the data. You never write code. Do the work yourself. Do not launch subagents.
 
 Requires the `codescroll` MCP server (tools named `mcp__codescroll__*`). If those tools are missing, tell the user to restart the Claude Code session in the CodeScroll repo and check `/mcp`, then stop.
 
 ## Tools
 
-`list_repos`, `survey_repo(repo)`, `list_dir(repo, path)`, `read_file(repo, path)`, `git_grep(repo, pattern)`, `test_detector(repo, rule, scan?, ignore?)`, `save_profile(repo, profile)`, `rule_stats(repo)`, `submit_facts(repo, head_sha, tool, facts)`. Do not call any other config tool (`add_repo`, `add_rule`, `set_group`, and so on). Never edit `config/repos.yaml`.
+`list_repos`, `survey_repo(repo)`, `list_dir(repo, path)`, `read_file(repo, path)`, `git_grep(repo, pattern)`, `test_detector(repo, rule, scan?, ignore?)`, `save_profile(repo, profile)`, `rule_stats(repo)`, `submit_facts(repo, head_sha, tool, facts)`. Do not call any other config tool (`add_repo`, `add_rule`, `set_group`, and so on). Never edit `local/repos.yaml`.
 
 ## What the profile holds
 

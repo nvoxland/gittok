@@ -191,7 +191,7 @@ class Config:
     mascots: dict[str, Mascot] = field(default_factory=dict)
     meme_templates: dict[str, MemeTemplate] = field(default_factory=dict)
     languages: dict = field(default_factory=dict)  # config/languages.yaml
-    profiles: dict = field(default_factory=dict)  # repo -> profiles.Profile (config/profiles/)
+    profiles: dict = field(default_factory=dict)  # repo -> profiles.Profile (local/profiles/)
     scan_defaults: dict = field(default_factory=dict)  # config/scan_defaults.yaml
 
     def repo(self, name: str) -> Repo:
@@ -223,9 +223,9 @@ def project_root(start: Path | None = None) -> Path:
         return Path(env).expanduser().resolve()
     here = (start or Path.cwd()).resolve()
     for d in (here, *here.parents):
-        if (d / "config" / "repos.yaml").is_file():
+        if (d / "config" / "settings.yaml").is_file():
             return d
-    raise ConfigError("project root not found: no config/repos.yaml in any parent directory")
+    raise ConfigError("project root not found: no config/settings.yaml in any parent directory")
 
 
 def _read(path: Path, required: bool = False) -> Any:
@@ -291,26 +291,36 @@ def _repos_settings(data: Any, root: Path, file: Path) -> ReposSettings:
     return ReposSettings(allowed_roots=tuple(roots))
 
 
+_SETTINGS_KEYS = {
+    "data_dir", "server", "agent", "analysis", "research", "render", "repos", "gc", "user",
+    "profiles",
+}  # fmt: skip
+
+
 def _load_settings(root: Path) -> Settings:
-    file = root / "config" / "settings.yaml"
-    data = _mapping(_read(file), "settings", file)
-    _check_keys(
-        data,
-        {
-            "data_dir",
-            "server",
-            "agent",
-            "analysis",
-            "research",
-            "render",
-            "repos",
-            "gc",
-            "user",
-            "profiles",
-        },
-        "settings",
-        file,
-    )
+    """config/settings.yaml, with the optional local/settings.yaml merged over it.
+
+    Top-level keys replace; mapping sections merge key by key. Each file is checked on its
+    own first, so an unknown key names the file that holds it.
+    """
+    base_file = root / "config" / "settings.yaml"
+    local_file = root / "local" / "settings.yaml"
+    base = _mapping(_read(base_file), "settings", base_file)
+    local = _mapping(_read(local_file), "settings", local_file)
+    _build_settings(base, root, base_file)
+    if local:
+        _build_settings(local, root, local_file)
+    merged = dict(base)
+    for key, val in local.items():
+        if isinstance(val, dict) and isinstance(merged.get(key), dict):
+            merged[key] = {**merged[key], **val}
+        elif val is not None or key == "data_dir":
+            merged[key] = val
+    return _build_settings(merged, root, local_file if local else base_file)
+
+
+def _build_settings(data: dict, root: Path, file: Path) -> Settings:
+    _check_keys(data, _SETTINGS_KEYS, "settings", file)
     data_dir = Path(str(data.get("data_dir", "data"))).expanduser()
     if not data_dir.is_absolute():
         data_dir = root / data_dir
@@ -329,8 +339,8 @@ def _load_settings(root: Path) -> Settings:
 
 
 def _load_repos(root: Path) -> tuple[dict[str, Repo], dict[str, Group]]:
-    file = root / "config" / "repos.yaml"
-    data = _mapping(_read(file, required=True), "repos.yaml", file)
+    file = root / "local" / "repos.yaml"  # optional: missing means no repos and no groups
+    data = _mapping(_read(file), "repos.yaml", file)
     _check_keys(data, {"repos", "groups"}, "repos.yaml", file)
     raw_repos = _text_keys(_mapping(data.get("repos"), "repos", file), "repo", file)
     raw_groups = _text_keys(_mapping(data.get("groups"), "groups", file), "group", file)
@@ -387,16 +397,31 @@ def _load_repos(root: Path) -> tuple[dict[str, Repo], dict[str, Group]]:
     return repos, groups
 
 
+def _overlay_entries(
+    root: Path, fname: str, top: str, kind: str, allowed: set[str]
+) -> dict[str, tuple[dict, Path]]:
+    """Entries of `config/<fname>` with `local/<fname>` merged over them per name, field by field.
+
+    Each entry comes with the file that last set it, for error messages.
+    """
+    out: dict[str, tuple[dict, Path]] = {}
+    for folder in ("config", "local"):
+        file = root / folder / fname
+        data = _mapping(_read(file), fname, file)
+        _check_keys(data, {top}, fname, file)
+        for name, raw in _text_keys(_mapping(data.get(top), top, file), kind, file).items():
+            raw = _mapping(raw, f"{kind} '{name}'", file)
+            _check_keys(raw, allowed, f"{kind} '{name}'", file)
+            out[name] = ({**out.get(name, ({}, file))[0], **raw}, file)
+    return out
+
+
 def _load_personas(root: Path) -> dict[str, Persona]:
-    file = root / "config" / "personas.yaml"
-    data = _mapping(_read(file), "personas.yaml", file)
-    _check_keys(data, {"personas"}, "personas.yaml", file)
     out: dict[str, Persona] = {}
-    for handle, raw in _text_keys(
-        _mapping(data.get("personas"), "personas", file), "persona", file
-    ).items():
-        raw = _mapping(raw, f"persona '{handle}'", file)
-        _check_keys(raw, {"name", "voice", "bio"}, f"persona '{handle}'", file)
+    entries = _overlay_entries(
+        root, "personas.yaml", "personas", "persona", {"name", "voice", "bio"}
+    )
+    for handle, (raw, file) in entries.items():
         for req in ("name", "voice"):
             if req not in raw:
                 raise ConfigError(f"persona '{handle}' is missing '{req}' ({file})")
@@ -405,15 +430,9 @@ def _load_personas(root: Path) -> dict[str, Persona]:
 
 
 def _load_mascots(root: Path) -> dict[str, Mascot]:
-    file = root / "config" / "mascots.yaml"
-    data = _mapping(_read(file), "mascots.yaml", file)
-    _check_keys(data, {"mascots"}, "mascots.yaml", file)
     out: dict[str, Mascot] = {}
-    for name, raw in _text_keys(
-        _mapping(data.get("mascots"), "mascots", file), "mascot", file
-    ).items():
-        raw = _mapping(raw, f"mascot '{name}'", file)
-        _check_keys(raw, {"repo", "style", "seed"}, f"mascot '{name}'", file)
+    entries = _overlay_entries(root, "mascots.yaml", "mascots", "mascot", {"repo", "style", "seed"})
+    for name, (raw, file) in entries.items():
         if not raw.get("style"):
             raise ConfigError(f"mascot '{name}' is missing 'style' ({file})")
         out[name] = Mascot(name, raw.get("repo"), raw["style"], int(raw.get("seed", 0)))

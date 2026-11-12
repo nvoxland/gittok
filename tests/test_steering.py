@@ -441,9 +441,12 @@ def make_ycfg(fixture_repo, tmp_path):
     """A config loaded from real yaml files (with comments) under tmp_path/config."""
     d = tmp_path / "ycfg" / "config"
     d.mkdir(parents=True)
-    (d / "repos.yaml").write_text(REPOS_YAML.format(path=fixture_repo.path))
+    (d / "settings.yaml").write_text("{}\n")
     (d / "mascots.yaml").write_text(MASCOTS_YAML)
     (d / "personas.yaml").write_text(PERSONAS_YAML)
+    loc = tmp_path / "ycfg" / "local"
+    loc.mkdir()
+    (loc / "repos.yaml").write_text(REPOS_YAML.format(path=fixture_repo.path))
     return config_mod.load_config(tmp_path / "ycfg")
 
 
@@ -453,6 +456,11 @@ def ycfg(fixture_repo, tmp_path):
 
 
 def text(cfg, name):
+    """A file under local/ (what the edit tools write)."""
+    return (cfg.root / "local" / name).read_text()
+
+
+def shared(cfg, name):
     return (cfg.root / "config" / name).read_text()
 
 
@@ -542,9 +550,8 @@ def test_set_mascot_updates_fields_and_links_repo(ycfg):
     assert out == {"name": "crow", "repo": "alpha", "style": "a very large crow", "seed": 99}
     m = config_mod.load_config(ycfg.root).mascots["crow"]
     assert (m.repo, m.style, m.seed) == ("alpha", "a very large crow", 99)
-    assert "# keep" in text(ycfg, "mascots.yaml") and "# mascots header" in text(
-        ycfg, "mascots.yaml"
-    )
+    assert "crow" in text(ycfg, "mascots.yaml")
+    assert shared(ycfg, "mascots.yaml") == MASCOTS_YAML  # config/ is never written
 
     steering.set_mascot(ycfg, "otter", repo="beta", style="an otter")
     new = config_mod.load_config(ycfg.root)
@@ -570,7 +577,9 @@ def test_edit_persona_changes_only_given_fields(ycfg):
     assert new.personas["greybeard"].voice == "Tired: has seen #everything."
     assert new.personas["greybeard"].name == "Greybeard"
     assert new.personas["penny"].voice == "Enthusiastic junior."
-    assert "# keep" in text(ycfg, "personas.yaml")
+    assert "greybeard" in text(ycfg, "personas.yaml")
+    assert "penny" not in text(ycfg, "personas.yaml")  # sparse overlay: edited handles only
+    assert shared(ycfg, "personas.yaml") == PERSONAS_YAML
 
     steering.edit_persona(ycfg, "newbie", name="Newbie", voice="Curious.")
     assert config_mod.load_config(ycfg.root).personas["newbie"].name == "Newbie"
@@ -633,8 +642,9 @@ def test_edit_writes_through_replace_and_takes_a_lock_file(ycfg, monkeypatch):
     monkeypatch.setattr(steering.os, "replace", lambda a, b: (calls.append(str(b)), real(a, b)))
     steering.set_group(ycfg, "alpha", "ops")
     assert any(c.endswith("repos.yaml") for c in calls)
-    assert (ycfg.root / "config" / ".edit.lock").exists()
-    assert not list((ycfg.root / "config").glob("*.tmp*"))
+    assert (ycfg.root / "local" / ".edit.lock").exists()
+    assert not list((ycfg.root / "local").glob("*.tmp*"))
+    assert not (ycfg.root / "config" / ".edit.lock").exists()
 
 
 def test_add_repo_requires_an_allowed_root(ycfg, fixture_repo, tmp_path):
@@ -697,10 +707,11 @@ def test_add_repo_honours_configured_roots_and_refuses_home_and_slash(
     ],
 )
 def test_persona_voice_rejects_injection_and_long_text(ycfg, voice):
-    before = text(ycfg, "personas.yaml")
+    before = shared(ycfg, "personas.yaml")
     with pytest.raises(steering.SteeringError):
         steering.edit_persona(ycfg, "greybeard", voice=voice)
-    assert text(ycfg, "personas.yaml") == before
+    assert shared(ycfg, "personas.yaml") == before
+    assert not (ycfg.root / "local" / "personas.yaml").exists()
 
 
 def test_persona_and_mascot_text_limits_and_cleaning(ycfg):
