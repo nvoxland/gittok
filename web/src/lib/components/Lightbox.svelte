@@ -169,7 +169,8 @@
 		padding: 0;
 		background: none;
 	}
-	.lb-body :global(img) {
+	/* Not avatars: a group chat's sender icons stay small. */
+	.lb-body :global(img:not(.avatar)) {
 		max-height: none !important;
 		width: 100%;
 		height: auto;

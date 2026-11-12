@@ -76,6 +76,13 @@ describe('Card lightbox', () => {
 		expect(css).toMatch(/-webkit-text-size-adjust:\s*100%/);
 	});
 
+	it('expanded images fill the width, but avatars keep their size (group chat senders)', async () => {
+		const { readFileSync } = await import('node:fs');
+		const css = readFileSync(`${process.cwd()}/src/lib/components/Lightbox.svelte`, 'utf8');
+		expect(css).not.toMatch(/\.lb-body :global\(img\)\s*\{/);
+		expect(css).toMatch(/\.lb-body :global\(img:not\(\.avatar\)\)\s*\{[^}]*width:\s*100%/);
+	});
+
 	it('Escape and the close button close it', async () => {
 		const { container } = render(Card, { card: codeCard() });
 		await fireEvent.click(container.querySelector('.visual')!);
