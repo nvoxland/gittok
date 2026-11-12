@@ -210,11 +210,6 @@ def test_slotter_reads_card_features_in_one_query_not_one_per_card(cfg, monkeypa
     assert slotter.features_for  # the batch read
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="learning.score_cards still reads the features of each card with two queries; "
-    "it must take the features the slotter already loaded",
-)
 def test_feed_request_query_count_does_not_grow_with_the_number_of_cards(cfg):
     few, many = _feed_queries(cfg, 4), _feed_queries(cfg, 24)
     assert len(many) == len(few), (len(few), len(many))

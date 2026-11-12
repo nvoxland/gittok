@@ -204,7 +204,7 @@ def test_other_languages_defs_and_import_specs(path):
     text, kinds, specs = OTHERS[path]
     grammar = structure.grammar_for(path) or {"a.rb": "ruby", "A.java": "java"}.get(path, "x")
     if not (structure.available() and structure.ready(grammar)):
-        pytest.skip("needs the structure group")
+        pytest.skip("needs the grammar (gittok structure --prefetch)")
     f = facts(path, text)
     assert {d.name: d.kind for d in f.defs} == kinds
     assert [i.spec for i in f.imports] == specs

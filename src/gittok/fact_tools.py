@@ -7,6 +7,7 @@ research tools. An unknown symbol gives `[]`, an unknown repo raises ResearchErr
 from __future__ import annotations
 
 from . import db, factcheck, facts, gitq, secrets
+from .config import unknown_repo
 from .research import ResearchError
 
 DEFAULT_LIMIT = 50
@@ -22,8 +23,7 @@ def _limit(n: int) -> int:
 def _open(cfg, repo: str):
     """`with _open(cfg, repo) as conn:`; the connection is closed when the block ends."""
     if repo not in cfg.repos:
-        known = ", ".join(sorted(cfg.repos)) or "(none)"
-        raise ResearchError(f"unknown repo: {repo}. Known repos: {known}")
+        raise ResearchError(unknown_repo(cfg.repos, repo))
     return db.session(cfg.settings.data_dir / "gittok.db")
 
 

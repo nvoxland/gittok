@@ -31,7 +31,7 @@ uv run gittok repos add storefront <git-url>     # https://, ssh://, git:// or g
 uv run gittok structure --prefetch     # download the tree-sitter grammars once (needs network)
 ```
 
-A local directory is read in place. A remote URL is cloned into the managed `repos/` directory of the clone, and GitTok fetches it before each analysis.
+A local directory is read in place. A remote URL is cloned into the managed `repos/` directory of the clone, and GitTok fetches it before analysis.
 
 Then start Claude Code in the clone:
 

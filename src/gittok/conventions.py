@@ -261,14 +261,21 @@ def _nil(conn, rid, profile, defs, calls, by_symbol, by_name, texts, fs, skipped
 
 
 def refresh(
-    conn, repo: str, path, head: str, settings: AnalysisSettings, profile: Profile | None
+    conn,
+    repo: str,
+    path,
+    head: str,
+    settings: AnalysisSettings,
+    profile: Profile | None,
+    stats: dict | None = None,
 ) -> int:
     """Mine and store the fact-based candidates; rows the miner no longer finds are removed.
-    Does nothing while the facts of `head` are missing, so old rows stay until they are built."""
+    Does nothing while the facts of `head` are missing, so old rows stay until they are built.
+    `stats` is passed to `mine`."""
     rid = facts._repo_id(conn, repo)
     if rid is None or not _facts_current(conn, rid, head):
         return 0
-    found = mine(conn, repo, path, head, profile, settings)
+    found = mine(conn, repo, path, head, profile, settings, stats)
     hashes = candidates.window_hashes(path, head, found)
     now = db.now_iso()
     with db.immediate(conn):

@@ -74,7 +74,7 @@ agent:
   per_day_runs: 4
 ```
 
-A key that GitTok does not know is ignored with a warning; `gittok health` prints the warning. Restart the server after a change (`gittok serve`, or the Claude Code session that owns it).
+A key that GitTok does not know is ignored with a warning; `gittok health` prints the warning. The same holds for an unknown key in `config/reward.yaml`. Restart the server after a change (`gittok serve`, or the Claude Code session that owns it).
 
 The values below are the shipped ones.
 
@@ -244,6 +244,10 @@ These have no `local/` overlay. To change one, you need a clone.
 | `config/claims.yaml` | The phrases that make a typed claim |
 | `config/meme_templates.yaml` | The meme templates the agent may use |
 | `config/languages.yaml`, `config/file_types.yaml`, `config/queries/` | Per-language patterns, file type tables, and tree-sitter queries |
+
+An unknown top-level key in `config/reward.yaml`, or an unknown key in its `weights` or `importance` map, is ignored with a warning that `gittok health` prints. A known key with a value of the wrong shape is an error.
+
+`config/languages.yaml` has a `shared:` block next to `languages:`. It holds the line shapes that are true for most languages: the comment start, the lines whose numbers are not magic numbers, the start of a multi-line literal, the shape of a self call, and the tokens to skip in parameter lists and nesting. Each language can set any of these keys itself; its value then replaces the shared one. A language that GitTok knows only through `config/queries/` uses the shared values as they are.
 
 ## Environment variables
 

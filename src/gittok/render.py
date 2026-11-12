@@ -19,7 +19,7 @@ from typing import Any, Protocol
 
 import httpx
 
-from gittok import db
+from gittok import db, private
 
 log = logging.getLogger("gittok.render")
 
@@ -266,7 +266,7 @@ def retry_failed(conn) -> int:
 
 def _store_images(conn, cfg, card_id: str, kind: str, images: list[RenderedImage]) -> None:
     folder = cfg.settings.data_dir / "assets" / card_id
-    folder.mkdir(parents=True, exist_ok=True)
+    private.make_dir(folder)
     try:
         paths = []
         for n, img in enumerate(images):

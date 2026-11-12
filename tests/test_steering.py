@@ -339,7 +339,7 @@ def test_coverage_uses_churn_signal_dirs_and_rejects_unknown_repo(conn, cfg):
     dirs = {r["dir"] for r in steering.coverage(conn, cfg)}
     assert {"billing", "src", "data"} <= dirs
     assert not any("/" in d or d == "." for d in dirs)
-    with pytest.raises(steering.SteeringError, match="Unknown repo"):
+    with pytest.raises(steering.SteeringError, match="unknown repo: .*\\. Known repos: "):
         steering.coverage(conn, cfg, repo="nope")
 
 
@@ -486,7 +486,7 @@ def test_set_group_creates_group_and_can_clear_it(ycfg):
     new = config_mod.load_config(ycfg.root)
     assert new.repos["beta"].group is None
     assert "beta" not in new.groups["ops"].repos
-    with pytest.raises(steering.SteeringError, match="Unknown repo"):
+    with pytest.raises(steering.SteeringError, match="unknown repo: .*\\. Known repos: "):
         steering.set_group(ycfg, "nope", "ops")
     with pytest.raises(steering.SteeringError, match="group name"):
         steering.set_group(ycfg, "beta", "bad name!")
@@ -563,7 +563,7 @@ def test_set_mascot_updates_fields_and_links_repo(ycfg):
 
     with pytest.raises(steering.SteeringError, match="style"):
         steering.set_mascot(ycfg, "fresh")
-    with pytest.raises(steering.SteeringError, match="Unknown repo"):
+    with pytest.raises(steering.SteeringError, match="unknown repo: .*\\. Known repos: "):
         steering.set_mascot(ycfg, "crow", repo="nope")
 
 
@@ -1093,7 +1093,7 @@ def test_remove_repo_deletes_a_managed_clone(fresh_cfg, remote):
     assert not dest.exists()
     new = config_mod.load_config(fresh_cfg.root)
     assert new.repos == {} and new.groups["work"].repos == ()
-    with pytest.raises(steering.SteeringError, match="Unknown repo"):
+    with pytest.raises(steering.SteeringError, match="unknown repo: .*\\. Known repos: "):
         steering.remove_repo(new, "proj")
 
 

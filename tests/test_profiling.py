@@ -274,3 +274,55 @@ async def test_survey_reports_extension_counts_and_hints(cfg):
     assert any(p.startswith("web/dist") for p in paths)
     assert "generated marker" in paths["gen/out.py"]
     assert "linguist-vendored" in paths["vendor/**"]
+
+
+# --- rules skipped for a regex timeout ---------------------------------------------------
+
+EVIL = r"(a|aa)+$"  # catastrophic on a long run of "a" that ends in another letter
+EVIL_NAME = "a" * 40 + "b"
+
+
+@pytest.fixture
+def slow_cfg(tmp_path, monkeypatch):
+    from gittok import profiles
+
+    monkeypatch.setattr(profiles, "REGEX_TIMEOUT_S", 0.1)
+    monkeypatch.setattr(profiles, "_skipped_markers", {})
+    profiles._marker.cache_clear()
+    files = {
+        **FILES,
+        "app/slow.py": f"# {EVIL_NAME}\n\ndef {EVIL_NAME}():\n    return 1\n\n\n"
+        f"def caller():\n    return {EVIL_NAME}()\n",
+    }
+    repo = build_history_repo(tmp_path / "r", [("base", files, "2026-01-20T10:00:00+00:00")])
+    return make_config(repo, tmp_path / "cs")
+
+
+async def test_save_profile_lists_the_rules_skipped_for_a_regex_timeout(slow_cfg):
+    profile = {
+        "detectors": [RULE],
+        "generated_markers": [EVIL],
+        "sinks": [{"pattern": EVIL, "kind": "other"}, {"pattern": r"audit_log", "kind": "other"}],
+    }
+    res = data(await call(slow_cfg, "save_profile", {"repo": "fixture", "profile": profile}))
+    assert res["ok"]
+    skipped = {s["rule"]: s["reason"] for s in res["skipped_rules"]}
+    assert set(skipped) == {"sinks[0]", "generated_markers[0]"}
+    assert all("timed out" in reason for reason in skipped.values())
+
+
+async def test_save_profile_and_test_detector_give_an_empty_skipped_list_when_all_ran(cfg):
+    out = data(await call(cfg, "test_detector", {"repo": "fixture", "rule": RULE}))
+    assert out["ok"] and out["skipped_rules"] == []
+    res = data(
+        await call(cfg, "save_profile", {"repo": "fixture", "profile": {"detectors": [RULE]}})
+    )
+    assert res["ok"] and res["skipped_rules"] == []
+
+
+async def test_test_detector_lists_a_generated_marker_skipped_for_a_timeout(slow_cfg):
+    saved = {"detectors": [RULE], "generated_markers": [EVIL]}
+    data(await call(slow_cfg, "save_profile", {"repo": "fixture", "profile": saved}))
+    out = data(await call(slow_cfg, "test_detector", {"repo": "fixture", "rule": RULE}))
+    assert [s["rule"] for s in out["skipped_rules"]] == ["generated_markers[0]"]
+    assert "timed out" in out["skipped_rules"][0]["reason"]

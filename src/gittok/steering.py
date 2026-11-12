@@ -21,8 +21,8 @@ from pathlib import Path
 
 import yaml
 
-from gittok import brief, gitq, knowledge, learning, rule_stats, signals
-from gittok.config import load_config
+from gittok import brief, gitq, knowledge, learning, private, rule_stats, signals
+from gittok.config import load_config, unknown_repo
 
 
 class SteeringError(Exception):
@@ -320,7 +320,6 @@ def explain_weights(
 # ---------------------------------------------------------------- profile
 
 MIN_CLAIM_N = 5
-RULE_OUTCOME_ROWS = 5  # per repo, in get_profile
 RULE_OUTCOME_ROWS = 5  # rules per repo in get_profile
 MAX_SENTENCES = 8
 _NOUN = {
@@ -432,7 +431,7 @@ def coverage(conn, cfg, repo: str | None = None) -> list[dict]:
     A card has a `dir` feature per path prefix; each card counts once per top-level dir.
     """
     if repo is not None and repo not in cfg.repos:
-        raise SteeringError(f"Unknown repo '{repo}'. Known: {', '.join(cfg.repos) or 'none'}.")
+        raise SteeringError(unknown_repo(cfg.repos, repo))
     out = []
     for name in [repo] if repo else list(cfg.repos):
         known = knowledge.novelty_map(conn, name, cfg.settings.user.git_identities)
@@ -787,8 +786,8 @@ def _audit(cfg, tool: str, args: dict, created_by: str) -> None:
     }
     try:
         log = cfg.settings.data_dir / "config_audit.log"
-        log.parent.mkdir(parents=True, exist_ok=True)
-        with log.open("a", encoding="utf-8") as fh:
+        private.make_dir(log.parent)
+        with open(log, "a", encoding="utf-8", opener=private.opener) as fh:
             fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except OSError:
         pass  # the edit is done; a full disk must not undo or hide it
@@ -836,7 +835,7 @@ def _loads_as_same_text(name: str) -> bool:
 def set_group(cfg, repo: str, group: str | None, created_by: str = "agent") -> dict:
     """Put a repo in a group (created if new), or take it out of all groups with None."""
     if repo not in cfg.repos:
-        raise SteeringError(f"Unknown repo '{repo}'. Known: {', '.join(cfg.repos) or 'none'}.")
+        raise SteeringError(unknown_repo(cfg.repos, repo))
     if group is not None:
         _check_name("group name", group)
     _edit_files(cfg, {"repos.yaml": lambda lines: _group_edit(lines, cfg, repo, group)})
@@ -1091,7 +1090,7 @@ def remove_repo(cfg, name: str, created_by: str = "user") -> dict:
     added by URL) is deleted; a directory the user gave is never touched."""
     repo = cfg.repos.get(name)
     if repo is None:
-        raise SteeringError(f"Unknown repo '{name}'. Known: {', '.join(cfg.repos) or 'none'}.")
+        raise SteeringError(unknown_repo(cfg.repos, name))
     managed = is_managed(cfg, repo)
 
     def edit(lines: list[str]) -> None:
@@ -1123,7 +1122,7 @@ def set_mascot(
     if style is not None:
         style = _check_text("style", style, MAX_STYLE)
     if repo is not None and repo not in cfg.repos:
-        raise SteeringError(f"Unknown repo '{repo}'. Known: {', '.join(cfg.repos) or 'none'}.")
+        raise SteeringError(unknown_repo(cfg.repos, repo))
     if old is None and not style:
         raise SteeringError(f"New mascot '{name}' needs a style (the image prompt prefix).")
     if seed is not None and (not isinstance(seed, int) or isinstance(seed, bool)):

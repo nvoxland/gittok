@@ -7,6 +7,7 @@ import re
 from html import escape
 from pathlib import Path
 
+from gittok import private
 from gittok.config import Persona
 from gittok.render import IllustrationRenderer, RendererUnavailable
 
@@ -73,7 +74,7 @@ def generate_avatars(cfg, renderer: IllustrationRenderer, force: bool = False) -
         except RendererUnavailable:
             result["waiting"] = True
             return result
-        out.mkdir(parents=True, exist_ok=True)
+        private.make_dir(out)
         target.write_bytes(img.data)
         result["generated"] += 1
     return result

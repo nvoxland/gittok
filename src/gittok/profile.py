@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from gittok import db, steering
+from gittok import db, private, steering
 
 log = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ def write_profile(conn, cfg, now: datetime | None = None) -> Path:
     """Write the profile file atomically and return its path."""
     now = (now or datetime.now(UTC)).astimezone(UTC)
     path = profile_path(cfg)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    private.make_dir(path.parent)
     tmp = path.with_suffix(".md.tmp")
     tmp.write_text(render_profile(conn, cfg, now), encoding="utf-8")
     os.replace(tmp, path)

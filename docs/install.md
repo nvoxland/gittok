@@ -244,9 +244,9 @@ You do not need this to use the feed. Plain HTTP on the LAN works in a browser t
 
 **The project does not test these recipes.** GitTok itself serves plain HTTP only. The recipes use a second program on the same computer that holds the certificate and forwards to `http://127.0.0.1:8008`. Read the two warnings first.
 
-**Warning 1: pairing through a proxy works only when the server has a pairing token.** A proxy on the same computer connects from `127.0.0.1`. GitTok does not treat such a request as local when it has one of the headers `X-Forwarded-For`, `Forwarded`, `X-Forwarded-Host`, `X-Forwarded-Proto` or `X-Real-IP`. A request with one of these headers never gets `/mcp` (HTTP 403), and it needs the pairing cookie, the same as a LAN device. Know these limits:
+**Warning 1: a proxy needs LAN serving on, and each device must pair.** A proxy on the same computer connects from `127.0.0.1`. GitTok does not treat such a request as local when it has one of the headers `X-Forwarded-For`, `Forwarded`, `X-Forwarded-Host`, `X-Forwarded-Proto` or `X-Real-IP`. A request with one of these headers never gets `/mcp` (HTTP 403), and it needs the pairing cookie, the same as a LAN device. Know these limits:
 
-- The server has a pairing token only when LAN serving is on (`--lan`, or `server.lan: true`) or when `--host` is not a loopback address. With LAN serving off there is no token and no pairing: everybody who can reach the proxy can read the feed. `/mcp` stays closed to them.
+- The server has a pairing token only when LAN serving is on (`--lan`, or `server.lan: true`) or when `--host` is not a loopback address. With LAN serving off there is no token, so nothing can pair: GitTok refuses every request that has one of these headers with HTTP 403 (`proxy_needs_pairing`). Set `server.lan: true` and restart before you use a proxy.
 - A proxy that sends none of these headers still looks local, so it skips pairing and opens `/mcp` (which can read your configured repos). Tailscale Serve and Caddy send the headers by default. nginx sends them only when its config has `proxy_set_header X-Forwarded-For ...`. Do not remove these headers in the proxy config.
 - Pair each device on the address that it uses. Open `https://<the proxy's name>/pair?t=<token>` on the device: the token is the last part of the `pair:` URL printed at start-up. A cookie from the plain `http://<LAN address>:8008` address does not count for the proxy's name.
 
@@ -268,7 +268,7 @@ tailscale serve --bg 8008        # serves https://<machine>.<tailnet>.ts.net to 
 tailscale serve status           # shows the URL
 ```
 
-Put `<machine>.<tailnet>.ts.net` in `server.allowed_hosts`. Tailscale connects to `127.0.0.1` and adds `X-Forwarded-For`, so GitTok refuses `/mcp` for these requests (warning 1). With `server.lan` off, every device and user that your tailnet ACLs let reach this computer can read the feed without pairing. To ask for pairing, turn `server.lan` on (the server then also answers paired devices on your LAN) and open `https://<machine>.<tailnet>.ts.net/pair?t=<token>` once on each device. Do not use `tailscale funnel`: it opens the server to the internet.
+Put `<machine>.<tailnet>.ts.net` in `server.allowed_hosts`. Tailscale connects to `127.0.0.1` and adds `X-Forwarded-For`, so GitTok refuses `/mcp` for these requests (warning 1). With `server.lan` off, GitTok refuses every request from the tailnet (HTTP 403, `proxy_needs_pairing`). Turn `server.lan` on (the server then also answers paired devices on your LAN) and open `https://<machine>.<tailnet>.ts.net/pair?t=<token>` once on each device. Do not use `tailscale funnel`: it opens the server to the internet.
 
 ### Recipe B: mkcert and a local reverse proxy
 
@@ -298,5 +298,7 @@ Open `https://mymac.local:8443` on the phone. If the name is this computer's own
 ### If it does not work
 
 - HTTP 421 `unknown Host`: the name in the address bar is not in `server.allowed_hosts`.
+- HTTP 403 `proxy_needs_pairing`: LAN serving is off, so there is no pairing token. Set `server.lan: true`, restart, and pair the device.
+- HTTP 401 `pair this device`: open `https://<the proxy's name>/pair?t=<token>` on the device.
 - HTTP 403 `cross-origin request` on taps (like, save, answer): the same cause; the check uses the same list.
 - The page loads but there is no install prompt or offline mode: the certificate is not trusted on that device. A page with a certificate warning does not register a service worker.

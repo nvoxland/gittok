@@ -23,15 +23,12 @@ import uvicorn
 
 from gittok import (
     avatars,
-    candidate_leads,
     db,
     facts,
     gc,
     gitq,
     install,
-    knowledge,
     learning,
-    ledger,
     mcp_server,
     profile,
     profiling,
@@ -45,7 +42,6 @@ from gittok import (
     supply,
     validator,
 )
-from gittok import brief as brief_mod
 from gittok.api import create_app
 from gittok.config import ConfigError, load_config
 from gittok.steering import SteeringError
@@ -128,32 +124,8 @@ def _brief(args) -> int:
             n: signals.analyze(conn, cfg.repos[n], cfg.settings.analysis, profile=cfg.profile(n))
             for n in names
         }
-        b = brief_mod.build_brief(
-            repo_signals=repo_signals,
-            defaults=cfg.defaults,
-            personas=list(cfg.personas),
-            count=args.count or cfg.settings.agent.default_count,
-            packet_size=cfg.settings.agent.packet_size,
-            recent=mcp_server.recent_stories(conn),
-            meme_templates=cfg.meme_templates,
-            template_weights=mcp_server.template_weights(conn, cfg),
-            rules=steering.list_rules(conn),
-            unavailable_formats=mcp_server.unavailable_formats(cfg),
-            max_illustrations=cfg.settings.render.max_illustrations_per_run,
-            ledger=ledger.for_brief(
-                conn, cfg, sorted(repo_signals), datetime.now(UTC), analyses=repo_signals
-            ),
-            lead_ok=ledger.offerable(conn, cfg, datetime.now(UTC)),
-            variants=ledger.variants(conn, cfg, datetime.now(UTC)),
-            variant_max_share=cfg.settings.agent.variant_max_share,
-            intro_share=cfg.settings.agent.intro_share,
-            min_spot_the_bug=cfg.settings.agent.min_spot_the_bug_per_run,
-            facts_conn=conn,
-            novelty=knowledge.novelty_maps(conn, cfg, sorted(repo_signals)),
-            intro_prefer={r: candidate_leads.dirs_with_core(conn, r) for r in repo_signals},
-            filesets={r: cfg.fileset(r) for r in repo_signals},
-            **mcp_server.mix_inputs(conn, cfg),
-        )
+        count = args.count or cfg.settings.agent.default_count
+        b = mcp_server.build_brief(conn, cfg, repo_signals, count)
     print(b.to_markdown())
     return 0
 
@@ -194,7 +166,7 @@ def _banner(port: int, host: str, out) -> str | None:
     print("MCP (/mcp) is loopback-only and is never reachable from the LAN.", file=out)
     print("PWA install and offline mode need HTTPS: service workers do not register", file=out)
     print("on plain-HTTP LAN origins. The feed still works in the browser over HTTP.", file=out)
-    print("Tailscale is the planned HTTPS path (M6).", file=out)
+    print('For HTTPS, see docs/install.md, "HTTPS on a LAN".', file=out)
     return lan_token
 
 

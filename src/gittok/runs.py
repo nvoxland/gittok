@@ -7,7 +7,7 @@ import secrets
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 
-from gittok import db, ledger, replies, signals, store, validator
+from gittok import db, ledger, private, replies, signals, store, validator
 
 
 class RunError(Exception):
@@ -190,7 +190,7 @@ def submit(conn, cfg, run_id: str, cards: list | dict, packet_id: str | None = N
         run = get_run(conn, run_id)
         _check_open(run, run_id)
         n = run["submissions"] + 1
-        out_dir.mkdir(parents=True, exist_ok=True)
+        private.make_dir(out_dir)
         (out_dir / f"submission-{n}.json").write_text(json.dumps(raw, indent=2, ensure_ascii=False))
         quota = run["requested"] - run["accepted"] if run["requested"] is not None else None
         seen: set[str] = set()

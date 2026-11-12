@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from gittok import gitq, secrets
+from gittok.config import unknown_repo
 
 MAX_LOG = 200  # commits one git_log call returns at most
 
@@ -45,8 +46,7 @@ def _clean_path(path: str) -> str:
 def _resolve(cfg, repo: str, ref: str | None):
     r = cfg.repos.get(repo)
     if r is None:
-        known = ", ".join(sorted(cfg.repos)) or "(none)"
-        raise ResearchError(f"unknown repo: {repo}. Known repos: {known}")
+        raise ResearchError(unknown_repo(cfg.repos, repo))
     ref = ref or r.ref
     try:
         gitq.rev_parse(r.path, ref)

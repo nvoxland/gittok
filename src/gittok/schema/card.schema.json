@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://gittok.local/card.schema.json",
-  "title": "GitTok card submission (M2)",
+  "title": "GitTok card submission",
   "type": "object",
   "additionalProperties": false,
   "required": ["cards"],

@@ -67,7 +67,7 @@ def impress(conn, card_id, when):
 def fix_scores(monkeypatch, scores: dict[str, float]):
     """Make Thompson scores deterministic; unlisted cards get 0.5."""
 
-    def fake(conn, cfg, ids, rng, now=None):
+    def fake(conn, cfg, ids, rng, now=None, feats=None):
         return {i: scores.get(i, 0.5) for i in ids}
 
     monkeypatch.setattr(learning, "score_cards", fake)

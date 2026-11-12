@@ -188,6 +188,12 @@ class Settings:
     profiles: ProfilesSettings = field(default_factory=ProfilesSettings)
 
 
+def unknown_repo(repos, name) -> str:
+    """The one error text for a repo name that is not configured (every tool and command)."""
+    known = ", ".join(sorted(repos)) or "(none)"
+    return f"unknown repo: {name}. Known repos: {known}"
+
+
 @dataclass(frozen=True)
 class Config:
     root: Path
@@ -202,7 +208,7 @@ class Config:
     profiles: dict = field(default_factory=dict)  # repo -> profiles.Profile (local/profiles/)
     scan_defaults: dict = field(default_factory=dict)  # config/scan_defaults.yaml
     shared: Path | None = None  # where config/, web/ and claude/ live; None means `root`
-    # Problems that did not stop the load, such as an unknown settings key (`gittok health`).
+    # Problems that did not stop the load: unknown settings and reward keys (`gittok health`).
     warnings: tuple[str, ...] = ()
 
     def shared_path(self, *parts: str) -> Path:
@@ -213,8 +219,7 @@ class Config:
         try:
             return self.repos[name]
         except KeyError:
-            known = ", ".join(sorted(self.repos)) or "(none)"
-            raise ConfigError(f"unknown repo: {name}. Known repos: {known}") from None
+            raise ConfigError(unknown_repo(self.repos, name)) from None
 
     def profile(self, repo: str):
         """The repo's profile; an empty one (built-in detectors only) when it has none."""
@@ -703,6 +708,7 @@ def load_config(root: Path | None = None, shared: Path | None = None) -> Config:
         root = Path(root).resolve()
         shared = Path(shared).resolve() if shared else root
     from . import gitq
+    from .learning import reward_warnings
     from .profiles import load_profiles
 
     repos, groups = _load_repos(root)
@@ -716,7 +722,7 @@ def load_config(root: Path | None = None, shared: Path | None = None) -> Config:
         repos=repos,
         groups=groups,
         settings=settings,
-        warnings=warnings,
+        warnings=warnings + reward_warnings(shared),
         defaults=defaults,
         personas=_load_personas(root, shared),
         mascots=_load_mascots(root, shared),

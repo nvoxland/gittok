@@ -119,6 +119,18 @@ PROXY_HEADERS = frozenset(
 )
 
 
+NO_PAIRING_DETAIL = (
+    "This request came through a reverse proxy, and this server has no pairing token. "
+    "Set `server.lan: true` in local/settings.yaml (or start with --lan) and restart, "
+    "then open the pairing URL through the proxy."
+)
+
+
+def _is_forwarded(scope) -> bool:
+    """True when the request has a header that a reverse proxy adds."""
+    return any(k.lower() in PROXY_HEADERS for k, _ in scope.get("headers") or ())
+
+
 def _is_loopback(scope) -> bool:
     """True for a request that a program on this machine sent itself.
 
@@ -126,9 +138,7 @@ def _is_loopback(scope) -> bool:
     request that a local reverse proxy passed on comes from somewhere else, so it needs the
     pairing cookie and gets no MCP. A client only loses rights by sending such a header."""
     client = scope.get("client")
-    if not client:
-        return False
-    if any(k.lower() in PROXY_HEADERS for k, _ in scope.get("headers") or ()):
+    if not client or _is_forwarded(scope):
         return False
     try:
         return ipaddress.ip_address(client[0].split("%")[0]).is_loopback
@@ -388,6 +398,9 @@ class SecurityMiddleware:
         if path == "/mcp" or path.startswith("/mcp/"):
             if not loopback:
                 return await reply(_error_json(403, "mcp_loopback_only", "MCP is loopback-only"))
+        elif not self.token and _is_forwarded(scope):
+            # A proxied request is never local, and without a token nothing can pair it.
+            return await reply(_error_json(403, "proxy_needs_pairing", NO_PAIRING_DETAIL))
         elif self.token and not loopback and path != "/pair":
             cookie = _cookie(scope, LAN_COOKIE)
             if cookie is None or not hmac.compare_digest(cookie.encode(), self.token.encode()):

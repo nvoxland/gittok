@@ -605,8 +605,10 @@ def _cached(conn, repo_id: int, head: str) -> dict | None:
 
 
 def analyze(
-    conn, repo: Repo, settings: AnalysisSettings, force: bool = False, profile=None
+    conn, repo: Repo, settings: AnalysisSettings, force: bool = False, profile=None, stats=None
 ) -> dict:
+    """Signals, candidates, leads and facts of the repo's ref, cached by head commit.
+    `stats`, when given, collects what `conventions.mine` reports (`skipped_rules`)."""
     if repo.fetch:  # never raises; a failure keeps the old ref
         gitq.fetch_ref(repo.path, repo.ref, settings.fetch_min_interval_s)
     head = gitq.rev_parse(repo.path, repo.ref)
@@ -620,7 +622,7 @@ def analyze(
         cached = _cached(conn, row["id"], head)
         if cached is not None:
             facts.refresh(conn, repo.name, repo.path, head, t0, settings, profile)
-            conventions.refresh(conn, repo.name, repo.path, head, settings, profile)
+            conventions.refresh(conn, repo.name, repo.path, head, settings, profile, stats)
             return {**meta, "cached": True, "signals": cached}
 
     # All git work happens first, with no write transaction open.
@@ -692,7 +694,7 @@ def analyze(
         profiles.fileset_for(profile),
     )
     facts.refresh(conn, repo.name, path, head, t0, settings, profile)
-    conventions.refresh(conn, repo.name, path, head, settings, profile)
+    conventions.refresh(conn, repo.name, path, head, settings, profile, stats)
     return {**meta, "cached": False, "signals": result}
 
 

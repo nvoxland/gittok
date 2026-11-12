@@ -72,7 +72,7 @@ describe('Card header', () => {
 });
 
 describe('Card visual dispatch', () => {
-	it('renders each M2 kind', () => {
+	it('renders each image and chart kind', () => {
 		const cases = [
 			{ visual: memeVisual(), resolved: images(), sel: 'img.media' },
 			{ visual: comicVisual(2), resolved: images(2), sel: '.panel' },

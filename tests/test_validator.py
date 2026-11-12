@@ -217,7 +217,7 @@ def test_dirs_are_normalized_in_returned_card(fixture_repo, repos):
 
 
 # ---------------------------------------------------------------------------
-# M2 formats
+# Meme, illustration and chart formats
 # ---------------------------------------------------------------------------
 from gittok.config import Mascot, MemeTemplate  # noqa: E402
 from tests import cards as C  # noqa: E402

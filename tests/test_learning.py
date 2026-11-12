@@ -273,12 +273,33 @@ def test_reward_config_defaults_file_overrides_and_unknown_keys(cfg, tmp_path):
     (tmp_path / "config" / "reward.yaml").write_text("weights:\n  save: 0.5\nhalf_life_days: 7\n")
     rc = learning.load_reward_config(cfg)
     assert rc.weights["save"] == 0.5 and rc.weights["like"] == 0.25 and rc.half_life_days == 7
-    (tmp_path / "config" / "reward.yaml").write_text("bogus: 1\n")
+    (tmp_path / "config" / "reward.yaml").write_text("weights: 3\n")
     with pytest.raises(learning.RewardConfigError):
         learning.load_reward_config(cfg)
-    (tmp_path / "config" / "reward.yaml").write_text("weights:\n  nope: 1\n")
-    with pytest.raises(learning.RewardConfigError):
-        learning.load_reward_config(cfg)
+
+
+def test_unknown_reward_key_is_dropped_with_a_warning_and_the_file_still_loads(cfg, tmp_path):
+    """A running process may read a newer reward file: an unknown key must not stop it."""
+    from gittok.config import load_config
+
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "reward.yaml").write_text(
+        "future: 1\nweights:\n  nope: 1\n  save: 0.5\nimportance:\n  zzz: 2\n"
+    )
+    rc = learning.load_reward_config(cfg)
+    assert rc.weights["save"] == 0.5 and "nope" not in rc.weights and "zzz" not in rc.importance
+    assert not hasattr(rc, "future")
+    warnings = load_config(cfg.root, shared=cfg.root).warnings
+    for key in ("'future'", "'weights.nope'", "'importance.zzz'"):
+        assert any(key in w and "config/reward.yaml" in w for w in warnings), (key, warnings)
+    assert len(warnings) == 3
+
+
+def test_shipped_reward_file_has_no_unknown_keys():
+    """Typos in the shipped file must not hide behind the warning."""
+    from gittok import config
+
+    assert learning.reward_warnings(config.shipped_root()) == ()
 
 
 def weights(conn):

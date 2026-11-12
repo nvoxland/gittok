@@ -42,63 +42,92 @@ class RewardConfigError(ValueError):
 
 _REWARD_FIELDS = tuple(RewardConfig.__dataclass_fields__)
 _CLOSED_MAPS = ("weights", "importance")  # a key the shipped file does not have is a typo
+_MAP_FIELDS = tuple(n for n, f in RewardConfig.__dataclass_fields__.items() if f.type == "dict")
 
 
-def _read_reward(path) -> dict:
+def _read_reward(path) -> tuple[dict, tuple[str, ...]]:
+    """The keys of one reward file that this code knows, and one warning for each other key.
+
+    An unknown key is not an error, for the reason `config._drop_unknown` gives: a process
+    that started before an upgrade must still load a newer file. `gittok health` prints
+    the warnings. A known key with a value of the wrong shape is still an error."""
     data = yaml.safe_load(path.read_text()) or {}
     if not isinstance(data, dict):
         raise RewardConfigError(f"{path} must be a mapping")
-    for key in data:
+    known = _known_subkeys(path)
+    out: dict[str, Any] = {}
+    unknown: list[str] = []
+    for key, value in data.items():
         if key not in _REWARD_FIELDS:
-            raise RewardConfigError(f"unknown key '{key}' in {path}")
-    return data
+            unknown.append(str(key))
+            continue
+        if key in _MAP_FIELDS and not isinstance(value, dict):
+            raise RewardConfigError(f"'{key}' must be a mapping in {path}")
+        if key in known:
+            unknown += [f"{key}.{sub}" for sub in value if sub not in known[key]]
+            value = {k: v for k, v in value.items() if k in known[key]}
+        out[key] = value
+    where = "/".join(path.parts[-2:])
+    return out, tuple(f"unknown reward key '{k}' in {where} (ignored)" for k in unknown)
+
+
+def _known_subkeys(path) -> dict[str, set]:
+    """The keys of each closed map, from the shipped file (nothing when `path` is that file)."""
+    shipped = config.shipped_root() / "config" / "reward.yaml"
+    if path == shipped:
+        return {}
+    base = default_reward_config()
+    return {name: set(getattr(base, name)) for name in _CLOSED_MAPS}
 
 
 @cache
 def default_reward_config() -> RewardConfig:
     """The shipped config/reward.yaml. It must set every field."""
     path = config.shipped_root() / "config" / "reward.yaml"
-    data = _read_reward(path)
+    data, _ = _read_reward(path)
     missing = [k for k in _REWARD_FIELDS if k not in data]
     if missing:
         raise RewardConfigError(f"{path} is missing: {', '.join(missing)}")
     return RewardConfig(**data)
 
 
-# reward.yaml path -> ((mtime_ns, size), parsed config): a feed request does not parse it again.
-_reward_cache: dict[str, tuple[tuple[int, int], RewardConfig]] = {}
+# reward.yaml path -> ((mtime_ns, size), parsed config, warnings): a feed request does not
+# parse it again.
+_reward_cache: dict[str, tuple[tuple[int, int], RewardConfig, tuple[str, ...]]] = {}
+
+
+def _load_reward(shared) -> tuple[RewardConfig, tuple[str, ...]]:
+    base = default_reward_config()
+    path = shared / "config" / "reward.yaml"
+    try:
+        st = path.stat()
+    except OSError:
+        return base, ()
+    stamp = (st.st_mtime_ns, st.st_size)
+    hit = _reward_cache.get(str(path))
+    if hit is not None and hit[0] == stamp:
+        return hit[1], hit[2]
+    data, warnings = _read_reward(path)
+    merged = {
+        key: {**getattr(base, key), **value} if key in _MAP_FIELDS else value
+        for key, value in data.items()
+    }
+    rc = replace(base, **merged)
+    _reward_cache[str(path)] = (stamp, rc, warnings)
+    return rc, warnings
 
 
 def load_reward_config(cfg) -> RewardConfig:
     """The project's config/reward.yaml merged over the shipped one, key by key.
 
-    A missing file means the shipped values; an unknown key is an error. The parsed file is
-    cached until its mtime or size changes."""
-    base = default_reward_config()
-    path = (getattr(cfg, "shared", None) or cfg.root) / "config" / "reward.yaml"
-    try:
-        st = path.stat()
-    except OSError:
-        return base
-    stamp = (st.st_mtime_ns, st.st_size)
-    hit = _reward_cache.get(str(path))
-    if hit is not None and hit[0] == stamp:
-        return hit[1]
-    merged: dict[str, Any] = {}
-    for key, value in _read_reward(path).items():
-        current = getattr(base, key)
-        if isinstance(current, dict):
-            if not isinstance(value, dict):
-                raise RewardConfigError(f"'{key}' must be a mapping in {path}")
-            for sub in value:
-                if key in _CLOSED_MAPS and sub not in current:
-                    raise RewardConfigError(f"unknown key '{key}.{sub}' in {path}")
-            merged[key] = {**current, **value}
-        else:
-            merged[key] = value
-    rc = replace(base, **merged)
-    _reward_cache[str(path)] = (stamp, rc)
-    return rc
+    A missing file means the shipped values; an unknown key is dropped (`reward_warnings`).
+    The parsed file is cached until its mtime or size changes."""
+    return _load_reward(getattr(cfg, "shared", None) or cfg.root)[0]
+
+
+def reward_warnings(shared) -> tuple[str, ...]:
+    """One warning for each key of `<shared>/config/reward.yaml` that was ignored."""
+    return _load_reward(shared)[1]
 
 
 _SKIP_TEXT_KEYS = {"kind", "repo", "path", "commit", "template", "chart", "style", "dir", "mermaid"}
@@ -386,15 +415,19 @@ def posterior_means(
 
 
 def score_cards(
-    conn, cfg, card_ids: list[str], rng, now: datetime | None = None
+    conn, cfg, card_ids: list[str], rng, now: datetime | None = None, feats=None
 ) -> dict[str, float]:
     """Thompson sample per call: one Beta draw per (feature, value), shared by all cards.
 
     Score = importance-weighted mean of the draws over the card's features. Reads only.
     A card's `dir` prefixes count as one term: their draws are averaged first.
+    `feats` (card id -> features, as `slotter.features_for` gives them) saves the two reads
+    per card when the caller already has the features.
     """
     now, rc = _now(now), load_reward_config(cfg)
-    feats = {cid: card_features(conn, cfg, cid, now=now) for cid in card_ids}
+    if feats is None:
+        feats = {cid: card_features(conn, cfg, cid, now=now) for cid in card_ids}
+    feats = {cid: sorted(feats.get(cid) or ()) for cid in card_ids}
     feats = {cid: f for cid, f in feats.items() if f}
     stored = {
         (r["feature"], r["value"]): _decayed(rc, cfg, r, now)[:2]

@@ -317,7 +317,7 @@ def build_batch(conn, cfg, limit: int, served: set[str], seed: int, now: datetim
             due = [i for i in due if not rule_matches(r["feature"], r["value"], feats[i])]
     due = _reserve_srs(len(ids), due[: knobs["max_srs_per_batch"]], limit)
     slots = limit - len(due)
-    scores = learning.score_cards(conn, cfg, ids, rng, now=now)
+    scores = learning.score_cards(conn, cfg, ids, rng, now=now, feats=feats)
     for r in rules:
         if r["type"] in ("boost", "prefer"):
             for i in ids:

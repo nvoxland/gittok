@@ -61,8 +61,8 @@ The profile owns the file set. A key you write REPLACES the bootstrap default (`
    After `save_profile`, read `conventions` in its result: the count per tag and sample reasons. If the samples are false alarms (for example a sink that is too wide, or a convention the code does not follow), tighten the data and save again. If a count is 0, check the sink patterns with `git_grep`. Drop data that gives mostly noise.
 7. Test each detector with `test_detector(repo, rule)`. For a rule over files outside the current `scan`, pass the draft `scan` (and `ignore`) too: `test_detector(repo, rule, scan=[...])`. Fix it until it passes the gates and its samples show the right code. If the samples are mostly noise, drop the rule. Do not keep a weak rule. Change one thing at a time: tighten the regex, narrow `paths`, add `exclude`.
 8. Revise mode (a profile exists): call `rule_stats(repo)` first. Drop or rework each rule with `factor` under 0.8 that has many `found` but few `rated` or `cards`. Keep good rules unchanged. Add rules for areas the old profile missed, and update `roles` and `stack` if the manifests changed.
-9. Call `save_profile(repo, profile)` with the whole profile. If it returns errors by rule id, fix those rules and call it once more. Then stop.
-10. Report in a few lines: rules saved with their hit counts, the number of roles, and anything you skipped and why.
+9. Call `save_profile(repo, profile)` with the whole profile. If it returns errors by rule id, fix those rules and call it once more. Then read `skipped_rules` in the result. Each entry (`rule`, `reason`) is a regex in `sinks`, `conventions`, `nil_guards` or `generated_markers` that timed out, so GitTok does not use it. Rewrite such a regex (no nested repeats, add anchors) or remove it, and save once more. `test_detector` gives the same list for `generated_markers`. Then stop.
+10. Report in a few lines: rules saved with their hit counts, the number of roles, any `skipped_rules` that remain, and anything you skipped and why.
 
 ## Rules
 

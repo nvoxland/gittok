@@ -21,9 +21,13 @@ def cfg(fixture_repo, tmp_path):
 
 
 def call(app, method, path, peer, **kw):
+    cookies = kw.pop("cookies", None)  # on the client: httpx deprecates cookies per request
+
     async def go():
         transport = httpx.ASGITransport(app=app, client=(peer, 5000))
-        async with httpx.AsyncClient(transport=transport, base_url="http://localhost:8008") as c:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://localhost:8008", cookies=cookies
+        ) as c:
             return await c.request(method, path, **kw)
 
     return asyncio.run(go())
@@ -458,6 +462,7 @@ PROXY_HEADERS = [
     {"Forwarded": "for=100.64.0.7;proto=https"},
     {"X-Forwarded-Host": "feed.example.ts.net"},
     {"X-Real-IP": "100.64.0.7"},
+    {"X-Forwarded-Proto": "https"},
     {"x-forwarded-for": "127.0.0.1"},  # the value does not matter, the header does
 ]
 
@@ -491,6 +496,22 @@ def test_a_proxied_device_can_still_pair(lan_app):
 
 def test_a_direct_loopback_request_is_still_loopback(lan_app):
     assert call(lan_app, "GET", "/api/feed", "127.0.0.1").status_code == 200
+
+
+@pytest.mark.parametrize("headers", PROXY_HEADERS)
+@pytest.mark.parametrize("path", ["/api/feed", "/api/repos", "/", "/healthz", "/pair?t=x"])
+def test_a_proxied_request_is_refused_when_the_server_has_no_pairing_token(cfg, headers, path):
+    app = api.create_app(lambda: cfg)  # server.lan is off: there is no token to pair with
+    for peer in ("127.0.0.1", "::1"):
+        r = call(app, "GET", path, peer, headers=headers, cookies={"cs_lan": TOKEN})
+        assert r.status_code == 403
+        assert r.json()["code"] == "proxy_needs_pairing"
+        assert "server.lan: true" in r.json()["detail"]
+
+
+def test_a_direct_loopback_request_needs_no_token_when_lan_is_off(cfg):
+    app = api.create_app(lambda: cfg)
+    assert call(app, "GET", "/api/feed", "127.0.0.1").status_code == 200
 
 
 # --- Machine-readable error codes --------------------------------------------------------------
