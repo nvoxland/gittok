@@ -23,6 +23,7 @@ describe('PWA static files', () => {
 	});
 	it('links the manifest, apple icon and theme colors from app.html', () => {
 		const html = read('src/app.html');
+		expect(html).toContain('rel="icon" href="/icon-192.png" type="image/png"');
 		expect(html).toContain('rel="manifest" href="/manifest.webmanifest"');
 		expect(html).toContain('rel="apple-touch-icon" href="/apple-touch-icon.png"');
 		expect(html).toContain('name="theme-color" content="#f6f6f4" media="(prefers-color-scheme: light)"');
