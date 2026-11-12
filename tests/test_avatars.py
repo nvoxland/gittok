@@ -2,8 +2,8 @@ import re
 
 import pytest
 
-from blamescroll import avatars
-from blamescroll.config import Persona
+from gittok import avatars
+from gittok.config import Persona
 from tests.test_render import FakeRunner, render_cfg
 
 
@@ -34,7 +34,7 @@ def test_avatar_prompt_uses_persona_name_and_voice():
 
 
 def test_generate_avatars_writes_pngs_and_skips_existing(fixture_repo, tmp_path):
-    from blamescroll import render
+    from gittok import render
 
     cfg = render_cfg(fixture_repo, tmp_path)
     runner = FakeRunner()
@@ -52,7 +52,7 @@ def test_generate_avatars_writes_pngs_and_skips_existing(fixture_repo, tmp_path)
 
 
 def test_generate_avatars_reports_waiting_without_mflux(fixture_repo, tmp_path, monkeypatch):
-    from blamescroll import render
+    from gittok import render
 
     monkeypatch.setattr(render.shutil, "which", lambda name: None)
     monkeypatch.setattr(render.importlib.util, "find_spec", lambda name: None)
@@ -62,7 +62,7 @@ def test_generate_avatars_reports_waiting_without_mflux(fixture_repo, tmp_path, 
 
 
 def test_generate_avatars_propagates_render_errors(fixture_repo, tmp_path):
-    from blamescroll import render
+    from gittok import render
 
     cfg = render_cfg(fixture_repo, tmp_path)
     r = render.IllustrationRenderer(runner=FakeRunner(fail=True), command=["x"])

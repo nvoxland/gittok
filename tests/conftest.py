@@ -15,7 +15,7 @@ def make_config(fixture_repo, tmp_path, **agent):
     """A full Config for the fixture repo, with real personas and the shipped default mix."""
     import yaml
 
-    from blamescroll.config import (
+    from gittok.config import (
         AgentSettings,
         AnalysisSettings,
         Config,
@@ -54,6 +54,6 @@ def anyio_backend():
 @pytest.fixture(autouse=True)
 def _fixed_choice_order(monkeypatch):
     """Most tests pin quiz answers to the positions the card was written with."""
-    from blamescroll import store
+    from gittok import store
 
     monkeypatch.setattr(store, "SHUFFLE", False)

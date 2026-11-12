@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from blamescroll import config as config_mod
-from blamescroll import db, knowledge, learning, steering, store
+from gittok import config as config_mod
+from gittok import db, knowledge, learning, steering, store
 from tests.cards import text_card
 from tests.conftest import make_config
 
@@ -125,7 +125,7 @@ def test_reprocessing_does_not_change_numbers(conn, cfg):
 
 
 def test_churn_does_not_make_a_dir_less_novel(conn, cfg):
-    from blamescroll import signals
+    from gittok import signals
 
     a = add_card(conn, cfg, dirs=["billing"])
     for i in range(4):
@@ -167,7 +167,7 @@ def test_novelty_map_and_coverage_and_profile(conn, cfg):
 
 
 def test_api_accepts_knew_it_and_teach_more():
-    from blamescroll import api
+    from gittok import api
 
     assert {"knew_it", "teach_more"} <= set(api.EventType.__args__)
 

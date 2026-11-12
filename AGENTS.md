@@ -78,35 +78,35 @@ This repo has no git remote. When ending a work session: file issues for remaini
 
 ```bash
 uv sync                          # install Python deps (Python 3.13)
-uv run pytest                    # unit tests (live tests skipped unless BLAMESCROLL_LIVE=1)
+uv run pytest                    # unit tests (live tests skipped unless GITTOK_LIVE=1)
 uv run ruff check                # lint
 npm --prefix web install
 npm --prefix web test            # vitest component tests
 npm --prefix web run build       # static build into web/build
-uv run blamescroll mcp --ui --lan # what .mcp.json runs: stdio MCP, plus an auto-reloading feed on :8008 while the session lasts
-uv run blamescroll serve          # standalone feed at http://127.0.0.1:8008 and MCP at /mcp (no Claude session)
-uv run blamescroll install        # dry run: MCP + skills + LaunchAgent (--apply to do it; see docs/install.md)
+uv run gittok mcp --ui --lan # what .mcp.json runs: stdio MCP, plus an auto-reloading feed on :8008 while the session lasts
+uv run gittok serve          # standalone feed at http://127.0.0.1:8008 and MCP at /mcp (no Claude session)
+uv run gittok install        # dry run: MCP + skills + LaunchAgent (--apply to do it; see docs/install.md)
 uv sync --group images           # optional: mflux for mascot illustrations, comics, avatars
-uv run blamescroll structure --prefetch   # download its grammars (once, needs network)
-uv run blamescroll render         # one render pass (serve also renders in the background)
-uv run blamescroll avatars        # generate persona avatar PNGs (needs the images group)
+uv run gittok structure --prefetch   # download its grammars (once, needs network)
+uv run gittok render         # one render pass (serve also renders in the background)
+uv run gittok avatars        # generate persona avatar PNGs (needs the images group)
 ```
 
 Red/green TDD is required: write the failing test first.
 
 ## Architecture Overview
 
-Blamescroll (working name; see `SPEC.md`) is a personal TikTok-style feed of cards about your own codebases.
+GitTok (working name; see `SPEC.md`) is a personal TikTok-style feed of cards about your own codebases.
 
-- `src/blamescroll/` is a Python package. It analyzes git history into signals, builds a brief, validates card specs against git, stores cards in SQLite, and serves the feed API.
-- **The session owns the server.** The project `.mcp.json` makes Claude Code start `blamescroll mcp --ui --lan`. That process talks MCP over stdio and starts a child `blamescroll serve --reload` that serves the feed API, the web build, and the render/learning workers on port 8008 for the LAN (pairing token; `/mcp` over HTTP stays loopback-only). The child reloads when a file in `src/blamescroll/` changes, and it exits when the MCP process ends, even after a hard kill. If 8008 is already taken, it runs MCP only. Changes to the MCP tools themselves need `/mcp` → blamescroll → Reconnect. `blamescroll serve` runs the same app without a session.
-- Card generation does **not** shell out to `claude -p`. A Claude Code session runs the `blamescroll-generate` skill (`.claude/skills/`). The skill calls `get_brief` and gives each packet id to a `blamescroll-writer` subagent (`.claude/agents/`) on haiku or sonnet. The writer calls `get_packet`, reads the evidence attached to its leads, researches only what is missing, and submits its own cards with `submit_cards(packet_id)`. The driver never handles card JSON.
-- **Keeping the feed full.** Two SessionStart hook lines do this. `blamescroll health --hint` prints one line when the feed wants cards now (unseen cards last under `agent.target_runway_days`): run `/blamescroll-generate`. `blamescroll feed-watch --hint` always prints one line: start `uv run --quiet blamescroll feed-watch` with Bash `run_in_background`, once per session. The feed server appends a fixed line to `data/feed-wants-cards.log` when the feed wants cards (not while a run is open, and at most once per `agent.wake_cooldown_hours`). The watch exits on that line. When it exits, run `/blamescroll-generate` without asking, then start the watch again. The `get_brief` daily run cap still applies.
-- **Repo profiles.** `local/profiles/<repo>.yaml` holds rules as data (regex or ast-grep patterns, roles, ignore globs) that Blamescroll runs and scores itself (`docs/learning.md`, "Candidate score and repo profiles"). The `blamescroll-profile-repo` skill (sonnet) writes and revises them with `survey_repo`, `test_detector`, `save_profile`, `rule_stats`. `blamescroll health --hint` prints one line when a repo has no profile or its manifests changed; offer `/blamescroll-profile-repo <repo>`, do not start it unasked.
+- `src/gittok/` is a Python package. It analyzes git history into signals, builds a brief, validates card specs against git, stores cards in SQLite, and serves the feed API.
+- **The session owns the server.** The project `.mcp.json` makes Claude Code start `gittok mcp --ui --lan`. That process talks MCP over stdio and starts a child `gittok serve --reload` that serves the feed API, the web build, and the render/learning workers on port 8008 for the LAN (pairing token; `/mcp` over HTTP stays loopback-only). The child reloads when a file in `src/gittok/` changes, and it exits when the MCP process ends, even after a hard kill. If 8008 is already taken, it runs MCP only. Changes to the MCP tools themselves need `/mcp` → gittok → Reconnect. `gittok serve` runs the same app without a session.
+- Card generation does **not** shell out to `claude -p`. A Claude Code session runs the `gittok-generate` skill (`.claude/skills/`). The skill calls `get_brief` and gives each packet id to a `gittok-writer` subagent (`.claude/agents/`) on haiku or sonnet. The writer calls `get_packet`, reads the evidence attached to its leads, researches only what is missing, and submits its own cards with `submit_cards(packet_id)`. The driver never handles card JSON.
+- **Keeping the feed full.** Two SessionStart hook lines do this. `gittok health --hint` prints one line when the feed wants cards now (unseen cards last under `agent.target_runway_days`): run `/gittok-generate`. `gittok feed-watch --hint` always prints one line: start `uv run --quiet gittok feed-watch` with Bash `run_in_background`, once per session. The feed server appends a fixed line to `data/feed-wants-cards.log` when the feed wants cards (not while a run is open, and at most once per `agent.wake_cooldown_hours`). The watch exits on that line. When it exits, run `/gittok-generate` without asking, then start the watch again. The `get_brief` daily run cap still applies.
+- **Repo profiles.** `local/profiles/<repo>.yaml` holds rules as data (regex or ast-grep patterns, roles, ignore globs) that GitTok runs and scores itself (`docs/learning.md`, "Candidate score and repo profiles"). The `gittok-profile-repo` skill (sonnet) writes and revises them with `survey_repo`, `test_detector`, `save_profile`, `rule_stats`. `gittok health --hint` prints one line when a repo has no profile or its manifests changed; offer `/gittok-profile-repo <repo>`, do not start it unasked.
 - `web/` is a SvelteKit static app: vertical snap-scroll feed, horizontal depth panels.
 - Card formats, visual kinds, and the `resolved` shapes the client renders are specified in `docs/formats.md`. Meme, illustration, and comic cards are stored `pending_render` and appear in the feed after the render worker draws them (memegen for memes, mflux for illustrations).
-- Config lives in `config/*.yaml`; the card contract is `src/blamescroll/schema/card.schema.json`; agent guidance is `src/blamescroll/prompts/generate.md`; runtime data goes in `data/` (gitignored).
-- **Two roots.** `config.resolve_roots()` gives (shared, home). Shared files (`config/`, `web/build`, `.claude/skills|agents`) come from `cfg.shared_path(...)`; user files (`local/`, relative `data_dir`) come from `cfg.root`. In a clone both are the clone. Installed (`uv tool install`), shared is the wheel's `blamescroll/_bundled/` and home is `BLAMESCROLL_HOME` (default `~/.blamescroll`). Never use `parents[2]`; use `config.shipped_root()`. A wheel needs `web/build` first (`hatch_build.py` checks). See `docs/install.md`.
+- Config lives in `config/*.yaml`; the card contract is `src/gittok/schema/card.schema.json`; agent guidance is `src/gittok/prompts/generate.md`; runtime data goes in `data/` (gitignored).
+- **Two roots.** `config.resolve_roots()` gives (shared, home). Shared files (`config/`, `web/build`, `.claude/skills|agents`) come from `cfg.shared_path(...)`; user files (`local/`, relative `data_dir`) come from `cfg.root`. In a clone both are the clone. Installed (`uv tool install`), shared is the wheel's `gittok/_bundled/` and home is `GITTOK_HOME` (default `~/.gittok`). Never use `parents[2]`; use `config.shipped_root()`. A wheel needs `web/build` first (`hatch_build.py` checks). See `docs/install.md`.
 
 ## Conventions & Patterns
 

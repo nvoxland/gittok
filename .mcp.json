@@ -1,9 +1,9 @@
 {
   "mcpServers": {
-    "blamescroll": {
+    "gittok": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "blamescroll", "mcp", "--ui", "--lan"]
+      "args": ["run", "gittok", "mcp", "--ui", "--lan"]
     }
   }
 }

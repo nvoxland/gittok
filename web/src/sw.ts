@@ -16,13 +16,13 @@ declare const __PRECACHE__: string[];
 declare const __VERSION__: string;
 declare const self: ServiceWorkerGlobalScope;
 
-const CACHE = `blamescroll-${__VERSION__}`;
+const CACHE = `gittok-${__VERSION__}`;
 const SYNC_TAG = 'replay-events';
 
 // ---- offline event queue (IndexedDB) ----
 function openDb(): Promise<IDBDatabase> {
 	return new Promise((resolve, reject) => {
-		const req = indexedDB.open('blamescroll-sw', 1);
+		const req = indexedDB.open('gittok-sw', 1);
 		req.onupgradeneeded = () => req.result.createObjectStore('queue', { keyPath: 'id', autoIncrement: true });
 		req.onsuccess = () => resolve(req.result);
 		req.onerror = () => reject(req.error);

@@ -102,7 +102,7 @@ A card may set `"account": "repo:path"`. The card is then shown as posted by tha
 ## Status and rendering
 
 - Cards whose visual is `meme`, `illustration`, or `comic` are stored with status `pending_render`. All others are `ready`.
-- The render worker (in `blamescroll serve`, plus `blamescroll render`) claims a pending card by setting the transient status `rendering`, so two passes never render the same card. It then sets `ready`, or `render_failed` with the error text in `cards.resolved.render_error`. If the renderer is unavailable, the card goes back to `pending_render`. A card stuck in `rendering` for more than 30 minutes is reset to `pending_render` at the start of the next pass.
+- The render worker (in `gittok serve`, plus `gittok render`) claims a pending card by setting the transient status `rendering`, so two passes never render the same card. It then sets `ready`, or `render_failed` with the error text in `cards.resolved.render_error`. If the renderer is unavailable, the card goes back to `pending_render`. A card stuck in `rendering` for more than 30 minutes is reset to `pending_render` at the start of the next pass.
 - The feed and `/api/repos/{name}` return only `ready` cards.
 
 ## Teaching contract (`learn` and the explain floor)
@@ -142,7 +142,7 @@ The client shows `explain` text as a small markdown subset: paragraphs (blank li
 
 Each card from the feed, `/api/cards/{id}`, `/api/saved`, and the repo profile has `links`: `{"repo_url", "panels": [url | null], "sources": [{"label", "url"}]}`, or `null`.
 
-- `links` is `null` when the card's repo has no GitHub URL. Set `url:` on the repo in `local/repos.yaml`, or let Blamescroll read it from `git remote get-url origin`. Only github.com URLs make links.
+- `links` is `null` when the card's repo has no GitHub URL. Set `url:` on the repo in `local/repos.yaml`, or let GitTok read it from `git remote get-url origin`. Only github.com URLs make links.
 - `panels` has one entry per `depth` panel. A `code` panel links to `{repo_url}/blob/{commit}/{path}#L{a}-L{b}`. A `code_diff` panel links to `{repo_url}/commit/{commit}`. An `explain` panel is `null`.
 - `sources` has one entry per card source, each with its own repo's URL. A commit source links to `/commit/{sha}`. A path source links to `/blob/{rev}/{path}`, where `rev` is the commit the card cites for that file, else the repo `ref` if it is a branch name (`origin/master` gives `master`). Otherwise `url` is `null`.
 - The client opens these links in a new tab (`target="_blank"`, `rel="noopener noreferrer"`). The source line on a code or diff panel uses the panel URL. The explain panel ends with a Sources list.

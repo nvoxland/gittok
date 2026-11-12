@@ -84,7 +84,7 @@ export function singleFlight<T>(fn: () => Promise<T>): () => Promise<T> {
 
 // Caches to delete on activate. Keep the current cache and the newest older one: a page from
 // the previous build may still ask for its /_app/ chunks. Relies on caches.keys() creation order.
-export function staleCaches(keys: string[], current: string, prefix = 'blamescroll-'): string[] {
+export function staleCaches(keys: string[], current: string, prefix = 'gittok-'): string[] {
 	const others = keys.filter((k) => k.startsWith(prefix) && k !== current);
 	return others.slice(0, -1);
 }

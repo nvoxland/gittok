@@ -2,8 +2,8 @@
 
 import pytest
 
-from blamescroll import brief, slotter, validator
-from blamescroll.config import Repo
+from gittok import brief, slotter, validator
+from gittok.config import Repo
 from tests import cards as C
 from tests.test_brief import (
     DEFAULTS,

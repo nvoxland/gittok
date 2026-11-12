@@ -2,8 +2,8 @@
 
 import pytest
 
-from blamescroll import claims, validator
-from blamescroll.config import Repo
+from gittok import claims, validator
+from gittok.config import Repo
 from tests.cards import example_card, text_card
 
 PERSONAS = ["greybeard", "penny_learns", "archivist", "meme_compiler", "paranoid_sec", "shipit_sam"]
@@ -227,7 +227,7 @@ def test_other_reasons_come_first(fixture_repo, repos):
 
 
 def test_agent_setting_defaults_on():
-    from blamescroll.config import AgentSettings
+    from gittok.config import AgentSettings
 
     assert AgentSettings().claim_checks is True
 

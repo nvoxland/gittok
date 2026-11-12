@@ -2,8 +2,8 @@
 // Memory first; localStorage / sessionStorage are best-effort.
 import { getItemWithLegacy } from './legacyKey';
 
-const KEY = 'blamescroll.card-state';
-const ANSWER_KEY = 'blamescroll.answers';
+const KEY = 'gittok.card-state';
+const ANSWER_KEY = 'gittok.answers';
 
 export type CardFlags = { liked?: boolean; saved?: boolean; knewIt?: boolean; teachMore?: boolean };
 
@@ -74,7 +74,7 @@ export function clearAnswers(ids: string[]): void {
 }
 
 // Beat cards play once; afterwards they open on the full view.
-const PLAYED_KEY = 'blamescroll.played';
+const PLAYED_KEY = 'gittok.played';
 let playedCache: Record<string, number> | undefined;
 const playedMap = () => (playedCache ??= load<Record<string, number>>(() => localStorage, PLAYED_KEY));
 

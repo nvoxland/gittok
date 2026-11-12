@@ -1,6 +1,6 @@
 """Hatch build hook: refuse to build a wheel without the web build.
 
-The wheel bundles `web/build` as `blamescroll/_bundled/web`. Without it an installed app
+The wheel bundles `web/build` as `gittok/_bundled/web`. Without it an installed app
 would serve only a placeholder page, so fail loudly instead.
 """
 

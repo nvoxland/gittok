@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from blamescroll import db, gitq, signals
-from blamescroll.config import AnalysisSettings, Repo
+from gittok import db, gitq, signals
+from gittok.config import AnalysisSettings, Repo
 
 
 def test_churn_ranks_most_edited_file_first(fixture_repo):

@@ -5,8 +5,8 @@ import subprocess
 
 import pytest
 
-from blamescroll import research
-from blamescroll.config import (
+from gittok import research
+from gittok.config import (
     AgentSettings,
     AnalysisSettings,
     Config,
@@ -15,7 +15,7 @@ from blamescroll.config import (
     ServerSettings,
     Settings,
 )
-from blamescroll.research import ResearchError
+from gittok.research import ResearchError
 
 
 def make_cfg(repo_path, **research_kw) -> Config:

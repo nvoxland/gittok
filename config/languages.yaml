@@ -1,4 +1,4 @@
-# Per-language patterns for the candidate miners (src/blamescroll/candidates.py).
+# Per-language patterns for the candidate miners (src/gittok/candidates.py).
 # All patterns are Python regexes, matched line by line. A language that is not listed
 # here produces no candidates. `thresholds` are the defaults; a language may override
 # any of them under its own `thresholds` key.

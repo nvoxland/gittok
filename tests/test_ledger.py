@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from blamescroll import db, ledger
+from gittok import db, ledger
 from tests.conftest import make_config
 
 NOW = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
@@ -275,7 +275,7 @@ def test_offerable_covers_leads_computed_without_a_ledger(conn, cfg):
     s = {"author_shares": {"by_dir": {"src": [{"author": "a", "share": 0.9}]}}}
     ledger.refresh(conn, "r", s, 0, "h1", {}, NOW)
     ok = ledger.offerable(conn, cfg, NOW)
-    from blamescroll import brief
+    from gittok import brief
 
     (lead,) = brief.lead_refs_for("whose_code", s, 0, 5, repo="r")
     assert ok(lead)

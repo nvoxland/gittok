@@ -9,7 +9,7 @@ import httpx
 import pytest
 import uvicorn
 
-from blamescroll import api, social
+from gittok import api, social
 from tests.conftest import make_config
 
 TOKEN = "tok-123456"
@@ -67,7 +67,7 @@ def test_api_requires_cookie_for_lan_peers(lan_app):
 def test_html_gets_pairing_page_for_lan_peers(lan_app):
     r = call(lan_app, "GET", "/", "192.168.1.9", headers={"Accept": "text/html"})
     assert r.status_code == 401
-    assert "blamescroll serve --lan" in r.text
+    assert "gittok serve --lan" in r.text
     assert TOKEN not in r.text
 
 

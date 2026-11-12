@@ -147,10 +147,10 @@ describe('replayQueue removal order', () => {
 
 describe('staleCaches', () => {
 	it('keeps the current and the newest previous cache, deletes older ones', () => {
-		expect(staleCaches(['blamescroll-a', 'blamescroll-b', 'blamescroll-c', 'other'], 'blamescroll-c')).toEqual([
-			'blamescroll-a'
+		expect(staleCaches(['gittok-a', 'gittok-b', 'gittok-c', 'other'], 'gittok-c')).toEqual([
+			'gittok-a'
 		]);
 	});
 	it('deletes nothing when there is only a previous one', () =>
-		expect(staleCaches(['blamescroll-a', 'blamescroll-b'], 'blamescroll-b')).toEqual([]));
+		expect(staleCaches(['gittok-a', 'gittok-b'], 'gittok-b')).toEqual([]));
 });

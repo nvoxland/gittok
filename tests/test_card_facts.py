@@ -2,8 +2,8 @@
 
 import pytest
 
-from blamescroll import db, validator
-from blamescroll.config import AgentSettings, Repo
+from gittok import db, validator
+from gittok.config import AgentSettings, Repo
 from tests.cards import example_card, explain
 from tests.test_validator import PERSONAS
 
@@ -166,7 +166,7 @@ def test_default_setting_off():
 
 
 def _schema(conn, fixture_repo, items):
-    from blamescroll import facts, gitq
+    from gittok import facts, gitq
 
     conn.execute("UPDATE repos SET path = ?", (str(fixture_repo.path),))
     head = gitq.rev_parse(fixture_repo.path, "main")
@@ -247,7 +247,7 @@ def test_typed_phrase_with_typed_fact_passes(fixture_repo, repos, conn):
 
 
 def test_rank_order():
-    from blamescroll import factcheck
+    from gittok import factcheck
 
     assert factcheck.rank("analyzer:x") < factcheck.rank("schema:x") < factcheck.rank("macro")
     assert factcheck.rank("macro") < factcheck.rank("syntax") < factcheck.rank("convention")

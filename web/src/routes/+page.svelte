@@ -49,7 +49,7 @@
 	// The card on screen, kept on this device so a reload (iOS drops background pages) resumes on it
 	// even when the server's event log has not caught up. localStorage, not sessionStorage: a
 	// browser restart or tab restore (Brave on iOS) starts a new session and would lose it.
-	const CURRENT_KEY = 'blamescroll.current';
+	const CURRENT_KEY = 'gittok.current';
 	function rememberCurrent(id: string) {
 		try {
 			localStorage.setItem(CURRENT_KEY, id);
@@ -224,8 +224,8 @@
 				<h2>You're all caught up</h2>
 				<p>You have seen every card for now.</p>
 				<p>
-					To make more, open Claude Code in the Blamescroll repo and run
-					<code>/blamescroll-generate</code>.
+					To make more, open Claude Code in the GitTok repo and run
+					<code>/gittok-generate</code>.
 				</p>
 				<button type="button" onclick={checkAgain} disabled={checking}>
 					{checking ? 'Checking…' : 'Check for new cards'}

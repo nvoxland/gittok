@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from blamescroll import brief, db, ledger, profiles
+from gittok import brief, db, ledger, profiles
 from tests.conftest import make_config
 from tests.test_brief import build, signals
 from tests.test_fileset import prof

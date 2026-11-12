@@ -105,7 +105,7 @@ export const templateFixtures: Record<string, AnyJson> = {
 			title: 'the squad',
 			messages: [
 				{ from: 'greybeard', text: 'who touched billing' },
-				{ from: 'gittok:src/blamescroll/gitq.py', text: 'not me' }
+				{ from: 'gittok:src/gittok/gitq.py', text: 'not me' }
 			]
 		}
 	},
@@ -118,7 +118,7 @@ export const templateFixtures: Record<string, AnyJson> = {
 		kind: 'template',
 		template: 'dating_profile',
 		data: {
-			name: 'gittok:src/blamescroll/gitq.py',
+			name: 'gittok:src/gittok/gitq.py',
 			age: '3 years',
 			bio: 'I only talk to git.',
 			likes: ['subprocess'],

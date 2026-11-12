@@ -2,8 +2,8 @@
 
 import pytest
 
-from blamescroll import validator
-from blamescroll.config import AgentSettings, Repo
+from gittok import validator
+from gittok.config import AgentSettings, Repo
 from tests.cards import example_card
 from tests.test_validator import PERSONAS
 

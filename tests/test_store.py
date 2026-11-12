@@ -3,8 +3,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from blamescroll import db, store, validator
-from blamescroll.config import (
+from gittok import db, store, validator
+from gittok.config import (
     AgentSettings,
     AnalysisSettings,
     Config,
@@ -176,7 +176,7 @@ def test_card_ids_sort_by_time():
 
 
 def _store_kind(conn, cfg, card):
-    from blamescroll.config import Mascot, MemeTemplate
+    from gittok.config import Mascot, MemeTemplate
 
     accepted, rejected = validator.validate_cards(
         [card],
@@ -326,7 +326,7 @@ def test_variant_rejected_low_reward_unless_liked(conn, cfg, fixture_repo):
 
 
 def test_predicted_story_key_matches_the_validators(cfg, fixture_repo):
-    from blamescroll import storykey
+    from gittok import storykey
 
     card = text_card(fixture_repo)
     sha = card["sources"][0]["commit"]

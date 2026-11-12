@@ -2,7 +2,7 @@
 
 import pytest
 
-from blamescroll import brief, db, knowledge, ledger
+from gittok import brief, db, knowledge, ledger
 from tests.conftest import make_config
 from tests.test_brief import DEFAULTS, build
 from tests.test_ledger import NOW, refresh, sig

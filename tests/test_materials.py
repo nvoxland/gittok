@@ -1,7 +1,7 @@
 import subprocess
 
-from blamescroll import materials
-from blamescroll.brief import Lead
+from gittok import materials
+from gittok.brief import Lead
 from tests.conftest import make_config
 from tests.fixture_repo import build_history_repo
 
@@ -156,9 +156,9 @@ def _store_facts(cfg, repo_path):
     """A definition and a call in billing/invoice.py lines 1-3, as the facts store holds them."""
     from contextlib import closing
 
-    from blamescroll import db
+    from gittok import db
 
-    with closing(db.open_db(cfg.settings.data_dir / "blamescroll.db")) as conn:
+    with closing(db.open_db(cfg.settings.data_dir / "gittok.db")) as conn:
         conn.execute(
             "INSERT INTO repos(name, path, ref) VALUES ('fixture', ?, 'main')", (str(repo_path),)
         )

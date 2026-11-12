@@ -1,6 +1,6 @@
 import { getItemWithLegacy } from './legacyKey';
 
-const KEY = 'blamescroll.session';
+const KEY = 'gittok.session';
 let memory: string | undefined;
 
 // crypto.randomUUID exists only in secure contexts (HTTPS, localhost), not on a LAN http:// page.

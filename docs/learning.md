@@ -86,10 +86,10 @@ Rewards are written to `rewards` (one row per impression, idempotent on `impress
 - Card score = Σ_f importance[f] · sample_f / Σ importance over the card's features, where sample_f ~ Beta(α, β). Importances in reward.yaml: story_type 1.0, format 1.0, tone 0.7, persona 0.5, repo 0.8, group 0.4, dir 0.6, visual_kind 0.5, template 0.5, meme_template 0.4, recency 0.6, difficulty 0.3, has_comments 0.2.
 - `dir` features are path prefixes. A card gets the dirs it names, plus the parent dir of every path in its sources, its visual (when it has a path), and its `code` and `code_diff` depth panels. Each dir adds all its prefixes: `a/b/c` gives `a`, `a/b`, `a/b/c`. A file at the repo root adds no dir. Reward updates every prefix, so a parent dir learns from its children.
 - A card's `dir` prefixes count as one term in the score. The sampled values are averaged, and `importance.dir` is applied once. A deep card does not outweigh `format` or `story_type`.
-- `blamescroll refeature` recomputes `card_features` for all cards from their stored specs. Run it after a change to how features are derived. `blamescroll refit --apply` does the same for each card it rewrites.
+- `gittok refeature` recomputes `card_features` for all cards from their stored specs. Run it after a change to how features are derived. `gittok refit --apply` does the same for each card it rewrites.
 - `half_life_days` 21, `prior_strength` from `config/defaults.yaml` (10).
 
-Public API (`src/blamescroll/learning.py`):
+Public API (`src/gittok/learning.py`):
 ```python
 def process_events(conn, cfg, now=None) -> dict            # new impressions → rewards → weight updates; idempotent
 def card_features(conn, cfg, card_id) -> list[tuple[str, str]]
@@ -98,9 +98,9 @@ def posterior_means(conn, cfg, feature: str) -> dict[str, tuple[float, float]]  
 def category_shares(conn, cfg) -> dict[str, float]          # learned share per default-mix category, blended with the prior
 def reset_weights(conn, feature: str | None = None) -> int
 ```
-`process_events` runs in the serve worker every 30 s and via `blamescroll learn`.
+`process_events` runs in the serve worker every 30 s and via `gittok learn`.
 
-## 5. Slotting (SPEC §12.4) — `src/blamescroll/slotter.py`
+## 5. Slotting (SPEC §12.4) — `src/gittok/slotter.py`
 
 `GET /api/feed?limit=20&cursor=...` builds the next batch. A first page (no cursor) starts with the card of the newest impression, if it is still `ready`, so a reload resumes there (`resume_card_id`); the slots below fill the rest.
 1. Candidates: `ready` cards not impressed in the last `repeat_days` (7), not already served this feed session (the cursor carries served ids), plus due SRS cards.
@@ -122,7 +122,7 @@ On a wrong answer (`POST /api/answer`), upsert `srs(card_id)` with interval 1 da
 
 `brief.build_brief` takes optional `category_shares`. Quotas come from the shares instead of the raw default mix, with a floor: every renderable category gets at least 1 card when `count >= number of categories`. The `interactive` category is now renderable (story types `spot_the_bug`, `guess_who`, `guess_when`, `quiz`, `this_or_that`; format `quiz`; packets with interactive slots are sonnet).
 
-How many cards a run makes (`src/blamescroll/supply.py`): `get_brief` without `count` uses `want`.
+How many cards a run makes (`src/gittok/supply.py`): `get_brief` without `count` uses `want`.
 
 - `backlog` = ready cards not shown in the last `repeat_days`.
 - `burn` = max(distinct cards shown per day, 7-day mean; `agent.min_burn_per_day`).
@@ -151,7 +151,7 @@ Saved state lives in the `saved_cards` table (`card_id`, `saved_at`, `saved_ts`)
 
 ## 9. Reset
 
-`blamescroll reset-weights [--feature F]` and `learning.reset_weights`. M4's MCP `reset_defaults` calls the same function.
+`gittok reset-weights [--feature F]` and `learning.reset_weights`. M4's MCP `reset_defaults` calls the same function.
 
 ## 10. Which rules change generation (brief) and which only rank (slotter)
 
@@ -175,7 +175,7 @@ Saved state lives in the `saved_cards` table (`card_id`, `saved_at`, `saved_ts`)
 
 ## 11. Garbage collection
 
-Nothing grows without bound. `src/blamescroll/gc.py` deletes cards and files that have no further use. `GcWorker` runs a pass every `gc.interval_s` (1 hour) inside `blamescroll serve`. `blamescroll gc [--dry-run] [--vacuum]` runs one pass and prints the counts as JSON. A dry run changes nothing. `VACUUM` runs only from the CLI.
+Nothing grows without bound. `src/gittok/gc.py` deletes cards and files that have no further use. `GcWorker` runs a pass every `gc.interval_s` (1 hour) inside `gittok serve`. `gittok gc [--dry-run] [--vacuum]` runs one pass and prints the counts as JSON. A dry run changes nothing. `VACUUM` runs only from the CLI.
 
 Settings (`gc:` in `config/settings.yaml`):
 
@@ -281,7 +281,7 @@ Every candidate, built-in or from a profile rule, gets its `score` from one form
 
 The limits stay: `analysis.candidates_per_tag` per tag (a profile rule has its own limit, per tag and rule) and 3 per file. The stored key is still (repo, path, line start, tag). When a profile hit and a built-in hit share that key, the built-in hit stays.
 
-A repo profile is a YAML file `local/profiles/<repo>.yaml` in Blamescroll (never in the repo it describes). Its format is `src/blamescroll/schema/profile.schema.json`. `profiles.py` loads it and rejects unknown keys, a bad tag, a weight outside 0.1 to 3, a rule with both or neither of `regex` and `ast_grep`, and a bad glob. Each error names the detector id. A repo with no file has an empty profile: built-in miners only. Rules are data. Blamescroll never runs code from a profile.
+A repo profile is a YAML file `local/profiles/<repo>.yaml` in GitTok (never in the repo it describes). Its format is `src/gittok/schema/profile.schema.json`. `profiles.py` loads it and rejects unknown keys, a bad tag, a weight outside 0.1 to 3, a rule with both or neither of `regex` and `ast_grep`, and a bad glob. Each error names the detector id. A repo with no file has an empty profile: built-in miners only. Rules are data. GitTok never runs code from a profile.
 
 The profile also owns the file set. `scan` (globs of files read), `ignore` (globs never read) and `kinds` (`test`, `fixture`, `generated`, `docs`, `vendored` -> globs) come from the profile; `generated_markers` (regexes for generated headers) is optional. A file is read iff it matches `scan` and not `ignore`. `kinds` classify read files: `test` sets `is_test`; generated, vendored and fixture files are never mined but stay classified for the intro, `whose_code` and the repo map. `profiles.FileSet` is the one classifier (`reads`, `kind`, `is_test`, `is_code_dir`). The bootstrap values are in `config/scan_defaults.yaml` (scan from `languages.yaml` extensions, ignore, kinds, generated markers, noise). They apply per key: a key the profile sets replaces the default, a key it omits uses it. No merging, so the agent is in control. A scanned file with no known language gets the `text` language: only the plain text rules (see the structure layer below) and profile rules apply. `noise` (lockfiles, source maps, images) always keeps such paths out of story leads. No Python file may hold path or extension lists (a test greps for them).
 
@@ -301,7 +301,7 @@ Shipping a regex set per language does not scale, so the miners read code throug
 2. **Regex patterns** (`config/languages.yaml`: python, clojure, typescript). Used when the group or the grammar is missing, and for what is a pattern, not structure: entry points, catch-all, sleep, regex literals, bit operations, skipped tests, metaprogramming, commented-out code, long lines, big literals.
 3. **Plain text**, for a file with neither (a scanned file type with no grammar, such as `.zig` in a profile `scan`). The miners find `smell` markers in comment-like lines (prefixes in `text_fallback.comment_prefixes`), `long_line`, and `deep_nesting` by indentation. Data and prose extensions (`text_fallback.skip_extensions`) and `docs` files are skipped.
 
-The pack downloads a grammar bundle on first use. Mining never starts that download: a grammar counts only when it is already in the local cache (`structure.ready`). `blamescroll structure --prefetch` fetches the grammars for the languages in the configured repos, and `blamescroll health --hint` prints one line when the group is installed but a grammar is missing. Until then those files use layer 2 or 3.
+The pack downloads a grammar bundle on first use. Mining never starts that download: a grammar counts only when it is already in the local cache (`structure.ready`). `gittok structure --prefetch` fetches the grammars for the languages in the configured repos, and `gittok health --hint` prints one line when the group is installed but a grammar is missing. Until then those files use layer 2 or 3.
 
 What the structure layer changes in the miners:
 
@@ -333,7 +333,7 @@ The decision is `store.variant_blocker`. Two cards of one story in the same subm
 
 The brief offers variants. `ledger.variants` lists the stories that meet the reward and age conditions (liked first, then best reward). It adds the hook of the newest card; if gc deleted every card, the lead has the story type and sources only. `build_brief` uses a variant for a slot only when that slot has no fresh lead: its (repo, story type) has fewer leads than slots. The variant must be in the slot's repo and a story type of the slot's category. At most `floor(agent.variant_max_share x count)` slots (0.2) become variants. A variant slot keeps the story's story type and gets a format of the category that the story has not used. The packet lead reads `[variant] retell "<hook>" (<story type>, first told as <formats>) as a <format>; cite the same sources: <sources>`. Its `lead_refs` entry is `{"kind": "variant", "story_key", "sources"}`. A variant lead marks no ledger coverage.
 
-## 14. What the reader knows (knowledge model) — `src/blamescroll/knowledge.py`
+## 14. What the reader knows (knowledge model) — `src/gittok/knowledge.py`
 
 The `knowledge` table (migration 0012) holds counts per `(repo, dir)`: `cards_seen`, `explains_opened`, `quiz_right`, `quiz_wrong`, `knew_it`, `teach_more`, `last_seen_ts`. `process_events` calls `knowledge.update_in_tx` after the rewards, in the same transaction.
 

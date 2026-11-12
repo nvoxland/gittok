@@ -7,9 +7,9 @@ const read = (p: string) => readFileSync(resolve(root, p), 'utf8');
 
 describe('PWA static files', () => {
 	const manifest = () => JSON.parse(read('static/manifest.webmanifest'));
-	it('has a standalone manifest named Blamescroll', () => {
+	it('has a standalone manifest named GitTok', () => {
 		const m = manifest();
-		expect(m.name).toBe('Blamescroll');
+		expect(m.name).toBe('GitTok');
 		expect(m.short_name).toBeTruthy();
 		expect(m.display).toBe('standalone');
 		expect(m.start_url).toBe('/');

@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 import pytest
 from mcp import Client
 
-from blamescroll import db, ledger, mcp_server
+from gittok import db, ledger, mcp_server
 from tests.cards import example_card, text_card
 from tests.conftest import make_config
 
@@ -85,9 +85,9 @@ async def test_scripted_run_stores_valid_cards_and_reports_rejects(fixture_repo,
 
 
 def _calls(cfg, run_id):
-    from blamescroll import db, runs
+    from gittok import db, runs
 
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         return runs.get_run(conn, run_id)["meta"]["mcp_calls"]
 
 
@@ -109,7 +109,7 @@ async def test_calls_counted_per_explicit_run_only(fixture_repo, tmp_path):
 
 
 async def test_bump_failure_does_not_fail_the_tool(fixture_repo, tmp_path, monkeypatch):
-    from blamescroll import runs
+    from gittok import runs
 
     cfg = make_config(fixture_repo, tmp_path)
     server = mcp_server.build_server(lambda: cfg)
@@ -129,7 +129,7 @@ async def test_bump_failure_does_not_fail_the_tool(fixture_repo, tmp_path, monke
 
 
 def _with_repo(cfg, name, path, ref):
-    from blamescroll.config import Repo
+    from gittok.config import Repo
 
     cfg.repos[name] = Repo(name=name, path=path, ref=ref)
 
@@ -158,7 +158,7 @@ async def test_get_brief_all_repos_failing_is_a_tool_error(fixture_repo, tmp_pat
 
 
 async def test_get_brief_uses_learned_mix_when_rewards_exist(fixture_repo, tmp_path):
-    from blamescroll import db, learning
+    from gittok import db, learning
 
     cfg = make_config(fixture_repo, tmp_path)
     server = mcp_server.build_server(lambda: cfg)
@@ -166,9 +166,9 @@ async def test_get_brief_uses_learned_mix_when_rewards_exist(fixture_repo, tmp_p
         plain = data(await client.call_tool("get_brief", {"count": 12}))
     assert "Mix: default" in plain["summary_markdown"]
 
-    from blamescroll import brief
+    from gittok import brief
 
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         for f in brief.CATEGORY_FORMATS["code"]:
             if f != "code_card":
                 a0, b0 = learning._prior(cfg, "format", f)
@@ -190,11 +190,11 @@ async def test_get_brief_uses_learned_mix_when_rewards_exist(fixture_repo, tmp_p
 def test_recent_stories_carry_format_and_template(fixture_repo, tmp_path):
     from types import SimpleNamespace
 
-    from blamescroll import db, store
+    from gittok import db, store
     from tests import cards as C
 
     cfg = make_config(fixture_repo, tmp_path)
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         conn.execute("INSERT INTO runs(id, status, started_at) VALUES ('r1', 'finished', 'x')")
         spec = text_card(fixture_repo)
         store.insert_card(conn, cfg, "r1", SimpleNamespace(card=spec, resolved={}, story_key="k1"))
@@ -218,10 +218,10 @@ def test_recent_stories_carry_format_and_template(fixture_repo, tmp_path):
 async def test_get_brief_without_count_is_noop_when_backlog_is_full(fixture_repo, tmp_path):
     from types import SimpleNamespace
 
-    from blamescroll import db, store
+    from gittok import db, store
 
     cfg = make_config(fixture_repo, tmp_path)
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         conn.execute("INSERT INTO runs(id, status, started_at) VALUES ('r0', 'finished', 'x')")
         for i in range(30):
             acc = SimpleNamespace(card=text_card(fixture_repo), resolved={}, story_key=f"k{i}")
@@ -233,7 +233,7 @@ async def test_get_brief_without_count_is_noop_when_backlog_is_full(fixture_repo
         assert out["nothing_to_do"] is True and out["run_id"] is None
         assert out["health"]["backlog"] == 30 and out["health"]["want"] == 0
         assert data(await client.call_tool("feed_health", {}))["backlog"] == 30
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         assert conn.execute("SELECT COUNT(*) FROM runs WHERE id != 'r0'").fetchone()[0] == 0
 
 
@@ -277,7 +277,7 @@ async def test_second_brief_on_same_head_skips_covered_leads(fixture_repo, tmp_p
         first = data(await client.call_tool("get_brief", {"count": 6}))
         first_ids = await _lead_ids(client, first)
         assert first_ids  # leads come from the ledger and carry its ids
-        with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+        with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
             marks = ",".join("?" * len(first_ids))
             conn.execute(
                 f"UPDATE leads SET times_covered = 1, last_covered_at = ? WHERE id IN ({marks})",
@@ -289,7 +289,7 @@ async def test_second_brief_on_same_head_skips_covered_leads(fixture_repo, tmp_p
 
 
 async def test_submit_facts_checks_against_the_head_and_rejects_stale(fixture_repo, tmp_path):
-    from blamescroll import gitq
+    from gittok import gitq
 
     cfg = make_config(fixture_repo, tmp_path)
     server = mcp_server.build_server(lambda: cfg)

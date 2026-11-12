@@ -1,6 +1,6 @@
 import pytest
 
-from blamescroll import gitq
+from gittok import gitq
 from tests.fixture_repo import INVOICE_V1
 
 

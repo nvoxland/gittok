@@ -2,8 +2,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from blamescroll import validator
-from blamescroll.config import Repo
+from gittok import validator
+from gittok.config import Repo
 from tests.cards import example_card, text_card
 
 PERSONAS = ["greybeard", "penny_learns", "archivist", "meme_compiler", "paranoid_sec", "shipit_sam"]
@@ -219,7 +219,7 @@ def test_dirs_are_normalized_in_returned_card(fixture_repo, repos):
 # ---------------------------------------------------------------------------
 # M2 formats
 # ---------------------------------------------------------------------------
-from blamescroll.config import Mascot, MemeTemplate  # noqa: E402
+from gittok.config import Mascot, MemeTemplate  # noqa: E402
 from tests import cards as C  # noqa: E402
 
 MEME_TEMPLATES = {"drake": MemeTemplate("drake", 2), "success": MemeTemplate("success", 1)}
@@ -764,7 +764,7 @@ def test_duplicate_choices_rejected(fixture_repo, repos):
 
 
 def test_guess_when_year_uses_the_author_timezone(tmp_path):
-    from blamescroll.config import Repo
+    from gittok.config import Repo
     from tests.fixture_repo import _Builder
 
     path = tmp_path / "r"

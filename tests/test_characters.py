@@ -4,8 +4,8 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from blamescroll import api, characters, db, runs, signals, store
-from blamescroll.config import _load_personas
+from gittok import api, characters, db, runs, signals, store
+from gittok.config import _load_personas
 from tests.cards import example_card, text_card
 from tests.conftest import make_config
 
@@ -21,7 +21,7 @@ def client(cfg):
 
 
 def seed(cfg, cards):
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         run_id = runs.open_run(conn, cfg, repo=None, brief="b", requested=5)
         res = runs.submit(conn, cfg, run_id, cards)
     return [a["card_id"] for a in res["accepted"]]
@@ -57,7 +57,7 @@ def test_persona_page_has_bio_posts_and_comments(cfg, client, fixture_repo):
 
 
 def test_file_page_lists_cards_citing_the_path(cfg, client, fixture_repo):
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         signals.analyze(conn, cfg.repos["fixture"], cfg.settings.analysis)
     (cid,) = seed(cfg, [example_card(fixture_repo)])
     body = client.get("/api/files/fixture/billing/invoice.py").json()
@@ -84,7 +84,7 @@ def test_follow_toggle_is_stored_and_reported(client):
 
 
 def test_cast_notes_cover_the_packet_personas_and_stay_small(cfg, fixture_repo):
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         run_id = runs.open_run(conn, cfg, repo=None, brief="b", requested=5)
         for i in range(5):
             spec = text_card(

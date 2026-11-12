@@ -1,6 +1,6 @@
 {
-	"name": "Blamescroll",
-	"short_name": "Blamescroll",
+	"name": "GitTok",
+	"short_name": "GitTok",
 	"description": "A personal feed of cards about your own codebases",
 	"start_url": "/",
 	"scope": "/",

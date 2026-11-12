@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from blamescroll import brief, candidates, config, gitq, knowledge, profiles
-from blamescroll.config import AnalysisSettings, ConfigError
+from gittok import brief, candidates, config, gitq, knowledge, profiles
+from gittok.config import AnalysisSettings, ConfigError
 from tests.fixture_repo import build_history_repo
 
 

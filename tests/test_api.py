@@ -4,13 +4,13 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from blamescroll import api, db, runs, steering
+from gittok import api, db, runs, steering
 from tests.cards import example_card, explain, quiz_card, text_card, this_or_that_card
 from tests.conftest import make_config
 
 
 def seed(cfg, fixture_repo, cards):
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         run_id = runs.open_run(conn, cfg, repo=None, brief="b", requested=5)
         res = runs.submit(conn, cfg, run_id, cards)
     return [a["card_id"] for a in res["accepted"]]
@@ -89,7 +89,7 @@ def test_repos_lists_config_with_head_sha(cfg, client, fixture_repo):
         "repos": [{"name": "fixture", "ref": "main", "head_sha": None, "group": None}]
     }
     seed(cfg, fixture_repo, [example_card(fixture_repo)])
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         conn.execute("UPDATE repos SET last_analyzed_sha = 'abc123'")
         conn.commit()
     assert client.get("/api/repos").json()["repos"][0]["head_sha"] == "abc123"
@@ -102,7 +102,7 @@ def test_events_are_stored(cfg, client):
     ]
     res = client.post("/api/events", json={"events": events})
     assert res.json() == {"stored": 2}
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         rows = conn.execute("SELECT * FROM events ORDER BY id").fetchall()
     assert [r["type"] for r in rows] == ["impression", "dwell"]
     assert db.loads(rows[1]["data"]) == {"ms": 4200}
@@ -165,7 +165,7 @@ def test_pages_are_revalidated_and_hashed_assets_cached_forever(cfg):
 
 def test_prefs_default_and_follow_the_steering_setting(cfg, client):
     assert client.get("/api/prefs").json() == {"playback_speed": 1.0}
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         steering.set_playback_speed(conn, cfg, 1.5)
     assert client.get("/api/prefs").json() == {"playback_speed": 1.5}
 
@@ -233,7 +233,7 @@ def test_asset_is_served_with_type_and_cache_header(cfg, client):
         "/assets/c_abc123/1.png",  # missing
         "/assets/c_abc123/0.jpg",
         "/assets/c_abc123/a.png",
-        "/assets/..%2Fblamescroll.db/0.png",
+        "/assets/..%2Fgittok.db/0.png",
         "/assets/c_abc123/..%2F..%2Fsecret.png",
         "/assets/c-abc/0.png",
     ],
@@ -299,9 +299,9 @@ def test_avatar_prefers_generated_png(cfg, client):
 
 
 def analyzed(cfg):
-    from blamescroll import signals
+    from gittok import signals
 
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         return signals.analyze(conn, cfg.repos["fixture"], cfg.settings.analysis)
 
 
@@ -326,7 +326,7 @@ def test_repo_profile_has_stats_and_newest_ready_cards(cfg, client, fixture_repo
 
 def test_repo_profile_excludes_unready_cards_and_caps_at_20(cfg, client, fixture_repo):
     (cid,) = seed(cfg, fixture_repo, [example_card(fixture_repo)])
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         for i in range(25):
             conn.execute(
                 "INSERT INTO cards(id, run_id, repo_id, story_type, format, persona, tone, "
@@ -360,7 +360,7 @@ def test_repo_profile_unknown_is_404(client):
 def test_repo_profile_mascot_image_only_when_file_exists(cfg, fixture_repo, tmp_path):
     import dataclasses
 
-    from blamescroll.config import Mascot
+    from gittok.config import Mascot
 
     cfg = dataclasses.replace(
         cfg,
@@ -382,7 +382,7 @@ def test_lifespan_runs_learning_worker_and_stops_it(cfg, fixture_repo):
 
     ids = seed(cfg, fixture_repo, [example_card(fixture_repo), text_card(fixture_repo)])
     old = int((time.time() - 3 * 3600) * 1000)
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         conn.executemany(
             "INSERT INTO events(card_id, type, ts, data, received_at) "
             "VALUES (?, 'impression', ?, ?, 'x')",
@@ -392,7 +392,7 @@ def test_lifespan_runs_learning_worker_and_stops_it(cfg, fixture_repo):
     app = api.create_app(lambda: cfg, learning_worker=True, learning_interval_s=0.01)
     with TestClient(app):
         for _ in range(200):
-            with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+            with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
                 done = conn.execute("SELECT COUNT(*) FROM rewards").fetchone()[0]
             if done == 2:
                 break
@@ -409,7 +409,7 @@ def test_no_learning_worker_by_default(cfg):
 
 
 def answer_events(cfg):
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         rows = conn.execute("SELECT * FROM events WHERE type = 'answer' ORDER BY id").fetchall()
     return [(r["card_id"], db.loads(r["data"])) for r in rows]
 
@@ -424,7 +424,7 @@ def test_answer_returns_truth_and_records_server_side_event(cfg, client, fixture
         "explanation": "main() lives in src/app.py.",
     }
     assert answer_events(cfg) == [(cid, {"choice": 1, "correct": False, "session": "s1"})]
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         row = conn.execute("SELECT * FROM srs WHERE card_id = ?", (cid,)).fetchone()
     assert row["interval_days"] == 1 and row["mastered"] == 0
     assert client.post("/api/answer", json={"card_id": cid, "choice": 0}).json()["correct"] is True
@@ -450,7 +450,7 @@ def test_answer_errors(cfg, client, fixture_repo):
 
 def test_answer_on_deleted_card_is_404(cfg, client, fixture_repo):
     (quiz,) = seed(cfg, fixture_repo, [quiz_card(fixture_repo)])
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as c:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as c:
         c.execute("DELETE FROM cards WHERE id = ?", (quiz,))  # as gc does
     r = client.post("/api/answer", json={"card_id": quiz, "choice": 0})
     assert r.status_code == 404
@@ -491,7 +491,7 @@ def test_saved_lists_cards_whose_latest_save_is_on(cfg, client, fixture_repo):
 
 
 def saved_rows(cfg):
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as c:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as c:
         return {r["card_id"]: r["saved_ts"] for r in c.execute("SELECT * FROM saved_cards")}
 
 
@@ -519,7 +519,7 @@ def test_older_save_event_does_not_override_newer(cfg, client, fixture_repo):
 def test_saved_survives_event_pruning(cfg, client, fixture_repo):
     (a,) = seed(cfg, fixture_repo, [example_card(fixture_repo)])
     save_event(client, a, True, 1000)
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as c:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as c:
         c.execute("DELETE FROM events")
     assert [card["id"] for card in client.get("/api/saved").json()["cards"]] == [a]
 
@@ -595,10 +595,10 @@ def test_stories_seen_unknown_repo_is_404(social_client):
 
 
 def test_notifications_endpoints(social_client, social_cfg):
-    from blamescroll import social
+    from gittok import social
     from tests.test_social import NOW
 
-    with db.open_db(social_cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(social_cfg.settings.data_dir / "gittok.db") as conn:
         social.generate_notifications(conn, social_cfg, NOW)
     body = social_client.get("/api/notifications?unread=1").json()
     assert body["unread"] == 1
@@ -613,10 +613,10 @@ def test_notifications_endpoints(social_client, social_cfg):
 
 
 def test_notifications_read_all(social_client, social_cfg):
-    from blamescroll import social
+    from gittok import social
     from tests.test_social import NOW
 
-    with db.open_db(social_cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(social_cfg.settings.data_dir / "gittok.db") as conn:
         social.generate_notifications(conn, social_cfg, NOW)
     r = social_client.post("/api/notifications/read", json={"all": True})
     assert r.json()["unread"] == 0
@@ -635,10 +635,10 @@ def test_lifespan_runs_notify_worker_and_stops_it(social_cfg):
     app = api.create_app(
         lambda: social_cfg, notify_worker=True, notify_interval_s=0.01, clock=lambda: NOW
     )
-    db.open_db(social_cfg.settings.data_dir / "blamescroll.db").close()  # migrate before threads
+    db.open_db(social_cfg.settings.data_dir / "gittok.db").close()  # migrate before threads
     with TestClient(app):
         for _ in range(200):
-            with db.open_db(social_cfg.settings.data_dir / "blamescroll.db") as conn:
+            with db.open_db(social_cfg.settings.data_dir / "gittok.db") as conn:
                 n = conn.execute(
                     "SELECT COUNT(*) FROM notifications WHERE kind != 'low_runway'"
                 ).fetchone()[0]
@@ -663,7 +663,7 @@ def test_lifespan_runs_gc_worker_and_stops_it(social_cfg):
     from tests.test_social import NOW
 
     app = api.create_app(lambda: social_cfg, gc_worker=True, gc_interval_s=0.01, clock=lambda: NOW)
-    db.open_db(social_cfg.settings.data_dir / "blamescroll.db").close()  # migrate before threads
+    db.open_db(social_cfg.settings.data_dir / "gittok.db").close()  # migrate before threads
     with TestClient(app):
         last = social_cfg.settings.data_dir / "gc_last.json"
         for _ in range(200):
@@ -702,7 +702,7 @@ def test_api_requests_are_logged_with_status(cfg, client):
 def test_feed_returns_resume_card_id(cfg, client, fixture_repo):
     ids = seed(cfg, fixture_repo, [example_card(fixture_repo), text_card(fixture_repo)])
     assert client.get("/api/feed").json()["resume_card_id"] is None
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as c:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as c:
         c.execute(
             "INSERT INTO events(card_id, type, ts, data, received_at) "
             "VALUES (?, 'impression', 1, '{}', '2026-06-01T00:00:00Z')",
@@ -740,7 +740,7 @@ def test_repo_profile_counts_verdicts_per_top_dir(cfg, client, fixture_repo):
 
 
 def test_repo_map_has_knowledge_and_verdicts_per_dir(cfg, client, fixture_repo):
-    from blamescroll import knowledge
+    from gittok import knowledge
 
     card = example_card(fixture_repo, verdict="cursed")
     card["comments"] = [
@@ -748,7 +748,7 @@ def test_repo_map_has_knowledge_and_verdicts_per_dir(cfg, client, fixture_repo):
     ]
     ids = seed(cfg, fixture_repo, [card, text_card(fixture_repo, verdict="core")])
     assert len(ids) == 2
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         conn.execute(
             "INSERT INTO events(card_id, type, ts, data, received_at) "
             "VALUES (?, 'impression', 1000, '{}', 'x')",
@@ -787,7 +787,7 @@ def test_feed_filters_by_repo_and_dir(cfg, client, fixture_repo):
 
 def test_feed_dir_filter_matches_subdirs_but_not_prefix_names(cfg, client, fixture_repo):
     (cid,) = seed(cfg, fixture_repo, [example_card(fixture_repo)])
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         conn.execute("INSERT INTO card_features VALUES (?, 'dir', 'billing/sub')", (cid,))
         conn.commit()
     assert len(client.get("/api/feed", params={"dir": "billing/sub"}).json()["cards"]) == 1
@@ -797,7 +797,7 @@ def test_feed_dir_filter_matches_subdirs_but_not_prefix_names(cfg, client, fixtu
 
 def test_repo_map_returns_per_file_symbol_coverage(cfg, client, fixture_repo):
     seed(cfg, fixture_repo, [text_card(fixture_repo)])
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         rid = conn.execute("SELECT id FROM repos WHERE name = 'fixture'").fetchone()[0]
         for i, name in enumerate(("f", "g")):
             conn.execute(

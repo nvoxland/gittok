@@ -2,8 +2,8 @@
 
 import pytest
 
-from blamescroll import candidates, gitq, profiles, structure
-from blamescroll.config import AnalysisSettings
+from gittok import candidates, gitq, profiles, structure
+from gittok.config import AnalysisSettings
 from tests.fixture_repo import build_history_repo
 
 DATE = "2026-01-01T10:00:00+00:00"

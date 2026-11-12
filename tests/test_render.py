@@ -8,9 +8,9 @@ from pathlib import Path
 import httpx
 import pytest
 
-from blamescroll import db, render, runs
-from blamescroll.config import Mascot, RenderSettings
-from blamescroll.render import RenderedImage
+from gittok import db, render, runs
+from gittok.config import Mascot, RenderSettings
+from gittok.render import RenderedImage
 from tests.cards import text_card
 from tests.conftest import make_config
 
@@ -224,7 +224,7 @@ class FakeRenderer:
 
 
 def seed_pending(cfg, fixture_repo, visual, count=1):
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         run_id = runs.open_run(conn, cfg, repo=None, brief="b", requested=5)
         res = runs.submit(conn, cfg, run_id, [text_card(fixture_repo)])
         ids = [res["accepted"][0]["card_id"]]
@@ -250,7 +250,7 @@ def seed_pending(cfg, fixture_repo, visual, count=1):
 
 
 def card_row(cfg, cid):
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         return conn.execute("SELECT * FROM cards WHERE id=?", (cid,)).fetchone()
 
 
@@ -260,7 +260,7 @@ MEME = {"kind": "meme", "template": "drake", "lines": ["a", "b"]}
 def test_render_pending_writes_assets_and_marks_ready(fixture_repo, tmp_path):
     cfg = render_cfg(fixture_repo, tmp_path)
     (cid,) = seed_pending(cfg, fixture_repo, MEME)
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         counts = render.render_pending(conn, cfg, {"meme": FakeRenderer()})
         assets = conn.execute("SELECT * FROM assets WHERE card_id=?", (cid,)).fetchall()
     assert counts == {"rendered": 1, "failed": 0, "waiting": 0}
@@ -281,7 +281,7 @@ def test_render_pending_comic_has_one_image_per_panel(fixture_repo, tmp_path):
     cfg = render_cfg(fixture_repo, tmp_path)
     comic = {"kind": "comic", "panels": [{"prompt": "a"}, {"prompt": "b"}, {"prompt": "c"}]}
     (cid,) = seed_pending(cfg, fixture_repo, comic)
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         render.render_pending(conn, cfg, {"illustration": FakeRenderer()})
     visual = db.loads(card_row(cfg, cid)["resolved"])["visual"]
     assert visual["images"] == [f"/assets/{cid}/{n}.png" for n in range(3)]
@@ -291,7 +291,7 @@ def test_render_pending_failure_marks_render_failed(fixture_repo, tmp_path):
     cfg = render_cfg(fixture_repo, tmp_path)
     (cid,) = seed_pending(cfg, fixture_repo, MEME)
     bad = FakeRenderer(error=render.RenderError("memegen returned 404"))
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         counts = render.render_pending(conn, cfg, {"meme": bad})
     assert counts == {"rendered": 0, "failed": 1, "waiting": 0}
     row = card_row(cfg, cid)
@@ -306,7 +306,7 @@ def test_render_pending_unavailable_stays_pending(fixture_repo, tmp_path):
         FakeRenderer(is_available=False),
         FakeRenderer(error=render.RendererUnavailable("down")),
     ):
-        with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+        with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
             counts = render.render_pending(conn, cfg, {"meme": renderer})
         assert counts == {"rendered": 0, "failed": 0, "waiting": 1}
         assert card_row(cfg, cid)["status"] == "pending_render"
@@ -315,7 +315,7 @@ def test_render_pending_unavailable_stays_pending(fixture_repo, tmp_path):
 def test_render_pending_oldest_first_with_limit(fixture_repo, tmp_path):
     cfg = render_cfg(fixture_repo, tmp_path)
     ids = seed_pending(cfg, fixture_repo, MEME, count=3)
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         counts = render.render_pending(conn, cfg, {"meme": FakeRenderer()}, limit=2)
     assert counts["rendered"] == 2
     assert [card_row(cfg, c)["status"] for c in ids] == ["ready", "ready", "pending_render"]
@@ -324,7 +324,7 @@ def test_render_pending_oldest_first_with_limit(fixture_repo, tmp_path):
 def test_retry_failed_resets_status(fixture_repo, tmp_path):
     cfg = render_cfg(fixture_repo, tmp_path)
     (cid,) = seed_pending(cfg, fixture_repo, MEME)
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         render.render_pending(conn, cfg, {"meme": FakeRenderer(error=render.RenderError("x"))})
         assert render.retry_failed(conn) == 1
     row = card_row(cfg, cid)
@@ -382,7 +382,7 @@ class ReentrantRenderer(FakeRenderer):
         self.visuals.append(spec["visual"])
         if not self.inner_done:
             self.inner_done = True
-            with db.open_db(self.cfg.settings.data_dir / "blamescroll.db") as conn2:
+            with db.open_db(self.cfg.settings.data_dir / "gittok.db") as conn2:
                 render.render_pending(conn2, self.cfg, {"meme": self})
         return super().render(visual, cfg, spec)
 
@@ -391,7 +391,7 @@ def test_interleaved_passes_render_each_card_once(fixture_repo, tmp_path):
     cfg = render_cfg(fixture_repo, tmp_path)
     ids = seed_pending(cfg, fixture_repo, MEME, count=3)
     r = ReentrantRenderer(cfg)
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         counts = render.render_pending(conn, cfg, {"meme": r})
     assert r.calls == 3
     assert [card_row(cfg, c)["status"] for c in ids] == ["ready"] * 3
@@ -408,7 +408,7 @@ def test_claimed_card_is_rendering_during_render(fixture_repo, tmp_path):
             seen.append(card_row(cfg, cid)["status"])
             return super().render(visual, cfg_, spec)
 
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         render.render_pending(conn, cfg, {"meme": Peek()})
     assert seen == ["rendering"]
 
@@ -417,7 +417,7 @@ def test_unavailable_during_render_returns_to_pending(fixture_repo, tmp_path):
     cfg = render_cfg(fixture_repo, tmp_path)
     (cid,) = seed_pending(cfg, fixture_repo, MEME)
     r = FakeRenderer(error=render.RendererUnavailable("down"))
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         render.render_pending(conn, cfg, {"meme": r})
     assert card_row(cfg, cid)["status"] == "pending_render"
 
@@ -428,7 +428,7 @@ def test_stale_rendering_cards_are_reset(fixture_repo, tmp_path):
     cfg = render_cfg(fixture_repo, tmp_path)
     old, fresh = seed_pending(cfg, fixture_repo, MEME, count=2)
     now = datetime.now(UTC)
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         for cid, age in ((old, 31), (fresh, 5)):
             since = (now - timedelta(minutes=age)).isoformat()
             conn.execute(
@@ -444,7 +444,7 @@ def test_stale_rendering_cards_are_reset(fixture_repo, tmp_path):
 def test_not_ready_cards_are_not_in_feed(fixture_repo, tmp_path):
     cfg = render_cfg(fixture_repo, tmp_path)
     (cid,) = seed_pending(cfg, fixture_repo, MEME)
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         conn.execute("UPDATE cards SET status='rendering' WHERE id=?", (cid,))
         conn.commit()
         assert conn.execute("SELECT count(*) FROM cards WHERE status='ready'").fetchone()[0] == 0
@@ -458,7 +458,7 @@ def test_failed_store_removes_partial_pngs(fixture_repo, tmp_path):
         def render(self, visual, cfg_, spec):
             return [RenderedImage(png_bytes(), 4, 6), RenderedImage(None, 4, 6)]
 
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         counts = render.render_pending(conn, cfg, {"meme": Broken()})
     assert counts["failed"] == 1
     assert card_row(cfg, cid)["status"] == "render_failed"
@@ -469,7 +469,7 @@ def test_failed_store_removes_partial_pngs(fixture_repo, tmp_path):
 def test_corrupt_spec_fails_that_card_only(fixture_repo, tmp_path):
     cfg = render_cfg(fixture_repo, tmp_path)
     bad, good = seed_pending(cfg, fixture_repo, MEME, count=2)
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         conn.execute("UPDATE cards SET spec='{not json' WHERE id=?", (bad,))
         conn.commit()
         counts = render.render_pending(conn, cfg, {"meme": FakeRenderer()})
@@ -481,7 +481,7 @@ def test_corrupt_spec_fails_that_card_only(fixture_repo, tmp_path):
 def test_unknown_kind_fails_that_card_only(fixture_repo, tmp_path):
     cfg = render_cfg(fixture_repo, tmp_path)
     (cid,) = seed_pending(cfg, fixture_repo, {"nokind": 1})
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         counts = render.render_pending(conn, cfg, {"meme": FakeRenderer()})
     assert counts["failed"] == 1
     assert card_row(cfg, cid)["status"] == "render_failed"
@@ -489,12 +489,12 @@ def test_unknown_kind_fails_that_card_only(fixture_repo, tmp_path):
 
 def test_mark_failed_tolerates_deleted_card(fixture_repo, tmp_path):
     cfg = render_cfg(fixture_repo, tmp_path)
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         render._mark_failed(conn, "c_gone", "boom")
 
 
 def test_mflux_command_matches_model_family(monkeypatch):
-    from blamescroll import render
+    from gittok import render
 
     found = {
         "mflux-generate-z-image": "/bin/zi",

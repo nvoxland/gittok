@@ -3,8 +3,8 @@
 import pytest
 from mcp import Client
 
-from blamescroll import config as config_mod
-from blamescroll import mcp_server
+from gittok import config as config_mod
+from gittok import mcp_server
 from tests.conftest import make_config
 from tests.test_mcp_e2e import data
 from tests.test_steering import make_ycfg
@@ -108,7 +108,7 @@ async def test_add_repo_is_seen_by_the_next_list_repos(fixture_repo, tmp_path):
             )
         )
         assert added["name"] == "delta"
-        assert "/blamescroll-profile-repo delta" in added["next"]
+        assert "/gittok-profile-repo delta" in added["next"]
         repos = {r["name"]: r for r in data(await client.call_tool("list_repos", {}))}
         assert repos["delta"]["group"] == "newbies"
         data(await client.call_tool("set_group", {"repo": "delta", "group": "oldies"}))
@@ -141,7 +141,7 @@ async def test_get_brief_lists_active_rules_and_honors_bans(server):
 
 
 async def test_expired_rules_are_not_in_the_brief(fixture_repo, tmp_path):
-    from blamescroll import db
+    from gittok import db
 
     cfg = make_config(fixture_repo, tmp_path)
     server = mcp_server.build_server(lambda: cfg)
@@ -150,7 +150,7 @@ async def test_expired_rules_are_not_in_the_brief(fixture_repo, tmp_path):
             "add_rule",
             {"type": "ban", "feature": "format", "value": "code_card", "expires": "1h"},
         )
-        with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+        with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
             conn.execute("UPDATE rules SET expires_at = '2020-01-01T00:00:00Z'")
             conn.commit()
         brief = data(await client.call_tool("get_brief", {"count": 3}))
@@ -162,7 +162,7 @@ async def test_expired_rules_are_not_in_the_brief(fixture_repo, tmp_path):
 async def test_brief_skips_formats_whose_renderer_is_unavailable(
     fixture_repo, tmp_path, monkeypatch
 ):
-    from blamescroll import render
+    from gittok import render
 
     class Down:
         def available(self):
@@ -195,11 +195,11 @@ async def test_brief_skips_formats_whose_renderer_is_unavailable(
 
 
 async def test_set_playback_speed_changes_client_prefs(server, fixture_repo, tmp_path):
-    from blamescroll import db, steering
+    from gittok import db, steering
 
     async with Client(server) as client:
         res = data(await client.call_tool("set_playback_speed", {"speed": 1.5}))
     assert res == {"playback_speed": 1.5}
     cfg = make_config(fixture_repo, tmp_path)
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         assert steering.get_prefs(conn) == {"playback_speed": 1.5}

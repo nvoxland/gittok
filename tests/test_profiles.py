@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from blamescroll import config, profiles
+from gittok import config, profiles
 
 VALID = {
     "version": 1,

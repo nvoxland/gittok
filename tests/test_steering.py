@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from blamescroll import config as config_mod
-from blamescroll import db, learning, steering, store
+from gittok import config as config_mod
+from gittok import db, learning, steering, store
 from tests.cards import text_card
 from tests.conftest import make_config
 
@@ -114,7 +114,7 @@ def test_add_rule_dir_accepts_repo_prefix_and_checks_the_ref(conn, cfg):
 def test_add_rule_group_and_has_comments_values(conn, cfg):
     from dataclasses import replace
 
-    from blamescroll.config import Group
+    from gittok.config import Group
 
     cfg = replace(cfg, groups={"dev": Group("dev", ("fixture",))})
     assert steering.add_rule(conn, cfg, type="ban", feature="group", value="dev")
@@ -333,7 +333,7 @@ def test_coverage_lists_top_level_dirs_least_seen_first(conn, cfg):
 
 
 def test_coverage_uses_churn_signal_dirs_and_rejects_unknown_repo(conn, cfg):
-    from blamescroll import signals
+    from gittok import signals
 
     signals.analyze(conn, cfg.repos["fixture"], cfg.settings.analysis)
     dirs = {r["dir"] for r in steering.coverage(conn, cfg)}
@@ -515,7 +515,7 @@ def test_add_repo_appends_entry_checks_git_and_keeps_comments(ycfg, fixture_repo
         "ref": "main",
         "group": "ops",
         "mascot": "crow",
-        "next": "Next: run /blamescroll-profile-repo gamma to teach Blamescroll this codebase.",
+        "next": "Next: run /gittok-profile-repo gamma to teach GitTok this codebase.",
     }
     new = config_mod.load_config(ycfg.root)
     g = new.repos["gamma"]

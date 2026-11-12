@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from blamescroll import db, learning, store
+from gittok import db, learning, store
 from tests.cards import text_card
 from tests.conftest import make_config
 
@@ -325,7 +325,7 @@ def test_weights_updated_from_reward_with_priors(conn, cfg):
 
 
 def test_story_type_prior_follows_category_share(conn, cfg):
-    from blamescroll import brief
+    from gittok import brief
 
     a, b = add_card(conn, cfg), add_card(conn, cfg)
     liked_impression(conn, a, b)
@@ -420,7 +420,7 @@ def test_category_shares_equal_default_mix_without_data(conn, cfg):
 
 
 def code_evidence(conn, cfg, good, bad, when=NOW):
-    from blamescroll import brief
+    from gittok import brief
 
     # Only formats that no other category lists, so other categories see no shared evidence.
     for f in brief.CATEGORY_FORMATS["code"]:
@@ -430,7 +430,7 @@ def code_evidence(conn, cfg, good, bad, when=NOW):
 
 def test_category_shares_move_toward_better_rewarded_categories(conn, cfg):
     code_evidence(conn, cfg, good=45, bad=5)
-    from blamescroll import brief
+    from gittok import brief
 
     for f in brief.CATEGORY_FORMATS["memes"]:
         put_weight(conn, cfg, "format", f, 5, 45)
@@ -441,7 +441,7 @@ def test_category_shares_move_toward_better_rewarded_categories(conn, cfg):
 
 
 def test_more_evidence_moves_shares_further(conn, cfg):
-    from blamescroll import brief
+    from gittok import brief
 
     for f in brief.CATEGORY_FORMATS["memes"]:
         put_weight(conn, cfg, "format", f, 5, 5)
@@ -453,7 +453,7 @@ def test_more_evidence_moves_shares_further(conn, cfg):
 
 
 def test_category_shares_never_drop_below_floor(conn, cfg):
-    from blamescroll import brief
+    from gittok import brief
 
     code_evidence(conn, cfg, good=0, bad=5000)
     for f in brief.CATEGORY_FORMATS["memes"]:
@@ -469,7 +469,7 @@ def test_category_with_default_share_zero_stays_zero(conn, cfg):
     shares = learning.category_shares(conn, cfg, now=NOW)
     assert shares["interactive"] == 0.0
     assert sum(shares.values()) == pytest.approx(1.0)
-    from blamescroll import brief
+    from gittok import brief
 
     code_evidence(conn, cfg, good=0, bad=5000)
     for f in brief.CATEGORY_FORMATS["memes"]:

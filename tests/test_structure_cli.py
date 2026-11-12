@@ -1,10 +1,10 @@
-"""`blamescroll structure` and the health hint."""
+"""`gittok structure` and the health hint."""
 
 import json
 
 import pytest
 
-from blamescroll import cli, profiling, structure
+from gittok import cli, profiling, structure
 from tests.conftest import make_config
 
 
@@ -44,7 +44,7 @@ def test_prefetch_without_the_group_says_how_to_install(cfg, capsys, monkeypatch
     monkeypatch.setattr(structure, "available", lambda: False)
     assert cli.main(["structure", "--prefetch"]) == 1
     out = capsys.readouterr().out
-    assert "reinstall blamescroll" in out and "--group" not in out
+    assert "reinstall gittok" in out and "--group" not in out
 
 
 def test_prefetch_reports_a_failed_download(cfg, capsys, monkeypatch):
@@ -59,7 +59,7 @@ def test_prefetch_reports_a_failed_download(cfg, capsys, monkeypatch):
 
 
 def test_health_hint_has_one_line_when_grammars_are_missing(cfg, capsys, monkeypatch):
-    from blamescroll import supply
+    from gittok import supply
 
     monkeypatch.setattr(profiling, "profile_hint", lambda cfg: None)
     monkeypatch.setattr(
@@ -73,7 +73,7 @@ def test_health_hint_has_one_line_when_grammars_are_missing(cfg, capsys, monkeyp
 
 
 def test_health_hint_is_silent_without_the_group(cfg, capsys, monkeypatch):
-    from blamescroll import supply
+    from gittok import supply
 
     monkeypatch.setattr(profiling, "profile_hint", lambda cfg: None)
     monkeypatch.setattr(

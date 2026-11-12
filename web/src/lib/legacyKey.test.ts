@@ -7,18 +7,26 @@ describe('getItemWithLegacy', () => {
 	});
 
 	it('reads the new key', () => {
-		localStorage.setItem('blamescroll.x', 'new');
+		localStorage.setItem('gittok.x', 'new');
+		localStorage.setItem('blamescroll.x', 'mid');
 		localStorage.setItem('codescroll.x', 'old');
-		expect(getItemWithLegacy(localStorage, 'blamescroll.x')).toBe('new');
+		expect(getItemWithLegacy(localStorage, 'gittok.x')).toBe('new');
 	});
 
-	it('falls back once to the old key and writes the new one', () => {
+	it('falls back once to the blamescroll key and writes the new one', () => {
+		localStorage.setItem('blamescroll.x', 'mid');
 		localStorage.setItem('codescroll.x', 'old');
-		expect(getItemWithLegacy(localStorage, 'blamescroll.x')).toBe('old');
-		expect(localStorage.getItem('blamescroll.x')).toBe('old');
+		expect(getItemWithLegacy(localStorage, 'gittok.x')).toBe('mid');
+		expect(localStorage.getItem('gittok.x')).toBe('mid');
 	});
 
-	it('returns null when neither key exists', () => {
-		expect(getItemWithLegacy(localStorage, 'blamescroll.x')).toBeNull();
+	it('falls back to the codescroll key and writes the new one', () => {
+		localStorage.setItem('codescroll.x', 'old');
+		expect(getItemWithLegacy(localStorage, 'gittok.x')).toBe('old');
+		expect(localStorage.getItem('gittok.x')).toBe('old');
+	});
+
+	it('returns null when no key exists', () => {
+		expect(getItemWithLegacy(localStorage, 'gittok.x')).toBeNull();
 	});
 });

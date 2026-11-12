@@ -1,11 +1,11 @@
-# Data for the tree-sitter structure layer (src/blamescroll/structure.py).
+# Data for the tree-sitter structure layer (src/gittok/structure.py).
 # Each shipped grammar has a tags query next to this file: config/queries/<grammar>.scm.
 # A query captures: @definition.<kind> + @name (+ @private), @reference, @comment,
 # @import (statement) + @import.path (module spec) + @import.relative (marks a relative spec).
 # Queries are data. A repo profile may carry its own query for a grammar (profile `queries`).
 #
 # Grammar names are those of tree-sitter-language-pack. Download the grammars with
-# `blamescroll structure --prefetch` (docs/install.md).
+# `gittok structure --prefetch` (docs/install.md).
 
 # Default shape rules for a grammar that has no entry below (a profile query for a stack we do
 # not ship). Matched on node type names.
@@ -37,7 +37,7 @@ index_files: [__init__, index]
 embedded:
   svelte: {container: script_element, body: raw_text, grammar: typescript}
 
-# Import resolution (src/blamescroll/candidates.py), per language, all optional:
+# Import resolution (src/gittok/candidates.py), per language, all optional:
 #   separator        in a dotted import, this text becomes "/" (default ".")
 #   strip_suffix     regex removed from the end of a path import
 #   aliases          regexes for imports that are rooted at the source tree; group 1 is the path

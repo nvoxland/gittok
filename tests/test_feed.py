@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from blamescroll import db, feed, store
+from gittok import db, feed, store
 from tests.cards import quiz_card, text_card
 from tests.conftest import make_config
 

@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from blamescroll import db, learning, supply
+from gittok import db, learning, supply
 from tests.cards import meme_card
 from tests.conftest import make_config
 from tests.test_slotter import add_card, impress
@@ -100,7 +100,7 @@ def test_low_runway_notification_once_per_day(conn, cfg):
 
 
 def test_feed_health_reports_last_gc_pass(conn, cfg):
-    from blamescroll import gc
+    from gittok import gc
 
     assert supply.feed_health(conn, cfg, NOW)["gc"] is None
     cfg.settings.data_dir.mkdir(parents=True, exist_ok=True)
@@ -119,7 +119,7 @@ def test_wants_cards_signal_appends_a_fixed_line_with_cooldown(conn, cfg):
 
 
 def test_wants_cards_signal_is_silent_while_a_run_is_open_or_feed_is_full(conn, cfg):
-    from blamescroll import runs
+    from gittok import runs
 
     log = cfg.settings.data_dir / supply.WANTS_FILE
     runs.open_run(conn, cfg, repo=None, brief="b", requested=5, now=NOW)

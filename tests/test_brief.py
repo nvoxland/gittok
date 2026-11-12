@@ -1,6 +1,6 @@
 import pytest
 
-from blamescroll import brief
+from gittok import brief
 
 DEFAULTS = {
     "categories": {
@@ -214,7 +214,7 @@ def test_interactive_slots_use_quiz_format_and_sonnet_packets():
 
 
 def test_interactive_story_types_are_known_to_the_validator():
-    from blamescroll import validator
+    from gittok import validator
 
     assert set(brief.CATEGORY_STORIES["interactive"]) == validator.INTERACTIVE_STORIES
     assert brief.CATEGORY_FORMATS["interactive"] == ("quiz",)
@@ -332,7 +332,7 @@ def test_variant_slots_capped_by_share():
 
 
 def test_guidance_has_rules_personas_and_budget():
-    from blamescroll.config import Persona
+    from gittok.config import Persona
 
     personas = {"greybeard": Persona("greybeard", "Greybeard", "Grumpy senior. Dry.")}
     md = brief.guidance_markdown(personas)
@@ -577,7 +577,7 @@ def test_markdown_lists_story_and_allowed_formats_per_packet():
 
 
 def _personas():
-    from blamescroll.config import Persona
+    from gittok.config import Persona
 
     return {"greybeard": Persona("greybeard", "Greybeard", "Grumpy senior. Dry.")}
 
@@ -603,7 +603,7 @@ def test_base_guidance_explains_account_and_points_to_formats():
 
 
 def test_meme_section_lists_templates_with_line_counts():
-    from blamescroll.config import MemeTemplate
+    from gittok.config import MemeTemplate
 
     tpl = {"drake": MemeTemplate("drake", 2, "top = rejected, bottom = preferred")}
     md = brief.guidance_markdown(_personas(), formats=["meme"], meme_templates=tpl)
@@ -611,7 +611,7 @@ def test_meme_section_lists_templates_with_line_counts():
 
 
 def test_illustration_sections_name_mascots_and_forbid_text():
-    from blamescroll.config import Mascot
+    from gittok.config import Mascot
 
     mascots = {"otter": Mascot("otter", "storefront", "style", 1)}
     for fmt in ("mascot_scene", "comic"):
@@ -937,8 +937,8 @@ def two_repos(tmp_path):
 
 
 def analyzed(tmp_path, api, web):
-    from blamescroll import db, signals
-    from blamescroll.config import AnalysisSettings, Repo
+    from gittok import db, signals
+    from gittok.config import AnalysisSettings, Repo
 
     conn = db.open_db(tmp_path / "t.db")
     out = {}
@@ -962,7 +962,7 @@ def test_drift_alert_finds_identifier_still_used_in_the_other_repo_via_git_grep(
 
 
 def test_drift_grep_is_bounded_to_five_identifiers_per_repo(tmp_path, two_repos, monkeypatch):
-    from blamescroll import gitq
+    from gittok import gitq
 
     members = analyzed(tmp_path, *two_repos)
     api_recent = members["api"]["signals"]["recent_commits"]
@@ -1458,7 +1458,7 @@ def test_ledger_leads_still_honor_ban_dir_rules():
 
 
 def tpls(*ids, fits=None):
-    from blamescroll.config import MemeTemplate
+    from gittok.config import MemeTemplate
 
     fits = fits or {}
     return {i: MemeTemplate(i, 2, f"hint {i}", tuple(fits.get(i, ()))) for i in ids}

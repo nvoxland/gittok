@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from blamescroll.config import ConfigError, load_config, project_root
+from gittok.config import ConfigError, load_config, project_root
 
 
 def write(root: Path, name: str, text: str) -> None:
@@ -130,12 +130,12 @@ def test_data_dir_tilde(tmp_path, monkeypatch):
 
 
 def test_project_root_env(tmp_path, monkeypatch):
-    monkeypatch.setenv("BLAMESCROLL_ROOT", str(tmp_path))
+    monkeypatch.setenv("GITTOK_ROOT", str(tmp_path))
     assert project_root() == tmp_path.resolve()
 
 
 def test_project_root_walks_up(tmp_path, monkeypatch):
-    monkeypatch.delenv("BLAMESCROLL_ROOT", raising=False)
+    monkeypatch.delenv("GITTOK_ROOT", raising=False)
     write(tmp_path, "settings.yaml", "{}\n")
     deep = tmp_path / "a" / "b"
     deep.mkdir(parents=True)
@@ -143,7 +143,7 @@ def test_project_root_walks_up(tmp_path, monkeypatch):
 
 
 def test_project_root_not_found(tmp_path, monkeypatch):
-    monkeypatch.delenv("BLAMESCROLL_ROOT", raising=False)
+    monkeypatch.delenv("GITTOK_ROOT", raising=False)
     with pytest.raises(ConfigError):
         project_root(tmp_path)
 
@@ -160,7 +160,7 @@ def test_real_repo_config():
 def test_real_config_has_mascots_meme_templates_and_render_settings():
     from pathlib import Path
 
-    from blamescroll.config import load_config
+    from gittok.config import load_config
 
     cfg = load_config(Path(__file__).parents[1])
     assert cfg.mascots["otter"].repo == "storefront"
@@ -186,7 +186,7 @@ def test_meme_template_fits_is_loaded(tmp_path):
 def test_mascot_with_unknown_key_is_an_error(tmp_path):
     import pytest
 
-    from blamescroll.config import ConfigError, load_config
+    from gittok.config import ConfigError, load_config
 
     (tmp_path / "config").mkdir()
     (tmp_path / "local").mkdir()

@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from blamescroll import db, gitq, runs, social, srs
+from gittok import db, gitq, runs, social, srs
 from tests.conftest import make_config
 from tests.fixture_repo import FixtureRepo
 
@@ -67,7 +67,7 @@ def cfg(recent, tmp_path):
 
 @pytest.fixture
 def conn(cfg):
-    c = db.open_db(cfg.settings.data_dir / "blamescroll.db")
+    c = db.open_db(cfg.settings.data_dir / "gittok.db")
     yield c
     c.close()
 
@@ -101,7 +101,7 @@ def test_stories_one_per_repo_with_recent_commits(cfg, conn):
 
 def test_stories_skip_repos_without_recent_commits(fixture_repo, tmp_path, conn):
     cfg = make_config(fixture_repo, tmp_path / "other")
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as c:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as c:
         assert social.stories(c, cfg, NOW) == []
 
 
@@ -109,7 +109,7 @@ def test_stories_cap_at_ten_commits(tmp_path):
     repo = tmp_path / "busy"
     make_repo(repo, [(12 - i * 0.5, "A", f"c{i}", [f"f{i}.py"]) for i in range(12)])
     cfg = make_config(FixtureRepo(path=repo), tmp_path)
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as c:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as c:
         s = social.stories(c, cfg, NOW)[0]
     assert len(s["commits"]) == 10
     assert s["commits"][0]["subject"] == "c11"
@@ -137,18 +137,18 @@ def test_stories_sorted_newest_first(tmp_path):
     cfg = make_config(FixtureRepo(path=a), tmp_path)
     from dataclasses import replace
 
-    from blamescroll.config import Repo
+    from gittok.config import Repo
 
     cfg = replace(cfg, repos={"a": Repo(name="a", path=a, ref="main"),
                               "b": Repo(name="b", path=b, ref="main")})  # fmt: skip
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as c:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as c:
         assert [s["repo"] for s in social.stories(c, cfg, NOW)] == ["b", "a"]
 
 
 def test_mascot_image_when_file_exists(cfg, conn):
     from dataclasses import replace
 
-    from blamescroll.config import Repo
+    from gittok.config import Repo
 
     cfg = replace(cfg, repos={"fixture": Repo(name="fixture", path=cfg.repos["fixture"].path,
                                               ref="main", mascot="otter")})  # fmt: skip
@@ -249,7 +249,7 @@ def _busy_cfg(tmp_path, extra=()):
 
 def test_hot_files_in_one_repo_make_one_digest_without_dot_dirs(tmp_path):
     cfg = _busy_cfg(tmp_path)
-    with closing(db.open_db(cfg.settings.data_dir / "blamescroll.db")) as conn:
+    with closing(db.open_db(cfg.settings.data_dir / "gittok.db")) as conn:
         assert social.generate_notifications(conn, cfg, NOW)["hot_file"] == 1
         (text,) = texts(conn, "hot_file")
     assert text.startswith("Busy day in ")
@@ -259,7 +259,7 @@ def test_hot_files_in_one_repo_make_one_digest_without_dot_dirs(tmp_path):
 
 def test_more_commits_to_a_hot_file_the_same_day_do_not_notify_again(tmp_path):
     cfg = _busy_cfg(tmp_path, extra=[(1, "Ann", "six", ["brief.py", "cli.py"])])
-    with closing(db.open_db(cfg.settings.data_dir / "blamescroll.db")) as conn:
+    with closing(db.open_db(cfg.settings.data_dir / "gittok.db")) as conn:
         social.generate_notifications(conn, cfg, NOW - timedelta(minutes=90))
         social.clear_cache()
         assert social.generate_notifications(conn, cfg, NOW)["hot_file"] == 0
@@ -324,7 +324,7 @@ def _notif_leads(conn):
 
 
 def _add_card_row(conn, cfg, card_id, path, created_at, lead_id=None):
-    from blamescroll import store
+    from gittok import store
 
     repo_id = store.ensure_repo(conn, cfg.repos["fixture"])
     conn.execute(
@@ -341,7 +341,7 @@ def _add_card_row(conn, cfg, card_id, path, created_at, lead_id=None):
 
 
 def test_hot_file_without_card_makes_a_notif_lead_and_submit_links_it(cfg, conn):
-    from blamescroll import ledger
+    from gittok import ledger
 
     social.generate_notifications(conn, cfg, NOW)
     n = _notif(conn)
@@ -367,7 +367,7 @@ def test_hot_file_without_card_makes_a_notif_lead_and_submit_links_it(cfg, conn)
 
 
 def test_notif_lead_is_offered_first(cfg, conn):
-    from blamescroll import ledger
+    from gittok import ledger
 
     social.generate_notifications(conn, cfg, NOW)
     out = ledger.for_brief(conn, cfg, ["fixture"], NOW)
@@ -424,12 +424,12 @@ def test_digest_lead_once_per_repo_per_day(cfg, conn):
 
 def test_digest_skipped_without_recent_commits(fixture_repo, tmp_path):
     cfg = make_config(fixture_repo, tmp_path / "other")
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as c:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as c:
         assert social.generate_digests(c, cfg, NOW) == 0
 
 
 def test_digest_is_offered_first_then_gone_once_covered(cfg, conn):
-    from blamescroll import ledger
+    from gittok import ledger
 
     social.generate_digests(conn, cfg, NOW)
     offered = ledger.for_brief(conn, cfg, ["fixture"], NOW)[("fixture", "before_after")]
@@ -483,7 +483,7 @@ def test_commit_url_when_repo_has_github_url(cfg):
 
     repo = replace(cfg.repos["fixture"], url="https://github.com/o/r")
     cfg = replace(cfg, repos={"fixture": repo})
-    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as c:
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as c:
         story = social.stories(c, cfg, NOW)[0]
     first = story["commits"][0]
     assert first["url"] == f"https://github.com/o/r/commit/{first['sha']}"

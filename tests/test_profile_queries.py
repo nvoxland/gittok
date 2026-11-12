@@ -3,7 +3,7 @@
 import pytest
 import yaml
 
-from blamescroll import structure
+from gittok import structure
 from tests.conftest import make_config
 from tests.fixture_repo import build_history_repo
 from tests.test_profiling import FILES, call, data, profile_file

@@ -12,7 +12,7 @@ describe('session id', () => {
 		const a = getSessionId();
 		expect(a.length).toBeGreaterThan(8);
 		expect(getSessionId()).toBe(a);
-		expect(sessionStorage.getItem('blamescroll.session')).toBe(a);
+		expect(sessionStorage.getItem('gittok.session')).toBe(a);
 		resetSessionForTest();
 		expect(getSessionId()).toBe(a);
 	});

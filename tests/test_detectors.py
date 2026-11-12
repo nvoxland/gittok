@@ -5,8 +5,8 @@ import time
 
 import pytest
 
-from blamescroll import candidates, db, detectors, gitq, profiles, signals
-from blamescroll.config import AnalysisSettings, Repo
+from gittok import candidates, db, detectors, gitq, profiles, signals
+from gittok.config import AnalysisSettings, Repo
 from tests.fixture_repo import build_history_repo
 
 ROUTES = """from flask import Flask
@@ -124,7 +124,7 @@ def test_catastrophic_regex_times_out_without_failing(repo_path, caplog, monkeyp
     bad = rule("boom", match={"regex": r"(a|aa)+$", "paths": ["app/evil.py"]})
     good = rule("audit")
     started = time.monotonic()
-    with caplog.at_level(logging.WARNING, logger="blamescroll.detectors"):
+    with caplog.at_level(logging.WARNING, logger="gittok.detectors"):
         out = run(repo_path, profile(detectors=[bad, good]))
     assert time.monotonic() - started < 10
     assert by_rule(out, "boom") == []
@@ -155,7 +155,7 @@ def test_ast_grep_rules_are_skipped_with_one_log_line_when_missing(repo_path, ca
         )
         for i in range(2)
     ]
-    with caplog.at_level(logging.INFO, logger="blamescroll.detectors"):
+    with caplog.at_level(logging.INFO, logger="gittok.detectors"):
         out = run(repo_path, profile(detectors=rules + [rule()]))
     assert by_rule(out, "ast0") == [] and by_rule(out, "ast1") == []
     assert by_rule(out, "audit")
@@ -190,7 +190,7 @@ def test_ast_grep_rule_makes_candidates(repo_path):
 @pytest.mark.skipif(not HAVE_ASTGREP, reason="ast-grep-py not installed")
 def test_ast_grep_unsupported_language_is_skipped(repo_path, caplog):
     r = rule("clj", match={"ast_grep": "(defn $N)", "language": "clojure", "paths": ["**"]})
-    with caplog.at_level(logging.INFO, logger="blamescroll.detectors"):
+    with caplog.at_level(logging.INFO, logger="gittok.detectors"):
         out = run(repo_path, profile(detectors=[r, rule()]))
     assert by_rule(out, "clj") == [] and by_rule(out, "audit")
     assert any("clojure" in r.message for r in caplog.records)
@@ -245,7 +245,7 @@ def test_run_never_raises_on_a_bad_hit(repo_path, monkeypatch, caplog):
 
     monkeypatch.setattr(detectors, "_hit", flaky)
     r = rule("flaky", match={"regex": r"def (\w+)", "paths": ["app/**"]})
-    with caplog.at_level(logging.WARNING, logger="blamescroll.detectors"):
+    with caplog.at_level(logging.WARNING, logger="gittok.detectors"):
         out = by_rule(run(repo_path, profile(detectors=[r])), "flaky")
     assert out and all(c["path"] != "app/core.py" for c in out)
     assert any("app/core.py" in x.message for x in caplog.records)

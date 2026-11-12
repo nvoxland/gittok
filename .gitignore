@@ -4,7 +4,7 @@
 *.db
 .beads-credential-key
 
-# Blamescroll
+# GitTok
 data/
 web/build/
 web/node_modules/

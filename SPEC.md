@@ -1,8 +1,8 @@
-# Blamescroll — Spec
+# GitTok — Spec
 
 A personal, TikTok/Instagram-style feed for understanding the codebases you work in every day. A local server on your Mac generates cards from your repos and their git history, and you scroll them on your phone as an installed web app. The feed learns what you engage with, and you can ask the coding agent what it has learned and tell it how to adjust.
 
-*Formerly CodeScroll.*
+*Formerly Blamescroll, and before that CodeScroll.*
 
 ---
 
@@ -54,7 +54,7 @@ A personal, TikTok/Instagram-style feed for understanding the codebases you work
 | Server | **FastAPI** (serves feed API, static frontend, assets, event ingest) |
 | Database | **SQLite** (single file; easy for the agent to inspect) |
 | Git analysis | Shell out to `git` (log, blame, diff, shortlog, show). Add pygit2 only if needed |
-| Content agent | An interactive **Claude Code** session (or Codex) running the `blamescroll-generate` skill against the Blamescroll MCP server. No `claude -p`: headless use is not allowed on a subscription |
+| Content agent | An interactive **Claude Code** session (or Codex) running the `gittok-generate` skill against the GitTok MCP server. No `claude -p`: headless use is not allowed on a subscription |
 | Memes | Self-hosted **memegen** (jacebrowning/memegen) |
 | Illustrations | **mflux** (MLX, Apple Silicon). Default model Z-Image Turbo; FLUX.2 Klein 4B as faster option |
 | Code rendering | **Shiki** (syntax highlighting), Mermaid only for occasional diagram cards |
@@ -265,7 +265,7 @@ Default tone mix is in §13. Rules can force or exclude tones.
 
 - Nightly full run (launchd).
 - Optional git post-commit hook that queues an incremental run for that repo.
-- Manual: `blamescroll generate [--repo X] [--count N]`.
+- Manual: `gittok generate [--repo X] [--count N]`.
 
 ### 10.2 Git analysis (no LLM)
 
@@ -297,9 +297,9 @@ Tones: lean dry-deadpan and roast; at least 4 other tones for exploration.
 
 `claude -p` is not allowed on a subscription, so generation runs inside an interactive agent session:
 
-- The user (or a `/loop` later) runs the `blamescroll-generate` skill in Claude Code. The MCP server is part of the same process as the feed. The project's `.mcp.json` starts `blamescroll mcp --ui --lan`: MCP over stdio, plus the feed API and PWA on the LAN for as long as the session runs. `blamescroll serve` runs the feed and MCP (streamable HTTP at `/mcp`) without a session.
+- The user (or a `/loop` later) runs the `gittok-generate` skill in Claude Code. The MCP server is part of the same process as the feed. The project's `.mcp.json` starts `gittok mcp --ui --lan`: MCP over stdio, plus the feed API and PWA on the LAN for as long as the session runs. `gittok serve` runs the feed and MCP (streamable HTTP at `/mcp`) without a session.
 - The skill calls `get_brief`, which runs analysis, builds the brief, opens a `runs` row, and returns a short summary and a list of **work packets** (1–5 cards each, 2 by default, with a suggested model). Leads and guidance stay on the server.
-- **Cost control:** the session model only hands out packet ids. Each packet goes to a `blamescroll-writer` subagent (`.claude/agents/`, only Blamescroll tools) on the packet's model (haiku for concrete-lead stories, sonnet for explanatory ones). The writer calls `get_packet` for its leads, attached materials (commit stat and diff, or numbered file lines and blame), and guidance. It researches with read-only MCP tools (`git_log`, `git_show`, `git_blame`, `git_grep`, `read_file`, `list_dir`) scoped to configured repos, only for what the materials lack, and calls `submit_cards(packet_id)` itself. It does not dry-run: `submit_cards` validates and returns the same rejects (`check_cards` stays for tools and tests). The server validates (§10.6), stores accepted cards, and returns reject reasons. One fix round, then rejected cards are dropped. The writer replies with one line, so card JSON never passes through the driver.
+- **Cost control:** the session model only hands out packet ids. Each packet goes to a `gittok-writer` subagent (`.claude/agents/`, only GitTok tools) on the packet's model (haiku for concrete-lead stories, sonnet for explanatory ones). The writer calls `get_packet` for its leads, attached materials (commit stat and diff, or numbered file lines and blame), and guidance. It researches with read-only MCP tools (`git_log`, `git_show`, `git_blame`, `git_grep`, `read_file`, `list_dir`) scoped to configured repos, only for what the materials lack, and calls `submit_cards(packet_id)` itself. It does not dry-run: `submit_cards` validates and returns the same rejects (`check_cards` stays for tools and tests). The server validates (§10.6), stores accepted cards, and returns reject reasons. One fix round, then rejected cards are dropped. The writer replies with one line, so card JSON never passes through the driver.
 - `finish_run` closes the run and records models used, MCP call counts, and per-packet results.
 - Per-run card count and per-day run caps are enforced by the server in `get_brief`.
 - Card-writing guidance lives in `prompts/generate.md` and is returned by `get_packet`: schema, persona and tone definitions, mascot styles, and the real-people rule.
@@ -488,7 +488,7 @@ Types: `boost`, `ban`, `focus`, `limit`, `prefer`. Optional expiry. Each rule re
 
 ## 15. Agent interface (MCP + CLI)
 
-MCP server `blamescroll` exposing:
+MCP server `gittok` exposing:
 
 | Tool | Purpose |
 |---|---|
@@ -502,7 +502,7 @@ MCP server `blamescroll` exposing:
 | `recent_cards` / `card_stats` | What was shown and how it did |
 | `coverage` | What parts of each repo the user has seen |
 
-A nightly job writes `data/profile.md`, a plain-English profile summary. The CLI (`blamescroll …`) exposes the same functions.
+A nightly job writes `data/profile.md`, a plain-English profile summary. The CLI (`gittok …`) exposes the same functions.
 
 Example: user tells Claude Code "less memes, more of the sync engine this week" → agent calls `add_rule` twice and confirms.
 
@@ -532,7 +532,7 @@ Example: user tells Claude Code "less memes, more of the sync engine this week" 
 ## 17. Milestones
 
 **M1 — Skeleton feed**
-Repo config, git analysis for one repo, brief builder (static default mix), MCP server (brief, read-only research tools, submit_cards) + `blamescroll-generate` skill, validator, code/text cards only, FastAPI + Svelte snap-scroll feed on the Mac.
+Repo config, git analysis for one repo, brief builder (static default mix), MCP server (brief, read-only research tools, submit_cards) + `gittok-generate` skill, validator, code/text cards only, FastAPI + Svelte snap-scroll feed on the Mac.
 
 **M2 — Renderers and formats**
 memegen, mflux with mascots, template formats (iceberg, tier list, group chat, etc.), depth panels, personas and comments.

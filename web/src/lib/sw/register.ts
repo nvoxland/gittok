@@ -20,6 +20,6 @@ export async function registerServiceWorker(
 		await reg.sync?.register(SYNC_TAG).catch(() => {});
 	} catch {
 		// the app works without a worker
-		console.info('Blamescroll: offline mode is off. Service workers need HTTPS or localhost.');
+		console.info('GitTok: offline mode is off. Service workers need HTTPS or localhost.');
 	}
 }

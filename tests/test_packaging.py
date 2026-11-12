@@ -24,7 +24,7 @@ def wheel(tmp_path_factory):
         ["uv", "build", "--wheel", "--out-dir", str(out), str(ROOT)],
         check=True, capture_output=True, text=True,
     )  # fmt: skip
-    (whl,) = out.glob("blamescroll-*.whl")
+    (whl,) = out.glob("gittok-*.whl")
     return whl
 
 
@@ -42,20 +42,20 @@ def requires(wheel):
 
 
 def test_wheel_has_shared_files(wheel_names):
-    b = "blamescroll/_bundled/"
+    b = "gittok/_bundled/"
     for want in (
         "config/settings.yaml",
         "config/languages.yaml",
         "config/queries/",
         "web/index.html",
-        "claude/skills/blamescroll-generate/SKILL.md",
-        "claude/skills/blamescroll-steer/SKILL.md",
-        "claude/skills/blamescroll-profile-repo/SKILL.md",
-        "claude/agents/blamescroll-writer.md",
-        "claude/agents/blamescroll-scout.md",
+        "claude/skills/gittok-generate/SKILL.md",
+        "claude/skills/gittok-steer/SKILL.md",
+        "claude/skills/gittok-profile-repo/SKILL.md",
+        "claude/agents/gittok-writer.md",
+        "claude/agents/gittok-scout.md",
     ):
         assert any(n.startswith(b + want) for n in wheel_names), want
-    assert "blamescroll/prompts/generate.md" in wheel_names
+    assert "gittok/prompts/generate.md" in wheel_names
 
 
 def test_wheel_has_no_local_or_data(wheel_names):

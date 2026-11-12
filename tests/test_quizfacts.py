@@ -4,8 +4,8 @@ import copy
 
 import pytest
 
-from blamescroll import db, quizfacts, validator
-from blamescroll.config import Repo
+from gittok import db, quizfacts, validator
+from gittok.config import Repo
 from tests import cards as C
 from tests.test_brief import build
 from tests.test_validator import PERSONAS as V_PERSONAS

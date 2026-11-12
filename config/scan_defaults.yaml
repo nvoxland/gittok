@@ -1,5 +1,5 @@
 # Bootstrap file set for a repo that has NO profile (config/profiles/<repo>.yaml).
-# Which files Blamescroll reads, and which are tests, fixtures, generated, docs or vendored,
+# Which files GitTok reads, and which are tests, fixtures, generated, docs or vendored,
 # is decided per project by its profile. Nothing like this lives in the Python code.
 #
 # A profile REPLACES each of these keys it sets (no merging), so the profiling agent is in

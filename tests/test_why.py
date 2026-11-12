@@ -1,7 +1,7 @@
 from dataclasses import replace
 
-from blamescroll import materials
-from blamescroll.brief import Lead
+from gittok import materials
+from gittok.brief import Lead
 from tests.conftest import make_config
 from tests.fixture_repo import build_history_repo
 

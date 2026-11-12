@@ -4,7 +4,7 @@ from datetime import timedelta
 
 import pytest
 
-from blamescroll import brief, db, ledger
+from gittok import brief, db, ledger
 from tests.conftest import make_config
 from tests.test_brief import DEFAULTS, build, signals
 from tests.test_ledger import NOW, refresh
