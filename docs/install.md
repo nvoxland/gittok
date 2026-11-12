@@ -15,7 +15,8 @@ To build the wheel in a clone: `npm --prefix web run build`, then `uv build --wh
 Optional extras:
 
 ```bash
-uv tool install 'blamescroll[structure,profiles]'      # tree-sitter layer, ast-grep rules
+uv tool install 'blamescroll[structure,profiles]'      # from PyPI: tree-sitter layer, ast-grep rules
+uv tool install 'blamescroll[structure,profiles] @ ./blamescroll-0.1.0-py3-none-any.whl'   # from a wheel
 uv tool install 'blamescroll[images]'                  # mflux art (Apple silicon only)
 ```
 
