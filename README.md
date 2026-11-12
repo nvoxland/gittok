@@ -1,8 +1,17 @@
 # GitTok
 
-GitTok is a personal feed of short cards about your own codebases. It reads the git history and the code of the repos you add. Your coding agent (for example Claude Code) writes the cards through the GitTok MCP server, and GitTok checks each card against git before it stores it. You scroll the cards on your phone or in a browser.
+**The feed you can't stop scrolling, about your own code.**
 
-Everything runs on your own machine. GitTok never writes to your repos.
+GitTok turns your git repos into a TikTok-style feed. Swipe through short cards about the code you work in every day: the function everything depends on, the commit that got reverted twice, the TODO that has been waiting for six years, the two files that always change together.
+
+Some cards teach. Some are quizzes: spot the bug, guess who wrote it, guess when. Some are memes, comics, tier lists, group chats and horoscopes about your own code, with a cast of regulars arguing in the comments. Swipe up for the next card. Swipe sideways to go deeper, from the hook down to the real code and the real diff.
+
+It is a fast way to learn a codebase you just joined, and a surprisingly fun way to rediscover one you thought you knew.
+
+- **Every card is checked against git.** Your coding agent (for example Claude Code) writes the cards, and GitTok verifies each cited commit, file and line before a card reaches your feed.
+- **It learns what you like.** What you read, like and skip shapes what comes next. You can also just say it: "less memes, more of the sync engine."
+- **It helps things stick.** A quiz you got wrong comes back a day later, then after three days, then a week, until you have it.
+- **It is private.** Everything runs on your own machine. GitTok never writes to your repos and calls no model API of its own.
 
 <!-- screenshot -->
 
