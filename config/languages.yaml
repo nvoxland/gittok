@@ -1,7 +1,20 @@
-# Per-language patterns for the candidate miners (src/gittok/candidates.py).
-# All patterns are Python regexes, matched line by line. A language that is not listed
-# here produces no candidates. `thresholds` are the defaults; a language may override
-# any of them under its own `thresholds` key.
+# Per-language regex patterns for the candidate miners (src/gittok/candidates.py).
+# All patterns are Python regexes, matched line by line.
+#
+# How a file is read, best first:
+#   1. tree-sitter, when its language has a query in config/queries/ and the grammar is
+#      downloaded: definitions, parameters, nesting, branches, imports and comments.
+#   2. the entry here: function starts and imports by regex (used when 1 cannot read the file),
+#      and the things only a regex finds, with or without tree-sitter: entry points, skipped
+#      tests, catch-all handlers, sleeps, regex literals, bit operations, metaprogramming.
+#   3. neither: plain text rules (comment markers, long lines, deep indentation).
+#
+# The patterns name public frameworks and standard libraries only. A macro or a convention of
+# one project belongs in that repo's profile (local/profiles/<repo>.yaml), not here.
+# To change or add a language for all your repos, write local/languages.yaml (docs/config.md).
+#
+# `thresholds` are the defaults; a language may override any of them under its own
+# `thresholds` key.
 thresholds:
   long_function: 50        # lines
   deep_nesting: 5          # levels
@@ -86,7 +99,6 @@ languages:
     entry_points:
       - '^\s*\(defroutes\b'
       - '^\s*\(\s*(?:[\w.]+/)?(?:GET|POST|PUT|DELETE|PATCH)\s+"/'
-      - '^\s*\(\s*(?:[\w.]+/)?defendpoint\b'
       - '^\s*\(defn\s+-main\b'
       - '^\s*\(\s*(?:[\w.]+/)?defjob\b'
     entry_paths: ['(^|/)migrations?/', '(^|/)core\.cljs?$']
@@ -128,7 +140,7 @@ languages:
       - '\.command\('
       - '\bcron\.schedule\('
       - '^#!/usr/bin/env node'
-    entry_paths: ['(^|/)migrations?/', '(^|/)\+server\.\w+$', '(^|/)hooks\.server\.\w+$']
+    entry_paths: ['(^|/)migrations?/', '(^|/)\+server\.\w+$', '(^|/)hooks\.server\.\w+$', '(^|/)pages/api/', '(^|/)route\.[jt]sx?$']
     import_style: path
     imports:
       - '^\s*import\s[^''"]*?[''"]([^''"]+)[''"]'
@@ -157,3 +169,264 @@ languages:
     thresholds:
       big_literal: 40
       god_fan_out: 12
+
+  go:
+    extensions: [.go]
+    comment: "//"
+    comment_also: ["*", "/*"]
+    block: indent
+    func_start: '^func\s+(?:\([^)]*\)\s*)?(\w+)\s*[(\[]'
+    entry_points:
+      - '^func\s+main\s*\('
+      - '\b\w+\.(?:HandleFunc|Handle|GET|POST|PUT|DELETE|PATCH)\(\s*"'
+      - '\bcobra\.Command\s*\{'
+    entry_paths: ['(^|/)cmd/[^/]+/main\.go$', '(^|/)migrations?/']
+    imports:
+      - '^\s*(?:import\s+)?(?:[\w.]+\s+)?"([^"]+)"\s*$'
+    def_patterns:
+      - '^type\s+(\w+)\s'
+    public: '^(?:func\s+(?:\([^)]*\)\s*)?|type\s+)([A-Z]\w*)'
+    branch: '\b(?:if|for|case|select)\b|&&|\|\|'
+    skipped_test:
+      - '\bt\.Skip(?:f|Now)?\('
+    catch_all:
+      - '\brecover\(\)'
+    sleep: '\btime\.Sleep\('
+    regex_literal: '\bregexp\.(?:MustCompile|Compile)(?:POSIX)?\(\s*[`"](.{8,}?)[`"]\s*\)'
+    bit_ops: '[\w)\]]\s*(?:<<|>>|&\^)\s*[\w(]'
+    meta:
+      - '\breflect\.\w+\('
+      - '\bunsafe\.Pointer\b'
+    commented_code: '^\s*(?:[\w.\[\]]+\s*:?=[^=]|(?:func|return|if|for|var|const|type|defer|go)\b|[\w.]+\(.*\)$|[})\]]$)'
+
+  rust:
+    extensions: [.rs]
+    comment: "//"
+    comment_also: ["*", "/*"]
+    block: indent
+    func_start: '^\s*(?:pub(?:\([^)]*\))?\s+)?(?:(?:async|const|unsafe)\s+)*fn\s+(\w+)'
+    entry_points:
+      - '^\s*(?:pub\s+)?(?:async\s+)?fn\s+main\s*\('
+      - '^\s*#\[(?:\w+::)*(?:main|get|post|put|delete|patch|route|command)\b'
+    entry_paths: ['(^|/)src/main\.rs$', '(^|/)src/bin/', '(^|/)migrations?/']
+    imports:
+      - '^\s*(?:pub\s+)?use\s+([\w:]+)'
+      - '^\s*(?:pub\s+)?mod\s+(\w+)\s*;'
+    def_patterns:
+      - '^\s*(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum|trait|type|mod)\s+(\w+)'
+    public: '^pub\s+(?:(?:async|const|unsafe)\s+)*(?:fn|struct|enum|trait|type|mod|const|static)\s+(\w+)'
+    branch: '\b(?:if|else if|for|while|loop|match)\b|=>|&&|\|\|'
+    skipped_test:
+      - '^\s*#\[ignore\b'
+    catch_all:
+      - '\bcatch_unwind\('
+      - '^\s*_\s*=>\s*(?:\{\s*\}|\(\))\s*,?\s*$'
+    sleep: '\b(?:thread::sleep|time::sleep|sleep)\('
+    regex_literal: '\bRegex::new\(\s*r?#*"(.{8,}?)"#*\s*\)'
+    bit_ops: '[\w)\]]\s*(?:<<|>>)\s*[\w(]|\w\s+\^\s+\w'
+    meta:
+      - '^\s*macro_rules!'
+      - '\bunsafe\s*\{'
+      - '\btransmute\b'
+      - '#\[proc_macro'
+    commented_code: '^\s*(?:let\s|(?:fn|pub|use|return|if|for|while|match|impl|struct)\b|[\w.:]+\(.*\);?$|[})\]];?$)'
+
+  java:
+    extensions: [.java]
+    comment: "//"
+    comment_also: ["*", "/*"]
+    block: indent
+    # a method: at least one modifier, a return type, a name, an open parenthesis
+    func_start: '^\s+(?:(?:public|protected|private|static|final|abstract|synchronized|native|default)\s+)+(?!(?:class|interface|enum|record|new|return)\b)(?:<[^>]+>\s+)?[\w.<>\[\],? ]+?\s+(\w+)\s*\([^;]*$'
+    entry_points:
+      - '^\s*public\s+static\s+void\s+main\s*\('
+      - '^\s*@(?:GetMapping|PostMapping|PutMapping|DeleteMapping|PatchMapping|RequestMapping|GET|POST|PUT|DELETE|PATCH|Path|Scheduled|KafkaListener|RabbitListener|EventListener|WebServlet)\b'
+      - '^\s*@(?:RestController|Controller|SpringBootApplication)\b'
+    entry_paths: ['(^|/)migrations?/']
+    imports:
+      - '^\s*import\s+(?:static\s+)?([\w.]+?)(?:\.\*)?\s*;'
+    def_patterns:
+      - '^\s*(?:(?:public|protected|private|static|final|abstract|sealed)\s+)*(?:class|interface|enum|record)\s+(\w+)'
+    public: '^public\s+(?:(?:static|final|abstract|sealed)\s+)*(?:class|interface|enum|record)\s+(\w+)'
+    branch: '\b(?:if|else if|for|while|case|catch)\b|&&|\|\||\?\s'
+    skipped_test:
+      - '^\s*@(?:Disabled|Ignore)\b'
+    catch_all:
+      - '\bcatch\s*\(\s*(?:final\s+)?(?:Exception|Throwable)\s+\w+\s*\)'
+    sleep: '\b(?:Thread\.sleep|TimeUnit\.\w+\.sleep)\('
+    regex_literal: '\bPattern\.compile\(\s*"((?:\\.|[^"\\]){8,})"'
+    bit_ops: '[\w)\]]\s*(?:<<|>>>)\s*[\w(]|\w\s+\^\s+\w|\w\s+&\s+0x'
+    meta:
+      - '\.getDeclared(?:Method|Field|Constructor)s?\('
+      - '\bClass\.forName\('
+      - '\bProxy\.newProxyInstance\('
+      - '\.setAccessible\(true\)'
+    commented_code: '^\s*(?:[\w.<>\[\]]+\s+\w+\s*=[^=]|(?:return|if|for|while|import|public|private|protected|try|throw)\b|[\w.]+\(.*\);$|[})\]];?$)'
+
+  ruby:
+    extensions: [.rb, .rake]
+    comment: "#"
+    block: indent
+    func_start: '^\s*def\s+(?:self\.)?([\w?!]+)'
+    entry_points:
+      - '^\s*(?:get|post|put|patch|delete)\s+[''"]/'
+      - '^\s*(?:resources?|namespace|root)\s+[:''"]'
+      - '^\s*task\s+[:''"]?\w'
+      - '^\s*include\s+Sidekiq::(?:Worker|Job)\b'
+      - '^if\s+__FILE__\s*==\s*\$(?:0|PROGRAM_NAME)'
+    entry_paths: ['(^|/)db/migrate/', '(^|/)config/routes\.rb$']
+    imports:
+      - '^\s*require_relative\s+[''"]([^''"]+)[''"]'
+      - '^\s*require\s+[''"]([^''"]+)[''"]'
+    def_patterns:
+      - '^\s*(?:class|module)\s+([A-Z][\w:]*)'
+    public: '^(?:class|module)\s+([A-Z][\w:]*)'
+    branch: '\b(?:if|elsif|unless|while|until|when|rescue)\b|&&|\|\|'
+    skipped_test:
+      - '^\s*(?:xit|xdescribe|xcontext|pending|skip)\b'
+      - '\b(?:it|describe|context)\b.*\bskip:\s'
+    catch_all:
+      - '^\s*rescue\s*(?:=>\s*\w+)?\s*$'
+      - '^\s*rescue\s+(?:Exception|StandardError)\b'
+      - '\brescue\s+nil\b'
+    sleep: '(?<![\w.])sleep[\s(]+\d'
+    regex_literal: '(?:=~|!~|[=(,])\s*/((?:\\.|[^/\n\\]){8,})/[imxo]*'
+    bit_ops: '[\w)\]]\s*>>\s*\d|\w\s+\^\s+\w|\w\s+&\s+0x'
+    meta:
+      - '\bdefine_method\b'
+      - '\bmethod_missing\b'
+      - '\b(?:instance|class|module)_eval\b'
+      - '\bsend\(\s*:'
+      - '\bconst_get\('
+    commented_code: '^\s*(?:[\w.@\[\]]+\s*=[^=~]|(?:def|class|module|return|require|if|unless|end|puts|raise)\b|[\w.]+\(.*\)$)'
+
+  # The languages below have no tags query in config/queries/: these patterns are all GitTok
+  # knows about them. A repo profile can add a query for one repo (profile `queries`), and
+  # local/queries/ can add one for all your repos.
+  kotlin:
+    extensions: [.kt, .kts]
+    comment: "//"
+    comment_also: ["*", "/*"]
+    block: indent
+    func_start: '^\s*(?:(?:public|private|protected|internal|override|open|abstract|final|suspend|inline|operator|infix|tailrec|external|actual|expect)\s+)*fun\s+(?:<[^>]+>\s+)?(?:[\w.<>?]+\.)?(\w+)\s*\('
+    entry_points:
+      - '^\s*(?:suspend\s+)?fun\s+main\s*\('
+      - '^\s*@(?:GetMapping|PostMapping|PutMapping|DeleteMapping|PatchMapping|RequestMapping|Scheduled|KafkaListener|EventListener)\b'
+      - '^\s*(?:get|post|put|delete|patch|route)\s*\(\s*"/'
+    entry_paths: ['(^|/)migrations?/']
+    imports:
+      - '^\s*import\s+([\w.]+?)(?:\.\*)?(?:\s+as\s+\w+)?\s*$'
+    def_patterns:
+      - '^\s*(?:(?:public|private|internal|protected|open|abstract|sealed|data|enum|inner|value|annotation)\s+)*(?:class|interface|object)\s+(\w+)'
+    public: '^(?:(?:public|open|abstract|sealed|data|enum|suspend|inline)\s+)*(?:fun|class|interface|object)\s+(?:<[^>]+>\s+)?(\w+)'
+    branch: '\b(?:if|else if|for|while|when|catch)\b|->|&&|\|\||\?:'
+    skipped_test:
+      - '^\s*@(?:Disabled|Ignore)\b'
+    catch_all:
+      - '\bcatch\s*\(\s*\w+\s*:\s*(?:Exception|Throwable)\s*\)'
+      - '\brunCatching\s*\{'
+    sleep: '\b(?:Thread\.sleep|delay)\('
+    regex_literal: '\bRegex\(\s*"((?:\\.|[^"\\]){8,})"|"((?:\\.|[^"\\]){8,})"\.toRegex\(\)'
+    bit_ops: '\b(?:shl|shr|ushr|xor)\b|\binv\(\)'
+    meta:
+      - '\.getDeclared(?:Method|Field)s?\('
+      - '\bClass\.forName\('
+      - '\breified\b'
+    commented_code: '^\s*(?:(?:val|var|fun|return|if|for|while|import|when|class)\b|[\w.]+\(.*\)$|[})\]]$)'
+
+  csharp:
+    extensions: [.cs]
+    comment: "//"
+    comment_also: ["*", "/*"]
+    block: indent
+    func_start: '^\s+(?:(?:public|private|protected|internal|static|virtual|override|abstract|async|sealed|extern|unsafe|new|partial)\s+)+(?!(?:class|struct|record|interface|enum|delegate|event|return)\b)[\w.<>\[\],?() ]+?\s+(\w+)\s*(?:<[^>]+>)?\s*\([^;]*$'
+    entry_points:
+      - '^\s*(?:public\s+)?static\s+(?:async\s+)?(?:void|int|Task(?:<int>)?)\s+Main\s*\('
+      - '^\s*\[(?:Http(?:Get|Post|Put|Delete|Patch)|Route|ApiController|Function|FunctionName)\b'
+      - '\bapp\.Map(?:Get|Post|Put|Delete|Patch|Group)\('
+    entry_paths: ['(^|/)Program\.cs$', '(^|/)Migrations?/']
+    imports:
+      - '^\s*(?:global\s+)?using\s+(?:static\s+)?(?:\w+\s*=\s*)?([\w.]+)\s*;'
+    def_patterns:
+      - '^\s*(?:(?:public|private|protected|internal|static|abstract|sealed|partial|readonly)\s+)*(?:class|interface|struct|enum|record)\s+(\w+)'
+    public: '^\s*public\s+(?:(?:static|abstract|sealed|partial|readonly)\s+)*(?:class|interface|struct|enum|record)\s+(\w+)'
+    branch: '\b(?:if|else if|for|foreach|while|case|catch)\b|&&|\|\||\?\?|\?\s'
+    skipped_test:
+      - '\[(?:Ignore|(?:Fact|Theory)\s*\(\s*Skip)\b'
+      - '\bAssert\.(?:Ignore|Inconclusive)\('
+    catch_all:
+      - '\bcatch\s*(?:\(\s*(?:System\.)?Exception(?:\s+\w+)?\s*\))?\s*\{?\s*$'
+    sleep: '\b(?:Thread\.Sleep|Task\.Delay)\('
+    regex_literal: '\bRegex(?:\.\w+)?\((?:[^"\n]*,\s*)?@?"((?:\\.|[^"\\]){8,})"'
+    bit_ops: '[\w)\]]\s*(?:<<|>>>)\s*[\w(]|\w\s+\^\s+\w|\w\s+&\s+0x'
+    meta:
+      - '\.GetMethod\('
+      - '\.GetProperty\('
+      - '\bActivator\.CreateInstance\('
+      - '\bExpression\.Lambda\b'
+    commented_code: '^\s*(?:(?:var|return|if|for|foreach|while|using|public|private|protected|try|throw)\b|[\w.<>\[\]]+\s+\w+\s*=[^=]|[\w.]+\(.*\);$|[})\]];?$)'
+
+  php:
+    extensions: [.php]
+    comment: "//"
+    comment_also: ["#", "*", "/*"]
+    block: indent
+    func_start: '^\s*(?:(?:public|private|protected|static|final|abstract)\s+)*function\s+&?(\w+)\s*\('
+    entry_points:
+      - '\bRoute::(?:get|post|put|patch|delete|any|match|resource|apiResource)\('
+      - '^\s*#\[Route\('
+      - '\$(?:app|router)->(?:get|post|put|patch|delete|map|group)\('
+    entry_paths: ['(^|/)public/index\.php$', '(^|/)migrations?/']
+    # `use Vendor\Name` names a class, not a file: only include and require paths resolve
+    imports:
+      - '\b(?:require|include)(?:_once)?\s*\(?\s*(?:__DIR__\s*\.\s*)?[''"]/?([^''"]+?)(?:\.php)?[''"]'
+    def_patterns:
+      - '^\s*(?:(?:abstract|final|readonly)\s+)*(?:class|interface|trait|enum)\s+(\w+)'
+    public: '^(?:(?:abstract|final|readonly)\s+)*(?:class|interface|trait|enum|function)\s+(\w+)'
+    branch: '\b(?:if|elseif|else if|for|foreach|while|case|catch)\b|&&|\|\||\?\?|\?\s'
+    skipped_test:
+      - '->markTest(?:Skipped|Incomplete)\('
+    catch_all:
+      - '\bcatch\s*\(\s*\\?(?:Exception|Throwable)\s+\$\w+\s*\)'
+    sleep: '\b(?:sleep|usleep)\(\s*[\d$]'
+    regex_literal: '\bpreg_\w+\(\s*[''"]((?:\\.|[^''"\\]){8,})[''"]'
+    bit_ops: '[\w)\]]\s*(?:<<|>>)\s*[\w($]|\w\s+\^\s+[\w$]'
+    meta:
+      - '\bfunction\s+__(?:call|callStatic|get|set|invoke)\b'
+      - '\bcall_user_func(?:_array)?\('
+      - '\beval\('
+      - '\bnew\s+Reflection\w+\('
+    commented_code: '^\s*(?:\$[\w\[\]''">-]+\s*=[^=]|(?:function|return|if|foreach|for|while|echo|use|class|require|include)\b|[\w$>:-]+\(.*\);$|[})\]];?$)'
+
+  swift:
+    extensions: [.swift]
+    comment: "//"
+    comment_also: ["*", "/*"]
+    block: indent
+    func_start: '^\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:(?:public|private|fileprivate|internal|open|static|class|final|override|mutating|nonisolated|required|convenience)\s+)*func\s+(\w+)\s*(?:<[^>]+>)?\s*\('
+    entry_points:
+      - '^\s*@(?:main|UIApplicationMain|NSApplicationMain)\b'
+      - '\b(?:app|routes|router)\.(?:get|post|put|patch|delete|on)\('
+      - '^\s*(?:static\s+)?func\s+main\s*\('
+    entry_paths: ['(^|/)main\.swift$', '(^|/)Migrations?/']
+    # an import names a module, not a file: it resolves only when a file has that name
+    imports:
+      - '^\s*(?:@testable\s+)?import\s+(?:(?:class|struct|enum|protocol|func)\s+)?([\w.]+)'
+    def_patterns:
+      - '^\s*(?:(?:public|private|fileprivate|internal|open|final|indirect)\s+)*(?:class|struct|enum|protocol|extension|actor)\s+(\w+)'
+    public: '^(?:public|open)\s+(?:(?:final|static)\s+)*(?:class|struct|enum|protocol|actor|func|let|var)\s+(\w+)'
+    branch: '\b(?:if|else if|guard|for|while|case|catch)\b|&&|\|\||\?\?'
+    skipped_test:
+      - '\bXCTSkip(?:If|Unless)?\('
+      - '\.disabled\('
+    catch_all:
+      - '\bcatch\s*\{'
+    sleep: '(?<![\w.])(?:sleep|usleep)\(|\b(?:Thread|Task)\.sleep\('
+    regex_literal: '\b(?:NSRegularExpression\(\s*pattern:|Regex\()\s*#?"((?:\\.|[^"\\]){8,})"'
+    bit_ops: '[\w)\]]\s*(?:<<|>>)\s*[\w(]|\w\s+\^\s+\w|\w\s+&\s+0x'
+    meta:
+      - '\bMirror\(reflecting:'
+      - '\bunsafeBitCast\('
+      - '@dynamicMemberLookup\b'
+      - '\bNSClassFromString\('
+    commented_code: '^\s*(?:(?:let|var|func|return|if|guard|for|while|import|class|struct)\b|[\w.]+\(.*\)$|[})\]]$)'

@@ -8,12 +8,9 @@ import math
 import threading
 from collections.abc import Callable
 from contextlib import closing
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from functools import cache
 from typing import Any
-
-import yaml
 
 from gittok import config, db, knowledge, requests
 
@@ -41,93 +38,44 @@ class RewardConfigError(ValueError):
 
 
 _REWARD_FIELDS = tuple(RewardConfig.__dataclass_fields__)
-_CLOSED_MAPS = ("weights", "importance")  # a key the shipped file does not have is a typo
-_MAP_FIELDS = tuple(n for n, f in RewardConfig.__dataclass_fields__.items() if f.type == "dict")
 
 
-def _read_reward(path) -> tuple[dict, tuple[str, ...]]:
-    """The keys of one reward file that this code knows, and one warning for each other key.
+def _reward_files(shared, home) -> tuple[RewardConfig, tuple[str, ...]]:
+    """(reward config, warnings) from config/reward.yaml with local/reward.yaml merged over
+    it (overlay.py). An unknown key is dropped with a warning, for the reason
+    `config._drop_unknown` gives; a known key with a value of the wrong shape is an error."""
+    from gittok import overlay
 
-    An unknown key is not an error, for the reason `config._drop_unknown` gives: a process
-    that started before an upgrade must still load a newer file. `gittok health` prints
-    the warnings. A known key with a value of the wrong shape is still an error."""
-    data = yaml.safe_load(path.read_text()) or {}
-    if not isinstance(data, dict):
-        raise RewardConfigError(f"{path} must be a mapping")
-    known = _known_subkeys(path)
-    out: dict[str, Any] = {}
-    unknown: list[str] = []
-    for key, value in data.items():
-        if key not in _REWARD_FIELDS:
-            unknown.append(str(key))
-            continue
-        if key in _MAP_FIELDS and not isinstance(value, dict):
-            raise RewardConfigError(f"'{key}' must be a mapping in {path}")
-        if key in known:
-            unknown += [f"{key}.{sub}" for sub in value if sub not in known[key]]
-            value = {k: v for k, v in value.items() if k in known[key]}
-        out[key] = value
-    where = "/".join(path.parts[-2:])
-    return out, tuple(f"unknown reward key '{k}' in {where} (ignored)" for k in unknown)
+    try:
+        ld = overlay.load("reward", shared, home)
+    except config.ConfigError as e:
+        raise RewardConfigError(str(e)) from None
+
+    def build(data: dict) -> RewardConfig:
+        missing = [k for k in _REWARD_FIELDS if k not in data]
+        if missing:
+            raise RewardConfigError(f"config/reward.yaml is missing: {', '.join(missing)}")
+        return RewardConfig(**{k: data[k] for k in _REWARD_FIELDS})
+
+    return ld.memo("reward_config", build), ld.warnings
 
 
-def _known_subkeys(path) -> dict[str, set]:
-    """The keys of each closed map, from the shipped file (nothing when `path` is that file)."""
-    shipped = config.shipped_root() / "config" / "reward.yaml"
-    if path == shipped:
-        return {}
-    base = default_reward_config()
-    return {name: set(getattr(base, name)) for name in _CLOSED_MAPS}
-
-
-@cache
 def default_reward_config() -> RewardConfig:
     """The shipped config/reward.yaml. It must set every field."""
-    path = config.shipped_root() / "config" / "reward.yaml"
-    data, _ = _read_reward(path)
-    missing = [k for k in _REWARD_FIELDS if k not in data]
-    if missing:
-        raise RewardConfigError(f"{path} is missing: {', '.join(missing)}")
-    return RewardConfig(**data)
-
-
-# reward.yaml path -> ((mtime_ns, size), parsed config, warnings): a feed request does not
-# parse it again.
-_reward_cache: dict[str, tuple[tuple[int, int], RewardConfig, tuple[str, ...]]] = {}
-
-
-def _load_reward(shared) -> tuple[RewardConfig, tuple[str, ...]]:
-    base = default_reward_config()
-    path = shared / "config" / "reward.yaml"
-    try:
-        st = path.stat()
-    except OSError:
-        return base, ()
-    stamp = (st.st_mtime_ns, st.st_size)
-    hit = _reward_cache.get(str(path))
-    if hit is not None and hit[0] == stamp:
-        return hit[1], hit[2]
-    data, warnings = _read_reward(path)
-    merged = {
-        key: {**getattr(base, key), **value} if key in _MAP_FIELDS else value
-        for key, value in data.items()
-    }
-    rc = replace(base, **merged)
-    _reward_cache[str(path)] = (stamp, rc, warnings)
-    return rc, warnings
+    return _reward_files(None, None)[0]
 
 
 def load_reward_config(cfg) -> RewardConfig:
-    """The project's config/reward.yaml merged over the shipped one, key by key.
+    """config/reward.yaml with the user's local/reward.yaml merged over it, key by key.
 
-    A missing file means the shipped values; an unknown key is dropped (`reward_warnings`).
-    The parsed file is cached until its mtime or size changes."""
-    return _load_reward(getattr(cfg, "shared", None) or cfg.root)[0]
+    A missing local file means the shipped values; an unknown key is dropped
+    (`reward_warnings`). The parsed files are cached until one of them changes."""
+    return _reward_files(getattr(cfg, "shared", None) or cfg.root, cfg.root)[0]
 
 
-def reward_warnings(shared) -> tuple[str, ...]:
-    """One warning for each key of `<shared>/config/reward.yaml` that was ignored."""
-    return _load_reward(shared)[1]
+def reward_warnings(shared, home=None) -> tuple[str, ...]:
+    """One warning for each reward key that was ignored."""
+    return _reward_files(shared, home)[1]
 
 
 _SKIP_TEXT_KEYS = {"kind", "repo", "path", "commit", "template", "chart", "style", "dir", "mermaid"}

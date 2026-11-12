@@ -1,4 +1,7 @@
-data_dir: data                 # relative to the project root, or absolute / ~
+# The shipped settings. Do not edit: write the keys you change to local/settings.yaml of your
+# GitTok directory (docs/config.md). Nothing here is about one computer: hosts are loopback,
+# and paths are inside the GitTok directory or under ~/.cache.
+data_dir: data                 # relative to the GitTok directory, or absolute / ~
 server:
   host: 127.0.0.1
   port: 8008

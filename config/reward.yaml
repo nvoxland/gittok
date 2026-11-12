@@ -1,4 +1,5 @@
 # Reward and ranking knobs (docs/learning.md). Expected to be tuned with real use.
+# To change one, write only that key to local/reward.yaml (docs/config.md).
 skip_ms: 1000
 weights:
   dwell: 0.45                  # x watch fraction: beat cards by time played, static by dwell/expected

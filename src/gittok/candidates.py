@@ -24,7 +24,6 @@ import math
 import posixpath
 import re
 from dataclasses import dataclass, field
-from functools import cache
 
 from . import config, db, detectors, gitq, secrets, structure
 from .config import AnalysisSettings
@@ -147,25 +146,39 @@ def _compile(name: str, raw: dict, base: dict, shared: dict | None = None) -> La
     )
 
 
-@cache
 def _default_languages() -> dict:
-    try:
-        return config.load_languages()
-    except config.ConfigError:
-        return config.load_languages(config.shipped_root())
+    """languages.yaml of the active GitTok directory (shipped, with its local file merged)."""
+    return config.load_languages()
 
 
 def compiled_languages() -> dict[str, Lang]:
-    """The configured languages as compiled `Lang` objects (cached)."""
-    return _compiled_languages()
+    """The configured languages as compiled `Lang` objects (kept until a file changes)."""
+    from . import overlay
+
+    def build(spec: dict, queries: dict) -> dict[str, Lang]:
+        base = spec.get("thresholds") or {}
+        shared = spec.get("shared") or {}
+        return {
+            n: _compile(n, {**_structure_imports(queries, n), **raw}, base, shared)
+            for n, raw in (spec.get("languages") or {}).items()
+        }
+
+    return overlay.derived(("languages", "queries"), "compiled", build)
 
 
-@cache
-def _compiled_languages() -> dict[str, Lang]:
-    spec = _default_languages()
-    base = spec.get("thresholds") or {}
-    shared = spec.get("shared")
-    return {n: _compile(n, raw, base, shared) for n, raw in (spec.get("languages") or {}).items()}
+def _structure_imports(queries: dict, name: str) -> dict:
+    """How imports of the language `name` resolve when it is known to the structure layer
+    (queries/languages.yaml). A languages.yaml entry that sets `import_style` keeps its own."""
+    raw = (queries.get("languages") or {}).get(name)
+    if raw is None:
+        return {}
+    generic = queries.get("generic") or {}
+    return {
+        "import_style": "module",
+        "import_unit": raw.get("import_unit", "file"),
+        "import_split": raw.get("import_split") or generic.get("import_split"),
+        "import_skip_heads": raw.get("drop_segments") or (),
+    }
 
 
 def text_lang(base: dict | None = None) -> Lang:
@@ -234,10 +247,7 @@ def _structure_lang(name: str, base: dict, grammar: str | None = None) -> Lang:
         {
             "extensions": structure.extensions(name),
             "comment": raw.get("comment") or generic.get("comment"),
-            "import_style": "module",
-            "import_unit": raw.get("import_unit", "file"),
-            "import_split": raw.get("import_split") or generic.get("import_split"),
-            "import_skip_heads": raw.get("drop_segments") or (),
+            **_structure_imports(structure.spec(), name),
         },
         base,
     )
@@ -605,10 +615,15 @@ def _header_end(lines: list[str], i: int) -> int:
 
 
 def _indent_end(lines: list[str], start: int, hdr: int) -> int:
+    """The last line of the block that starts at `start` (its header ends at `hdr`): the lines
+    indented deeper, and a closing bracket at the header's own indent. An opening brace alone
+    on the line after the header (the brace-on-its-own-line style) belongs to the block."""
     ind = _indent(lines[start])
     end = hdr
     for j in range(hdr + 1, len(lines)):
         if not lines[j].strip():
+            continue
+        if end == hdr and lines[j].strip() == "{" and _indent(lines[j]) == ind:
             continue
         if _indent(lines[j]) <= ind:
             if lines[j].lstrip().startswith(CLOSERS):
@@ -1091,12 +1106,15 @@ def mine(
     The profile's file set (scan, ignore, kinds) decides which files are read; with no profile
     the bootstrap file set applies. `profile` also adds its detector hits, and these may land in
     files of the `text` language, which the built-in miners skip."""
-    spec = languages or _default_languages()
-    base = spec.get("thresholds") or {}
-    shared = spec.get("shared")
-    langs = {
-        n: _compile(n, raw, base, shared) for n, raw in (spec.get("languages") or {}).items()
-    }
+    if languages is None:
+        langs = compiled_languages()
+    else:
+        base = languages.get("thresholds") or {}
+        shared = languages.get("shared")
+        langs = {
+            n: _compile(n, {**_structure_imports(structure.spec(), n), **raw}, base, shared)
+            for n, raw in (languages.get("languages") or {}).items()
+        }
     queries = profile.queries if profile is not None else None
     all_files = _read_files(path, ref, settings, langs, fileset_for(profile), queries)
     files = [sf for sf in all_files if sf.lang.name != "text"]

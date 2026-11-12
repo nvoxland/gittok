@@ -11,10 +11,9 @@ import re
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
-from functools import cache
 from typing import Any
 
-from gittok import config, knowledge, quizfacts, validator
+from gittok import knowledge, overlay, quizfacts, validator
 from gittok.profiles import FileSet, fileset_for
 
 _DRAMA = (
@@ -104,6 +103,13 @@ CATEGORY_FORMATS_FLAT = tuple(dict.fromkeys(f for fs in CATEGORY_FORMATS.values(
 # A comic has 2 or 3 panels (one illustration each); the brief reserves the worst case, 3.
 ILLUSTRATION_COST = {"mascot_scene": 1, "comic": 3}
 
+# Formats that draw a mascot. A repo with no mascot gets none of them (`no_mascot_repos`).
+MASCOT_FORMATS = frozenset(
+    f
+    for f, k in validator.FORMAT_KIND.items()
+    if {"illustration", "comic"} & set((k,) if isinstance(k, str) else k)
+)
+
 # Formats that draw an image (meme, illustration, comic, chart, diagram); the image share
 # target (defaults visual_mix.image_min_share) counts these.
 IMAGE_KINDS = frozenset({"meme", "illustration", "comic", "chart", "diagram"})
@@ -189,13 +195,16 @@ def test_or_doc(path: str, files: FileSet | None = None) -> bool:
     return fs.is_test(path) or fs.matches(path, "docs")
 
 
-@cache
 def _comment_todo() -> re.Pattern:
     """A TODO-like word right after a comment start (data: `todo_comment` in file_types.yaml)."""
-    spec = config.file_types().get("todo_comment") or {}
-    starts = "|".join(re.escape(p) for p in spec.get("prefixes") or ())
-    words = "|".join(re.escape(w) for w in spec.get("words") or ())
-    return re.compile(rf"({starts})\s*({words})\b")
+
+    def build(types: dict) -> re.Pattern:
+        spec = types.get("todo_comment") or {}
+        starts = "|".join(re.escape(p) for p in spec.get("prefixes") or ())
+        words = "|".join(re.escape(w) for w in spec.get("words") or ())
+        return re.compile(rf"({starts})\s*({words})\b")
+
+    return overlay.derived("file_types", "todo_comment", build)
 
 
 ANCIENT_DAYS = 90
@@ -571,9 +580,10 @@ def _identifiers(subject: str) -> set[str]:
     return set(_ROUTE.findall(subject)) | {k for k in _ENV_KEY.findall(subject) if len(k) >= 6}
 
 
-@cache
 def _noise_basenames() -> frozenset[str]:
-    return frozenset(config.file_types().get("noise_basenames") or ())
+    return overlay.derived(
+        "file_types", "noise_basenames", lambda t: frozenset(t.get("noise_basenames") or ())
+    )
 
 
 def _contract_file(path: str) -> bool:
@@ -762,6 +772,7 @@ class Brief:
     rules: list = field(default_factory=list)
     focus: list = field(default_factory=list)  # (repo or None, dir or None, slots)
     unavailable: list = field(default_factory=list)
+    no_mascot: list = field(default_factory=list)  # repos that get no mascot format
     intro: list = field(default_factory=list)  # (repo, dir, cards) reserved for unseen dirs
 
     def to_dict(self) -> dict:
@@ -794,6 +805,13 @@ class Brief:
             out += [
                 "",
                 f"Skipping {', '.join(self.unavailable)}: renderer not available.",
+            ]
+        if self.no_mascot:
+            one = len(self.no_mascot) == 1
+            out += [
+                "",
+                f"{', '.join(self.no_mascot)} {'has' if one else 'have'} no mascot: no "
+                f"{', '.join(sorted(MASCOT_FORMATS))} cards for {'it' if one else 'them'}.",
             ]
         if self.rules:
             out += ["", "Rules:"]
@@ -1065,6 +1083,7 @@ def build_brief(
     evidence: int | None = None,
     rules=None,
     unavailable_formats=frozenset(),
+    no_mascot_repos=frozenset(),
     groups: dict[str, list[str]] | None = None,
     format_weights: dict[str, float] | None = None,
     ledger: dict[tuple[str, str], list[Lead]] | None = None,
@@ -1093,6 +1112,9 @@ def build_brief(
     ceil(count x intro_share) cards for leads from the dirs the reader knows least (novelty at
     least INTRO_MIN_NOVELTY). Those leads are flagged `intro` and go first in their packet.
 
+    `no_mascot_repos` names the repos that have no mascot. A card of such a repo is never
+    given a format that draws one (`MASCOT_FORMATS`).
+
     `min_spot_the_bug` (a share of `count`) reserves that many spot_the_bug slots before the
     category quotas are used, when some repo has a lead for it. The quota of the interactive
     category grows to hold them.
@@ -1109,6 +1131,7 @@ def build_brief(
         evidence=evidence,
         rules=rules,
         unavailable_formats=unavailable_formats,
+        no_mascot_repos=frozenset(no_mascot_repos or ()),
         groups=groups,
         format_weights=format_weights,
         ledger=ledger,
@@ -1142,6 +1165,7 @@ class _BriefBuilder:
     evidence: int | None
     rules: Any
     unavailable_formats: Any
+    no_mascot_repos: frozenset
     groups: dict[str, list[str]] | None
     format_weights: dict[str, float] | None
     ledger: dict[tuple[str, str], list[Lead]] | None
@@ -1191,6 +1215,11 @@ class _BriefBuilder:
             rules=self.rules,
             focus=self.focus,
             unavailable=[f for f in CATEGORY_FORMATS_FLAT if f in set(self.unavailable_formats)],
+            no_mascot=sorted(
+                r
+                for r in self.repo_signals
+                if r in self.no_mascot_repos and not MASCOT_FORMATS <= self.gone_formats
+            ),
             intro=_intro_summary(self.intro_at, self.slots),
         )
 
@@ -1299,10 +1328,11 @@ class _BriefBuilder:
         self.ban_dirs = [r["value"] for r in rules if r["type"] == "ban" and r["feature"] == "dir"]
         self.all_repos = list(self.repo_signals)
 
-    def allowed_for(self, story, category, used, spent, fallback=()):
+    def allowed_for(self, story, category, used, spent, fallback=(), repo=None):
         """Formats a card of this story type may use, best first; never empty.
 
-        Banned and unavailable formats are dropped; formats at their cap or past the
+        Banned and unavailable formats are dropped, and the mascot formats too when `repo`
+        has no mascot; formats at their cap or past the
         illustration budget drop too while others remain. Order: formats of the slot's
         category first, then least used (divided by rule boost x learned weight), then least
         used in recent cards, then list order. With nothing left, the best format of
@@ -1310,7 +1340,9 @@ class _BriefBuilder:
         """
         fmt_boost, fmt_caps, weights = self.fmt_boost, self.fmt_caps, self.weights
         max_illustrations, recent_fmt = self.max_illustrations, self.recent_fmt
-        pool = [f for f in STORY_FORMATS.get(story, ()) if f not in self.gone_formats]
+        gone = self.gone_formats | (MASCOT_FORMATS if repo in self.no_mascot_repos else set())
+        pool = [f for f in STORY_FORMATS.get(story, ()) if f not in gone]
+        fallback = [f for f in fallback if f not in gone] or list(fallback)
         if not pool:
             return [_pick_format(fallback, used, spent, max_illustrations, fmt_boost, fmt_caps,
                                  recent_fmt, weights)]  # fmt: skip
@@ -1496,13 +1528,13 @@ class _BriefBuilder:
                 ),
             )
             combos.remove((g, t))
-            allowed = self.allowed_for(t, category, used, self.spent, cross_fmts)
+            lead_repo = cross_groups[g][0]
+            allowed = self.allowed_for(t, category, used, self.spent, cross_fmts, lead_repo)
             fmt = allowed[0]
             self.slot_allowed.append(allowed)
             used[fmt] = used.get(fmt, 0) + 1
             self.spent += ILLUSTRATION_COST.get(fmt, 0)
             story_used[t] = story_used.get(t, 0) + 1
-            lead_repo = cross_groups[g][0]
             self.repo_total[lead_repo] = self.repo_total.get(lead_repo, 0) + 1
             self.slots.append((lead_repo, category, t, fmt, g))
         return cross_n
@@ -1558,7 +1590,7 @@ class _BriefBuilder:
                 )
                 story_used[story] = story_used.get(story, 0) + 1
                 allowed = self.allowed_for(
-                    story, category, used, self.spent, self.formats_in[category]
+                    story, category, used, self.spent, self.formats_in[category], repo
                 )
                 fmt = allowed[0]
                 used[fmt] = used.get(fmt, 0) + 1
@@ -1590,13 +1622,18 @@ class _BriefBuilder:
                     continue
                 room = self.spent - ILLUSTRATION_COST.get(fmt, 0)
                 # Formats that suit the variant's story first, then any of the category's.
+                no_mascot = MASCOT_FORMATS if repo in self.no_mascot_repos else ()
                 options = [
                     f
                     for f in self.allowed_for(
-                        v["story_type"], category, used, room, formats_in[category]
+                        v["story_type"], category, used, room, formats_in[category], repo
                     )
                     if f not in v["formats_used"]
-                ] or [f for f in formats_in[category] if f not in v["formats_used"]]
+                ] or [
+                    f
+                    for f in formats_in[category]
+                    if f not in v["formats_used"] and f not in no_mascot
+                ]
                 if not options:
                     continue
                 new = _pick_format(
@@ -1890,5 +1927,5 @@ def guidance_markdown(
         for m in (mascots or {}).values()
     )
     body = "\n\n".join(chosen).replace("{meme_templates}", tpl or "(none configured)")
-    body = body.replace("{mascots}", masc or "(none configured)")
+    body = body.replace("{mascots}", masc or "(none: leave `mascots` out)")
     return out.rstrip() + "\n\n## Format sections\n\n" + body + "\n"

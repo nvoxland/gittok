@@ -284,11 +284,21 @@ def test_illustration_default_mascot_falls_back_to_repo_field(fixture_repo):
     assert accepted[0].card["visual"]["mascots"] == ["crow"]
 
 
-def test_illustration_without_any_default_mascot_rejected(fixture_repo, repos):
-    mascots = {"crow": MASCOTS["crow"]}
-    assert reasons(check2([C.illustration_card(fixture_repo)], repos, mascots=mascots)[1]) == [
-        "unknown_mascot"
-    ]
+def test_illustration_for_a_repo_with_no_mascot_is_accepted_without_one(fixture_repo, repos):
+    """A missing mascot never rejects a card: the image is drawn with no mascot style."""
+    for mascots in ({"crow": MASCOTS["crow"]}, {}):  # none for this repo; none at all
+        accepted, rejected = check2([C.illustration_card(fixture_repo)], repos, mascots=mascots)
+        assert rejected == []
+        assert accepted[0].card["visual"]["mascots"] == []
+        accepted, rejected = check2([C.comic_card(fixture_repo)], repos, mascots=mascots)
+        assert rejected == [] and accepted[0].card["visual"]["mascots"] == []
+
+
+def test_a_named_mascot_that_does_not_exist_says_to_leave_the_field_out(fixture_repo, repos):
+    v = {"kind": "illustration", "prompt": "p", "caption": "c", "mascots": ["walrus"]}
+    _, rejected = check2([C.illustration_card(fixture_repo, visual=v)], repos, mascots={})
+    assert reasons(rejected) == ["unknown_mascot"]
+    assert "leave `mascots` out" in rejected[0].detail
 
 
 def test_unknown_mascot_rejected(fixture_repo, repos):

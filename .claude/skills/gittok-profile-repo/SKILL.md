@@ -17,7 +17,7 @@ Requires the `gittok` MCP server (tools named `mcp__gittok__*`). If those tools 
 
 ## Tools
 
-`list_repos`, `survey_repo(repo)`, `list_dir(repo, path)`, `read_file(repo, path)`, `git_grep(repo, pattern)`, `test_detector(repo, rule, scan?, ignore?)`, `save_profile(repo, profile)`, `rule_stats(repo)`, `submit_facts(repo, head_sha, tool, facts)`. Do not call any other config tool (`add_repo`, `remove_repo`, `set_lan`, `pairing_link`, `add_rule`, `set_group`, `set_mascot`, `edit_persona`, `reset_defaults`). Never edit `local/repos.yaml`.
+`list_repos`, `survey_repo(repo)`, `list_dir(repo, path)`, `read_file(repo, path)`, `git_grep(repo, pattern)`, `test_detector(repo, rule, scan?, ignore?)`, `save_profile(repo, profile)`, `rule_stats(repo)`, `submit_facts(repo, head_sha, tool, facts)`. Do not call any other config tool (`add_repo`, `remove_repo`, `set_lan`, `pairing_link`, `add_rule`, `set_group`, `set_mascot`, `edit_persona`, `reset_defaults`). Never edit a file in `local/` or `config/` by hand (no file tools on them, no shell): the one thing you write is this repo's profile, and only through `save_profile`.
 
 ## What the profile holds
 
@@ -33,6 +33,13 @@ The profile owns the file set. A key you write REPLACES the bootstrap default (`
 - `notes` (optional): free-text lines for the next agent, such as the analyzer command (step 2b).
 - `sinks`, `conventions`, `nil_guards`, `nil_markers` (optional): data for the convention miner (step 6b).
 - `detectors`: rules with `id`, `tag`, `match` (`regex` or `ast_grep`, `paths`, optional `exclude`), `weight` (0.1 to 3), optional `verdict_hint` (good, bad, clever, cursed, core), `window` (lines, 1 to 40), and `why`.
+
+## One repo or all repos
+
+A profile is for ONE repo. `local/` holds the user's settings for ALL repos of this GitTok directory (`config_files` lists those files). Know which is which:
+
+- It belongs in the profile, and you write it with `save_profile`: this repo's file set (`scan`, `ignore`, `kinds`, `generated_markers`), its `roles`, its detectors, its conventions, and a tags query for a language of this repo (`queries`, step 5b). A macro or a naming rule of this project is a detector here, never a shipped pattern.
+- It belongs in `local/`, and you do not edit it: a thing every repo of the user needs. Examples: a language that GitTok should know in all repos (`local/languages.yaml` for regex patterns, `local/queries/` for a tags query), a file type for all repos (`local/scan_defaults.yaml`, `local/file_types.yaml`), a secret pattern (`local/secrets.yaml`). Do the profile with a `queries` entry and a `scan` entry so that this repo works now. Then tell the user in one line of the report what would help all repos, and that they can ask for it ("support Kotlin in all my repos"): the gittok-steer skill makes that change, on their request.
 
 ## Steps
 
@@ -50,7 +57,7 @@ The profile owns the file set. A key you write REPLACES the bootstrap default (`
 4. Write `roles` for the main dirs. One line each, plain words.
 5. Decide `scan` from the extension counts and the stack. Include the code extensions and the non-code files that teach: SQL migrations, GraphQL or proto schemas, EDN or YAML config that the code reads, workflow files. Skip binary and prose-only files.
    Decide `ignore` and `kinds` from what THIS project builds or generates. Check the manifests' build config, `.gitattributes`, generated markers, and committed build output (`list_dir`, `read_file`, `git_grep`). Confirm each survey hint by looking; a hint is a guess. Put tests, fixtures, recorded HTTP and snapshots in `kinds`; put generated code and vendored code in `kinds` too; put build output and lockfiles in `ignore`.
-   5b. Read `survey_repo(...)["structure"]`. It lists the file types that have a grammar but no shipped query (`uncovered`, with the grammar name). The shipped queries cover python, typescript/javascript/svelte, clojure, go, ruby, java and rust. If a language that matters in this repo is listed there, and it has no regex patterns either, write a minimal tags query for it and put it in `queries` under the grammar name. Keep it to these captures: `@definition.function` (or `.class`, `.method`) on the whole definition with `@name` on its name, `@comment` on comment nodes, and `@import` with `@import.path` on the module string. Start with the function and comment lines only. `save_profile` tests it: it must compile, read at least one file, and find something. Fix the query from the error text. If `structure.installed` is false, skip this step and tell the user the GitTok install is broken (tree-sitter is a normal dependency): reinstall it, or run `uv sync` in a clone.
+   5b. Read `survey_repo(...)["structure"]`. It lists the file types that have a grammar but no shipped query (`uncovered`, with the grammar name). The shipped queries cover python, typescript/javascript/svelte, clojure, go, ruby, java and rust (the user's `local/queries/` may add more). Kotlin, C#, PHP and Swift have regex patterns only: they still get functions, entry points and smells, and a query gives them exact definitions, parameters and imports. If a language that matters in this repo is listed there, write a minimal tags query for it and put it in `queries` under the grammar name. Keep it to these captures: `@definition.function` (or `.class`, `.method`) on the whole definition with `@name` on its name, `@comment` on comment nodes, and `@import` with `@import.path` on the module string. Start with the function and comment lines only. `save_profile` tests it: it must compile, read at least one file, and find something. Fix the query from the error text. If `structure.installed` is false, skip this step and tell the user the GitTok install is broken (tree-sitter is a normal dependency): reinstall it, or run `uv sync` in a clone.
 6. Write 8 to 20 detectors. Cover these:
    - Entry points of this stack: route tables, endpoint macros or decorators, handlers, jobs, CLI commands.
    - The data model: schemas, models, migrations.

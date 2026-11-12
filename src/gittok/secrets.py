@@ -1,4 +1,5 @@
-"""Deterministic secret detector. The patterns are data in config/secrets.yaml.
+"""Deterministic secret detector. The patterns are data in config/secrets.yaml; the user's
+local/secrets.yaml adds to them (docs/config.md).
 
 `find(text)` lists the secrets in `text`; `redact(text)` replaces each with
 `<redacted: N chars>` and keeps the line count, so line numbers stay valid.
@@ -10,9 +11,6 @@ import math
 import re
 from collections import Counter
 from dataclasses import dataclass
-from functools import lru_cache
-
-import yaml
 
 _FLAGS = {"i": re.I, "s": re.S, "m": re.M}
 
@@ -45,12 +43,7 @@ def entropy(s: str) -> float:
     return -sum(c / n * math.log2(c / n) for c in Counter(s).values())
 
 
-@lru_cache(maxsize=1)
-def _spec() -> tuple[tuple[_Pattern, ...], re.Pattern]:
-    from . import config
-
-    file = config.shipped_root() / "config" / "secrets.yaml"
-    data = yaml.safe_load(file.read_text()) or {}
+def _build(data: dict) -> tuple[tuple[_Pattern, ...], re.Pattern]:
     pats = []
     for p in data["patterns"]:
         flags = 0
@@ -66,6 +59,15 @@ def _spec() -> tuple[tuple[_Pattern, ...], re.Pattern]:
             )
         )
     return tuple(pats), re.compile(data.get("keep_prefix") or r"(?!)")
+
+
+def _spec() -> tuple[tuple[_Pattern, ...], re.Pattern]:
+    """The compiled patterns: config/secrets.yaml with the user's local/secrets.yaml merged
+    over it. They are compiled again when a file changes. A broken local file leaves the
+    shipped patterns in use (`load_config` reports the error)."""
+    from . import overlay
+
+    return overlay.derived("secrets", "compiled", _build)
 
 
 def find(text: str) -> list[Finding]:

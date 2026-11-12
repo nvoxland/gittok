@@ -6,7 +6,7 @@ from gittok.config import ConfigError, load_config, resolve_roots
 
 
 def write(root: Path, name: str, text: str) -> None:
-    p = root / ("local" if name == "repos.yaml" else "config") / name
+    p = root / ("local" if name in ("repos.yaml", "mascots.yaml") else "config") / name
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(text)
 
@@ -94,7 +94,7 @@ def test_shipped_settings_have_no_unknown_keys(tmp_path):
 def test_unknown_key_in_persona(tmp_path):
     write(tmp_path, "repos.yaml", "repos:\n  a:\n    path: /x\n")
     write(tmp_path, "personas.yaml", "personas:\n  p:\n    name: P\n    voice: v\n    x: 1\n")
-    with pytest.raises(ConfigError, match="'x'.*personas.yaml"):
+    with pytest.raises(ConfigError, match="personas.p.x'.*personas.yaml"):
         load_config(tmp_path)
 
 
@@ -126,8 +126,9 @@ def test_settings_defaults_when_absent(tmp_path):
     assert s.analysis.churn_windows_days == (30, 90, 365)
     assert s.analysis.history_window_days == 720
     assert s.research.max_read_lines == 300
-    assert cfg.defaults == {}
-    assert cfg.personas == {}
+    # A file the root does not have is the shipped one.
+    assert cfg.defaults["prior_strength"] == 10
+    assert "greybeard" in cfg.personas
 
 
 def test_partial_settings_merge_with_defaults(tmp_path):
@@ -180,10 +181,21 @@ def test_shipped_config_loads_without_user_files(tmp_path):
     assert cfg.personas["greybeard"].name == "Greybeard"
 
 
-def test_shipped_config_has_mascots_meme_templates_and_render_settings(tmp_path):
+def test_no_mascot_is_shipped(tmp_path):
+    """A mascot belongs to the user's own repo: it lives in local/mascots.yaml only."""
+    shipped = Path(__file__).parents[1]
+    assert not (shipped / "config" / "mascots.yaml").exists()
+    assert load_config(tmp_path, shared=shipped).mascots == {}
+
+
+def test_a_shipped_style_mascots_file_is_not_read(tmp_path):
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "mascots.yaml").write_text("mascots:\n  m: {style: s, seed: 1}\n")
+    assert load_config(tmp_path).mascots == {}
+
+
+def test_shipped_config_has_meme_templates_and_render_settings(tmp_path):
     cfg = load_config(tmp_path, shared=Path(__file__).parents[1])
-    assert cfg.mascots["crow"].seed == 1717
-    assert "a small round black crow" in cfg.mascots["crow"].style
     assert cfg.meme_templates["drake"].lines == 2
     assert cfg.settings.render.max_illustrations_per_run == 6
     assert cfg.settings.render.memegen_url.startswith("http://127.0.0.1")
@@ -206,10 +218,9 @@ def test_mascot_with_unknown_key_is_an_error(tmp_path):
 
     from gittok.config import ConfigError, load_config
 
-    (tmp_path / "config").mkdir()
     (tmp_path / "local").mkdir()
     (tmp_path / "local" / "repos.yaml").write_text("repos: {r: {path: /tmp/r}}\n")
-    (tmp_path / "config" / "mascots.yaml").write_text(
+    (tmp_path / "local" / "mascots.yaml").write_text(
         "mascots: {crow: {repo: r, style: s, seed: 1, color: red}}\n"
     )
     with pytest.raises(ConfigError, match="color"):
@@ -317,11 +328,11 @@ def test_local_personas_merge_field_by_field(tmp_path):
     assert got["b"].voice == "w" and got["c"].name == "C"
 
 
-def test_local_mascots_merge_over_config(tmp_path):
-    write(tmp_path, "mascots.yaml", "mascots:\n  m: {style: s, seed: 1}\n")
-    wl(tmp_path, "mascots.yaml", "mascots:\n  m: {seed: 5}\n  n: {style: t}\n")
+def test_mascots_come_from_the_local_file(tmp_path):
+    wl(tmp_path, "mascots.yaml", "mascots:\n  m: {style: s, seed: 5, repo: a}\n  n: {style: t}\n")
     got = load_config(tmp_path).mascots
-    assert got["m"].style == "s" and got["m"].seed == 5 and got["n"].style == "t"
+    assert (got["m"].style, got["m"].seed, got["m"].repo) == ("s", 5, "a")
+    assert got["n"].style == "t" and got["n"].seed == 0
 
 
 def test_server_lan_defaults_on_and_loads_from_the_overlay(tmp_path):

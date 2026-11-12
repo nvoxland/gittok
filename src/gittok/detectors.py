@@ -49,19 +49,21 @@ def _ast_language_ok(language: str) -> bool:
     return True
 
 
-@cache
 def ast_grep_languages() -> tuple[str, ...]:
     """Languages that ast-grep accepts, probed at run time. The names to try come from the
     structure layer's grammars and `ast_grep_probe` in file_types.yaml. Empty without
     ast-grep-py."""
     if not ast_grep_available():
         return ()
-    from . import config, structure
+    from . import overlay
 
-    names = {g for _, g in structure._by_ext().values()} | set(structure.spec()["languages"])
-    names |= set(config.file_types().get("ast_grep_probe") or ())
-    probe = sorted(names)
-    return tuple(x for x in probe if _ast_language_ok(x))
+    def build(queries: dict, types: dict) -> tuple[str, ...]:
+        langs = queries.get("languages") or {}
+        names = {g for raw in langs.values() for g in (raw.get("extensions") or {}).values()}
+        names |= set(langs) | set(types.get("ast_grep_probe") or ())
+        return tuple(x for x in sorted(names) if _ast_language_ok(x))
+
+    return overlay.derived(("queries", "file_types"), "ast_grep_languages", build)
 
 
 def _clip(text: str, n: int = 70) -> str:

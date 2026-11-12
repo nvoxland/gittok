@@ -11,10 +11,6 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from functools import cache
-from pathlib import Path
-
-import yaml
 
 from . import facts
 
@@ -48,15 +44,11 @@ def _strong(source: str | None) -> bool:
     return rank(source) <= 1  # analyzer or schema
 
 
-@cache
 def _claims() -> dict:
-    from . import config
+    """config/claims.yaml with the user's local/claims.yaml merged over it."""
+    from . import overlay
 
-    for root in (Path.cwd(), config.shipped_root()):
-        file = root / "config" / "claims.yaml"
-        if file.is_file():
-            return yaml.safe_load(file.read_text()) or {}
-    return {}
+    return overlay.data("claims")
 
 
 @dataclass

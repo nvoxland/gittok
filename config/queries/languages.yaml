@@ -2,7 +2,10 @@
 # Each shipped grammar has a tags query next to this file: config/queries/<grammar>.scm.
 # A query captures: @definition.<kind> + @name (+ @private), @reference, @comment,
 # @import (statement) + @import.path (module spec) + @import.relative (marks a relative spec).
-# Queries are data. A repo profile may carry its own query for a grammar (profile `queries`).
+# Queries are data. A repo profile may carry its own query for a grammar (profile `queries`),
+# for that repo. For all your repos: local/queries/languages.yaml is merged over this file (add
+# a language, add a `def_heads` macro of yours), and local/queries/<grammar>.scm replaces the
+# shipped query of that grammar (docs/config.md).
 #
 # Grammar names are those of tree-sitter-language-pack. Download the grammars with
 # `gittok structure --prefetch` (docs/install.md).
@@ -95,7 +98,7 @@ languages:
       refer_all: ":all"
     # head symbol -> kind of the definition it makes; `{{def_heads}}` in a query expands to these
     def_heads:
-      function: [defn, defn-, defmacro, fn-traced]
+      function: [defn, defn-, defmacro]
       method: [defmethod, defmulti]
       var: [def, defonce, def-, defprotocol, defrecord, deftype]
     private_heads: [defn-, def-]

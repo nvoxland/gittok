@@ -241,7 +241,9 @@ Git data about teammates (names, commit messages, timestamps, authorship) is fai
 ## 8. Mascots
 
 - One mascot per repo, named in `local/repos.yaml`.
-- Each mascot has a fixed **style** text and a **seed** (`config/mascots.yaml`, with `local/mascots.yaml` merged over it). GitTok puts the style before every illustration prompt and reuses the seed, so a mascot looks the same on every card.
+- Each mascot has a fixed **style** text and a **seed** (`local/mascots.yaml`). GitTok puts the style before every illustration prompt and reuses the seed, so a mascot looks the same on every card.
+- GitTok ships no mascot: a mascot belongs to the user's repo. When a repo is added, the agent profiles it and then picks a small character and a style that fit it (`set_mascot`), and tells the user. It does this only when the illustration renderer can run (`status`: `renderers.illustration`).
+- A repo with no mascot gets no `mascot_scene` and no `comic` cards. No card is rejected for a missing mascot.
 - A cross-repo card can show several mascots.
 
 ```yaml
@@ -322,7 +324,7 @@ A card is a JSON object. The contract is `src/gittok/schema/card.schema.json`, a
 - A quiz has a valid answer. Code is read from git at the cited commit, not copied from the agent.
 - Claim checks: numbers, dates, shas and names in the text must agree with git (`docs/formats.md`, "Claim checks").
 - Accounts are personas or code accounts, never real people.
-- Secrets in repo text are masked before the text leaves the server (`config/secrets.yaml`).
+- Secrets in repo text are masked before the text leaves the server (`config/secrets.yaml`; `local/secrets.yaml` adds patterns).
 - An invalid card is rejected with a reason. The reasons are stored with the run.
 
 ### 10.7 Rendering
@@ -417,15 +419,13 @@ tones:
   chaotic-absurd: 0.15
   earnest-teacher: 0.15
 
-personas: uniform
-topics: uniform
 visual_mix:
   image_min_share: 0.5   # least share of cards in an image format
 exploration_share: 0.18
 prior_strength: 10       # pseudo-observations behind each prior
 ```
 
-A reset (`reset_defaults`, or `gittok reset-weights`) deletes the learned weights, so the feed starts from this mix again.
+A reset (`reset_defaults`, or `gittok reset-weights`) deletes the learned weights, so the feed starts from this mix again. `local/defaults.yaml` changes the mix for one GitTok directory; like every shipped file, it has a local file that is merged over it (`docs/config.md`, "The merge rule").
 
 ---
 
@@ -459,6 +459,7 @@ The MCP server is named `gittok`. Its tools fall into these groups:
 | State | `status`, `recent_runs` (with `list_repos`, `feed_health` and `recent_cards`, these answer questions about GitTok's state, so the agent does not read the database or run the CLI) |
 | Steering | `list_rules`, `add_rule`, `remove_rule`, `reset_defaults`, `set_playback_speed` |
 | Config | `list_repos`, `add_repo`, `remove_repo`, `set_group`, `set_mascot`, `edit_persona` |
+| Config files (read-only) | `config_files`, `get_config`, `check_config` |
 | Phone access | `pairing_link`, `set_lan` |
 
 Every repo tool takes a configured repo name, never a path. The one exception is `add_repo`, which takes the path or URL of the repo to add.
@@ -468,6 +469,8 @@ The user manages GitTok by asking the agent in plain words: the server's MCP ins
 - `add_repo` accepts the root of any git repo on the machine (own `.git`, top of the checkout, has a commit, not inside a configured repo). The permission prompt of Claude Code is the consent. `repos.allowed_roots`, when the user set it, limits the tool to those directories.
 - `remove_repo` removes the entry and all that GitTok made for the repo: its cards with every row and file that hangs off them, the rows keyed by the repo, its profile, the rules on the repo, and a mascot of the repo that the user defined and no other repo uses. The learned weights stay. A card of another repo that only cites the repo stays. `keep_data` removes only the entry. It deletes the directory only for a clone that GitTok made (`remote` set, path exactly `<home>/repos/<name>`, not a symlink). Garbage collection does the same for a repo that is no longer configured, and the feed never serves its cards (`docs/learning.md`, "Garbage collection").
 - `list_repos` gives per repo `profiled`, `cards`, `unseen` and `last_card_at`. `feed_health` gives the backlog, also per repo (`by_repo`). `recent_cards(limit, repo)` names the repo and group of each card. `recent_runs(limit)` gives the last runs with counts and the top reject reasons. `status` gives the version, the directory and its files version, and the state of the feed server.
+- Every shipped config file has a local file in `local/` that is merged over it. There is no tool that writes any setting: on the user's request the agent edits the local file with its own file tools. `config_files` lists the files with their merge rule, `get_config(file, key)` gives the shipped, local and effective value, and `check_config` loads everything again and returns errors and warnings. The writer and scout subagents do not have these tools, and generation and profiling never edit `local/` by hand.
+- `status` also gives `renderers` (`illustration`, `meme`): whether each image renderer can run now.
 - `pairing_link` returns the pairing links, opens the loopback-only QR page (`/pairing`) in the browser, and carries a `notice` about LAN serving that the agent relays to the user. `set_lan` writes only `server.lan` in `local/settings.yaml`; the change needs a server restart.
 
 The server writes `<data_dir>/profile.md`, a plain-English summary of the learned taste, once a day. The CLI (`gittok --help`) gives the same functions without an agent.

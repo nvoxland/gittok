@@ -1,4 +1,6 @@
-# Shipped prior (SPEC §13).
+# Shipped prior (SPEC §13): the mix before the feed has learned anything. The feed learns
+# your taste from what you read; a rule ("less memes") steers it. To start from another mix,
+# write the keys you change to local/defaults.yaml (docs/config.md).
 categories:
   git_drama: 0.25
   memes: 0.20
@@ -15,9 +17,10 @@ tones:
   chaotic-absurd: 0.15
   earnest-teacher: 0.15
 
-personas: uniform
-topics: uniform
 visual_mix:
-  image_min_share: 0.5  # least share of cards in an image format (meme, illustration, comic, chart, diagram)
+  # Share of a packet's cards that should use an image format (meme, illustration, comic,
+  # chart, diagram). A soft target: it counts only formats that can be drawn, so with no
+  # image renderer it asks for charts and diagrams, which the client draws.
+  image_min_share: 0.5
 exploration_share: 0.18
 prior_strength: 10

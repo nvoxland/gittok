@@ -1,4 +1,5 @@
-# Typed-claim trigger phrases. Data, not code: edit here to change what counts.
+# Typed-claim trigger phrases. Data, not code. To add a phrase or a word, write
+# local/claims.yaml: its lists add to the lists here (docs/config.md).
 #
 # When the hook or the first explain panel says one of these about a `backticked` symbol, the card
 # must list a typed fact (returns / accepts / may_be_nil) for that symbol. Such a fact is backed
@@ -17,7 +18,7 @@ typed_phrases:
 # A `returns` type that contains one of these words counts as "may be nil" for a may_be_nil fact.
 nilable_words:
   - nil
-  - null
+  - "null"
   - none
   - optional
   - maybe

@@ -126,6 +126,23 @@ def structure_hint(cfg) -> str | None:
     )
 
 
+def mascot_hint(cfg, renderers: dict) -> str | None:
+    """One line for the SessionStart hook: repos that have no mascot, when the illustration
+    renderer can draw one. None otherwise. A new repo gets its mascot in the add flow; this
+    is for a repo that was added before."""
+    if not renderers.get("illustration"):
+        return None
+    missing = [name for name in cfg.repos if cfg.mascot_for(name) is None]
+    if not missing:
+        return None
+    return (
+        f"{', '.join(missing)} {'has' if len(missing) == 1 else 'have'} no mascot, so "
+        f"{'it gets' if len(missing) == 1 else 'they get'} no illustration cards. Offer to "
+        "make one (a small character and a style that fit the repo, saved with set_mascot); "
+        "do not make it unasked."
+    )
+
+
 def profile_hint(cfg) -> str | None:
     """One line for the SessionStart hook: repos with no profile, or whose manifests changed
     since their profile was written. None when nothing is needed."""

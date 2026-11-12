@@ -5,8 +5,13 @@
 # A profile REPLACES each of these keys it sets (no merging), so the profiling agent is in
 # control. A key the profile leaves out falls back to the value here. Globs: "*" stays inside
 # one path part, "**" crosses parts, a glob with no "/" matches the file name at any depth.
+#
+# To change these values for all your repos, write local/scan_defaults.yaml: a list there adds
+# to the list here (docs/config.md). For one repo, use its profile.
 
-# Files that are read: the extensions in languages.yaml and config/queries/languages.yaml.
+# Files that are read. First the extensions that config/languages.yaml or config/queries/
+# know; then common languages that get the plain text rules only (comment markers, long
+# lines, deep indentation) until a profile or a local file adds more.
 scan:
   - '*.py'
   - '*.clj'
@@ -22,8 +27,28 @@ scan:
   - '*.svelte'
   - '*.go'
   - '*.rb'
+  - '*.rake'
   - '*.java'
   - '*.rs'
+  - '*.kt'
+  - '*.kts'
+  - '*.cs'
+  - '*.php'
+  - '*.swift'
+  - '*.c'
+  - '*.h'
+  - '*.cc'
+  - '*.cpp'
+  - '*.hpp'
+  - '*.m'
+  - '*.mm'
+  - '*.scala'
+  - '*.ex'
+  - '*.exs'
+  - '*.dart'
+  - '*.lua'
+  - '*.sh'
+  - '*.vue'
 
 # Files never read: hidden dirs, dependency and build dirs, lockfiles, minified and
 # machine-generated suffixes.
@@ -38,16 +63,22 @@ ignore:
   - '**/build/**'
   - '**/target/**'
   - '**/out/**'
-  - '**/.venv/**'
+  - '**/obj/**'
+  - '**/_build/**'
+  - '**/coverage/**'
   - '**/venv/**'
   - '**/__pycache__/**'
-  - '**/.svelte-kit/**'
   - '**/site-packages/**'
   - '**/bower_components/**'
+  - '**/Pods/**'
+  - '**/Carthage/**'
+  - '**/DerivedData/**'
   - '*.min.*'
+  - '*.bundle.js'
   - '*-lock.*'
   - '*.lock'
   - '*_pb2.py'
+  - '*_pb2_grpc.py'
   - '*.pb.*'
   - '*.d.ts'
 
@@ -57,6 +88,7 @@ kinds:
   test:
     - '**/test/**'
     - '**/tests/**'
+    - '**/Tests/**'
     - '**/spec/**'
     - '**/specs/**'
     - '**/__tests__/**'
@@ -66,6 +98,9 @@ kinds:
     - '*.test.*'
     - '*.spec.*'
     - 'test_*'
+    - '*Test.*'
+    - '*Tests.*'
+    - '*Spec.*'
   fixture:
     - '**/fixture/**'
     - '**/fixtures/**'
@@ -79,15 +114,24 @@ kinds:
     - '**/__mocks__/**'
   generated:
     - '**/generated/**'
+    - '**/__generated__/**'
     - '**/gen/**'
     - '**/dist/**'
     - '**/build/**'
     - '**/target/**'
+    - '*.generated.*'
+    - '*_generated.*'
+    - '*.g.dart'
+    - '*.freezed.dart'
+    - '*.g.cs'
+    - '*.Designer.cs'
   vendored:
     - '**/vendor/**'
     - '**/vendored/**'
     - '**/third_party/**'
+    - '**/third-party/**'
     - '**/node_modules/**'
+    - '**/Pods/**'
   docs:
     - '**/doc/**'
     - '**/docs/**'
@@ -103,23 +147,41 @@ kinds:
 # A read file whose first 5 lines match one of these (case-insensitive regexes) is generated.
 generated_markers:
   - '@generated|do not edit|auto-?generated|code generated'
+  - 'this file (?:is|was) (?:automatically )?generated'
 
-# Paths that are never a lead for a story (lockfiles, source maps, binary assets), also with
-# a profile. Matched on top of the file set.
+# Paths that are never a lead for a story (tool state, build output, lockfiles, source maps,
+# binary assets), also with a profile. Matched on top of the file set.
 noise:
   - '**/.beads/**'
+  - '**/.idea/**'
+  - '**/.vscode/**'
+  - '**/.gradle/**'
+  - '**/.svelte-kit/**'
+  - '**/.next/**'
+  - '**/.nuxt/**'
   - '**/node_modules/**'
   - '**/dist/**'
   - '**/build/**'
+  - '**/target/**'
+  - '**/obj/**'
   - '**/vendor/**'
-  - '**/.svelte-kit/**'
+  - '**/Pods/**'
+  - '**/__pycache__/**'
   - 'package-lock.json'
+  - 'npm-shrinkwrap.json'
   - 'yarn.lock'
   - 'pnpm-lock.yaml'
   - 'uv.lock'
   - 'poetry.lock'
   - 'Cargo.lock'
   - 'Gemfile.lock'
+  - 'composer.lock'
+  - 'Podfile.lock'
+  - 'Package.resolved'
+  - 'packages.lock.json'
+  - 'gradle.lockfile'
+  - 'mix.lock'
+  - 'pubspec.lock'
   - 'go.sum'
   - 'deps.lock.json'
   - '*.min.js'
@@ -130,6 +192,13 @@ noise:
   - '*.svg'
   - '*.png'
   - '*.jpg'
+  - '*.jpeg'
   - '*.gif'
+  - '*.webp'
   - '*.ico'
   - '*.pdf'
+  - '*.woff'
+  - '*.woff2'
+  - '*.ttf'
+  - '*.zip'
+  - '*.jar'

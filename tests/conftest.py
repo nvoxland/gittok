@@ -74,3 +74,22 @@ def _no_real_feed_server(monkeypatch):
     from gittok import cli
 
     monkeypatch.setattr(cli, "_server_dir", lambda port: None)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_local_overrides():
+    """A test never reads the `local/` files of the directory the suite runs in. Until a test
+    loads a config of its own, the readers without a Config see the shipped files alone."""
+    from gittok import overlay
+
+    overlay.activate(None, None)
+    yield
+    overlay.activate(None, None)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_image_renderer(monkeypatch):
+    """`gittok health --hint` does not depend on whether this computer can draw images."""
+    from gittok import cli
+
+    monkeypatch.setattr(cli, "_renderers", lambda cfg: {"illustration": False})

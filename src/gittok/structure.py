@@ -26,9 +26,6 @@ import posixpath
 import re
 from dataclasses import dataclass, field
 from functools import cache
-from pathlib import Path
-
-import yaml
 
 try:  # normal dependencies; a broken install must not stop the regex fallback
     import tree_sitter as _ts
@@ -108,34 +105,27 @@ class FileFacts:
 # ---------- config ----------
 
 
-def _queries_dir() -> Path:
-    from . import config
-
-    try:
-        d = config.shared_root() / "config" / "queries"
-        if d.is_dir():
-            return d
-    except config.ConfigError:
-        pass
-    return config.shipped_root() / "config" / "queries"
-
-
-@cache
 def spec() -> dict:
-    """config/queries/languages.yaml."""
-    data = yaml.safe_load((_queries_dir() / "languages.yaml").read_text()) or {}
-    data.setdefault("languages", {})
-    return data
+    """config/queries/languages.yaml, with the user's local/queries/languages.yaml merged over
+    it (overlay.py). Do not change the result."""
+    from . import overlay
+
+    return overlay.data("queries")
 
 
-@cache
 def _by_ext() -> dict[str, tuple[str, str]]:
     """extension -> (language name, grammar)."""
-    return {
-        ext: (name, grammar)
-        for name, raw in spec()["languages"].items()
-        for ext, grammar in (raw.get("extensions") or {}).items()
-    }
+    from . import overlay
+
+    return overlay.derived(
+        "queries",
+        "by_ext",
+        lambda data: {
+            ext: (name, grammar)
+            for name, raw in data["languages"].items()
+            for ext, grammar in (raw.get("extensions") or {}).items()
+        },
+    )
 
 
 def _ext(path: str) -> str:
@@ -246,8 +236,10 @@ def _parser(grammar: str):
 
 def _shipped_query(grammar: str, language: str | None) -> str | None:
     alias = ((spec()["languages"].get(language or "") or {}).get("query_alias")) or {}
-    file = _queries_dir() / f"{alias.get(grammar, grammar)}.scm"
-    return file.read_text() if file.is_file() else None
+    from . import overlay
+
+    file = overlay.query_file(alias.get(grammar, grammar))  # local/queries first
+    return file.read_text() if file is not None else None
 
 
 def _expand(text: str, rules: dict) -> str:
@@ -379,10 +371,13 @@ def resolve_rules(language: str) -> dict:
     return dict((spec()["languages"].get(language) or {}).get("resolve") or {})
 
 
-@cache
 def path_translation() -> dict[int, str]:
     """str.translate table that folds path characters (data: `path_normalize`)."""
-    return str.maketrans(spec().get("path_normalize") or {})
+    from . import overlay
+
+    return overlay.derived(
+        "queries", "path_translation", lambda d: str.maketrans(d.get("path_normalize") or {})
+    )
 
 
 def _analyze(language, grammar, src: bytes, queries: dict, off: int) -> FileFacts | None:

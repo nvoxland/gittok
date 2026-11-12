@@ -56,7 +56,7 @@ And these files for Claude Code:
 
 GitTok makes the rest when it needs it:
 
-- `local/`: `repos.yaml`, `profiles/`, and the `settings.yaml`, `personas.yaml`, `mascots.yaml` overlays (`docs/config.md`).
+- `local/`: `repos.yaml`, `mascots.yaml`, `profiles/`, and an optional override file for each shipped config file, such as `settings.yaml` or `scan_defaults.yaml` (`docs/config.md`).
 - `data/`: the database, card images, and logs.
 - `repos/`: the clones of repos you added by URL.
 
@@ -189,8 +189,10 @@ Your own settings live in `local/` of the GitTok directory. `docs/config.md` des
 
 - `local/repos.yaml`: the repos and groups to analyze.
 - `local/profiles/<repo>.yaml`: the profile of each repo.
+- `local/mascots.yaml`: the mascot of each repo. GitTok ships none; Claude makes one when you add a repo, if the image renderer works.
 - `local/settings.yaml`: merged over `config/settings.yaml`, key by key inside each section.
-- `local/personas.yaml` and `local/mascots.yaml`: merged over the shared files, per name and field by field. The edit tools write only here.
+- `local/personas.yaml`: merged over the shipped file, per name and field by field. The edit tools write only here.
+- One optional file for each other shipped file (`local/scan_defaults.yaml`, `local/languages.yaml`, `local/queries/`, `local/file_types.yaml`, `local/secrets.yaml`, `local/claims.yaml`, `local/meme_templates.yaml`, `local/defaults.yaml`, `local/reward.yaml`): merged over the shipped one. Maps merge key by key and lists add. Ask Claude for the change, or write the file yourself; `gittok config check` validates it.
 - `local/.edit.lock`: the lock file of the edit tools.
 
 ## Session hooks
@@ -249,6 +251,8 @@ curl -s http://127.0.0.1:5001/templates/ | head -c 200   # JSON means it works
 Restart the feed server afterwards (`/mcp`, gittok, Reconnect). Until memegen answers, the brief skips the `meme` format and meme cards stay `pending_render`.
 
 ## Illustration renderer (mflux)
+
+Without this renderer GitTok makes no illustration cards and no mascot; everything else works. When it works, Claude gives each new repo a mascot (`docs/config.md`, "Mascots").
 
 Illustration and comic cards, and the persona avatars, are drawn by [mflux](https://github.com/filipstrand/mflux) on Apple Silicon. It is a large download (torch and mlx, plus the model).
 

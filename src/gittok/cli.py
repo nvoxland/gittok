@@ -298,9 +298,64 @@ def _health(args) -> int:
         line = profiling.structure_hint(cfg)
         if line:
             print(line)
+        line = profiling.mascot_hint(cfg, _renderers(cfg))
+        if line:
+            print(f"GitTok: {line}")
         line = facts.analyzer_hint(stale)
         if line:
             print(line)
+    return 0
+
+
+def _renderers(cfg) -> dict:
+    """Which image renderers can run. The meme server is not asked: only `illustration`
+    matters to the callers here, and that check opens no connection."""
+    from . import render
+
+    return {"illustration": render.default_renderers(cfg)["illustration"].available()}
+
+
+def _config_roots():
+    from . import overlay
+
+    shared, root = resolve_roots()
+    overlay.activate(shared, root)
+    return shared, root
+
+
+def _config_check(args) -> int:
+    from . import overlay
+
+    out = overlay.check(*_config_roots())
+    for w in out["warnings"]:
+        print(f"warning: {w}")
+    for e in out["errors"]:
+        print(f"error: {e}")
+    if out["ok"]:
+        n = len(out["local_files"])
+        print(f"ok: the config loads ({n} local file{'s' * (n != 1)}).")
+    print(out["takes_effect"])
+    return 0 if out["ok"] else 1
+
+
+def _config_files(args) -> int:
+    from . import overlay
+
+    for row in overlay.describe(*_config_roots()):
+        mark = "yours" if row["local_exists"] else "-"
+        shipped = row["shipped"] or "(none shipped)"
+        print(f"{row['file']:<15} {shipped:<30} {row['local']}  [{mark}]")
+        print(f"{'':<15} {row['what']}.")
+        if row["merge"] != overlay.MERGE:
+            print(f"{'':<15} Merge: {row['merge']}.")
+    print(f"Merge rule, where no other is named: {overlay.MERGE}.")
+    return 0
+
+
+def _config_get(args) -> int:
+    from . import overlay
+
+    print(json.dumps(overlay.get(*_config_roots(), args.file, args.key), indent=2))
     return 0
 
 
@@ -863,8 +918,8 @@ def main(argv: list[str] | None = None) -> int:
         "cards with their events, saved marks and image files; its analysis, facts, leads and "
         "knowledge; steering rules on the repo; its profile (local/profiles/<name>.yaml); a "
         "mascot of the repo that you defined and no other repo uses; and the clone, when "
-        "GitTok made it from a URL. Kept: the learned weights and shipped mascots. The "
-        "directory you gave is never touched.",
+        "GitTok made it from a URL. Kept: the learned weights and a mascot that another "
+        "repo uses. The directory you gave is never touched.",
     )
     q.add_argument("name")
     q.add_argument(
@@ -999,6 +1054,16 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--style")
     q.add_argument("--seed", type=int)
     q.set_defaults(fn=_mascot_set)
+    p = sub.add_parser("config", help="list, read and check the config files")
+    csub = p.add_subparsers(dest="config_cmd", required=True)
+    q = csub.add_parser("check", help="load every config file and print errors and warnings")
+    q.set_defaults(fn=_config_check)
+    q = csub.add_parser("files", help="every config file: shipped path, local path, merge rule")
+    q.set_defaults(fn=_config_files)
+    q = csub.add_parser("get", help="the shipped, local and effective value of a file or key")
+    q.add_argument("file")
+    q.add_argument("key", nargs="?")
+    q.set_defaults(fn=_config_get)
     p = sub.add_parser("persona", help="manage personas")
     psub = p.add_subparsers(dest="persona_cmd", required=True)
     q = psub.add_parser("edit", help="change a persona's name or voice")

@@ -41,7 +41,7 @@ A format/kind mismatch is rejected with reason `format_kind_mismatch`.
 ```
 - `prompt`: the scene only, at most 400 characters. **No text, letters, or logos in the image.** The mascot's fixed style prompt is prepended by the server.
 - `caption`: at most 140 characters. The client overlays it; captions are never baked into images.
-- `mascots`: optional, 1 to 3 names from `config/mascots.yaml` (edits go to `local/mascots.yaml`). Default: the mascot of the card's first repo.
+- `mascots`: optional, 1 to 3 names from `local/mascots.yaml` (GitTok ships no mascot; `docs/config.md`, "Mascots"). Default: the mascot of the card's first repo. A repo with no mascot is not given this format; a card that still uses it is drawn with no mascot style and is not rejected.
 
 ### comic
 ```json

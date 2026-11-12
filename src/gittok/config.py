@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field, fields
-from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -221,6 +220,14 @@ class Config:
         except KeyError:
             raise ConfigError(unknown_repo(self.repos, name)) from None
 
+    def mascot_for(self, repo: str) -> Mascot | None:
+        """The mascot that cards of `repo` use: the one its entry names, else the first whose
+        own `repo` is this repo. None when it has none."""
+        r = self.repos.get(repo)
+        if r is not None and r.mascot in self.mascots:
+            return self.mascots[r.mascot]
+        return next((m for m in self.mascots.values() if m.repo == repo), None)
+
     def profile(self, repo: str):
         """The repo's profile; an empty one (built-in detectors only) when it has none."""
         from .profiles import Profile
@@ -310,7 +317,7 @@ def _read(path: Path, required: bool = False) -> Any:
     try:
         return yaml.safe_load(path.read_text())
     except yaml.YAMLError as e:
-        raise ConfigError(f"invalid YAML in {path}: {e}") from e
+        raise ConfigError(f"invalid YAML in {path}: {' '.join(str(e).split())}") from e
 
 
 def _mapping(value: Any, what: str, file: Path) -> dict:
@@ -532,67 +539,40 @@ def _load_repos(root: Path) -> tuple[dict[str, Repo], dict[str, Group]]:
     return repos, groups
 
 
-def _overlay_entries(
-    root: Path, fname: str, top: str, kind: str, allowed: set[str], shared: Path | None = None
-) -> dict[str, tuple[dict, Path]]:
-    """Entries of `config/<fname>` with `local/<fname>` merged over them per name, field by field.
-
-    Each entry comes with the file that last set it, for error messages.
-    """
-    out: dict[str, tuple[dict, Path]] = {}
-    for folder, base in (("config", shared or root), ("local", root)):
-        file = base / folder / fname
-        data = _mapping(_read(file), fname, file)
-        _check_keys(data, {top}, fname, file)
-        for name, raw in _text_keys(_mapping(data.get(top), top, file), kind, file).items():
-            raw = _mapping(raw, f"{kind} '{name}'", file)
-            _check_keys(raw, allowed, f"{kind} '{name}'", file)
-            out[name] = ({**out.get(name, ({}, file))[0], **raw}, file)
-    return out
+def _personas(data: dict) -> dict[str, Persona]:
+    return {
+        handle: Persona(handle, raw["name"], raw["voice"], raw.get("bio"))
+        for handle, raw in (data.get("personas") or {}).items()
+    }
 
 
-def _load_personas(root: Path, shared: Path | None = None) -> dict[str, Persona]:
-    out: dict[str, Persona] = {}
-    entries = _overlay_entries(
-        root, "personas.yaml", "personas", "persona", {"name", "voice", "bio"}, shared
-    )
-    for handle, (raw, file) in entries.items():
-        for req in ("name", "voice"):
-            if req not in raw:
-                raise ConfigError(f"persona '{handle}' is missing '{req}' ({file})")
-        out[handle] = Persona(handle, raw["name"], raw["voice"], raw.get("bio"))
-    return out
-
-
-def _load_mascots(root: Path, shared: Path | None = None) -> dict[str, Mascot]:
+def _load_mascots(root: Path) -> dict[str, Mascot]:
+    """local/mascots.yaml. Nothing is shipped: a mascot belongs to the user's own repo."""
+    file = root / "local" / "mascots.yaml"
+    data = _mapping(_read(file), "mascots.yaml", file)
+    _check_keys(data, {"mascots"}, "mascots.yaml", file)
     out: dict[str, Mascot] = {}
-    entries = _overlay_entries(
-        root, "mascots.yaml", "mascots", "mascot", {"repo", "style", "seed"}, shared
-    )
-    for name, (raw, file) in entries.items():
+    for name, raw in _text_keys(
+        _mapping(data.get("mascots"), "mascots", file), "mascot", file
+    ).items():
+        raw = _mapping(raw, f"mascot '{name}'", file)
+        _check_keys(raw, {"repo", "style", "seed"}, f"mascot '{name}'", file)
         if not raw.get("style"):
             raise ConfigError(f"mascot '{name}' is missing 'style' ({file})")
         out[name] = Mascot(name, raw.get("repo"), raw["style"], int(raw.get("seed", 0)))
     return out
 
 
-def _load_meme_templates(root: Path) -> dict[str, MemeTemplate]:
-    file = root / "config" / "meme_templates.yaml"  # `root` is the shared root here
-    data = _mapping(_read(file), "meme_templates.yaml", file)
-    _check_keys(data, {"templates"}, "meme_templates.yaml", file)
-    out: dict[str, MemeTemplate] = {}
-    for tid, raw in _text_keys(
-        _mapping(data.get("templates"), "templates", file), "meme template", file
-    ).items():
-        raw = _mapping(raw, f"meme template '{tid}'", file)
-        _check_keys(raw, {"lines", "hint", "fits"}, f"meme template '{tid}'", file)
-        out[tid] = MemeTemplate(
+def _meme_templates(data: dict) -> dict[str, MemeTemplate]:
+    return {
+        tid: MemeTemplate(
             tid,
-            int(raw.get("lines", 2)),
-            str(raw.get("hint", "")),
-            tuple(str(t) for t in raw.get("fits") or ()),
+            int((raw or {}).get("lines", 2)),
+            str((raw or {}).get("hint", "")),
+            tuple(str(t) for t in (raw or {}).get("fits") or ()),
         )
-    return out
+        for tid, raw in (data.get("templates") or {}).items()
+    }
 
 
 _LANG_KEYS = {
@@ -609,51 +589,35 @@ _LANG_TEXT_KEYS = {
 }  # fmt: skip
 
 
-def load_languages(root: Path | None = None) -> dict:
-    """config/languages.yaml as {"thresholds": {...}, "shared": {...}, "languages": {...}}.
+def _overlaid(name: str, root: Path | None, home: Path | None) -> dict:
+    """The data of one overlaid file: for the active roots, or for the roots given."""
+    from . import overlay
+
+    if root is None and home is None:
+        return overlay.data(name)
+    return overlay.load(name, root, home).data
+
+
+def load_languages(root: Path | None = None, home: Path | None = None) -> dict:
+    """config/languages.yaml, with local/languages.yaml merged over it, as
+    {"thresholds": {...}, "shared": {...}, "languages": {...}}.
 
     `shared` holds line shapes for every language; a language may set the same keys."""
-    import re
-
-    root = shared_root() if root is None else Path(root)
-    file = root / "config" / "languages.yaml"
-    data = _mapping(_read(file), "languages.yaml", file)
-    _check_keys(data, {"languages", "thresholds", "shared"}, "languages.yaml", file)
-    langs = _text_keys(_mapping(data.get("languages"), "languages", file), "language", file)
-    shared = _mapping(data.get("shared"), "shared", file)
-    for name, raw in (("shared", shared), *langs.items()):
-        what = "shared" if raw is shared else f"language '{name}'"
-        raw = _mapping(raw, what, file)
-        _check_keys(raw, _LANG_KEYS, what, file)
-        if raw is not shared and not raw.get("extensions"):
-            raise ConfigError(f"language '{name}' is missing 'extensions' ({file})")
-        for key, val in raw.items():
-            if key in _LANG_TEXT_KEYS:
-                continue
-            for pat in [val] if isinstance(val, str) else val:
-                try:
-                    re.compile(pat)
-                except (re.error, TypeError) as e:
-                    raise ConfigError(f"bad pattern in {what} {key}: {e} ({file})") from e
+    data = _overlaid("languages", root, home)
     return {
-        "thresholds": _mapping(data.get("thresholds"), "thresholds", file),
-        "shared": shared,
-        "languages": langs,
+        "thresholds": data.get("thresholds") or {},
+        "shared": data.get("shared") or {},
+        "languages": data.get("languages") or {},
     }
 
 
 _SCAN_KEYS = {"scan", "ignore", "kinds", "generated_markers", "noise"}
 
 
-def load_scan_defaults(root: Path | None = None) -> dict:
-    """config/scan_defaults.yaml: the file set of a repo that has no profile."""
-    root = shared_root() if root is None else Path(root)
-    file = root / "config" / "scan_defaults.yaml"
-    if not file.is_file():  # a test root without the file: use the shipped one
-        file = shipped_root() / "config" / "scan_defaults.yaml"
-    data = _mapping(_read(file, required=True), "scan_defaults.yaml", file)
-    _check_keys(data, _SCAN_KEYS, "scan_defaults.yaml", file)
-    return data
+def load_scan_defaults(root: Path | None = None, home: Path | None = None) -> dict:
+    """config/scan_defaults.yaml with local/scan_defaults.yaml merged over it: the file set of
+    a repo that has no profile."""
+    return _overlaid("scan_defaults", root, home)
 
 
 _FILE_TYPE_KEYS = {
@@ -662,43 +626,31 @@ _FILE_TYPE_KEYS = {
 }  # fmt: skip
 
 
-def load_file_types(root: Path | None = None) -> dict:
-    """config/file_types.yaml: extension tables, noise file names, manifest names."""
-    root = shared_root() if root is None else Path(root)
-    file = root / "config" / "file_types.yaml"
-    if not file.is_file():  # a test root without the file: use the shipped one
-        file = shipped_root() / "config" / "file_types.yaml"
-    data = _mapping(_read(file, required=True), "file_types.yaml", file)
-    _check_keys(data, _FILE_TYPE_KEYS, "file_types.yaml", file)
-    return data
+def load_file_types(root: Path | None = None, home: Path | None = None) -> dict:
+    """config/file_types.yaml with local/file_types.yaml merged over it: extension tables,
+    noise file names, manifest names."""
+    return _overlaid("file_types", root, home)
 
 
 def file_types() -> dict:
-    """The shipped file types (cached; the project root when there is one)."""
-    return _file_types_cached()
+    """The file types of the active GitTok directory (shipped, with its local file merged)."""
+    from . import overlay
+
+    return overlay.data("file_types")
 
 
-@cache
-def _file_types_cached() -> dict:
-    try:
-        return load_file_types()
-    except ConfigError:
-        return load_file_types(shipped_root())
-
-
-@cache
 def language_extensions() -> frozenset[str]:
-    """Every extension (with its dot) that config/languages.yaml or config/queries/ maps to a
+    """Every extension (with its dot) that languages.yaml or queries/languages.yaml maps to a
     language."""
-    from . import structure
+    from . import overlay
 
-    try:
-        langs = load_languages()
-    except ConfigError:
-        langs = load_languages(shipped_root())
-    out = {e for raw in langs["languages"].values() for e in raw["extensions"]}
-    out |= set(structure._by_ext())
-    return frozenset(out)
+    def build(langs: dict, queries: dict) -> frozenset[str]:
+        out = {e for raw in (langs.get("languages") or {}).values() for e in raw["extensions"]}
+        for raw in (queries.get("languages") or {}).values():
+            out |= set(raw.get("extensions") or ())
+        return frozenset(out)
+
+    return overlay.derived(("languages", "queries"), "extensions", build)
 
 
 def source_extensions() -> frozenset[str]:
@@ -712,10 +664,19 @@ def file_word_extensions() -> frozenset[str]:
     return frozenset(e.lstrip(".") for e in exts) | frozenset(file_types().get("file_words") or ())
 
 
-def load_config(root: Path | None = None, shared: Path | None = None) -> Config:
+# Files whose warnings and errors `load_config` reports, besides the ones it puts in the Config.
+_CHECKED = ("file_types", "queries", "claims", "secrets")
+
+
+def load_config(
+    root: Path | None = None, shared: Path | None = None, activate: bool = True
+) -> Config:
     """Load all config. `root` is the home (`local/`, data); `shared` holds `config/`.
 
     With no `root`, both come from `resolve_roots()`. With a `root` alone, shared is the root.
+    Every shipped file is read with its `local/` file merged over it (overlay.py). `activate`
+    makes these roots the ones that readers without a Config use (the secret detector, the
+    file type tables, the queries).
     """
     if root is None:
         shared_dir, root = resolve_roots()
@@ -723,27 +684,52 @@ def load_config(root: Path | None = None, shared: Path | None = None) -> Config:
     else:
         root = Path(root).resolve()
         shared = Path(shared).resolve() if shared else root
-    from . import gitq
-    from .learning import reward_warnings
+    import copy
+
+    from . import gitq, overlay
     from .profiles import load_profiles
 
+    if activate:
+        # First, so that the home is known also when a file below is broken: `check_config`
+        # then reports on this directory, and the readers fall back to the shipped file.
+        overlay.activate(shared, root)
     repos, groups = _load_repos(root)
     settings, warnings = _load_settings(root, shared)
-    gitq.set_timeout(settings.analysis.git_timeout_s)  # gitq takes paths, not a config
-    defaults_file = shared / "config" / "defaults.yaml"
-    defaults = _mapping(_read(defaults_file), "defaults.yaml", defaults_file)
-    return Config(
+    files = {
+        name: overlay.load(name, shared, root)
+        for name in (
+            "defaults",
+            "personas",
+            "meme_templates",
+            "languages",
+            "scan_defaults",
+            "reward",
+            *_CHECKED,
+        )  # fmt: skip
+    }
+    for ld in files.values():
+        warnings += ld.warnings
+    cfg = Config(
         root=root,
         shared=shared,
         repos=repos,
         groups=groups,
         settings=settings,
-        warnings=warnings + reward_warnings(shared),
-        defaults=defaults,
-        personas=_load_personas(root, shared),
-        mascots=_load_mascots(root, shared),
-        meme_templates=_load_meme_templates(shared),
-        languages=load_languages(shared),
+        warnings=warnings,
+        defaults=copy.deepcopy(files["defaults"].data),
+        personas=_personas(files["personas"].data),
+        mascots=_load_mascots(root),
+        meme_templates=_meme_templates(files["meme_templates"].data),
+        languages=copy.deepcopy(
+            {
+                "thresholds": files["languages"].data.get("thresholds") or {},
+                "shared": files["languages"].data.get("shared") or {},
+                "languages": files["languages"].data.get("languages") or {},
+            }
+        ),
         profiles=load_profiles(root),
-        scan_defaults=load_scan_defaults(shared),
+        scan_defaults=copy.deepcopy(files["scan_defaults"].data),
     )
+    if activate:
+        gitq.set_timeout(settings.analysis.git_timeout_s)  # gitq takes paths, not a config
+    return cfg

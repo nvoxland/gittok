@@ -664,6 +664,9 @@ def illustration_cost(card: dict) -> int:
 
 
 def _check_mascots(card: dict, ctx: _Ctx, gc: _GitCache) -> None:
+    """Fill in the default mascot of the card's first repo. A repo with no mascot is fine: the
+    list stays empty and the image is drawn with no mascot style. Only a name that the writer
+    gave and that does not exist is rejected."""
     v = card["visual"]
     names = v.get("mascots")
     if not names:
@@ -671,12 +674,14 @@ def _check_mascots(card: dict, ctx: _Ctx, gc: _GitCache) -> None:
         names = [m.name for m in ctx.mascots.values() if m.repo == first][:1]
         if not names:
             fallback = gc.repo(first).mascot
-            names = [fallback] if fallback else []
-        if not names:
-            raise _Reject("unknown_mascot", f"no default mascot for repo {first!r}; set mascots")
+            names = [fallback] if fallback in ctx.mascots else []
     for n in names:
         if n not in ctx.mascots:
-            raise _Reject("unknown_mascot", f"{n!r} is not a mascot; known: {sorted(ctx.mascots)}")
+            raise _Reject(
+                "unknown_mascot",
+                f"{n!r} is not a mascot; known: {sorted(ctx.mascots)}. Or leave `mascots` out: "
+                "the card then uses the mascot of its first repo, or none",
+            )
     v["mascots"] = names
     cost = illustration_cost(card)
     if ctx.budget is not None and cost > ctx.budget:

@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gittok import api, characters, db, runs, signals, store
-from gittok.config import _load_personas
+from gittok.config import load_config
 from tests.cards import example_card, text_card
 from tests.conftest import make_config
 
@@ -33,7 +33,7 @@ def test_persona_bio_is_optional(tmp_path):
         "personas:\n  a:\n    name: A\n    voice: v\n    bio: Hello.\n"
         "  b:\n    name: B\n    voice: w\n"
     )
-    got = _load_personas(tmp_path)
+    got = load_config(tmp_path).personas
     assert got["a"].bio == "Hello." and got["b"].bio is None
 
 

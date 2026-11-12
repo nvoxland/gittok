@@ -71,6 +71,7 @@ Rules:
 - Tests build their own fixture git repo. A unit test never needs the network or a Claude session.
 - Some structure tests are skipped until the grammars are in the local cache (`uv run gittok structure --prefetch`).
 - No logic for one programming language in the shipped Python. Language data lives in `config/` (`tests/test_no_language_logic.py`).
+- The shipped `config/` goes to every user. It holds defaults for any repo: nothing about one project, one stack or one computer. A user changes a default in `local/` of the GitTok directory (`docs/config.md`). Read a config file through `overlay.py`, which merges the local file over the shipped one; a new config file needs an entry in `overlay.FILES`, an example in `src/gittok/prompts/config_examples.yaml`, and a section in `docs/config.md` (tests check all three).
 - Run all four gates before you commit.
 
 CI (`.github/workflows/ci.yml`) runs the same gates on macOS for each push to `main` and each pull request, and builds the wheel.

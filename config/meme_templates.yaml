@@ -1,4 +1,5 @@
-# memegen template ids the agent may use (SPEC §10.7). Each entry: lines = how many text
+# memegen template ids the agent may use (SPEC §10.7). Your own go in local/meme_templates.yaml
+# (merged per id; `$remove: [id]` drops one). Each entry: lines = how many text
 # lines the template takes, and a hint for the agent. The renderer checks ids against the
 # running memegen instance's /templates list and logs any that do not exist.
 templates:

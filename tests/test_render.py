@@ -521,3 +521,15 @@ def test_meme_availability_probes_one_template_not_the_full_list():
     r = render.MemeRenderer("http://memegen.test", transport=httpx.MockTransport(handler))
     assert r.available() is True
     assert seen == ["/templates/drake"]
+
+
+def test_illustration_with_no_mascot_draws_the_scene_alone(fixture_repo, tmp_path):
+    cfg = dataclasses.replace(render_cfg(fixture_repo, tmp_path), mascots={})
+    cfg = dataclasses.replace(
+        cfg, repos={"fixture": dataclasses.replace(cfg.repos["fixture"], mascot=None)}
+    )
+    runner = FakeRunner()
+    r = render.IllustrationRenderer(runner=runner, command=["x"])
+    r.render({"kind": "illustration", "prompt": "stacking crates"}, cfg, {"repos": ["fixture"]})
+    assert arg(runner.calls[0][0], "--prompt").startswith("stacking crates, no text")
+    assert arg(runner.calls[0][0], "--seed") == "0"

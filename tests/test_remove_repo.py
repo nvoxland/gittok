@@ -393,7 +393,8 @@ def test_remove_repo_removes_its_own_mascot_from_the_user_file_and_its_image(ycf
     local_mascots(
         ycfg,
         "# my mascots\nmascots:\n  owl:\n    repo: beta\n    style: an owl   # keep?\n    seed: 3\n"
-        "  fox:\n    style: a fox   # stays\n    seed: 4\n",
+        "  fox:\n    style: a fox   # stays\n    seed: 4\n"
+        "  crow:\n    repo: alpha\n    style: a crow\n    seed: 7\n",
     )
     images = ycfg.settings.data_dir / "assets" / "mascots"
     images.mkdir(parents=True)
@@ -411,17 +412,21 @@ def test_remove_repo_removes_its_own_mascot_from_the_user_file_and_its_image(ycf
     assert not (images / "owl.png").exists() and (images / "fox.png").exists()
 
 
-def test_a_shipped_mascot_is_kept_and_no_longer_named_for_the_removed_repo(ycfg):
-    shipped = (ycfg.root / "config" / "mascots.yaml").read_text()
-    out = steering.remove_repo(ycfg, "alpha")  # crow is in config/mascots.yaml, repo alpha
-    assert out["mascots_removed"] == []
-    assert [m["name"] for m in out["mascots_kept"]] == ["crow"]
-    assert "shipped" in out["mascots_kept"][0]["why"]
-    assert (ycfg.root / "config" / "mascots.yaml").read_text() == shipped
-    new = config_mod.load_config(ycfg.root)  # no error for a mascot whose repo is gone
-    assert new.mascots["crow"].repo == "alpha"
+def test_the_mascot_of_the_removed_repo_goes_and_guidance_lists_none(ycfg):
+    """No mascot is shipped: the one in local/mascots.yaml goes with its repo."""
+    out = steering.remove_repo(ycfg, "alpha")  # crow is in local/mascots.yaml, repo alpha
+    assert out["mascots_removed"] == ["crow"] and out["mascots_kept"] == []
+    new = config_mod.load_config(ycfg.root)
+    assert new.mascots == {}
     text_ = brief.guidance_markdown(new.personas, None, {}, new.mascots, repos=new.repos)
-    assert "`crow`" in text_ and "repo alpha" not in text_
+    assert "`crow`" not in text_ and "repo alpha" not in text_
+
+
+def test_a_mascot_of_a_repo_that_is_gone_is_listed_with_no_repo(ycfg):
+    local_mascots(ycfg, "mascots:\n  owl:\n    repo: gone\n    style: an owl\n")
+    new = config_mod.load_config(ycfg.root)  # no error for a mascot whose repo is not there
+    text_ = brief.guidance_markdown(new.personas, None, {}, new.mascots, repos=new.repos)
+    assert "`owl`" in text_ and "repo gone" not in text_
 
 
 def test_a_mascot_that_another_repo_uses_is_kept(ycfg):

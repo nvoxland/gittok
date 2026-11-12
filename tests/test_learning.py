@@ -627,15 +627,19 @@ def test_reward_config_is_parsed_once_until_the_file_changes(cfg, tmp_path, monk
     file.parent.mkdir()
     file.write_text("half_life_days: 7\n")
     reads = []
-    real = learning.yaml.safe_load
-    monkeypatch.setattr(learning.yaml, "safe_load", lambda t: reads.append(1) or real(t))
+    from gittok import overlay
+
+    real = overlay.yaml.safe_load
+    monkeypatch.setattr(overlay.yaml, "safe_load", lambda t: reads.append(1) or real(t))
     assert learning.load_reward_config(cfg).half_life_days == 7
+    first = len(reads)
+    assert first >= 1
     assert learning.load_reward_config(cfg).half_life_days == 7
-    assert len(reads) == 1
+    assert len(reads) == first
     file.write_text("half_life_days: 9\n")
     os.utime(file, ns=(1, 1))  # a new mtime, whatever the clock resolution
     assert learning.load_reward_config(cfg).half_life_days == 9
-    assert len(reads) == 2
+    assert len(reads) > first
     file.unlink()
     assert learning.load_reward_config(cfg).half_life_days == 21  # the shipped default
 

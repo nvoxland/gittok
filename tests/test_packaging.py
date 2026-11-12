@@ -56,6 +56,8 @@ def test_wheel_has_shared_files(wheel_names):
     ):
         assert any(n.startswith(b + want) for n in wheel_names), want
     assert "gittok/prompts/generate.md" in wheel_names
+    assert "gittok/prompts/config_examples.yaml" in wheel_names
+    assert b + "config/mascots.yaml" not in wheel_names  # no mascot is shipped
 
 
 def test_wheel_has_everything_that_init_writes(wheel_names):

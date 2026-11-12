@@ -1,0 +1,81 @@
+# One small local override file for each config file, as text. The `config_files` tool shows
+# them (`example`), and docs/config.md has the same ones. Kept as data: the examples name
+# languages and file types, and the shipped Python holds no such names.
+
+settings: |
+  server:
+    port: 8010
+  agent:
+    per_day_runs: 4
+
+personas: |
+  personas:
+    greybeard:
+      voice: Grumpy senior engineer. Now also tired.
+
+defaults: |
+  categories:
+    memes: 0.10
+  visual_mix:
+    image_min_share: 0.3
+
+reward: |
+  weights:
+    like: 0.4
+  half_life_days: 14
+
+scan_defaults: |
+  scan: ['*.proto', '*.sql']        # also read these
+  ignore: ['**/legacy/**']          # never read these
+  kinds:
+    test: ['**/it/**']
+  noise: {$remove: ['*.svg']}       # a shipped entry goes only by name
+
+file_types: |
+  highlight:
+    .zig: zig
+  source_extensions: [.zig]
+  manifests: [build.zig]
+
+languages: |
+  thresholds:
+    long_function: 80
+  languages:
+    python:
+      entry_points: ['^\s*@my_job\b']   # added to the list
+
+queries: |
+  # local/queries/languages.yaml (the tags query itself goes in local/queries/zig.scm)
+  languages:
+    zig:
+      extensions: {.zig: zig}
+      comment: "//"
+
+claims: |
+  nilable_words: [undefined]
+
+secrets: |
+  patterns:
+    - name: acme_key
+      regex: 'ACME-[A-Z0-9]{12}'
+  # to turn a shipped pattern off:  patterns: {$remove: [jwt]}
+
+meme_templates: |
+  templates:
+    $remove: [chair]
+    doge: {lines: 2, hint: 'much X, very Y'}
+
+repos: |
+  repos:
+    myapp:
+      path: ~/src/myapp
+
+mascots: |
+  mascots:
+    otter:
+      repo: storefront
+      style: "a small round otter with a teal scarf, flat vector illustration"
+      seed: 4242
+
+profiles: |
+  scan: ['**/*.py', 'db/**/*.sql']   # written by save_profile, not by hand

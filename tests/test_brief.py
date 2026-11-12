@@ -1592,3 +1592,42 @@ def test_packets_of_one_repo_share_no_lead():
         assert owner.setdefault(subject, pid) == pid, subject  # one subject, one packet
     for p in b.packets:
         assert len(p.leads) == len(p.lead_refs)
+
+
+# --- mascots: a repo with none gets no format that draws one -----------------------------------
+
+
+def _all_allowed(b):
+    return {f for p in b.packets for fs in p.allowed for f in fs} | set(all_formats(b))
+
+
+def test_a_repo_with_no_mascot_gets_no_mascot_format():
+    assert brief.MASCOT_FORMATS == frozenset({"mascot_scene", "comic"})
+    with_mascot = build(count=20)
+    assert brief.MASCOT_FORMATS & _all_allowed(with_mascot)  # the control: they are offered
+    b = build(count=20, no_mascot_repos={"fixture"})
+    assert not brief.MASCOT_FORMATS & _all_allowed(b)
+    assert sum(p.count for p in b.packets) == 20
+    md = b.to_markdown()
+    assert "fixture has no mascot" in md and "mascot_scene" in md
+    assert "renderer not available" not in md
+
+
+def test_a_variant_for_a_repo_with_no_mascot_is_not_a_mascot_format():
+    variants = [
+        {
+            "repo": "fixture",
+            "story_type": "analogy",
+            "story_key": "k",
+            "hook": "h",
+            "formats_used": ["eli5"],
+            "sources": [{"repo": "fixture", "commit": "a" * 40}],
+        }
+    ]
+    b = build(count=20, variants=variants, variant_max_share=1.0, no_mascot_repos={"fixture"})
+    assert not brief.MASCOT_FORMATS & _all_allowed(b)
+
+
+def test_guidance_with_no_mascot_says_to_leave_the_field_out():
+    md = brief.guidance_markdown(_personas(), formats=["mascot_scene"], mascots={})
+    assert "(none: leave `mascots` out)" in md

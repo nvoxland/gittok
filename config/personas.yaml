@@ -1,4 +1,5 @@
 # Invented creator accounts (SPEC §7.1). Never real people.
+# Your changes go in local/personas.yaml (the edit_persona tool writes it), merged per field.
 personas:
   greybeard:
     name: Greybeard

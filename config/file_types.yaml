@@ -1,88 +1,142 @@
-# File-type facts used by several modules. Data, not code: edit here to add a language or stack.
+# File-type facts used by several modules. Data, not code. To add to a table for all your
+# repos, write local/file_types.yaml: a map there merges key by key, a list adds its items
+# (docs/config.md).
 
-# Extension -> name a card's code view highlights with (validator, card visuals).
+# Extension -> name a card's code view highlights with (validator, card visuals). Each name
+# must be a language of the web client's highlighter (Shiki; web/src/lib/highlight.test.ts
+# checks this table against it). An extension that is not here shows as plain text.
 highlight:
   .py: python
   .clj: clojure
   .cljs: clojure
   .cljc: clojure
+  .bb: clojure
   .edn: clojure
   .js: javascript
+  .mjs: javascript
+  .cjs: javascript
   .jsx: jsx
   .ts: typescript
   .tsx: tsx
   .svelte: svelte
+  .vue: vue
   .go: go
   .rs: rust
   .java: java
   .kt: kotlin
+  .kts: kotlin
+  .scala: scala
   .rb: ruby
+  .rake: ruby
+  .php: php
+  .cs: csharp
+  .swift: swift
+  .c: c
+  .h: c
+  .cc: cpp
+  .cpp: cpp
+  .hpp: cpp
+  .m: objective-c
+  .mm: objective-c
+  .ex: elixir
+  .exs: elixir
+  .dart: dart
+  .lua: lua
   .sh: bash
+  .bash: bash
+  .zsh: bash
   .sql: sql
+  .graphql: graphql
+  .proto: proto
+  .tf: terraform
   .yaml: yaml
   .yml: yaml
   .json: json
+  .toml: toml
+  .xml: xml
   .md: markdown
   .html: html
   .css: css
-  .toml: toml
-  .c: c
-  .h: c
-  .cpp: cpp
+  .scss: scss
 
 # Extensions (no dot) that make a word in a claim look like a file name, besides the
 # highlight table and the extensions of config/languages.yaml and config/queries.
-file_words: [txt, lock, cfg, ini, xml]
+file_words: [txt, lock, cfg, ini, conf, env, csv, mod, sum, gradle, csproj, sln, gemspec, plist]
 
 # Source-like extensions read by the age-of-lines signal, besides the extensions of
 # config/languages.yaml and config/queries.
-source_extensions: [.kt, .sh, .sql, .c, .h, .cpp]
+source_extensions: [.sh, .sql, .c, .h, .cc, .cpp, .hpp, .m, .mm, .scala, .ex, .exs, .dart,
+                    .lua, .vue]
 
 # File names (lowercase) that say nothing about a change: a commit that touches only these
-# is not a contract change.
+# is not a contract change. Manifests, entry files and tool config of the common ecosystems.
 noise_basenames:
   - readme.md
   - changelog.md
   - license
-  - package.json
-  - package-lock.json
-  - tsconfig.json
-  - pyproject.toml
-  - setup.py
-  - setup.cfg
-  - __init__.py
-  - index.js
-  - index.ts
-  - index.py
-  - main.py
-  - main.js
-  - main.ts
   - makefile
   - dockerfile
   - .gitignore
   - .gitattributes
+  - .editorconfig
   - .env.example
-  - conftest.py
   - settings.json
   - config.json
+  - package.json
+  - package-lock.json
+  - tsconfig.json
+  - index.js
+  - index.ts
+  - main.js
+  - main.ts
+  - pyproject.toml
+  - setup.py
+  - setup.cfg
+  - requirements.txt
+  - __init__.py
+  - index.py
+  - main.py
+  - conftest.py
   - cargo.toml
   - go.mod
+  - go.sum
+  - main.go
+  - pom.xml
+  - build.gradle
+  - build.gradle.kts
+  - settings.gradle
+  - gemfile
+  - rakefile
+  - composer.json
+  - package.swift
+  - mix.exs
+  - pubspec.yaml
+  - cmakelists.txt
   - deps.edn
   - project.clj
 
 # Files that name a project's dependencies or build. survey_repo lists them with their first
 # lines; the agent reads them. Globs on the file name.
 manifests:
-  - deps.edn
-  - project.clj
   - package.json
   - pyproject.toml
-  - Gemfile
+  - "requirements*.txt"
   - go.mod
   - Cargo.toml
   - pom.xml
-  - "requirements*.txt"
   - "build.gradle*"
+  - Gemfile
+  - "*.gemspec"
+  - composer.json
+  - "*.csproj"
+  - "*.sln"
+  - Package.swift
+  - mix.exs
+  - pubspec.yaml
+  - CMakeLists.txt
+  - build.sbt
+  - deps.edn
+  - project.clj
 
 # Language names to try against ast-grep at run time (besides the grammars of
 # config/queries/languages.yaml). The ones it accepts are reported by survey_repo.
@@ -102,28 +156,53 @@ doc_extensions: [.md, .rst, .txt, .adoc]
 comment_prefixes:
   .py: ["#"]
   .sh: ["#"]
+  .bash: ["#"]
+  .zsh: ["#"]
   .rb: ["#"]
+  .rake: ["#"]
+  .ex: ["#"]
+  .exs: ["#"]
+  .tf: ["#", "//", "/*", "*"]
   .yaml: ["#"]
   .yml: ["#"]
   .toml: ["#"]
+  .graphql: ["#"]
   .clj: [";"]
   .cljs: [";"]
   .cljc: [";"]
+  .bb: [";"]
   .edn: [";"]
   .js: ["//", "/*", "*"]
+  .mjs: ["//", "/*", "*"]
+  .cjs: ["//", "/*", "*"]
   .jsx: ["//", "/*", "*"]
   .ts: ["//", "/*", "*"]
   .tsx: ["//", "/*", "*"]
   .svelte: ["//", "/*", "*", "<!--"]
+  .vue: ["//", "/*", "*", "<!--"]
   .go: ["//", "/*", "*"]
   .rs: ["//", "/*", "*"]
   .java: ["//", "/*", "*"]
   .kt: ["//", "/*", "*"]
+  .kts: ["//", "/*", "*"]
+  .scala: ["//", "/*", "*"]
+  .cs: ["//", "/*", "*"]
+  .swift: ["//", "/*", "*"]
+  .dart: ["//", "/*", "*"]
+  .proto: ["//", "/*", "*"]
+  .php: ["//", "#", "/*", "*"]
   .c: ["//", "/*", "*"]
   .h: ["//", "/*", "*"]
+  .cc: ["//", "/*", "*"]
   .cpp: ["//", "/*", "*"]
+  .hpp: ["//", "/*", "*"]
+  .m: ["//", "/*", "*"]
+  .mm: ["//", "/*", "*"]
+  .scss: ["//", "/*", "*"]
   .css: ["/*", "*"]
   .html: ["<!--"]
+  .xml: ["<!--"]
+  .lua: ["--"]
   .sql: ["--", "/*", "*"]
 
 # A TODO-like word counts as a code comment when it follows one of these comment starts

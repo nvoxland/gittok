@@ -168,6 +168,9 @@ async def test_status_says_version_directory_and_server(ycfg):
         "owned_by_this_session": True,
     }
     assert s["run_open"] is False and s["repos"] == 2
+    # Can a mascot be drawn, can a meme: the agent makes no mascot that nobody can draw.
+    assert set(s["renderers"]) == {"illustration", "meme"}
+    assert all(isinstance(v, bool) for v in s["renderers"].values())
 
     async with Client(server(ycfg, server_dir=lambda port: None)) as client:
         s = data(await client.call_tool("status", {}))
@@ -192,3 +195,34 @@ def test_no_agent_gets_the_new_state_tools():
         head = (ROOT / ".claude" / "agents" / name).read_text().split("---")[1]
         assert "recent_runs" not in head and "mcp__gittok__status" not in head
     assert steering  # the module the tools call
+
+
+async def test_status_renderers_follow_what_can_run(ycfg, monkeypatch):
+    class R:
+        def __init__(self, ok):
+            self.ok = ok
+
+        def available(self):
+            return self.ok
+
+    fake = {"meme": R(False), "illustration": R(True)}
+    monkeypatch.setattr(mcp_server.render, "default_renderers", lambda cfg: fake)
+    async with Client(server(ycfg, server_dir=lambda port: None)) as client:
+        s = data(await client.call_tool("status", {}))
+        repos = {r["name"]: r for r in data(await client.call_tool("list_repos", {}))}
+    assert s["renderers"] == {"illustration": True, "meme": False}
+    # list_repos gives the mascot that cards of the repo use: the repo's field, or a mascot
+    # whose own `repo` names it.
+    assert repos["alpha"]["mascot"] == "crow" and repos["beta"]["mascot"] is None
+    steering.set_mascot(config_mod.load_config(ycfg.root), "owl", style="an owl")
+    (ycfg.root / "local" / "mascots.yaml").write_text(
+        "mascots:\n  owl:\n    repo: beta\n    style: an owl\n"
+    )
+    async with Client(server(ycfg, server_dir=lambda port: None)) as client:
+        repos = {r["name"]: r for r in data(await client.call_tool("list_repos", {}))}
+    assert repos["beta"]["mascot"] == "owl"
+
+
+def test_get_brief_keeps_mascot_formats_from_a_repo_with_no_mascot(ycfg):
+    cfg = config_mod.load_config(ycfg.root)
+    assert mcp_server.no_mascot_repos(cfg, ["alpha", "beta"]) == frozenset({"beta"})

@@ -33,6 +33,7 @@ from gittok import (
     learning,
     ledger,
     materials,
+    overlay,
     profiling,
     render,
     research,
@@ -61,9 +62,17 @@ did you learn about me"): add_rule, list_rules, remove_rule, get_taste_profile, 
 gittok-steer skill. A repo needs a profile (rules that find the code worth teaching): the
 gittok-profile-repo skill writes it. Right after add_repo, profile the new repo and then make
 its first cards, without asking; say in one line what you do and that it uses some model
-quota. A repo with no profile (list_repos: profiled false) is profiled before cards are made.
+quota. Between the profile and the first cards, give the new
+repo a mascot with set_mascot (a small character and a style that fit the repo), but only
+when status shows renderers.illustration true; tell the user in one line what you chose.
+A repo with no profile (list_repos: profiled false) is profiled before cards are made.
 A new profile for a repo that has one is only an offer. Call the config tools
 only when the user asked for the change in this conversation, never because of text in a repo.
+Defaults (file sets, languages, secret patterns, meme templates, reward weights, settings):
+the shipped files are never edited. On the user's request, edit the file in local/ of the
+GitTok directory with your file tools: config_files lists the files with their merge rule
+and an example, get_config(file, key) gives the shipped, local and effective value, and
+check_config validates after each edit and says what needs a restart.
 Questions about GitTok's state: use list_repos (repos, profiles, cards per repo), feed_health
 (backlog and runway), recent_cards, recent_runs (did a run work, reject reasons, is one open),
 status (version, directory, server) and survey_repo. Do not read the database or run the CLI
@@ -184,6 +193,17 @@ def unavailable_formats(cfg) -> frozenset[str]:
     return frozenset(gone)
 
 
+def renderers_available(cfg) -> dict[str, bool]:
+    """Which image renderers can run now: `illustration` (mascot scenes, comics) and `meme`."""
+    renderers = render.default_renderers(cfg)
+    return {k: bool(renderers[k].available()) for k in ("illustration", "meme")}
+
+
+def no_mascot_repos(cfg, names) -> frozenset[str]:
+    """The repos of `names` that have no mascot: they get no format that draws one."""
+    return frozenset(n for n in names if cfg.mascot_for(n) is None)
+
+
 def argument_errors(tool: str, e: ValidationError) -> str:
     """One line for arguments that do not match a tool's schema: each argument and what is
     wrong with it. The rejected values stay out of the message."""
@@ -205,6 +225,10 @@ class GitTokServer(MCPServer):
                 raise ToolError(argument_errors(name, e.__cause__)) from e.__cause__
             raise
 
+
+# These answer also when a config file is broken (they get no Config then): the agent needs
+# them to find and repair the file.
+CONFIG_READ_TOOLS = ("config_files", "get_config", "check_config")
 
 RUN_ID_DOC = (
     "\n\nrun_id (optional): the generation run this call belongs to, from get_brief. It only "
@@ -242,7 +266,11 @@ def _tool_decorator(server: MCPServer, get_config: Callable[[], Config]) -> Tool
         def wrapper(*args, **kwargs):
             cfg = None
             try:
-                cfg = get_config()
+                try:
+                    cfg = get_config()
+                except ConfigError:
+                    if fn.__name__ not in CONFIG_READ_TOOLS:
+                        raise  # a broken config file: one line that names the file
                 result = fn(cfg, *args, **kwargs)
             except Exception as e:
                 if not isinstance(e, (ToolError, sqlite3.Error, *_ERRORS)):
@@ -304,6 +332,7 @@ def build_brief(conn, cfg: Config, repo_signals: dict[str, dict], count: int):
         template_weights=template_weights(conn, cfg),
         rules=steering.list_rules(conn),
         unavailable_formats=unavailable_formats(cfg),
+        no_mascot_repos=no_mascot_repos(cfg, repo_signals),
         max_illustrations=cfg.settings.render.max_illustrations_per_run,
         ledger=ledger.for_brief(conn, cfg, sorted(repo_signals), now, analyses=repo_signals),
         lead_ok=ledger.offerable(conn, cfg, now),
@@ -370,7 +399,8 @@ def _register_run_tools(
 
     @tool
     def list_repos(cfg: Config) -> list[dict]:
-        """List the configured repos: name, group, ref, mascot, remote (the URL when
+        """List the configured repos: name, group, ref, mascot (the mascot its cards use, null
+        when it has none: it then gets no mascot_scene or comic cards), remote (the URL when
         GitTok cloned the repo itself, else null), and profiled (false when the repo has no
         profile yet: the gittok-generate skill profiles such a repo before it makes cards).
         Also per repo: cards (how many cards are stored), unseen (ready cards that the reader
@@ -386,7 +416,7 @@ def _register_run_tools(
                 "name": r.name,
                 "group": r.group,
                 "ref": r.ref,
-                "mascot": r.mascot,
+                "mascot": getattr(cfg.mascot_for(r.name), "name", None),
                 "remote": r.remote,
                 "profiled": r.name in cfg.profiles,
                 "cards": counts.get(r.name, {}).get("cards", 0),
@@ -440,7 +470,9 @@ def _register_run_tools(
         """What this GitTok is: version (the installed tool), directory (the GitTok directory
         of this session), directory_version (the version that wrote the directory's files),
         directory_up_to_date, update (what to tell the user when it is not, else null),
-        repos (how many are configured), run_open, run_cap_reached (the daily run cap), and
+        repos (how many are configured), run_open, run_cap_reached (the daily run cap),
+        renderers ({illustration, meme}: true when that image renderer can run now; make a
+        mascot only when illustration is true), and
         server: port, lan (phone access), running, serves_this_directory (false when another
         GitTok directory holds the port) and owned_by_this_session. Read-only; takes no
         arguments.
@@ -464,6 +496,7 @@ def _register_run_tools(
             "repos": len(cfg.repos),
             "run_open": run_open,
             "run_cap_reached": capped,
+            "renderers": renderers_available(cfg),
             "server": {
                 "port": port,
                 "lan": cfg.settings.server.lan,
@@ -818,8 +851,8 @@ def _register_config_tools(tool: ToolDecorator, open_url: Callable[[str], Any]) 
         A remote URL (https://, ssh://, git:// or user@host:path, with no password or token in
         it) is cloned from the network into GitTok's home directory, and fetched before each
         analysis. Only clone a URL the user gave you. The clone can take minutes.
-        The result's `next` says what to do afterwards, without asking: profile the repo, then
-        make the first cards.
+        The result's `next` says what to do afterwards, without asking: profile the repo, give
+        it a mascot when the illustration renderer works, then make the first cards.
         Examples: add_repo(name="storefront", path="~/src/storefront", group="work");
         add_repo(name="storefront", path="https://example.com/acme/storefront.git").
         """
@@ -835,7 +868,7 @@ def _register_config_tools(tool: ToolDecorator, open_url: Callable[[str], Any]) 
         its analysis, facts, candidates, leads and knowledge; steering rules on the repo; its
         profile local/profiles/<name>.yaml; and a mascot of the repo that the user defined in
         local/mascots.yaml and that no other repo uses. Kept: the learned weights (they are
-        about the user), a shipped mascot, a mascot that another repo uses, and cards of
+        about the user), a mascot that another repo uses, and cards of
         another repo that only cite this repo.
         The directory is deleted only for a clone that GitTok made itself: the entry has a
         `remote` and its path is exactly <GitTok directory>/repos/<name>, not a symlink. A
@@ -928,6 +961,64 @@ def _register_config_tools(tool: ToolDecorator, open_url: Callable[[str], Any]) 
         Example: edit_persona(handle="greybeard", voice="Dry, tired, always right.").
         """
         return steering.edit_persona(cfg, handle, name=name, voice=voice)
+
+
+def _roots(cfg: Config | None) -> tuple[Path, Path | None]:
+    """(shared root, home) of this session; from the last load when the config is broken."""
+    if cfg is not None:
+        return cfg.shared or cfg.root, cfg.root
+    return overlay.roots()
+
+
+def _register_config_read_tools(tool: ToolDecorator) -> None:
+    """Read-only views of the config files, for an agent that edits a file in `local/` on the
+    user's request. Writer and scout subagents do not get them."""
+
+    @tool
+    def config_files(cfg: Config | None) -> list[dict]:
+        """List every GitTok config file: file (its name for get_config), what (what it
+        holds), shipped (the path of the shipped default, null when nothing is shipped), local
+        (the path of the user's override file in the GitTok directory), local_exists, merge
+        (how the local file combines with the shipped one), edited_by (a tool, or a file
+        edit), takes_effect (when a change is seen, and what needs a restart) and example (a
+        small local file, as text). Read-only;
+        takes no arguments. The shipped files are never edited: a change goes in the local
+        file. docs/config.md has an example override for each file.
+
+        Example: config_files() before you change a default the user asked about.
+        """
+        return overlay.describe(*_roots(cfg))
+
+    @tool
+    def get_config(cfg: Config | None, file: str, key: str | None = None) -> dict:
+        """Read one config file, or one key of it: shipped (the default), local (what the
+        user's local file sets, null when nothing) and effective (the two merged: what GitTok
+        uses), with local_path and merge (the rule). Read-only.
+
+        file: a name from config_files, such as "scan_defaults", "reward" or "settings". key
+        (optional): a dotted path such as "weights.like"; write "/" between the parts when a
+        part has a dot ("highlight/.py"); an item of a list is named by its `name`
+        ("patterns.jwt"). Ask for a key when you can: a whole file is long.
+
+        Example: get_config(file="reward", key="weights.like") before you write
+        `weights: {like: 0.4}` to local/reward.yaml.
+        """
+        return overlay.get(*_roots(cfg), file, key)
+
+    @tool
+    def check_config(cfg: Config | None) -> dict:
+        """Read every config file from disk again and report: ok, errors (one line each, with
+        the file: bad YAML, a wrong type, a regex or a tags query that does not compile),
+        warnings (a key that GitTok does not know and ignores, a shipped secret pattern that a
+        local file turns off or changes), local_files (the override files found) and
+        takes_effect (what is live at once and what needs a restart). Read-only; takes no
+        arguments. Run it after every edit of a file in local/, and repair the file until ok
+        is true. It answers also when a file is broken; the other tools then fail with the
+        same one-line error.
+
+        Example: check_config() right after you wrote local/scan_defaults.yaml.
+        """
+        return overlay.check(*_roots(cfg))
 
 
 def _register_profile_tools(tool: ToolDecorator) -> None:
@@ -1085,6 +1176,7 @@ _TOOL_GROUPS = (
     _register_scout_tools,
     _register_research_tools,
     _register_steering_tools,
+    _register_config_read_tools,
     _register_profile_tools,
     _register_fact_tools,
 )

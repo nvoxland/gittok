@@ -2,8 +2,10 @@
 
 GitTok reads two kinds of files:
 
-- **Shared files** in `config/`. They ship with GitTok. Do not edit them: an upgrade replaces them, and in an installed tool they are inside the package.
-- **Your files** in `local/` of your GitTok directory. GitTok never ships these. All of them are optional.
+- **Shipped files** in `config/`. They hold the defaults and ship with GitTok. Do not edit them: an upgrade replaces them, and in an installed tool they are inside the package.
+- **Your files** in `local/` of your GitTok directory. GitTok never ships these. All of them are optional. Each shipped file has a local file of the same name, and GitTok merges yours over the shipped one. So you can change every default, and an upgrade keeps your changes.
+
+You do not have to edit a file. Ask Claude in a Claude Code session ("also scan .proto files", "change the reward for a like"): it uses a tool where one exists and edits the local file where none does (see "Change the config by asking").
 
 ## The two roots
 
@@ -13,17 +15,103 @@ GitTok works with two folders: the **shared root** (holds `config/`) and the **h
 2. Otherwise it walks up from the current directory. A folder with `gittok.yaml` is a GitTok directory: it is the home, and the shared root is inside the package. A folder with `config/settings.yaml` is a clone of the source: it is both roots.
 3. With neither, the command stops with an error: not inside a GitTok directory.
 
-So your files are `<gittok dir>/local/...`, and in a clone they are `<clone>/local/...`. The paths below are relative to the home. `gittok.yaml` itself is not a config file: `gittok init` and `gittok update` write it, and you do not edit it.
+So your files are `<gittok dir>/local/...`, and in a clone they are `<clone>/local/...`. The paths below are relative to the home. `gittok.yaml` itself is not a config file: `gittok init` and `gittok update` write it, and you do not edit it. `gittok init` makes `local/repos.yaml` only; you (or Claude) make another local file when you first need it.
 
-| File | What it holds | Who writes it |
+## Every file
+
+| File | What it holds | Shipped default | Your file | Who edits your file |
+|---|---|---|---|---|
+| repos | The repos and groups | none | `local/repos.yaml` | The `add_repo`, `remove_repo`, `set_group`, `set_mascot` tools, `gittok repos ...`, or you |
+| mascots | The mascot of each repo | none | `local/mascots.yaml` | The `set_mascot` tool, `gittok mascot set`, or you |
+| profiles | The profile of one repo | none | `local/profiles/<repo>.yaml` | The `gittok-profile-repo` skill, through `save_profile` |
+| settings | Server, agent, analysis, render and clean-up settings | `config/settings.yaml` | `local/settings.yaml` | You, or Claude by a file edit. The `set_lan` tool writes `server.lan` |
+| personas | Names, voices and bios of the cast | `config/personas.yaml` | `local/personas.yaml` | The `edit_persona` tool, `gittok persona edit`, or you |
+| defaults | The starting mix of categories and tones | `config/defaults.yaml` | `local/defaults.yaml` | You, or Claude by a file edit |
+| reward | Reward weights, read times, decay, slotting | `config/reward.yaml` | `local/reward.yaml` | You, or Claude by a file edit |
+| scan_defaults | The file set of a repo with no profile | `config/scan_defaults.yaml` | `local/scan_defaults.yaml` | You, or Claude by a file edit |
+| file_types | Extension tables, manifest names | `config/file_types.yaml` | `local/file_types.yaml` | You, or Claude by a file edit |
+| languages | Regex patterns per language | `config/languages.yaml` | `local/languages.yaml` | You, or Claude by a file edit |
+| queries | Tree-sitter languages and tags queries | `config/queries/languages.yaml`, `config/queries/<grammar>.scm` | `local/queries/languages.yaml`, `local/queries/<grammar>.scm` | You, or Claude by a file edit |
+| claims | The phrases that make a typed claim | `config/claims.yaml` | `local/claims.yaml` | You, or Claude by a file edit |
+| secrets | The patterns of the secret detector | `config/secrets.yaml` | `local/secrets.yaml` | You, or Claude by a file edit |
+| meme_templates | The meme templates a writer may use | `config/meme_templates.yaml` | `local/meme_templates.yaml` | You, or Claude by a file edit |
+
+Other folders of the home: `data/` (the database, images, logs, the pairing token; GitTok writes it) and `repos/<name>/` (the clone of a repo you added by URL; GitTok owns it).
+
+`gittok config files` prints this list for your directory, and marks the local files that exist. The `config_files` tool gives Claude the same list.
+
+## The merge rule
+
+One rule holds for every file except `settings`:
+
+- **A map merges key by key**, at every depth. Write only the keys you change.
+- **A list adds.** The items of your list are added to the shipped list. An item that is already there is not added twice. An item with a `name` (a secret pattern) that has the name of a shipped item changes that item, field by field.
+- **A single value replaces** the shipped value.
+- A key with no value (`scan:` and nothing after it) is ignored.
+
+To take something away you must say so:
+
+| You write | Result |
+|---|---|
+| `scan: {$remove: ['*.sh']}` | The shipped list without that item |
+| `scan: {$remove: ['*.sh'], $add: ['*.proto']}` | Both in one step |
+| `scan: {$replace: ['*.py']}` | Your list instead of the shipped list |
+| `templates: {$remove: [chair]}` | The shipped map without that key |
+| `templates: {$replace: true, mine: {lines: 2}}` | Your map instead of the shipped map |
+
+`$remove` and `$replace` work inside a key. At the top of a file they are refused, because GitTok needs every section of a shipped file.
+
+`settings` has its own, older rule: a top-level key replaces, and inside a section (`server`, `agent`, ...) each key replaces on its own, a list included.
+
+What happens on a mistake:
+
+- **A key that GitTok does not know** is ignored with a warning. The file still loads. `gittok health`, `gittok config check` and the `check_config` tool print the warning, so a typo stays visible.
+- **A broken file** (bad YAML, a value of the wrong type, a regex that does not compile) is an error of one line that names the file. GitTok does not start a run with a broken file. The secret detector keeps its shipped patterns in that case, so nothing is unmasked by a typo.
+- **`local/secrets.yaml` cannot drop the shipped patterns as a whole.** `$replace` on `patterns` is refused. A shipped pattern goes only by name (`patterns: {$remove: [jwt]}`), and GitTok prints a warning for each one that is off or changed, because less text is masked then.
+
+When a change takes effect:
+
+- The MCP tools read the files on every call, and the feed server reads them again when a file changes. Most changes are live at once, with no restart.
+- In `settings`, the `server` and `render` values, `data_dir` and the worker intervals need a server restart: in Claude Code run `/mcp`, pick gittok, and Reconnect; or start `gittok serve` again.
+- `languages`, `queries`, `scan_defaults`, `file_types` and a profile change what the next analysis finds. Cards that exist stay as they are.
+
+## One repo or all repos
+
+- `local/profiles/<repo>.yaml` is for **one repo**. Its `scan`, `ignore`, `kinds` and `generated_markers` each REPLACE the value of `scan_defaults` for that repo (no merging), and its `queries` add a tags query for that repo. The `gittok-profile-repo` skill writes it.
+- Every other file in `local/` is for **all repos** of this GitTok directory.
+
+So "also read `.proto` files in storefront" is a change to the profile of storefront, and "also read `.proto` files" is a line in `local/scan_defaults.yaml`. A repo with a profile that sets `scan` does not see the `scan` of `scan_defaults`.
+
+## Change the config by asking
+
+| You say | What Claude does | What it writes |
 |---|---|---|
-| `local/repos.yaml` | The repos and groups | You, `gittok repos ...`, the `add_repo`, `remove_repo`, `set_group` and `set_mascot` tools |
-| `local/settings.yaml` | Your changes to the settings | You. The `set_lan` tool writes `server.lan` only |
-| `local/personas.yaml` | Your changes to persona names, voices and bios | You, `gittok persona edit`, the `edit_persona` tool |
-| `local/mascots.yaml` | Your mascots | You, `gittok mascot set`, the `set_mascot` tool |
-| `local/profiles/<repo>.yaml` | The profile of one repo | The `gittok-profile-repo` skill, through `save_profile` |
-| `data/` | The database, images, logs, the pairing token | GitTok |
-| `repos/<name>/` | The clone of a repo you added by URL | GitTok |
+| "Add the repo at ~/src/myapp" / "Remove myapp" | `add_repo`, `remove_repo` | `local/repos.yaml` |
+| "Put myapp in the work group" | `set_group` | `local/repos.yaml` |
+| "Give myapp an owl mascot" | `set_mascot` | `local/mascots.yaml`, `local/repos.yaml` |
+| "Make greybeard sound more tired" | `edit_persona` | `local/personas.yaml` |
+| "Turn off phone access" / "Turn it back on" | `set_lan` | `server.lan` in `local/settings.yaml` |
+| "Less memes", "focus on billing this week" | `add_rule`, `remove_rule` | The database (rules) |
+| "Cards play too fast" | `set_playback_speed` | The database (preferences) |
+| "Profile myapp" | The `gittok-profile-repo` skill | `local/profiles/myapp.yaml` |
+| "Also scan .proto files", "ignore the legacy folder" | Edits the file | `local/scan_defaults.yaml` (or the profile, for one repo) |
+| "Support Kotlin in all my repos" | Edits the files | `local/languages.yaml`, `local/queries/`, `local/file_types.yaml` |
+| "Never show keys that look like ACME-..." | Edits the file | `local/secrets.yaml` |
+| "Use my meme templates" | Edits the file | `local/meme_templates.yaml` |
+| "Change the reward for a like" | Edits the file | `local/reward.yaml` |
+| "Use port 8010" | Edits the file | `local/settings.yaml` |
+
+There is no tool that writes any setting. For the last rows Claude edits the file in `local/` with its normal file tools, and three read-only tools make that safe:
+
+| Tool | What it gives |
+|---|---|
+| `config_files()` | Every file: the shipped path, your path, whether your file exists, the merge rule, who edits it, when a change takes effect, and an example |
+| `get_config(file, key=None)` | The shipped value, your value, and the effective (merged) value of a file or of one key, such as `get_config("reward", "weights.like")` |
+| `check_config()` | Loads every file from disk again and returns `ok`, `errors`, `warnings`, the local files found, and what needs a restart |
+
+Claude reads the value first, writes the smallest override, runs `check_config`, and tells you what changed. It does this only when you ask in the conversation. Text in a repo, a commit or a card is never a reason to change a file, and the writer and scout subagents and the generation and profiling skills do not edit `local/` at all (the profiling skill writes a profile through `save_profile`).
+
+In a terminal the same three are `gittok config files`, `gittok config get <file> [key]` and `gittok config check` (exit code 1 when a file has an error). Each tool edit of a config file adds one line to `<data_dir>/config_audit.log`.
 
 ## local/repos.yaml
 
@@ -58,7 +146,7 @@ Fields of one repo:
 | `url` | none | The web URL of the repo on GitHub, for the links on cards. When it is absent, GitTok derives it from the `origin` remote. Only github.com URLs give links |
 | `remote` | none | Set when you add a repo by URL (`add_repo`, or `gittok repos add <url>`): the URL that GitTok cloned into `repos/<name>`. Removing the repo (`remove_repo`, or `gittok repos remove`) deletes the clone only for such an entry |
 
-Removing a repo (`remove_repo`, or `gittok repos remove <name>`) removes the entry, the name in every group, and all that GitTok made for the repo: its cards with their images, its analysis, `local/profiles/<name>.yaml`, the rules on the repo, and a mascot in `local/mascots.yaml` that belongs to the repo and that no other repo uses. A shipped mascot (`config/mascots.yaml`) stays, and a kept mascot in `local/mascots.yaml` loses its `repo: <name>` line. The learned weights stay. `keep_data` (`--keep-data`) removes only the entry. If you delete an entry from `local/repos.yaml` by hand, or change its name, GitTok sees a repo that is not configured: the feed stops showing its cards and the next garbage collection pass deletes its data. A rename by hand is a removal and an addition. One guard: when no repo at all is configured, garbage collection deletes nothing for that reason, because an empty list is more likely a lost `repos.yaml`.
+Removing a repo (`remove_repo`, or `gittok repos remove <name>`) removes the entry, the name in every group, and all that GitTok made for the repo: its cards with their images, its analysis, `local/profiles/<name>.yaml`, the rules on the repo, and a mascot in `local/mascots.yaml` that belongs to the repo and that no other repo uses. A mascot that another repo uses stays, and loses its `repo: <name>` line. The learned weights stay. `keep_data` (`--keep-data`) removes only the entry. If you delete an entry from `local/repos.yaml` by hand, or change its name, GitTok sees a repo that is not configured: the feed stops showing its cards and the next garbage collection pass deletes its data. A rename by hand is a removal and an addition. One guard: when no repo at all is configured, garbage collection deletes nothing for that reason, because an empty list is more likely a lost `repos.yaml`.
 
 Fields of one group: `repos` (a list of repo names) and `standalone` (true or false; GitTok reads it but does not use it today). A repo can be in one group only.
 
@@ -76,22 +164,7 @@ agent:
   per_day_runs: 4
 ```
 
-A key that GitTok does not know is ignored with a warning; `gittok health` prints the warning. The same holds for an unknown key in `config/reward.yaml`. Restart the server after a change (`gittok serve`, or the Claude Code session that owns it).
-
-You can change most things by asking Claude in a Claude Code session, without editing a file:
-
-| You say | What Claude calls | What it writes |
-|---|---|---|
-| "Add the repo at ~/src/myapp" / "Remove myapp" | `add_repo`, `remove_repo` | `local/repos.yaml` |
-| "Put myapp in the work group" | `set_group` | `local/repos.yaml` |
-| "Give myapp an owl mascot" | `set_mascot` | `local/mascots.yaml`, `local/repos.yaml` |
-| "Make greybeard sound more tired" | `edit_persona` | `local/personas.yaml` |
-| "Turn off phone access" / "Turn it back on" | `set_lan` | `server.lan` in `local/settings.yaml` |
-| "Less memes", "focus on billing this week" | `add_rule`, `remove_rule` | The database (rules) |
-| "Cards play too fast" | `set_playback_speed` | The database (preferences) |
-| "Profile myapp" | The `gittok-profile-repo` skill | `local/profiles/myapp.yaml` |
-
-For any other setting, edit `local/settings.yaml` yourself, or ask Claude to edit the file. Each tool edit of a config file adds one line to `<data_dir>/config_audit.log`.
+A key that GitTok does not know is ignored with a warning; `gittok health` and `gittok config check` print the warning. Restart the server after a change to `server`, `render`, `data_dir` or a worker interval (`gittok serve`, or the Claude Code session that owns it); the other settings are read on the next tool call.
 
 The values below are the shipped ones.
 
@@ -170,7 +243,7 @@ The values below are the shipped ones.
 |---|---|---|
 | `memegen_url` | `http://127.0.0.1:5001` | The local memegen server |
 | `mflux_model` | `z-image-turbo` | The mflux model family |
-| `mflux_path` | `~/.cache/mflux/z-image-turbo-q4` | The folder that `mflux-save` wrote. Until it exists, illustration cards wait |
+| `mflux_path` | `~/.cache/mflux/z-image-turbo-q4` | The folder that `mflux-save` wrote (`docs/install.md`). Until it exists, GitTok makes no illustration cards and no mascot. Empty: quantize `mflux_model` on every run |
 | `mflux_steps` | `8` | Steps per image |
 | `mflux_quantize` | `8` | The quantization when `mflux_path` is empty |
 | `image_width`, `image_height` | `768`, `960` | The image size in pixels |
@@ -231,7 +304,7 @@ Fields: `name`, `voice`, `bio` (optional). The handles are fixed by the card sch
 
 ## Mascots
 
-`config/mascots.yaml` and `local/mascots.yaml` are merged in the same way, per mascot name:
+A mascot is a small character that the illustration cards of one repo draw. GitTok ships none: a mascot belongs to your repo, so all of them are in `local/mascots.yaml`.
 
 ```yaml
 # local/mascots.yaml
@@ -244,27 +317,150 @@ mascots:
 
 Fields: `style` (required; the text put before every illustration prompt), `seed` (a number, reused so the mascot looks the same), `repo` (optional). A repo uses the mascot named in its `mascot` field in `repos.yaml`, or else the first mascot whose `repo` is that repo. `gittok mascot set` and the `set_mascot` tool write this file.
 
+How a repo gets one:
+
+- **When you add a repo**, Claude profiles it and then picks a character and a style that fit it, saves it with `set_mascot`, and tells you in one line. Say "make the mascot a fox" to change it.
+- This happens only when the image renderer works (the `status` tool: `renderers.illustration`). Without it nobody can draw the mascot, so none is made.
+- **A repo with no mascot** gets no `mascot_scene` and no `comic` cards. All other formats work, and no card is rejected for a missing mascot. For a repo that you added earlier, the SessionStart hint offers a mascot once the renderer works; Claude makes it when you say yes.
+
 ## Repo profiles
 
-`local/profiles/<repo>.yaml` holds the profile of one repo: its stack, the role of each dir, the file set (`scan`, `ignore`, `kinds`), and the detector rules. The `gittok-profile-repo` skill writes it through `save_profile`, which tests every rule first. The fields and the scoring are in `docs/learning.md`, "Candidate score and repo profiles". The schema is `src/gittok/schema/profile.schema.json`. A repo without a profile uses `config/scan_defaults.yaml`.
+`local/profiles/<repo>.yaml` holds the profile of one repo: its stack, the role of each dir, the file set (`scan`, `ignore`, `kinds`), and the detector rules. The `gittok-profile-repo` skill writes it through `save_profile`, which tests every rule first. The fields and the scoring are in `docs/learning.md`, "Candidate score and repo profiles". The schema is `src/gittok/schema/profile.schema.json`. A repo without a profile uses `scan_defaults`.
 
-## Shared files you may want to read
+## The other files, with an example for each
 
-These have no `local/` overlay. To change one, you need a clone.
+Each example is a whole local file. It holds only what changes.
 
-| File | What it holds |
-|---|---|
-| `config/reward.yaml` | Reward weights, expected read times, feature importance, the decay half-life, slotting values (`docs/learning.md` sections 3 to 5) |
-| `config/defaults.yaml` | The default mix of categories and tones, the exploration share, the prior strength |
-| `config/scan_defaults.yaml` | The file set of a repo that has no profile |
-| `config/secrets.yaml` | The patterns of the secret detector |
-| `config/claims.yaml` | The phrases that make a typed claim |
-| `config/meme_templates.yaml` | The meme templates the agent may use |
-| `config/languages.yaml`, `config/file_types.yaml`, `config/queries/` | Per-language patterns, file type tables, and tree-sitter queries |
+### defaults: the starting mix
 
-An unknown top-level key in `config/reward.yaml`, or an unknown key in its `weights` or `importance` map, is ignored with a warning that `gittok health` prints. A known key with a value of the wrong shape is an error.
+The share of each category and tone before the feed has learned anything, the least share of image cards a packet asks for (`visual_mix.image_min_share`; a soft target that only counts formats which can be drawn), the exploration share, and the prior strength. "Less memes" is a rule (`add_rule`), not a change here; change this file when you want another starting point.
 
-`config/languages.yaml` has a `shared:` block next to `languages:`. It holds the line shapes that are true for most languages: the comment start, the lines whose numbers are not magic numbers, the start of a multi-line literal, the shape of a self call, and the tokens to skip in parameter lists and nesting. Each language can set any of these keys itself; its value then replaces the shared one. A language that GitTok knows only through `config/queries/` uses the shared values as they are.
+```yaml
+# local/defaults.yaml
+categories:
+  memes: 0.10
+visual_mix:
+  image_min_share: 0.3
+```
+
+### reward: weights and ranking
+
+Reward weights, expected read times, feature importance, the decay half-life, slotting values (`docs/learning.md` sections 3 to 5). An unknown key in `weights` or `importance` is ignored with a warning.
+
+```yaml
+# local/reward.yaml
+weights:
+  like: 0.4
+half_life_days: 14
+```
+
+### scan_defaults: the files GitTok reads
+
+For a repo with no profile: `scan` (globs of the files read), `ignore` (never read), `kinds` (`test`, `fixture`, `generated`, `vendored`, `docs`), `generated_markers` (regexes for a generated header) and `noise` (paths that are never the subject of a card; this one holds for repos with a profile too).
+
+```yaml
+# local/scan_defaults.yaml
+scan: ['*.proto', '*.sql']        # also read these
+ignore: ['**/legacy/**']          # never read these
+kinds:
+  test: ['**/it/**']
+noise: {$remove: ['*.svg']}       # a shipped entry goes only by name
+```
+
+### file_types: extension tables
+
+`highlight` (extension to the language name of the code view; it must be a language of the web client's highlighter, Shiki), `source_extensions`, `doc_extensions`, `comment_prefixes`, `noise_basenames`, `manifests`, `file_words`, `why_words`, `ast_grep_probe`, `todo_comment`.
+
+```yaml
+# local/file_types.yaml
+highlight:
+  .zig: zig
+source_extensions: [.zig]
+manifests: [build.zig]
+```
+
+### languages: regex patterns per language
+
+`config/languages.yaml` has the patterns of the candidate miners for Python, Clojure, TypeScript and JavaScript, Go, Rust, Java, Ruby, Kotlin, C#, PHP and Swift: function starts, imports, entry points, skipped tests, catch-all handlers, sleeps, regex literals, bit operations, metaprogramming, and thresholds. A `shared:` block holds the line shapes that are true for most languages; a language can set any of those keys itself. The patterns name public frameworks only. A macro or a convention of one project belongs in that repo's profile, or here in your local file.
+
+```yaml
+# local/languages.yaml
+thresholds:
+  long_function: 80
+languages:
+  python:
+    entry_points: ['^\s*@my_job\b']   # added to the shipped list
+  zig:                                  # a new language: `extensions` is required
+    extensions: [.zig]
+    comment: "//"
+    block: indent
+    func_start: '^\s*(?:pub\s+)?fn\s+(\w+)'
+```
+
+What a language gets:
+
+| Language | Tree-sitter query | Regex patterns | Result |
+|---|---|---|---|
+| Python, TypeScript/JavaScript/Svelte, Clojure, Go, Rust, Java, Ruby | yes | yes | All miners. Without the grammar download, the regex patterns still find functions, imports and the rest |
+| Kotlin, C#, PHP, Swift | no | yes | Functions, parameters, nesting and branches by regex and indentation; entry points, skipped tests, catch-alls, sleeps, regex literals. Imports resolve for Kotlin (and PHP `require`); C# and Swift imports name modules, not files, so there is no fan-in |
+| C, C++, Objective-C, Scala, Elixir, Dart, Lua, shell, Vue | no | no | The files are read. Plain text rules only: comment markers (HACK, FIXME), long lines, deep indentation. Profile rules work |
+| Any other | no | no | Not read, until a profile or `local/scan_defaults.yaml` adds the extension |
+
+### queries: tree-sitter
+
+`config/queries/languages.yaml` maps extensions to grammars and holds the shape rules of each language (node types for nesting and branches, parameters, what is public, how imports resolve). `config/queries/<grammar>.scm` is the tags query of one grammar. A local `languages.yaml` merges like every other file. A local `.scm` file replaces the shipped query of that grammar as a whole, because a query has no keys to merge.
+
+```yaml
+# local/queries/languages.yaml
+languages:
+  zig:
+    extensions: {.zig: zig}
+    comment: "//"
+  clojure:
+    def_heads:
+      function: [fn-traced]     # a macro of yours that defines a function
+```
+
+```scheme
+; local/queries/<grammar>.scm, here local/queries/zig.scm
+(function_declaration name: (identifier) @name) @definition.function
+(comment) @comment
+```
+
+The grammar must be one of tree-sitter-language-pack; `gittok structure --prefetch` downloads it. `check_config` compiles each local query whose grammar is downloaded. For one repo only, put the query in the repo's profile (`queries`) instead.
+
+### claims: typed-claim phrases
+
+The phrases that make a card's sentence a typed claim (`returns`, `accepts`, `may_be_nil`), and the words in a return type that mean "may be nil".
+
+```yaml
+# local/claims.yaml
+nilable_words: [undefined]
+```
+
+### secrets: what is masked
+
+Repo text that leaves the server goes through these patterns first. Each pattern has `name`, `regex`, and optional `flags` (`i`, `s`, `m`), `group`, `min_length`, `min_entropy`.
+
+```yaml
+# local/secrets.yaml
+patterns:
+  - name: acme_key
+    regex: 'ACME-[A-Z0-9]{12}'
+```
+
+To turn a shipped pattern off, name it: `patterns: {$remove: [jwt]}`. GitTok then prints a warning each time it loads the config.
+
+### meme_templates
+
+The memegen template ids a writer may use: `lines`, `hint`, `fits` (story types). A new id must exist on your memegen server.
+
+```yaml
+# local/meme_templates.yaml
+templates:
+  $remove: [chair]
+  doge: {lines: 2, hint: 'much X, very Y'}
+```
 
 ## Environment variables
 

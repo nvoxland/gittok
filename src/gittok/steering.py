@@ -894,7 +894,12 @@ def next_step(name: str) -> str:
         f"user in one line that you profile {name} so that GitTok learns which code is worth "
         "teaching, that it takes a few minutes and some model quota, and that it may ask "
         "permission to run a code analyzer. Then run the gittok-profile-repo skill "
-        f"(/gittok-profile-repo {name}). After it, say in one line that you make the first "
+        f"(/gittok-profile-repo {name}). After the profile, give the repo a mascot, but only "
+        "when status() says renderers.illustration is true (else skip this: nobody can draw "
+        "it, and the repo gets no mascot cards). Pick a small character and a drawing style "
+        "that fit what you just read in the repo, save it with "
+        f'set_mascot(name, style, repo="{name}"), and tell the user in one line what you chose '
+        "and that they can change it by asking. Then say in one line that you make the first "
         "cards, and run the gittok-generate skill (/gittok-generate); it stops by itself when "
         "get_brief answers nothing_to_do. If you have no skills, skip the profile (GitTok "
         "then uses its default rules) and make the cards with get_brief."
@@ -1141,18 +1146,13 @@ def _mascot_plan(cfg, name: str) -> tuple[list[str], list[dict]]:
     """(mascots to delete, mascots to keep with the reason) when the repo `name` goes.
 
     A mascot belongs to the repo when the repo's entry names it or its own `repo` is `name`.
-    It is deleted only when the user's local/mascots.yaml defines it, the shipped
-    config/mascots.yaml does not, and no other configured repo uses it."""
+    It is deleted only when the user's local/mascots.yaml defines it and no other configured
+    repo uses it. (No mascot is shipped.)"""
     repo = cfg.repos[name]
     bound = [m.name for m in cfg.mascots.values() if m.repo == name]
     if repo.mascot in cfg.mascots and repo.mascot not in bound:
         bound.append(repo.mascot)
     local = _local_names(cfg, "mascots.yaml", "mascots")
-    try:
-        shipped = yaml.safe_load(cfg.shared_path("config", "mascots.yaml").read_text())
-    except (OSError, yaml.YAMLError):
-        shipped = None
-    shipped = set((shipped or {}).get("mascots") or {}) if isinstance(shipped, dict) else set()
     remove, keep = [], []
     for m in sorted(bound):
         users = sorted(
@@ -1161,8 +1161,6 @@ def _mascot_plan(cfg, name: str) -> tuple[list[str], list[dict]]:
         )
         if users:
             keep.append({"name": m, "why": f"the repo {users[0]} uses it"})
-        elif m in shipped:
-            keep.append({"name": m, "why": "it is a shipped mascot (config/mascots.yaml)"})
         elif m in local:
             remove.append(m)
     return remove, keep
@@ -1191,8 +1189,8 @@ def remove_repo(cfg, name: str, created_by: str = "user", keep_data: bool = Fals
     their image files; the analysis, facts, candidates, leads and knowledge of the repo;
     steering rules on the repo; its profile local/profiles/<name>.yaml; a mascot of the repo
     that the user defined and no other repo uses; and a clone that GitTok made (repo added by
-    URL). Kept: the learned weights, shipped mascots, and a directory the user gave, which is
-    never touched. A card of another repo that only cites this repo stays.
+    URL). Kept: the learned weights, a mascot that another repo uses, and a directory the user
+    gave, which is never touched. A card of another repo that only cites this repo stays.
 
     `keep_data` removes only the entry (and a clone that GitTok made): cards, profile and
     mascot stay. The feed does not show them while the repo is not configured, and garbage

@@ -267,8 +267,8 @@ class FileSet:
         return False
 
 
-@cache
 def default_scan_defaults() -> dict:
+    """scan_defaults.yaml of the active GitTok directory (shipped, with its local file)."""
     from .config import load_scan_defaults
 
     return load_scan_defaults()

@@ -444,10 +444,10 @@ def make_ycfg(fixture_repo, tmp_path):
     d = tmp_path / "ycfg" / "config"
     d.mkdir(parents=True)
     (d / "settings.yaml").write_text("{}\n")
-    (d / "mascots.yaml").write_text(MASCOTS_YAML)
     (d / "personas.yaml").write_text(PERSONAS_YAML)
     loc = tmp_path / "ycfg" / "local"
     loc.mkdir()
+    (loc / "mascots.yaml").write_text(MASCOTS_YAML)  # mascots are the user's: local/ only
     (loc / "repos.yaml").write_text(REPOS_YAML.format(path=fixture_repo.path))
     return config_mod.load_config(tmp_path / "ycfg")
 
@@ -553,8 +553,8 @@ def test_set_mascot_updates_fields_and_links_repo(ycfg):
     assert out == {"name": "crow", "repo": "alpha", "style": "a very large crow", "seed": 99}
     m = config_mod.load_config(ycfg.root).mascots["crow"]
     assert (m.repo, m.style, m.seed) == ("alpha", "a very large crow", 99)
-    assert "crow" in text(ycfg, "mascots.yaml")
-    assert shared(ycfg, "mascots.yaml") == MASCOTS_YAML  # config/ is never written
+    assert "crow" in text(ycfg, "mascots.yaml") and "# mascots header" in text(ycfg, "mascots.yaml")
+    assert not (ycfg.root / "config" / "mascots.yaml").exists()  # config/ is never written
 
     steering.set_mascot(ycfg, "otter", repo="beta", style="an otter")
     new = config_mod.load_config(ycfg.root)
@@ -694,6 +694,16 @@ def test_add_repo_checks_the_roots_before_it_runs_git(ycfg, tmp_path, monkeypatc
     with pytest.raises(steering.SteeringError, match="allowed_roots"):
         steering.add_repo(_with_roots(ycfg, tmp_path / "allowed"), "secrets", str(elsewhere))
     assert calls == []
+
+
+def test_add_repo_next_step_makes_a_mascot_between_the_profile_and_the_cards():
+    text = steering.next_step("gamma")
+    assert text.index("gittok-profile-repo") < text.index("set_mascot") < text.index(
+        "gittok-generate"
+    )
+    for word in ("renderers.illustration", "status", "one line", "change it by asking"):
+        assert word in text, word
+    assert 'set_mascot(name, style, repo="gamma")' in text
 
 
 def test_add_repo_next_step_is_guidance_for_the_agent():

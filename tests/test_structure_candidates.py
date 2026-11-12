@@ -66,8 +66,9 @@ GO_USER = (
 
 
 @needs("go")
-def test_go_gets_definition_and_fan_in_candidates_without_regex_patterns(tmp_path):
-    assert "go" not in candidates.compiled_languages()  # no regex patterns for it
+def test_go_gets_definition_and_fan_in_candidates_from_the_structure_layer(tmp_path):
+    # The regex entry of go sets no import rules: they come from config/queries.
+    assert candidates.compiled_languages()["go"].raw["import_unit"] == "dir"
     files = {"util/util.go": GO_UTIL, "cmd/a/main.go": GO_USER, "cmd/b/main.go": GO_USER}
     out = mine(tmp_path, files)
     core = find(out, "core", "util/util.go")
@@ -193,4 +194,14 @@ def test_without_the_layer_the_regex_path_runs(tmp_path, monkeypatch):
     }
     out = mine(tmp_path, files)
     assert "imported by 2 files" in find(out, "core", "app/core.py")[0]["why"]
-    assert not find(out, "public_api", "x.go")  # go has no regexes: text fallback only
+    # go has regex patterns too: without its grammar they find the exported function
+    api = find(out, "public_api", "x.go")
+    assert api and "Helper" in api[0]["why"] and "internal" not in api[0]["why"]
+    assert "Helper() takes 7 parameters" in find(out, "many_params", "x.go")[0]["why"]
+
+
+def test_without_the_layer_go_imports_resolve_to_the_package_directory(tmp_path, monkeypatch):
+    off(monkeypatch)
+    files = {"util/util.go": GO_UTIL, "cmd/a/main.go": GO_USER, "cmd/b/main.go": GO_USER}
+    core = find(mine(tmp_path, files), "core", "util/util.go")
+    assert core and "imported by 2 files" in core[0]["why"]
