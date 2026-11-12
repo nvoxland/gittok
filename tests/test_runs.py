@@ -4,8 +4,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from codescroll import db, runs
-from codescroll.config import (
+from blamescroll import db, runs
+from blamescroll.config import (
     AgentSettings,
     AnalysisSettings,
     Config,
@@ -228,7 +228,7 @@ def _variants(fixture_repo, n):
 def _threaded_submit(cfg, run_id, payloads):
     import threading
 
-    path = cfg.settings.data_dir / "codescroll.db"
+    path = cfg.settings.data_dir / "blamescroll.db"
     barrier = threading.Barrier(len(payloads))
     results, errors = [], []
 
@@ -251,7 +251,7 @@ def _threaded_submit(cfg, run_id, payloads):
 
 
 def test_parallel_submits_keep_counters_and_files(cfg, fixture_repo):
-    c = db.open_db(cfg.settings.data_dir / "codescroll.db")
+    c = db.open_db(cfg.settings.data_dir / "blamescroll.db")
     run_id = runs.open_run(c, cfg, repo=None, brief="b", requested=10, now=NOW)
     cards = _variants(fixture_repo, 4)
     results, errors = _threaded_submit(cfg, run_id, [[x] for x in cards])
@@ -290,7 +290,7 @@ def test_submit_accepts_variant_of_a_good_old_story_in_a_new_format(conn, cfg, f
 
 
 def test_parallel_duplicate_story_stored_once(cfg, fixture_repo):
-    c = db.open_db(cfg.settings.data_dir / "codescroll.db")
+    c = db.open_db(cfg.settings.data_dir / "blamescroll.db")
     run_id = runs.open_run(c, cfg, repo=None, brief="b", requested=10, now=NOW)
     same = [text_card(fixture_repo)]
     results, errors = _threaded_submit(cfg, run_id, [same, same, same])
@@ -347,7 +347,7 @@ def test_bump_call_ignores_non_open_runs(conn, cfg):
 def test_bump_call_is_atomic_across_connections(cfg):
     import threading
 
-    path = cfg.settings.data_dir / "codescroll.db"
+    path = cfg.settings.data_dir / "blamescroll.db"
     c = db.open_db(path)
     run_id = runs.open_run(c, cfg, repo=None, brief="b", requested=1, now=NOW)
     barrier = threading.Barrier(6)
@@ -370,7 +370,7 @@ def test_bump_call_is_atomic_across_connections(cfg):
 def _m2_cfg(cfg, budget=4):
     import dataclasses
 
-    from codescroll.config import Mascot, MemeTemplate, RenderSettings
+    from blamescroll.config import Mascot, MemeTemplate, RenderSettings
 
     return dataclasses.replace(
         cfg,
@@ -406,7 +406,7 @@ def test_submit_tracks_illustration_budget_per_run(conn, cfg, fixture_repo):
 
 
 def test_submit_uses_config_templates_and_signals(conn, cfg, fixture_repo):
-    from codescroll import signals
+    from blamescroll import signals
     from tests import cards as C
 
     cfg = _m2_cfg(cfg)

@@ -1,7 +1,9 @@
 // Per-card like/save state and per-session quiz answers.
 // Memory first; localStorage / sessionStorage are best-effort.
-const KEY = 'codescroll.card-state';
-const ANSWER_KEY = 'codescroll.answers';
+import { getItemWithLegacy } from './legacyKey';
+
+const KEY = 'blamescroll.card-state';
+const ANSWER_KEY = 'blamescroll.answers';
 
 export type CardFlags = { liked?: boolean; saved?: boolean; knewIt?: boolean; teachMore?: boolean };
 
@@ -21,7 +23,7 @@ const answersMap = () =>
 
 function load<T>(store: () => Storage, key: string): T {
 	try {
-		return JSON.parse(store().getItem(key) ?? '{}') as T;
+		return JSON.parse(getItemWithLegacy(store(), key) ?? '{}') as T;
 	} catch {
 		return {} as T;
 	}
@@ -72,7 +74,7 @@ export function clearAnswers(ids: string[]): void {
 }
 
 // Beat cards play once; afterwards they open on the full view.
-const PLAYED_KEY = 'codescroll.played';
+const PLAYED_KEY = 'blamescroll.played';
 let playedCache: Record<string, number> | undefined;
 const playedMap = () => (playedCache ??= load<Record<string, number>>(() => localStorage, PLAYED_KEY));
 

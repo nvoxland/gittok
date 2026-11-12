@@ -1,6 +1,6 @@
 {
-	"name": "CodeScroll",
-	"short_name": "CodeScroll",
+	"name": "Blamescroll",
+	"short_name": "Blamescroll",
 	"description": "A personal feed of cards about your own codebases",
 	"start_url": "/",
 	"scope": "/",

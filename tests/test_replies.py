@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from codescroll import api, db, ledger, replies, runs, store
+from blamescroll import api, db, ledger, replies, runs, store
 from tests.cards import explain, text_card
 from tests.conftest import make_config
 
@@ -28,7 +28,7 @@ def path_card(fixture_repo, **over):
 def seed(cfg, fixture_repo):
     """A stored card with a comment by greybeard; returns the card id."""
     spec = path_card(fixture_repo, comments=[{"persona": "greybeard", "text": "Floats and money."}])
-    with db.open_db(cfg.settings.data_dir / "codescroll.db") as c:
+    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as c:
         c.execute(
             "INSERT INTO runs(id, status, started_at) "
             "VALUES ('r1', 'finished', '2026-05-30T00:00:00Z')"
@@ -66,13 +66,13 @@ def test_post_reply_rejects_bad_input(cfg, fixture_repo, over, status):
     client = TestClient(api.create_app(lambda: cfg))
     body = {"card_id": cid, "comment_index": 0, "text": "Why?", **over}
     assert client.post("/api/replies", json=body).status_code == status
-    with db.open_db(cfg.settings.data_dir / "codescroll.db") as c:
+    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as c:
         assert c.execute("SELECT COUNT(*) FROM replies").fetchone()[0] == 0
 
 
 def test_open_reply_becomes_a_pinned_lead_naming_the_persona(cfg, fixture_repo):
     cid = seed(cfg, fixture_repo)
-    with db.open_db(cfg.settings.data_dir / "codescroll.db") as c:
+    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as c:
         rep = replies.add(c, cid, 0, "Why floats?", now="2026-06-01T00:00:00Z")
         c.commit()
         out = ledger.for_brief(c, cfg, ["fixture"], NOW)
@@ -84,7 +84,7 @@ def test_open_reply_becomes_a_pinned_lead_naming_the_persona(cfg, fixture_repo):
 
 def test_submit_rejects_wrong_persona_and_links_right_one(cfg, fixture_repo):
     cid = seed(cfg, fixture_repo)
-    with db.open_db(cfg.settings.data_dir / "codescroll.db") as c:
+    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as c:
         rep = replies.add(c, cid, 0, "Why floats?")
         c.commit()
         lead = c.execute(

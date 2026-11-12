@@ -110,7 +110,7 @@ describe('feed page', () => {
 		render(Page);
 		const end = await screen.findByRole('region', { name: 'End of feed' });
 		expect(end).toHaveTextContent(/caught up/i);
-		expect(end).toHaveTextContent('/codescroll-generate');
+		expect(end).toHaveTextContent('/blamescroll-generate');
 		const articles = screen.getAllByRole('article');
 		expect(articles[articles.length - 1].compareDocumentPosition(end)).toBe(
 			Node.DOCUMENT_POSITION_FOLLOWING
@@ -153,12 +153,12 @@ describe('feed page', () => {
 			render(Page);
 			await screen.findByText('Hook 1');
 			fire['c_2']();
-			expect(localStorage.getItem('codescroll.current')).toBe('c_2');
+			expect(localStorage.getItem('blamescroll.current')).toBe('c_2');
 			expect(history.scrollRestoration).toBe('manual');
 		});
 
 		it('a reload with a changed feed puts the remembered card first; unseen cards stay below', async () => {
-			localStorage.setItem('codescroll.current', 'c_3');
+			localStorage.setItem('blamescroll.current', 'c_3');
 			// The server resumes on c_1 (its event log lags) and serves c_3 again further down.
 			route({
 				'/api/feed': { cards: [card(1), card(4), card(3), card(5)], next_cursor: 'm', resume_card_id: 'c_1' }
@@ -173,7 +173,7 @@ describe('feed page', () => {
 		});
 
 		it('fetches the remembered card when the new batch does not hold it', async () => {
-			localStorage.setItem('codescroll.current', 'c_9');
+			localStorage.setItem('blamescroll.current', 'c_9');
 			fetchMock.mockImplementation(async (url: string) => ({
 				ok: true,
 				headers: { get: () => null },
@@ -251,7 +251,7 @@ describe('feed page', () => {
 		route({ '/api/feed': { cards: [], next_cursor: null } });
 		render(Page);
 		expect(await screen.findByRole('region', { name: 'End of feed' })).toHaveTextContent(
-			'/codescroll-generate'
+			'/blamescroll-generate'
 		);
 	});
 

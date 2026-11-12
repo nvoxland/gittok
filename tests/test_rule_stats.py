@@ -2,7 +2,7 @@
 
 import pytest
 
-from codescroll import candidate_leads, db, rule_stats
+from blamescroll import candidate_leads, db, rule_stats
 from tests.test_candidate_leads import cand
 
 
@@ -129,12 +129,12 @@ def test_lead_strength_uses_factor(conn, monkeypatch):
 async def test_mcp_tool_returns_rows(fixture_repo, tmp_path):
     from mcp import Client
 
-    from codescroll import mcp_server
+    from blamescroll import mcp_server
     from tests.conftest import make_config
     from tests.test_mcp_e2e import data
 
     cfg = make_config(fixture_repo, tmp_path)
-    c = db.open_db(cfg.settings.data_dir / "codescroll.db")
+    c = db.open_db(cfg.settings.data_dir / "blamescroll.db")
     cand(c, "a.py", 1, "smell", rating=(5, "core"), repo="fixture")
     c.execute("UPDATE candidates SET rule_id = 'good'")
     c.commit()
@@ -151,7 +151,7 @@ async def test_mcp_tool_returns_rows(fixture_repo, tmp_path):
 def test_get_profile_has_rule_outcomes(conn, two_rules, tmp_path):
     from types import SimpleNamespace
 
-    from codescroll import steering
+    from blamescroll import steering
 
     cfg = SimpleNamespace(
         root=tmp_path,

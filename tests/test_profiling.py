@@ -7,8 +7,8 @@ import pytest
 import yaml
 from mcp import Client
 
-from codescroll import db, detectors, mcp_server, profiling
-from codescroll.config import ProfilesSettings
+from blamescroll import db, detectors, mcp_server, profiling
+from blamescroll.config import ProfilesSettings
 from tests.conftest import make_config
 from tests.fixture_repo import build_history_repo
 
@@ -98,7 +98,7 @@ async def test_survey_lists_manifests_dirs_languages(cfg):
 
 async def test_survey_head_sha_is_the_ref_commit(cfg):
     """Regression: the manifest loop shadowed `head`, so head_sha held lines."""
-    from codescroll import gitq
+    from blamescroll import gitq
 
     out = data(await call(cfg, "survey_repo", {"repo": "fixture"}))
     repo = cfg.repos["fixture"]
@@ -173,7 +173,7 @@ async def test_save_profile_writes_loads_and_refreshes_candidates(cfg):
     saved = yaml.safe_load(profile_file(cfg).read_text())
     assert saved["version"] == 1 and saved["head_sha"] and saved["written_at"]
     assert cfg.profile("fixture").detectors[0].id == "audit"
-    conn = db.open_db(cfg.settings.data_dir / "codescroll.db")
+    conn = db.open_db(cfg.settings.data_dir / "blamescroll.db")
     rows = conn.execute("SELECT rule_id FROM candidates WHERE rule_id = 'audit'").fetchall()
     assert len(rows) == 2
     # A second save bumps the version, and re-mines at the same head.

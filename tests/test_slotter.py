@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from codescroll import db, learning, slotter, store
+from blamescroll import db, learning, slotter, store
 from tests.cards import text_card
 from tests.conftest import make_config
 
@@ -348,7 +348,7 @@ def test_series_part_waits_for_an_unseen_earlier_part(conn, cfg):
 
 
 def test_followed_path_dir_boosts_its_cards(conn, cfg, monkeypatch):
-    from codescroll import characters
+    from blamescroll import characters
 
     a = add_card(conn, cfg, dirs=["billing"], hook="billing card")
     b = add_card(conn, cfg, dirs=["other"], hook="other card")

@@ -1,10 +1,10 @@
-"""Tests for `codescroll install`. Nothing here touches the real home directory."""
+"""Tests for `blamescroll install`. Nothing here touches the real home directory."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from codescroll import install
+from blamescroll import install
 
 
 class FakeRunner:
@@ -21,9 +21,9 @@ class FakeRunner:
 
 URL = "http://127.0.0.1:8008/mcp"
 ADD = [
-    "claude", "mcp", "add", "--scope", "user", "--transport", "http", "codescroll", URL,
+    "claude", "mcp", "add", "--scope", "user", "--transport", "http", "blamescroll", URL,
 ]  # fmt: skip
-GET = ["claude", "mcp", "get", "codescroll"]
+GET = ["claude", "mcp", "get", "blamescroll"]
 
 
 def which_all(name):
@@ -82,7 +82,7 @@ def test_mcp_apply_runs_add(tmp_path):
 
 # 4. skip when already registered with the same URL
 def test_mcp_skips_when_same_url(tmp_path):
-    runner = FakeRunner({tuple(GET): (0, f"codescroll:\n  Type: http\n  URL: {URL}\n")})
+    runner = FakeRunner({tuple(GET): (0, f"blamescroll:\n  Type: http\n  URL: {URL}\n")})
     env = make_env(tmp_path, apply=True, runner=runner)
     lines = install.install_mcp(env)
     assert ADD not in runner.calls
@@ -136,37 +136,37 @@ def test_skills_identical_is_unchanged(tmp_path):
 # 10. a different target is skipped with a diff summary
 def test_skills_differing_target_skipped_with_diff(tmp_path):
     env = make_env(tmp_path, apply=True)
-    target = env.home / ".claude" / "skills" / "codescroll-steer" / "SKILL.md"
+    target = env.home / ".claude" / "skills" / "blamescroll-steer" / "SKILL.md"
     target.parent.mkdir(parents=True)
     target.write_text("my edits\n")
     lines = install.install_skills(env)
     assert target.read_text() == "my edits\n"
     text = "\n".join(lines)
     assert "skipped" in text and "--force" in text
-    assert "-my edits" in text and "+skill codescroll-steer" in text
+    assert "-my edits" in text and "+skill blamescroll-steer" in text
 
 
 # 11. --force overwrites a differing target
 def test_skills_force_overwrites(tmp_path):
     env = make_env(tmp_path, apply=True, force=True)
-    target = env.home / ".claude" / "skills" / "codescroll-steer" / "SKILL.md"
+    target = env.home / ".claude" / "skills" / "blamescroll-steer" / "SKILL.md"
     target.parent.mkdir(parents=True)
     target.write_text("my edits\n")
     install.install_skills(env)
-    assert target.read_text() == "skill codescroll-steer\n"
+    assert target.read_text() == "skill blamescroll-steer\n"
 
 
 def plist_path(env):
-    return env.home / "Library" / "LaunchAgents" / "dev.codescroll.serve.plist"
+    return env.home / "Library" / "LaunchAgents" / "dev.blamescroll.serve.plist"
 
 
 # 12. plist content
 def test_plist_has_required_keys(tmp_path):
     env = make_env(tmp_path)
     plist = install.build_plist(env)
-    assert plist["Label"] == "dev.codescroll.serve"
+    assert plist["Label"] == "dev.blamescroll.serve"
     assert plist["ProgramArguments"] == [
-        "/opt/homebrew/bin/uv", "run", "--project", str(env.repo_root), "codescroll", "serve",
+        "/opt/homebrew/bin/uv", "run", "--project", str(env.repo_root), "blamescroll", "serve",
     ]  # fmt: skip
     assert plist["KeepAlive"] is True and plist["RunAtLoad"] is True
     assert plist["WorkingDirectory"] == str(env.repo_root)
@@ -193,7 +193,7 @@ def test_launchd_apply_writes_and_bootstraps(tmp_path):
 
     env = make_env(tmp_path, apply=True)
     install.install_launchd(env)
-    assert plistlib.loads(plist_path(env).read_bytes())["Label"] == "dev.codescroll.serve"
+    assert plistlib.loads(plist_path(env).read_bytes())["Label"] == "dev.blamescroll.serve"
     assert ["launchctl", "bootstrap", "gui/501", str(plist_path(env))] in env.runner.calls
     assert (env.data_dir / "logs").is_dir()
 
@@ -246,8 +246,8 @@ def test_run_install_dry_run_default_all_parts(tmp_path):
     assert "DRY RUN" in text and "--apply" in text
     assert "mcp:" in text and "skills:" in text and "launchd:" in text
     assert "Checklist" in text
-    assert "claude mcp remove codescroll --scope user" in text
-    assert "rm -r" in text and "codescroll install --uninstall --launchd --apply" in text
+    assert "claude mcp remove blamescroll --scope user" in text
+    assert "rm -r" in text and "blamescroll install --uninstall --launchd --apply" in text
     assert env.runner.calls == [GET]
     assert not env.home.exists()
 
@@ -265,7 +265,7 @@ def test_run_install_apply_lists_changes(tmp_path):
     env = make_env(tmp_path, apply=True)
     text = "\n".join(install.run_install(env))
     assert "DRY RUN" not in text
-    assert (env.home / ".claude" / "skills" / "codescroll-generate").is_dir()
+    assert (env.home / ".claude" / "skills" / "blamescroll-generate").is_dir()
     assert plist_path(env).exists()
 
 
@@ -285,41 +285,41 @@ def test_skills_apply_copies_our_agents_only(tmp_path):
     for name in install.AGENT_FILES:
         assert (agents / name).read_text() == f"agent {name}\n"
     assert not (agents / "someone-elses.md").exists()
-    assert any("codescroll-writer.md" in x for x in lines)
+    assert any("blamescroll-writer.md" in x for x in lines)
     again = install.install_skills(env)
-    assert any(x.startswith("skills: agent codescroll-writer.md unchanged") for x in again)
+    assert any(x.startswith("skills: agent blamescroll-writer.md unchanged") for x in again)
 
 
 def test_skills_dry_run_copies_no_agents(tmp_path):
     env = make_env(tmp_path)
     lines = install.install_skills(env)
-    assert any("would copy agent codescroll-writer.md" in x for x in lines)
+    assert any("would copy agent blamescroll-writer.md" in x for x in lines)
     assert not (env.home / ".claude" / "agents").exists()
 
 
-def test_repo_writer_agent_only_has_codescroll_tools():
+def test_repo_writer_agent_only_has_blamescroll_tools():
     root = Path(__file__).resolve().parents[1]
-    text = (root / ".claude" / "agents" / "codescroll-writer.md").read_text()
+    text = (root / ".claude" / "agents" / "blamescroll-writer.md").read_text()
     front = text.split("---")[1]
     tools_line = next(ln for ln in front.splitlines() if ln.startswith("tools:"))
     tools = [t.strip() for t in tools_line.removeprefix("tools:").split(",")]
-    assert tools and all(t.startswith("mcp__codescroll__") for t in tools)
-    assert "mcp__codescroll__get_packet" in tools
-    assert "mcp__codescroll__check_cards" not in tools
-    assert "mcp__codescroll__submit_cards" in tools
-    assert not {"mcp__codescroll__add_rule", "mcp__codescroll__get_brief"} & set(tools)
+    assert tools and all(t.startswith("mcp__blamescroll__") for t in tools)
+    assert "mcp__blamescroll__get_packet" in tools
+    assert "mcp__blamescroll__check_cards" not in tools
+    assert "mcp__blamescroll__submit_cards" in tools
+    assert not {"mcp__blamescroll__add_rule", "mcp__blamescroll__get_brief"} & set(tools)
     assert "model: sonnet" in front
 
 
 def test_writer_agent_has_no_check_cards_step():
     root = Path(__file__).resolve().parents[1]
     for rel in (
-        ".claude/agents/codescroll-writer.md",
-        "src/codescroll/prompts/generate.md",
-        ".claude/skills/codescroll-generate/SKILL.md",
+        ".claude/agents/blamescroll-writer.md",
+        "src/blamescroll/prompts/generate.md",
+        ".claude/skills/blamescroll-generate/SKILL.md",
     ):
         assert "check_cards" not in (root / rel).read_text(), rel
 
 
 def test_profile_repo_skill_is_registered():
-    assert "codescroll-profile-repo" in install.SKILL_NAMES
+    assert "blamescroll-profile-repo" in install.SKILL_NAMES

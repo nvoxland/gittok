@@ -3,8 +3,8 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-WRITER = (ROOT / ".claude" / "agents" / "codescroll-writer.md").read_text()
-GUIDE = (ROOT / "src" / "codescroll" / "prompts" / "generate.md").read_text()
+WRITER = (ROOT / ".claude" / "agents" / "blamescroll-writer.md").read_text()
+GUIDE = (ROOT / "src" / "blamescroll" / "prompts" / "generate.md").read_text()
 
 
 def test_writer_lists_facts_from_materials_in_every_card():
@@ -14,7 +14,7 @@ def test_writer_lists_facts_from_materials_in_every_card():
 
 def test_guidance_research_tools_include_the_fact_tools():
     budget = GUIDE.split("## Research budget", 1)[1]
-    assert "Use only the CodeScroll MCP tools" in budget
+    assert "Use only the Blamescroll MCP tools" in budget
     first = budget.split("\n- ", 2)[1]
     for tool in ("facts_for", "who_calls", "defined_where"):
         assert tool in first

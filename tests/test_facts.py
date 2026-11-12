@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from codescroll import db, facts, gitq, signals, structure
-from codescroll.config import AnalysisSettings, Repo
+from blamescroll import db, facts, gitq, signals, structure
+from blamescroll.config import AnalysisSettings, Repo
 from tests.fixture_repo import build_history_repo
 
 needs_grammars = pytest.mark.skipif(

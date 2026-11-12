@@ -4,7 +4,7 @@
 *.db
 .beads-credential-key
 
-# CodeScroll
+# Blamescroll
 data/
 web/build/
 web/node_modules/

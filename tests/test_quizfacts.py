@@ -4,8 +4,8 @@ import copy
 
 import pytest
 
-from codescroll import db, quizfacts, validator
-from codescroll.config import Repo
+from blamescroll import db, quizfacts, validator
+from blamescroll.config import Repo
 from tests import cards as C
 from tests.test_brief import build
 from tests.test_validator import PERSONAS as V_PERSONAS

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from mcp import Client
 
-from codescroll import candidates, db, install, mcp_server
+from blamescroll import candidates, db, install, mcp_server
 from tests.conftest import make_config
 from tests.fixture_repo import _Builder, build_history_repo
 from tests.test_mcp_e2e import data
@@ -77,7 +77,7 @@ async def test_scout_flow_and_rating_reuse(repo, tmp_path):
         b.commit("unrelated", date="2026-01-06T10:00:00+00:00")
         after = data(await client.call_tool("scout_status", {}))
         assert after["unrated_total"] == 0
-        conn = db.open_db(cfg.settings.data_dir / "codescroll.db")
+        conn = db.open_db(cfg.settings.data_dir / "blamescroll.db")
         rated = candidates.load_rated(conn, "fixture")
         assert len(rated) == 3 and rated[0]["teachable"] == 4 and rated[0]["concept"]
         assert candidates.load_rated(conn, "fixture", min_teachable=5) == []
@@ -131,22 +131,22 @@ async def test_scout_max_caps_the_total(repo, tmp_path):
 
 
 def test_scout_agent_file_has_only_the_two_tools():
-    text = (ROOT / ".claude" / "agents" / "codescroll-scout.md").read_text()
+    text = (ROOT / ".claude" / "agents" / "blamescroll-scout.md").read_text()
     head = text.split("---")[1]
     assert "model: haiku" in head
     tools = next(ln for ln in head.splitlines() if ln.startswith("tools:"))
     got = {t.strip() for t in tools.removeprefix("tools:").split(",")}
-    assert got == {"mcp__codescroll__get_candidates", "mcp__codescroll__rate_candidates"}
-    assert "codescroll-scout.md" in install.AGENT_FILES
+    assert got == {"mcp__blamescroll__get_candidates", "mcp__blamescroll__rate_candidates"}
+    assert "blamescroll-scout.md" in install.AGENT_FILES
 
 
 def test_skill_has_scout_step():
-    text = (ROOT / ".claude" / "skills" / "codescroll-generate" / "SKILL.md").read_text()
-    assert "scout_status" in text and "codescroll-scout" in text
+    text = (ROOT / ".claude" / "skills" / "blamescroll-generate" / "SKILL.md").read_text()
+    assert "scout_status" in text and "blamescroll-scout" in text
 
 
 def _two_repos(tmp_path, n_files=6):
-    from codescroll.config import Repo
+    from blamescroll.config import Repo
 
     files = {f"src/f{i}.py": f"# HACK: shortcut {i}\n" + BODY for i in range(n_files)}
     steps = [("add files", files, "2026-01-05T10:00:00+00:00")]
@@ -167,7 +167,7 @@ def _per_repo(st):
 
 
 def test_scout_max_is_split_across_repos(tmp_path):
-    from codescroll import scout
+    from blamescroll import scout
 
     cfg = _two_repos(tmp_path)
     conn = db.open_db(tmp_path / "t.db")
@@ -176,7 +176,7 @@ def test_scout_max_is_split_across_repos(tmp_path):
 
 
 def test_repo_with_no_ratings_gets_priority(tmp_path):
-    from codescroll import scout
+    from blamescroll import scout
 
     cfg = _two_repos(tmp_path)
     conn = db.open_db(tmp_path / "t.db")

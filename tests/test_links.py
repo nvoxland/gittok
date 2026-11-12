@@ -2,7 +2,7 @@ from dataclasses import replace
 
 import pytest
 
-from codescroll import links
+from blamescroll import links
 from tests.cards import example_card, text_card
 from tests.conftest import make_config
 

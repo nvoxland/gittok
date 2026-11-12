@@ -1,6 +1,6 @@
 # Feed API contract (M1)
 
-All endpoints are served by `codescroll serve` (default `http://127.0.0.1:8008`). JSON everywhere.
+All endpoints are served by `blamescroll serve` (default `http://127.0.0.1:8008`). JSON everywhere.
 
 ## GET /api/feed?limit=20&cursor=<opaque>
 
@@ -87,7 +87,7 @@ Body: `{ "card_id": "c_...", "choice": 0, "session": "..." }`. Returns the revea
 
 ## MCP: feed_health and get_brief
 
-`feed_health()` is a read-only MCP tool. `codescroll health` prints the same JSON.
+`feed_health()` is a read-only MCP tool. `blamescroll health` prints the same JSON.
 
 ```json
 { "backlog": 41, "burn_per_day": 12.0, "runway_days": 3.4, "target_days": 3,

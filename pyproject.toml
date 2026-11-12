@@ -1,5 +1,5 @@
 [project]
-name = "codescroll"
+name = "blamescroll"
 version = "0.1.0"
 description = "A personal TikTok-style feed for understanding your own codebases"
 requires-python = ">=3.13"
@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-codescroll = "codescroll.cli:main"
+blamescroll = "blamescroll.cli:main"
 
 [dependency-groups]
 images = ["mflux"]
@@ -27,11 +27,11 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/codescroll"]
+packages = ["src/blamescroll"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["live: needs a real repo or Claude session; skipped unless CODESCROLL_LIVE=1"]
+markers = ["live: needs a real repo or Claude session; skipped unless BLAMESCROLL_LIVE=1"]
 addopts = "-m 'not live'"
 
 [tool.ruff]

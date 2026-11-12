@@ -2,7 +2,7 @@ import copy
 
 import pytest
 
-from codescroll import validator
+from blamescroll import validator
 from tests.cards import example_card, text_card
 
 PERSONAS = ["greybeard", "penny_learns", "archivist", "meme_compiler", "paranoid_sec", "shipit_sam"]
@@ -208,7 +208,7 @@ def test_cross_repo_story_types_pass_schema():
 
 
 def test_verdict_is_optional_and_limited_to_scout_verdicts(fixture_repo):
-    from codescroll.scout import VERDICTS
+    from blamescroll.scout import VERDICTS
 
     for v in VERDICTS:
         assert errors(example_card(fixture_repo, verdict=v)) == []

@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 from mcp import Client
 
-from codescroll import db, facts, gitq, mcp_server, structure
-from codescroll.config import AnalysisSettings
+from blamescroll import db, facts, gitq, mcp_server, structure
+from blamescroll.config import AnalysisSettings
 from tests.conftest import make_config
 from tests.fixture_repo import build_history_repo
 from tests.test_facts import APP, D1, D2, GO, UTIL1, UTIL2, A, B
@@ -37,7 +37,7 @@ def setup(tmp_path):
     ]
     r = build_history_repo(tmp_path / "r", steps)
     cfg = make_config(r, tmp_path)
-    conn = db.open_db(cfg.settings.data_dir / "codescroll.db")
+    conn = db.open_db(cfg.settings.data_dir / "blamescroll.db")
     conn.execute("INSERT INTO repos(name, path, ref) VALUES ('fixture', ?, 'main')", (str(r.path),))
     head, t0 = gitq.rev_parse(r.path, "main"), gitq.commit_time(r.path, "main")
     facts.refresh(conn, "fixture", r.path, head, t0, AnalysisSettings())
@@ -108,15 +108,15 @@ async def test_limit_caps_rows(setup):
 
 
 def test_writer_lists_tools():
-    text = (Path(__file__).parents[1] / ".claude/agents/codescroll-writer.md").read_text()
+    text = (Path(__file__).parents[1] / ".claude/agents/blamescroll-writer.md").read_text()
     for t in ("defined_where", "who_calls", "what_calls", "symbol_history", "facts_for"):
-        assert f"mcp__codescroll__{t}" in text
+        assert f"mcp__blamescroll__{t}" in text
 
 
 @needs_grammars
 async def test_rows_carry_rank_and_sort_analyzer_first(setup):
     cfg, r = setup
-    conn = db.open_db(cfg.settings.data_dir / "codescroll.db")
+    conn = db.open_db(cfg.settings.data_dir / "blamescroll.db")
     conn.execute(
         "UPDATE fact_defines SET source = 'analyzer:x' WHERE name = 'run' AND path = 'b.py'"
     )

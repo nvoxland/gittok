@@ -1,10 +1,10 @@
-"""`codescroll structure` and the health hint."""
+"""`blamescroll structure` and the health hint."""
 
 import json
 
 import pytest
 
-from codescroll import cli, profiling, structure
+from blamescroll import cli, profiling, structure
 from tests.conftest import make_config
 
 
@@ -58,7 +58,7 @@ def test_prefetch_reports_a_failed_download(cfg, capsys, monkeypatch):
 
 
 def test_health_hint_has_one_line_when_grammars_are_missing(cfg, capsys, monkeypatch):
-    from codescroll import supply
+    from blamescroll import supply
 
     monkeypatch.setattr(profiling, "profile_hint", lambda cfg: None)
     monkeypatch.setattr(
@@ -72,7 +72,7 @@ def test_health_hint_has_one_line_when_grammars_are_missing(cfg, capsys, monkeyp
 
 
 def test_health_hint_is_silent_without_the_group(cfg, capsys, monkeypatch):
-    from codescroll import supply
+    from blamescroll import supply
 
     monkeypatch.setattr(profiling, "profile_hint", lambda cfg: None)
     monkeypatch.setattr(

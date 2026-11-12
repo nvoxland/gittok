@@ -1,5 +1,5 @@
-import codescroll
+import blamescroll
 
 
 def test_import_version():
-    assert codescroll.__version__ == "0.1.0"
+    assert blamescroll.__version__ == "0.1.0"

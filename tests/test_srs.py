@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from codescroll import db, srs, store
+from blamescroll import db, srs, store
 from tests.cards import quiz_card, text_card, this_or_that_card
 from tests.conftest import make_config
 

@@ -1,9 +1,9 @@
 {
   "mcpServers": {
-    "codescroll": {
+    "blamescroll": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "codescroll", "mcp", "--ui", "--lan"]
+      "args": ["run", "blamescroll", "mcp", "--ui", "--lan"]
     }
   }
 }

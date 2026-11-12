@@ -2,7 +2,7 @@
 
 from fastapi.testclient import TestClient
 
-from codescroll import api
+from blamescroll import api
 from tests.cards import quiz_card
 from tests.conftest import make_config
 from tests.test_api import seed

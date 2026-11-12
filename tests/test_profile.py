@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from codescroll import db, profile, steering
+from blamescroll import db, profile, steering
 from tests.conftest import make_config
 from tests.test_steering import NOW, add_card, reward
 
@@ -33,7 +33,7 @@ def test_write_profile_writes_markdown_sections(conn, cfg):
     path = profile.write_profile(conn, cfg, now=NOW)
     assert path == cfg.settings.data_dir / "profile.md"
     md = path.read_text()
-    assert md.startswith("# CodeScroll profile\n")
+    assert md.startswith("# Blamescroll profile\n")
     assert "2026-06-01" in md
     assert "## What you like" in md
     claim = r"You engaged with meme cards: average score 0\.\d+, and 100% scored well, over 6 views"

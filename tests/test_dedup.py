@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from codescroll import brief, db, ledger
+from blamescroll import brief, db, ledger
 from tests.conftest import make_config
 
 NOW = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)

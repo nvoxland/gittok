@@ -211,7 +211,7 @@ describe('Card actions', () => {
 		await fireEvent.click(btn);
 		expect(btn).toHaveAttribute('aria-pressed', 'true');
 		expect(calls).toEqual([['save', { on: true }]]);
-		expect(JSON.parse(localStorage.getItem('codescroll.card-state')!).c_save.saved).toBe(true);
+		expect(JSON.parse(localStorage.getItem('blamescroll.card-state')!).c_save.saved).toBe(true);
 	});
 
 	it('keeps the side column short: Knew it and More sit in the bottom row with the dots', () => {

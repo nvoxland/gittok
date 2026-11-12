@@ -2,8 +2,8 @@
 
 import pytest
 
-from codescroll import candidates, db, gitq, signals
-from codescroll.config import AnalysisSettings, Repo
+from blamescroll import candidates, db, gitq, signals
+from blamescroll.config import AnalysisSettings, Repo
 from tests.fixture_repo import build_history_repo
 
 CORE_PY = "def thing():\n    return 1\n"
@@ -146,7 +146,7 @@ def test_core_is_module_required_by_most(mined):
 def test_god_file_has_high_fan_out(repo_path):
     from pathlib import Path
 
-    from codescroll.config import load_languages
+    from blamescroll.config import load_languages
 
     spec = load_languages(Path(__file__).parents[1])
     spec["languages"]["python"]["thresholds"]["god_fan_out"] = 5  # the fixture is small
@@ -248,7 +248,7 @@ def test_per_tag_limit(tmp_path):
 def test_shipped_languages_file_loads():
     from pathlib import Path
 
-    from codescroll.config import load_languages
+    from blamescroll.config import load_languages
 
     spec = load_languages(Path(__file__).parents[1])
     assert {"python", "clojure", "typescript"} <= set(spec["languages"])

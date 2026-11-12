@@ -2,8 +2,8 @@
 
 import pytest
 
-from codescroll import brief, slotter, validator
-from codescroll.config import Repo
+from blamescroll import brief, slotter, validator
+from blamescroll.config import Repo
 from tests import cards as C
 from tests.test_brief import (
     DEFAULTS,

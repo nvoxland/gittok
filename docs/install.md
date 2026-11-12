@@ -1,12 +1,12 @@
-# Installing CodeScroll for daily use
+# Installing Blamescroll for daily use
 
-`codescroll install` sets up three things on your machine. It has three parts.
+`blamescroll install` sets up three things on your machine. It has three parts.
 
 | Part | Flag | What it does |
 |---|---|---|
-| MCP | `--mcp` | Runs `claude mcp add --scope user --transport http codescroll http://<host>:<port>/mcp`. Claude Code then sees the server from any directory. Skipped if `claude mcp get codescroll` already shows the same URL. |
-| Skills | `--skills` | Copies `codescroll-generate` and `codescroll-steer` from `.claude/skills/` to `~/.claude/skills/`. |
-| LaunchAgent | `--launchd` | Writes `~/Library/LaunchAgents/dev.codescroll.serve.plist` and loads it. `codescroll serve` then starts at login and restarts if it stops. Logs go to `<data_dir>/logs/serve.log`. |
+| MCP | `--mcp` | Runs `claude mcp add --scope user --transport http blamescroll http://<host>:<port>/mcp`. Claude Code then sees the server from any directory. Skipped if `claude mcp get blamescroll` already shows the same URL. |
+| Skills | `--skills` | Copies `blamescroll-generate` and `blamescroll-steer` from `.claude/skills/` to `~/.claude/skills/`. |
+| LaunchAgent | `--launchd` | Writes `~/Library/LaunchAgents/dev.blamescroll.serve.plist` and loads it. `blamescroll serve` then starts at login and restarts if it stops. Logs go to `<data_dir>/logs/serve.log`. |
 
 With no part flag, all three run. Host and port come from `config/settings.yaml` (`server.host`, `server.port`).
 
@@ -23,9 +23,9 @@ Settings that belong to one machine live in `local/`. This directory is in `.git
 ## Dry run is the default
 
 ```bash
-uv run codescroll install            # prints what it would do, changes nothing
-uv run codescroll install --apply    # does it
-uv run codescroll install --skills --apply
+uv run blamescroll install            # prints what it would do, changes nothing
+uv run blamescroll install --apply    # does it
+uv run blamescroll install --skills --apply
 ```
 
 The dry run only runs read-only checks (`claude mcp get`). It ends with a checklist of changes and the undo steps.
@@ -41,21 +41,21 @@ Rules for safe changes:
 
 | Part | Undo |
 |---|---|
-| MCP | `claude mcp remove codescroll --scope user` |
-| Skills | `rm -r ~/.claude/skills/codescroll-generate ~/.claude/skills/codescroll-steer` |
-| LaunchAgent | `uv run codescroll install --uninstall --launchd --apply` (runs `launchctl bootout gui/<uid> <plist>` and removes the plist) |
+| MCP | `claude mcp remove blamescroll --scope user` |
+| Skills | `rm -r ~/.claude/skills/blamescroll-generate ~/.claude/skills/blamescroll-steer` |
+| LaunchAgent | `uv run blamescroll install --uninstall --launchd --apply` (runs `launchctl bootout gui/<uid> <plist>` and removes the plist) |
 
 ## Structure layer (optional, tree-sitter)
 
-CodeScroll reads code structure (definitions, imports, comments) with tree-sitter when the optional group is installed. Without it everything works on the regex patterns in `config/languages.yaml` and, for other file types, on plain text rules.
+Blamescroll reads code structure (definitions, imports, comments) with tree-sitter when the optional group is installed. Without it everything works on the regex patterns in `config/languages.yaml` and, for other file types, on plain text rules.
 
 ```bash
 uv sync --group structure          # tree-sitter-language-pack 1.22.x, about 2 MB
-uv run codescroll structure        # status: installed, grammars needed, grammars missing (JSON)
-uv run codescroll structure --prefetch   # download the grammars for the repos in local/repos.yaml
+uv run blamescroll structure        # status: installed, grammars needed, grammars missing (JSON)
+uv run blamescroll structure --prefetch   # download the grammars for the repos in local/repos.yaml
 ```
 
-The package holds no grammars. They are a bundle of about 26 MB (12 languages) that the pack downloads from GitHub on first use into `~/Library/Caches/tree-sitter-language-pack/` (Linux: `~/.cache/`). `--prefetch` does this once, on purpose, so a mining run never waits on the network. A grammar that is not in the cache is not used; `codescroll health --hint` (the SessionStart hook) prints one line naming the missing grammars. Offline, run `--prefetch` on a machine with network and copy the cache dir. Shipped queries: python, typescript/tsx/javascript/svelte, clojure, go, ruby, java, rust. Another stack: let the profile skill write a `queries` entry (docs/learning.md, "The structure layer").
+The package holds no grammars. They are a bundle of about 26 MB (12 languages) that the pack downloads from GitHub on first use into `~/Library/Caches/tree-sitter-language-pack/` (Linux: `~/.cache/`). `--prefetch` does this once, on purpose, so a mining run never waits on the network. A grammar that is not in the cache is not used; `blamescroll health --hint` (the SessionStart hook) prints one line naming the missing grammars. Offline, run `--prefetch` on a machine with network and copy the cache dir. Shipped queries: python, typescript/tsx/javascript/svelte, clojure, go, ruby, java, rust. Another stack: let the profile skill write a `queries` entry (docs/learning.md, "The structure layer").
 
 ## Meme renderer (memegen)
 
@@ -68,7 +68,7 @@ docker run -d --name memegen --restart unless-stopped -p 127.0.0.1:5001:5000 mem
 curl -s http://127.0.0.1:5001/templates/ | head -c 200   # JSON means it works
 ```
 
-Restart `codescroll serve` afterwards. Until memegen answers, the brief skips the `meme` format and meme cards stay `pending_render`.
+Restart `blamescroll serve` afterwards. Until memegen answers, the brief skips the `meme` format and meme cards stay `pending_render`.
 
 ## Illustration renderer (mflux)
 
@@ -92,10 +92,10 @@ render:
   mflux_model: z-image-turbo                    # the family it is based on
 ```
 
-With `mflux_path` set, a render loads about 7 GB (q4) or 14 GB (q8) and takes 10 to 20 s per image at 8 steps. Use `--quantize 6` or `8` if the flat-vector mascots look rough at 4. Restart `codescroll serve` (or `/mcp` → codescroll → Reconnect) after installing, then check with:
+With `mflux_path` set, a render loads about 7 GB (q4) or 14 GB (q8) and takes 10 to 20 s per image at 8 steps. Use `--quantize 6` or `8` if the flat-vector mascots look rough at 4. Restart `blamescroll serve` (or `/mcp` → blamescroll → Reconnect) after installing, then check with:
 
 ```bash
-uv run codescroll avatars      # draws the persona avatars; the first image also warms the Metal cache
+uv run blamescroll avatars      # draws the persona avatars; the first image also warms the Metal cache
 ```
 
 Until mflux is importable, the brief skips `mascot_scene` and `comic` and those cards stay `pending_render`.
@@ -105,20 +105,20 @@ Until mflux is importable, the brief skips `mascot_scene` and `comic` and those 
 The MCP server also works with Codex. Add this to `~/.codex/config.toml`:
 
 ```toml
-[mcp_servers.codescroll]
+[mcp_servers.blamescroll]
 url = "http://127.0.0.1:8008/mcp"
 ```
 
-This is a streamable-HTTP MCP server. Use the host and port from your settings. Keep `codescroll serve` running (the LaunchAgent does this).
+This is a streamable-HTTP MCP server. Use the host and port from your settings. Keep `blamescroll serve` running (the LaunchAgent does this).
 
 Notes:
 
-- The `codescroll-generate` skill pins models (Sonnet for the driver, Haiku or Sonnet for packets). This is Claude-specific. Codex users should run each work packet by hand on a small model.
+- The `blamescroll-generate` skill pins models (Sonnet for the driver, Haiku or Sonnet for packets). This is Claude-specific. Codex users should run each work packet by hand on a small model.
 - Comparing Codex card quality with Claude card quality is tracked in beads. It spends ChatGPT quota, so the user runs it.
 
 ## Keeping "today" fresh (optional fetch)
 
-Analysis reads your local clone, so "recent" means the last time you pulled. For a repo other people push to, set `fetch: true`. CodeScroll then fetches the branch of the configured ref before it reads the repo (`fetch --no-tags --quiet <remote> <branch>`):
+Analysis reads your local clone, so "recent" means the last time you pulled. For a repo other people push to, set `fetch: true`. Blamescroll then fetches the branch of the configured ref before it reads the repo (`fetch --no-tags --quiet <remote> <branch>`):
 
 ```yaml
 repos:
@@ -128,8 +128,8 @@ repos:
     fetch: true          # default false
 ```
 
-Fetch updates remote-tracking refs only. It never changes the working tree, the index or local branches. It runs with prompts off and a 60 s timeout. If it fails, CodeScroll logs it and uses the old ref. A ref that is not remote-tracking (for example `HEAD`) skips the fetch. At most one fetch per repo runs in each `analysis.fetch_min_interval_s` (default 900) seconds.
+Fetch updates remote-tracking refs only. It never changes the working tree, the index or local branches. It runs with prompts off and a 60 s timeout. If it fails, Blamescroll logs it and uses the old ref. A ref that is not remote-tracking (for example `HEAD`) skips the fetch. At most one fetch per repo runs in each `analysis.fetch_min_interval_s` (default 900) seconds.
 
 ## LAN notes
 
-`codescroll serve --lan` and `codescroll mcp --ui --lan` (what the project `.mcp.json` runs) bind all interfaces. The feed and `/api/*` need a pairing cookie from non-loopback peers: open the `pair:` URL printed at start-up once on each device. The token lives in `<data_dir>/lan_token` (mode 0600). `/mcp` is loopback-only and refuses LAN peers. PWA install and offline mode need HTTPS, because service workers do not register on plain-HTTP LAN origins. See `docs/social.md`.
+`blamescroll serve --lan` and `blamescroll mcp --ui --lan` (what the project `.mcp.json` runs) bind all interfaces. The feed and `/api/*` need a pairing cookie from non-loopback peers: open the `pair:` URL printed at start-up once on each device. The token lives in `<data_dir>/lan_token` (mode 0600). `/mcp` is loopback-only and refuses LAN peers. PWA install and offline mode need HTTPS, because service workers do not register on plain-HTTP LAN origins. See `docs/social.md`.

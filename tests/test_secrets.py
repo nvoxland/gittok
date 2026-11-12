@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 from mcp import Client
 
-from codescroll import (
+from blamescroll import (
     candidates,
     db,
     feed,
@@ -20,8 +20,8 @@ from codescroll import (
     secrets,
     validator,
 )
-from codescroll.brief import Lead
-from codescroll.config import AnalysisSettings, Repo, ResearchSettings
+from blamescroll.brief import Lead
+from blamescroll.config import AnalysisSettings, Repo, ResearchSettings
 from tests.cards import example_card, explain
 from tests.conftest import make_config
 from tests.fixture_repo import build_history_repo
@@ -226,7 +226,7 @@ async def test_test_detector_samples_are_redacted(cfg):
 
 
 def test_survey_text_is_redacted(cfg):
-    from codescroll import profiling
+    from blamescroll import profiling
 
     out = profiling._redact_survey(cfg, {"profile": {"yaml": f"x: {AWS}"}, "files": 3})
     assert AWS not in json.dumps(out) and out["files"] == 3

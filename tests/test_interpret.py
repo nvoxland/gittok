@@ -2,8 +2,8 @@
 
 import pytest
 
-from codescroll import validator
-from codescroll.config import AgentSettings, Repo
+from blamescroll import validator
+from blamescroll.config import AgentSettings, Repo
 from tests.cards import example_card
 from tests.test_validator import PERSONAS
 

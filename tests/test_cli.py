@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from codescroll import cli, db
+from blamescroll import cli, db
 from tests.cards import example_card, text_card
 from tests.conftest import make_config
 
@@ -38,7 +38,7 @@ def test_validate_accepts_bare_list_and_exits_zero(cfg, fixture_repo, tmp_path, 
 
 def test_migrate_creates_db_and_prints_path(cfg, capsys):
     assert cli.main(["migrate"]) == 0
-    path = cfg.settings.data_dir / "codescroll.db"
+    path = cfg.settings.data_dir / "blamescroll.db"
     assert path.exists()
     assert str(path) in capsys.readouterr().out
 
@@ -66,19 +66,19 @@ def test_unknown_repo_prints_error_and_exits_1(cfg, capsys):
 
 
 def test_brief_prints_markdown_without_opening_a_run(cfg, capsys):
-    from codescroll import db
+    from blamescroll import db
 
     assert cli.main(["brief", "--count", "3"]) == 0
     out = capsys.readouterr().out
     assert "## Packet p1" in out and "Mix: default" in out
-    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
         assert conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 0
 
 
 def test_brief_prints_learned_mix_line_when_rewards_exist(cfg, capsys):
-    from codescroll import db
+    from blamescroll import db
 
-    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
         conn.execute("INSERT INTO rewards(card_id, reward, computed_at) VALUES ('c', 0.5, 'x')")
         conn.commit()
     assert cli.main(["brief", "--count", "3"]) == 0
@@ -105,7 +105,7 @@ def test_mcp_command_runs_stdio_server(cfg, monkeypatch):
 
 
 def _with_pending(cfg, fixture_repo, monkeypatch, renderer):
-    from codescroll import render
+    from blamescroll import render
     from tests.test_render import MEME, seed_pending
 
     ids = seed_pending(cfg, fixture_repo, MEME, count=3)
@@ -114,9 +114,9 @@ def _with_pending(cfg, fixture_repo, monkeypatch, renderer):
 
 
 def _statuses(cfg, ids):
-    from codescroll import db
+    from blamescroll import db
 
-    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
         return [
             conn.execute("SELECT status FROM cards WHERE id=?", (i,)).fetchone()[0] for i in ids
         ]
@@ -132,7 +132,7 @@ def test_render_runs_one_pass_with_limit_and_prints_counts(cfg, fixture_repo, mo
 
 
 def test_render_retry_failed_resets_then_renders(cfg, fixture_repo, monkeypatch, capsys):
-    from codescroll import render
+    from blamescroll import render
     from tests.test_render import FakeRenderer
 
     ids = _with_pending(
@@ -149,7 +149,7 @@ def test_render_retry_failed_resets_then_renders(cfg, fixture_repo, monkeypatch,
 
 
 def test_avatars_command_generates_and_skips(cfg, monkeypatch, capsys):
-    from codescroll import render
+    from blamescroll import render
     from tests.test_render import FakeRunner
 
     runner = FakeRunner()
@@ -167,7 +167,7 @@ def test_avatars_command_generates_and_skips(cfg, monkeypatch, capsys):
 
 
 def test_avatars_command_explains_missing_mflux(cfg, monkeypatch, capsys):
-    from codescroll import render
+    from blamescroll import render
 
     monkeypatch.setattr(render.shutil, "which", lambda name: None)
     monkeypatch.setattr(render.importlib.util, "find_spec", lambda name: None)
@@ -196,9 +196,9 @@ def test_serve_starts_the_render_learning_and_profile_workers(cfg, monkeypatch):
 def _seed_learning(cfg, fixture_repo):
     import time
 
-    from codescroll import db, runs
+    from blamescroll import db, runs
 
-    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
         run_id = runs.open_run(conn, cfg, repo=None, brief="b", requested=2)
         res = runs.submit(conn, cfg, run_id, [example_card(fixture_repo), text_card(fixture_repo)])
         ids = [a["card_id"] for a in res["accepted"]]
@@ -222,11 +222,11 @@ def test_learn_prints_counts_and_is_idempotent(cfg, fixture_repo, capsys):
 
 
 def test_reset_weights_all_and_by_feature(cfg, fixture_repo, capsys):
-    from codescroll import db
+    from blamescroll import db
 
     _seed_learning(cfg, fixture_repo)
     cli.main(["learn"])
-    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
         persona = conn.execute("SELECT COUNT(*) FROM weights WHERE feature='persona'").fetchone()[0]
         total = conn.execute("SELECT COUNT(*) FROM weights").fetchone()[0]
     capsys.readouterr()
@@ -240,9 +240,9 @@ def test_reset_weights_all_and_by_feature(cfg, fixture_repo, capsys):
 
 
 def _conn(cfg):
-    from codescroll import db
+    from blamescroll import db
 
-    return db.open_db(cfg.settings.data_dir / "codescroll.db")
+    return db.open_db(cfg.settings.data_dir / "blamescroll.db")
 
 
 def test_rules_add_list_remove_round_trip(cfg, capsys):
@@ -318,7 +318,7 @@ def ycfg(fixture_repo, tmp_path):
 
 
 def test_config_edit_commands(ycfg, fixture_repo, monkeypatch, capsys):
-    from codescroll import config as config_mod
+    from blamescroll import config as config_mod
 
     monkeypatch.setattr(cli, "load_config", lambda: config_mod.load_config(ycfg.root))
     assert cli.main(["repos", "add", "gamma", str(fixture_repo.path), "--group", "ops"]) == 0
@@ -345,10 +345,10 @@ def test_config_edit_commands(ycfg, fixture_repo, monkeypatch, capsys):
 
 def test_brief_matches_get_brief_inputs_rules_and_unavailable_formats(cfg, capsys, monkeypatch):
     """The dry-run brief must be the brief the agent would get: same rules, same skips."""
-    from codescroll import db, mcp_server, steering
+    from blamescroll import db, mcp_server, steering
 
     monkeypatch.setattr(mcp_server, "unavailable_formats", lambda c: frozenset({"meme"}))
-    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
         steering.add_rule(conn, cfg, type="ban", feature="format", value="horoscope", reason="no")
     assert cli.main(["brief", "--count", "10"]) == 0
     out = capsys.readouterr().out
@@ -382,9 +382,9 @@ def test_serve_without_lan_prints_no_warning(cfg, monkeypatch, capsys):
 def test_notify_runs_one_pass_and_prints_counts(cfg, monkeypatch, capsys):
     from datetime import UTC, datetime
 
-    from codescroll import db, runs
+    from blamescroll import db, runs
 
-    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
         rid = runs.open_run(conn, cfg, repo="fixture", brief="b", requested=3)
         conn.execute(
             "UPDATE runs SET status='finished', accepted=4, finished_at='x' WHERE id=?", (rid,)
@@ -402,7 +402,7 @@ def test_notify_runs_one_pass_and_prints_counts(cfg, monkeypatch, capsys):
 
 
 def _install_env(monkeypatch, tmp_path, cfg, **kw):
-    from codescroll import install
+    from blamescroll import install
 
     seen = {}
 
@@ -445,7 +445,7 @@ def test_install_part_flags_select_parts(cfg, tmp_path, monkeypatch, capsys):
 def test_install_apply_and_uninstall(cfg, tmp_path, monkeypatch, capsys):
     _install_env(monkeypatch, tmp_path, cfg)
     assert cli.main(["install", "--launchd", "--apply"]) == 0
-    plist = tmp_path / "home" / "Library" / "LaunchAgents" / "dev.codescroll.serve.plist"
+    plist = tmp_path / "home" / "Library" / "LaunchAgents" / "dev.blamescroll.serve.plist"
     assert plist.exists()
     assert cli.main(["install", "--uninstall", "--launchd", "--apply"]) == 0
     assert not plist.exists()
@@ -468,9 +468,9 @@ def test_mcp_ui_runs_a_reloading_feed_child_before_stdio(cfg, monkeypatch, capsy
     ((tag, cmd, env), mcp) = seen["order"]
     assert (tag, mcp) == ("ui", "mcp")
     assert cmd[1:] == [
-        "-m", "codescroll", "serve", "--reload", "--host", "127.0.0.1", "--port", "8008",
+        "-m", "blamescroll", "serve", "--reload", "--host", "127.0.0.1", "--port", "8008",
     ]  # fmt: skip
-    assert env["CODESCROLL_PARENT_PID"] == str(os.getpid())
+    assert env["BLAMESCROLL_PARENT_PID"] == str(os.getpid())
     assert seen["stopped"] == "proc"
     assert capsys.readouterr().out == ""  # stdout carries the MCP protocol
 
@@ -493,23 +493,23 @@ def test_serve_reload_runs_the_app_factory_with_reload(cfg, monkeypatch, capsys)
     calls = []
     monkeypatch.setattr(cli.uvicorn, "run", lambda app, **kw: calls.append((app, kw)))
     monkeypatch.setattr(cli.social, "lan_addresses", lambda: ["192.168.1.5"])
-    monkeypatch.delenv("CODESCROLL_LAN_TOKEN", raising=False)
+    monkeypatch.delenv("BLAMESCROLL_LAN_TOKEN", raising=False)
     assert cli.main(["serve", "--reload", "--lan"]) == 0
     ((app, kw),) = calls
-    assert app == "codescroll.cli:reload_app"
+    assert app == "blamescroll.cli:reload_app"
     assert kw["factory"] is True and kw["reload"] is True
     assert kw["reload_dirs"] == [str(Path(cli.__file__).parent)]
     assert kw["host"] == "0.0.0.0"
     tok = (cfg.settings.data_dir / "lan_token").read_text().strip()
-    assert os.environ["CODESCROLL_LAN_TOKEN"] == tok  # the reloaded worker reads it
+    assert os.environ["BLAMESCROLL_LAN_TOKEN"] == tok  # the reloaded worker reads it
     assert "pair:" in capsys.readouterr().out
 
 
 def test_reload_app_builds_the_feed_app_from_the_environment(cfg, monkeypatch):
     seen = {}
     monkeypatch.setattr(cli, "create_app", lambda get, **kw: seen.update(kw) or "app")
-    monkeypatch.setenv("CODESCROLL_LAN_TOKEN", "tok")
-    monkeypatch.delenv("CODESCROLL_PARENT_PID", raising=False)
+    monkeypatch.setenv("BLAMESCROLL_LAN_TOKEN", "tok")
+    monkeypatch.delenv("BLAMESCROLL_PARENT_PID", raising=False)
     assert cli.reload_app() == "app"
     assert seen["lan_token"] == "tok" and seen["render_worker"] is True
 
@@ -561,17 +561,17 @@ def test_refit_export_and_apply_call_the_refit_module(cfg, monkeypatch, capsys, 
 
 
 def test_refeature_rewrites_features(cfg, fixture_repo, capsys):
-    from codescroll import db
+    from blamescroll import db
 
     _seed_learning(cfg, fixture_repo)
-    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
         conn.execute("DELETE FROM card_features WHERE feature = 'dir'")
         conn.execute("INSERT INTO card_features SELECT id, 'dir', 'stale' FROM cards")
         conn.commit()
     capsys.readouterr()
     assert cli.main(["refeature"]) == 0
     assert "refeatured 2" in capsys.readouterr().out
-    with db.open_db(cfg.settings.data_dir / "codescroll.db") as conn:
+    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as conn:
         dirs = {r[0] for r in conn.execute("SELECT value FROM card_features WHERE feature='dir'")}
     assert "stale" not in dirs and {"billing", "src"} <= dirs
 
@@ -588,7 +588,7 @@ def test_gc_prints_counts_as_json(cfg, capsys):
 
 def test_health_hint_is_one_line_when_cards_are_wanted_else_silent(cfg, capsys, monkeypatch):
     """For the SessionStart hook: a reminder only when the feed needs cards."""
-    from codescroll import profiling, supply
+    from blamescroll import profiling, supply
 
     monkeypatch.setattr(profiling, "profile_hint", lambda cfg: None)
     want = {"backlog": 4, "runway_days": 0.4, "want": 20}
@@ -596,7 +596,7 @@ def test_health_hint_is_one_line_when_cards_are_wanted_else_silent(cfg, capsys, 
     assert cli.main(["health", "--hint"]) == 0
     out = capsys.readouterr().out.strip().splitlines()
     assert len(out) == 1
-    assert "20" in out[0] and "/codescroll-generate" in out[0] and "0.4" in out[0]
+    assert "20" in out[0] and "/blamescroll-generate" in out[0] and "0.4" in out[0]
     want["want"] = 0
     assert cli.main(["health", "--hint"]) == 0
     assert capsys.readouterr().out == ""
@@ -606,12 +606,12 @@ def test_health_hint_names_repos_without_a_profile_on_one_line(cfg, capsys):
     assert cli.main(["health", "--hint"]) == 0
     lines = [ln for ln in capsys.readouterr().out.splitlines() if "profile" in ln]
     assert len(lines) == 1
-    assert "fixture" in lines[0] and "/codescroll-profile-repo" in lines[0]
+    assert "fixture" in lines[0] and "/blamescroll-profile-repo" in lines[0]
     assert "no profile" in lines[0]
 
 
 def _quiet_feed(monkeypatch):
-    from codescroll import supply
+    from blamescroll import supply
 
     monkeypatch.setattr(
         supply, "feed_health", lambda conn, cfg, now: {"backlog": 9, "runway_days": 9, "want": 0}
@@ -621,7 +621,7 @@ def _quiet_feed(monkeypatch):
 def test_health_hint_is_silent_when_profiles_are_current(cfg, capsys, monkeypatch):
     from contextlib import closing
 
-    from codescroll import profiling
+    from blamescroll import profiling
 
     _quiet_feed(monkeypatch)
     rule = {"id": "x", "tag": "t_x", "weight": 1, "match": {"regex": "def ", "paths": ["**"]}}
@@ -634,7 +634,7 @@ def test_health_hint_is_silent_when_profiles_are_current(cfg, capsys, monkeypatc
 def test_health_hint_flags_changed_manifests(cfg, capsys, monkeypatch):
     from contextlib import closing
 
-    from codescroll import profiling
+    from blamescroll import profiling
 
     _quiet_feed(monkeypatch)
     rule = {"id": "x", "tag": "t_x", "weight": 1, "match": {"regex": "def ", "paths": ["**"]}}
@@ -648,16 +648,16 @@ def test_health_hint_flags_changed_manifests(cfg, capsys, monkeypatch):
 
 
 def test_repos_add_prints_the_profile_next_step(cfg, fixture_repo, capsys, monkeypatch):
-    out = {"name": "zed", "path": "/x", "next": "Next: run /codescroll-profile-repo zed"}
+    out = {"name": "zed", "path": "/x", "next": "Next: run /blamescroll-profile-repo zed"}
     monkeypatch.setattr(cli.steering, "add_repo", lambda *a, **k: out)
     assert cli.main(["repos", "add", "zed", str(fixture_repo.path)]) == 0
-    assert "/codescroll-profile-repo zed" in capsys.readouterr().out
+    assert "/blamescroll-profile-repo zed" in capsys.readouterr().out
 
 
 def test_health_hint_says_analyzer_facts_are_stale(cfg, capsys, monkeypatch):
     from contextlib import closing
 
-    from codescroll import gitq, profiling
+    from blamescroll import gitq, profiling
 
     _quiet_feed(monkeypatch)
     monkeypatch.setattr(profiling, "profile_hint", lambda cfg: None)
@@ -680,7 +680,7 @@ def test_health_hint_says_analyzer_facts_are_stale(cfg, capsys, monkeypatch):
 
 
 def _head(cfg):
-    from codescroll import gitq
+    from blamescroll import gitq
 
     r = cfg.repos["fixture"]
     return gitq.rev_parse(r.path, r.ref)
@@ -702,7 +702,7 @@ def test_submit_facts_reads_files_and_stores_analyzer_facts(cfg, tmp_path, capsy
     out = capsys.readouterr().out
     assert code == 0
     assert "defines=1" in out and "rejected=1" in out
-    with closing(db.open_db(cfg.settings.data_dir / "codescroll.db")) as conn:
+    with closing(db.open_db(cfg.settings.data_dir / "blamescroll.db")) as conn:
         row = conn.execute(
             "SELECT source FROM fact_defines WHERE name = 'main' AND source LIKE 'analyzer:%'"
         ).fetchone()
@@ -723,7 +723,7 @@ def test_feed_watch_exits_with_the_new_line_when_the_server_signals(cfg, capsys)
     import threading
     import time
 
-    from codescroll import supply
+    from blamescroll import supply
 
     log = cfg.settings.data_dir / supply.WANTS_FILE
     log.parent.mkdir(parents=True, exist_ok=True)
@@ -738,14 +738,14 @@ def test_feed_watch_exits_with_the_new_line_when_the_server_signals(cfg, capsys)
     assert cli.main(["feed-watch", "--poll", "0.05"]) == 0
     out = capsys.readouterr().out
     assert "new want 20 cards" in out and "old" not in out
-    assert "/codescroll-generate" in out
+    assert "/blamescroll-generate" in out
 
 
 def test_feed_watch_hint_tells_the_session_to_arm_the_watch(cfg, capsys):
     assert cli.main(["feed-watch", "--hint"]) == 0
     out = capsys.readouterr().out.strip().splitlines()
     assert len(out) == 1
-    assert "run_in_background" in out[0] and "codescroll feed-watch" in out[0]
+    assert "run_in_background" in out[0] and "blamescroll feed-watch" in out[0]
 
 
 def test_feed_watch_fires_at_once_for_a_signal_no_run_answered(cfg, capsys):
@@ -753,7 +753,7 @@ def test_feed_watch_fires_at_once_for_a_signal_no_run_answered(cfg, capsys):
     from contextlib import closing
     from datetime import UTC, datetime, timedelta
 
-    from codescroll import db, runs, supply
+    from blamescroll import db, runs, supply
 
     log = cfg.settings.data_dir / supply.WANTS_FILE
     log.parent.mkdir(parents=True, exist_ok=True)
@@ -768,7 +768,7 @@ def test_feed_watch_fires_at_once_for_a_signal_no_run_answered(cfg, capsys):
 def test_install_dry_run_works_without_a_local_dir(tmp_path, monkeypatch, capsys):
     (tmp_path / "config").mkdir()
     (tmp_path / "config" / "settings.yaml").write_text("{}\n")
-    monkeypatch.setenv("CODESCROLL_ROOT", str(tmp_path))
+    monkeypatch.setenv("BLAMESCROLL_ROOT", str(tmp_path))
     assert not (tmp_path / "local").exists()
     assert cli.main(["install", "--launchd"]) == 0
     assert not (tmp_path / "local").exists()

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from codescroll import api, db, knowledge, learning, ledger, runs, store
+from blamescroll import api, db, knowledge, learning, ledger, runs, store
 from tests.cards import explain, meme_card, text_card
 from tests.conftest import make_config
 
@@ -136,13 +136,13 @@ def test_submit_with_request_lead_marks_served(conn, cfg, fixture_repo):
 
 def test_knew_it_event_through_api_lowers_novelty(cfg, fixture_repo):
     client = TestClient(api.create_app(lambda: cfg))
-    with db.open_db(cfg.settings.data_dir / "codescroll.db") as c:
+    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as c:
         run_id = runs.open_run(c, cfg, repo=None, brief="b", requested=5)
         (acc,) = runs.submit(c, cfg, run_id, [path_card(fixture_repo)])["accepted"]
         cid = acc["card_id"]
         before = knowledge.novelty(c, "fixture", "src")
     body = {"events": [{"card_id": cid, "type": "knew_it", "ts": T, "data": {"on": True}}]}
     assert client.post("/api/events", json=body).json() == {"stored": 1}
-    with db.open_db(cfg.settings.data_dir / "codescroll.db") as c:
+    with db.open_db(cfg.settings.data_dir / "blamescroll.db") as c:
         learning.process_events(c, cfg, now=NOW)
         assert knowledge.novelty(c, "fixture", "src") < before

@@ -2,7 +2,7 @@
 
 import pytest
 
-from codescroll import materials, structure
+from blamescroll import materials, structure
 from tests.conftest import make_config
 from tests.fixture_repo import build_history_repo
 from tests.test_materials import _ref

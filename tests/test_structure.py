@@ -3,7 +3,7 @@ when the `structure` group or the grammar bundle is missing."""
 
 import pytest
 
-from codescroll import structure
+from blamescroll import structure
 
 
 def need(*grammars):

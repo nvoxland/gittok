@@ -5,8 +5,8 @@ import subprocess
 
 import pytest
 
-from codescroll import research
-from codescroll.config import (
+from blamescroll import research
+from blamescroll.config import (
     AgentSettings,
     AnalysisSettings,
     Config,
@@ -15,7 +15,7 @@ from codescroll.config import (
     ServerSettings,
     Settings,
 )
-from codescroll.research import ResearchError
+from blamescroll.research import ResearchError
 
 
 def make_cfg(repo_path, **research_kw) -> Config:

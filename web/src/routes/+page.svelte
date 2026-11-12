@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { getItemWithLegacy } from '#lib/legacyKey';
 	import { onMount } from 'svelte';
 	import Feed from '#lib/components/Feed.svelte';
 	import StoriesRow from '#lib/components/StoriesRow.svelte';
@@ -48,7 +49,7 @@
 	// The card on screen, kept on this device so a reload (iOS drops background pages) resumes on it
 	// even when the server's event log has not caught up. localStorage, not sessionStorage: a
 	// browser restart or tab restore (Brave on iOS) starts a new session and would lose it.
-	const CURRENT_KEY = 'codescroll.current';
+	const CURRENT_KEY = 'blamescroll.current';
 	function rememberCurrent(id: string) {
 		try {
 			localStorage.setItem(CURRENT_KEY, id);
@@ -58,7 +59,7 @@
 	}
 	function readCurrent(): string | null {
 		try {
-			return localStorage.getItem(CURRENT_KEY);
+			return getItemWithLegacy(localStorage, CURRENT_KEY);
 		} catch {
 			return null;
 		}
@@ -223,8 +224,8 @@
 				<h2>You're all caught up</h2>
 				<p>You have seen every card for now.</p>
 				<p>
-					To make more, open Claude Code in the CodeScroll repo and run
-					<code>/codescroll-generate</code>.
+					To make more, open Claude Code in the Blamescroll repo and run
+					<code>/blamescroll-generate</code>.
 				</p>
 				<button type="button" onclick={checkAgain} disabled={checking}>
 					{checking ? 'Checking…' : 'Check for new cards'}

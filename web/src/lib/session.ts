@@ -1,4 +1,6 @@
-const KEY = 'codescroll.session';
+import { getItemWithLegacy } from './legacyKey';
+
+const KEY = 'blamescroll.session';
 let memory: string | undefined;
 
 // crypto.randomUUID exists only in secure contexts (HTTPS, localhost), not on a LAN http:// page.
@@ -13,7 +15,7 @@ export function randomId(): string {
 export function getSessionId(): string {
 	if (memory) return memory;
 	try {
-		const stored = sessionStorage.getItem(KEY);
+		const stored = getItemWithLegacy(sessionStorage, KEY);
 		if (stored) {
 			memory = stored;
 			return stored;

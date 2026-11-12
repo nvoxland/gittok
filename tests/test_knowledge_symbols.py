@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from codescroll import db, knowledge, learning, ledger, store
+from blamescroll import db, knowledge, learning, ledger, store
 from tests.cards import text_card
 from tests.conftest import make_config
 from tests.test_candidate_leads import cand

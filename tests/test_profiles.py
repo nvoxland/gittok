@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from codescroll import config, profiles
+from blamescroll import config, profiles
 
 VALID = {
     "version": 1,

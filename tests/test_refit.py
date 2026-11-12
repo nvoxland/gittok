@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from codescroll import db, refit, runs, store
+from blamescroll import db, refit, runs, store
 from tests.cards import text_card
 from tests.conftest import make_config
 
@@ -16,7 +16,7 @@ def cfg(fixture_repo, tmp_path):
 
 @pytest.fixture
 def conn(cfg):
-    with closing(db.open_db(cfg.settings.data_dir / "codescroll.db")) as c:
+    with closing(db.open_db(cfg.settings.data_dir / "blamescroll.db")) as c:
         yield c
 
 

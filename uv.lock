@@ -72,6 +72,59 @@ wheels = [
 ]
 
 [[package]]
+name = "blamescroll"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "jsonschema" },
+    { name = "mcp" },
+    { name = "pyyaml" },
+    { name = "regex" },
+    { name = "uvicorn" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "anyio" },
+    { name = "httpx" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
+images = [
+    { name = "mflux" },
+]
+profiles = [
+    { name = "ast-grep-py" },
+]
+structure = [
+    { name = "tree-sitter-language-pack" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "jsonschema", specifier = ">=4.23" },
+    { name = "mcp", specifier = ">=2.3" },
+    { name = "pyyaml", specifier = ">=6" },
+    { name = "regex", specifier = ">=2024.11" },
+    { name = "uvicorn", specifier = ">=0.32" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "anyio", specifier = ">=4" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "pytest", specifier = ">=8" },
+    { name = "ruff", specifier = ">=0.8" },
+]
+images = [{ name = "mflux" }]
+profiles = [{ name = "ast-grep-py" }]
+structure = [{ name = "tree-sitter-language-pack", specifier = ">=1.22,<1.23" }]
+
+[[package]]
 name = "certifi"
 version = "2026.10.23"
 source = { registry = "https://pypi.org/simple" }
@@ -276,59 +329,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/c7/0e/7fa0ef50764b67090
 wheels = [
     { url = "https://files.pythonhosted.org/packages/58/50/6c0d534c5f134586a8e1ba4e330569e32f057e33372ae556463212fb4cd3/click-8.5.0-py3-none-any.whl", hash = "sha256:255bc9599cf7748b4b1a446ccc735421bd08a2ae529a8b88597d3de5664ee360", size = 125251, upload-time = "2026-08-26T13:33:12.928Z" },
 ]
-
-[[package]]
-name = "codescroll"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "jsonschema" },
-    { name = "mcp" },
-    { name = "pyyaml" },
-    { name = "regex" },
-    { name = "uvicorn" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "anyio" },
-    { name = "httpx" },
-    { name = "pytest" },
-    { name = "ruff" },
-]
-images = [
-    { name = "mflux" },
-]
-profiles = [
-    { name = "ast-grep-py" },
-]
-structure = [
-    { name = "tree-sitter-language-pack" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "fastapi", specifier = ">=0.115" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "jsonschema", specifier = ">=4.23" },
-    { name = "mcp", specifier = ">=2.3" },
-    { name = "pyyaml", specifier = ">=6" },
-    { name = "regex", specifier = ">=2024.11" },
-    { name = "uvicorn", specifier = ">=0.32" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "anyio", specifier = ">=4" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "pytest", specifier = ">=8" },
-    { name = "ruff", specifier = ">=0.8" },
-]
-images = [{ name = "mflux" }]
-profiles = [{ name = "ast-grep-py" }]
-structure = [{ name = "tree-sitter-language-pack", specifier = ">=1.22,<1.23" }]
 
 [[package]]
 name = "colorama"

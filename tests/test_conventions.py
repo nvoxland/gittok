@@ -2,8 +2,8 @@
 
 import pytest
 
-from codescroll import candidates, conventions, db, facts, gitq, profiles
-from codescroll.config import AnalysisSettings, ConfigError
+from blamescroll import candidates, conventions, db, facts, gitq, profiles
+from blamescroll.config import AnalysisSettings, ConfigError
 from tests.fixture_repo import build_history_repo
 
 SVC = """(ns svc)
@@ -186,7 +186,7 @@ def test_profile_schema_rejects_bad_data():
 
 
 def test_leads_map_the_tags():
-    from codescroll import candidate_leads as cl
+    from blamescroll import candidate_leads as cl
 
     for tag in ("convention_mismatch", "nil_contract"):
         assert tag in cl.CLEVER_TAGS and tag in cl.PREFER_TAGS

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from codescroll import db, gc, store
+from blamescroll import db, gc, store
 from tests.cards import text_card
 from tests.conftest import make_config
 
@@ -27,7 +27,7 @@ def cfg(fixture_repo, tmp_path):
 
 @pytest.fixture
 def conn(cfg):
-    c = db.open_db(cfg.settings.data_dir / "codescroll.db")
+    c = db.open_db(cfg.settings.data_dir / "blamescroll.db")
     c.execute(
         "INSERT INTO runs(id, status, started_at) VALUES ('r1', 'finished', '2026-01-01T00:00:00Z')"
     )

@@ -8,7 +8,7 @@ import ast
 import re
 from pathlib import Path
 
-SRC = Path(__file__).parents[1] / "src" / "codescroll"
+SRC = Path(__file__).parents[1] / "src" / "blamescroll"
 WORDS = re.compile(
     r"\b(clojure|clojurescript|python|typescript|javascript|svelte|golang|rust|ruby|java)\b",
     re.I,
