@@ -1,9 +1,9 @@
-import { fireEvent, render, screen, within } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetCardStateForTest } from '#lib/cardState.ts';
 import Card from './Card.svelte';
 import type { Card as CardT } from '#lib/types.ts';
-import { fakeCard } from './fixtures.ts';
+import { fakeCard, images, memeVisual } from './fixtures.ts';
 
 describe('Card', () => {
 	it('renders a card that has no comments field', () => {
@@ -455,6 +455,34 @@ describe('Card replies', () => {
 		});
 	});
 
+	it('keeps a sent reply when the card unmounts and mounts again (the feed unmounts far cards)', async () => {
+		const stored = {
+			id: 4,
+			card_id: 'c_9',
+			persona: 'greybeard',
+			comment_index: 0,
+			text: 'Why floats?',
+			created_at: 'x',
+			answered_card_id: null
+		};
+		fetchMock.mockResolvedValue({ ok: true, json: async () => stored });
+		const first = render(Card, { card: withComment() });
+		await fireEvent.click(screen.getAllByRole('button', { name: 'Reply' })[0]);
+		await fireEvent.input(screen.getByRole('textbox', { name: 'Your reply' }), {
+			target: { value: 'Why floats?' }
+		});
+		await fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+		await screen.findAllByText('Why floats?');
+		first.unmount();
+		expect(screen.queryByText('Why floats?')).toBeNull();
+		// The same reply also in the server's list must not show twice.
+		const { container } = render(Card, { card: withComment({ replies: [stored] }) });
+		expect(container.querySelectorAll('section.front .reply')).toHaveLength(1);
+		cleanup();
+		render(Card, { card: withComment() });
+		expect(screen.getAllByText('Why floats?').length).toBeGreaterThan(0);
+	});
+
 	it('does not send an empty reply', async () => {
 		render(Card, { card: withComment() });
 		await fireEvent.click(screen.getAllByRole('button', { name: 'Reply' })[0]);
@@ -481,5 +509,177 @@ describe('Card replies', () => {
 			'href',
 			'/card/c_77'
 		);
+	});
+});
+
+describe('Card keyboard and panels', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		resetCardStateForTest();
+	});
+
+	const deep = () =>
+		fakeCard({
+			depth: [
+				{ kind: 'explain', text: 'Why.' },
+				{ kind: 'explain', text: 'More.' }
+			]
+		});
+
+	function setup(card = deep()) {
+		const { container } = render(Card, { card });
+		const row = container.querySelector('.panels') as HTMLElement;
+		Object.defineProperty(row, 'clientWidth', { value: 300, configurable: true });
+		row.scrollTo = vi.fn() as never;
+		return { container, row };
+	}
+	async function scrollTo(row: HTMLElement, panel: number) {
+		row.scrollLeft = panel * 300;
+		await fireEvent.scroll(row);
+	}
+
+	it('the panel row is a focusable, labelled carousel', () => {
+		const { row } = setup();
+		expect(row).toHaveAttribute('tabindex', '0');
+		expect(row).toHaveAttribute('role', 'group');
+		expect(row).toHaveAttribute('aria-roledescription', 'carousel');
+		expect(row.getAttribute('aria-label')).toMatch(/panel 1 of 3/i);
+		expect(row.getAttribute('aria-label')).toMatch(/arrow/i);
+	});
+
+	it('each panel is a labelled slide', () => {
+		const { container } = setup(
+			fakeCard({
+				depth: [{ kind: 'explain', text: 'Why.' }],
+				comments: [{ persona: 'greybeard', text: 'Told you.' }]
+			})
+		);
+		const labels = [...container.querySelectorAll('.panels > section')].map((s) => [
+			s.getAttribute('role'),
+			s.getAttribute('aria-roledescription'),
+			s.getAttribute('aria-label')
+		]);
+		expect(labels).toEqual([
+			['group', 'slide', 'Panel 1 of 3: Card'],
+			['group', 'slide', 'Panel 2 of 3: Explanation'],
+			['group', 'slide', 'Panel 3 of 3: Comments']
+		]);
+	});
+
+	it('ArrowRight and ArrowLeft move between panels', async () => {
+		const { row } = setup();
+		await fireEvent.keyDown(row, { key: 'ArrowRight' });
+		expect(row.scrollTo).toHaveBeenLastCalledWith({ left: 300, behavior: 'smooth' });
+		await scrollTo(row, 1);
+		expect(row.getAttribute('aria-label')).toMatch(/panel 2 of 3/i);
+		await fireEvent.keyDown(row, { key: 'ArrowRight' });
+		expect(row.scrollTo).toHaveBeenLastCalledWith({ left: 600, behavior: 'smooth' });
+		await fireEvent.keyDown(row, { key: 'ArrowLeft' });
+		expect(row.scrollTo).toHaveBeenLastCalledWith({ left: 0, behavior: 'smooth' });
+	});
+
+	it('does nothing past the first or the last panel', async () => {
+		const { row } = setup();
+		await fireEvent.keyDown(row, { key: 'ArrowLeft' });
+		expect(row.scrollTo).not.toHaveBeenCalled();
+		await scrollTo(row, 2);
+		await fireEvent.keyDown(row, { key: 'ArrowRight' });
+		expect(row.scrollTo).not.toHaveBeenCalled();
+	});
+
+	it('Home and End go to the first and the last panel', async () => {
+		const { row } = setup();
+		await fireEvent.keyDown(row, { key: 'End' });
+		expect(row.scrollTo).toHaveBeenLastCalledWith({ left: 600, behavior: 'smooth' });
+		await scrollTo(row, 2);
+		await fireEvent.keyDown(row, { key: 'Home' });
+		expect(row.scrollTo).toHaveBeenLastCalledWith({ left: 0, behavior: 'smooth' });
+	});
+
+	it('leaves the arrow keys alone while the reader types a reply', async () => {
+		const { row } = setup(
+			fakeCard({
+				depth: [{ kind: 'explain', text: 'Why.' }],
+				comments: [{ persona: 'greybeard', text: 'Told you.' }]
+			})
+		);
+		await fireEvent.click(screen.getAllByRole('button', { name: 'Reply' })[0]);
+		await fireEvent.keyDown(screen.getByLabelText('Your reply'), { key: 'ArrowRight' });
+		expect(row.scrollTo).not.toHaveBeenCalled();
+	});
+
+	it('ArrowDown scrolls a long depth panel, and is left to the feed on the front', async () => {
+		const { container, row } = setup();
+		const front = new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true });
+		row.dispatchEvent(front);
+		expect(front.defaultPrevented).toBe(false);
+
+		await scrollTo(row, 1);
+		const section = container.querySelector('section[data-panel="1"]') as HTMLElement;
+		Object.defineProperty(section, 'scrollHeight', { value: 900, configurable: true });
+		Object.defineProperty(section, 'clientHeight', { value: 300, configurable: true });
+		section.scrollBy = vi.fn() as never;
+		const deepKey = new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true });
+		row.dispatchEvent(deepKey);
+		expect(deepKey.defaultPrevented).toBe(true);
+		expect(section.scrollBy).toHaveBeenCalledWith({ top: 80, behavior: 'smooth' });
+	});
+
+	it('marks the dot of the current panel for assistive tech only through the row label', () => {
+		const { container } = setup();
+		expect(container.querySelector('.dots')).toHaveAttribute('aria-hidden', 'true');
+	});
+
+	it('has a visible focus style on the panel row', async () => {
+		const { readFileSync } = await import('node:fs');
+		const css = readFileSync(`${process.cwd()}/src/lib/components/Card.svelte`, 'utf8');
+		expect(css).toMatch(/\.panels:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--accent\)/);
+	});
+
+	it('jumps without animation when the user asks for reduced motion', async () => {
+		vi.stubGlobal('matchMedia', (q: string) => ({ matches: q.includes('reduce'), media: q }));
+		const { row } = setup(
+			fakeCard({
+				depth: [{ kind: 'explain', text: 'Why.' }],
+				comments: [{ persona: 'greybeard', text: 'Told you.' }]
+			})
+		);
+		await fireEvent.click(screen.getByRole('button', { name: 'Comments (1)' }));
+		expect(row.scrollTo).toHaveBeenLastCalledWith({ left: 600, behavior: 'auto' });
+		await fireEvent.keyDown(row, { key: 'ArrowRight' });
+		expect(row.scrollTo).toHaveBeenLastCalledWith({ left: 300, behavior: 'auto' });
+	});
+});
+
+describe('Card images', () => {
+	const meme = (over: Partial<CardT> = {}) =>
+		fakeCard({
+			visual: memeVisual(),
+			resolved: { visual: images(), depth: [] },
+			comments: [{ persona: 'greybeard', text: 'Told you.' }],
+			...over
+		});
+
+	it('loads the images of the first card at once: it is on screen', () => {
+		const { container } = render(Card, { card: meme(), first: true });
+		const img = container.querySelector('img.media')!;
+		expect(img.getAttribute('loading')).toBe('eager');
+		expect(img.getAttribute('decoding')).toBe('async');
+		expect(container.querySelector('img.avatar')!.getAttribute('loading')).toBe('eager');
+	});
+
+	it('loads the images of later cards lazily', () => {
+		const { container } = render(Card, { card: meme() });
+		expect(container.querySelector('img.media')!.getAttribute('loading')).toBe('lazy');
+		expect(container.querySelector('img.media')!.getAttribute('decoding')).toBe('async');
+		expect(container.querySelector('img.avatar')!.getAttribute('loading')).toBe('lazy');
+		expect(container.querySelector('img.avatar')!.getAttribute('decoding')).toBe('async');
+	});
+
+	it('loads the lightbox image at once', async () => {
+		render(Card, { card: meme() });
+		await fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
+		const img = screen.getByRole('dialog').querySelector('img.media')!;
+		expect(img.getAttribute('loading')).toBe('eager');
 	});
 });

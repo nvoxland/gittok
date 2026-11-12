@@ -3,6 +3,7 @@
 	// Tap skips ahead, a long press pauses, and the finished card offers a replay.
 	import { onDestroy, type Snippet } from 'svelte';
 	import type { Beat } from '#lib/beats.ts';
+	import { prefersReducedMotion } from '#lib/motion.ts';
 	import { createPlayer, type PlayerState } from '#lib/player.ts';
 	import { hasPlayed, setPlayed } from '#lib/cardState.ts';
 	import { registerPlayStats } from '#lib/playStats.ts';
@@ -23,10 +24,7 @@
 	} = $props();
 
 	const HOLD_MS = 250;
-	const reducedMotion =
-		typeof window !== 'undefined' &&
-		typeof window.matchMedia === 'function' &&
-		window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+	const reducedMotion = prefersReducedMotion();
 
 	let view = $state<PlayerState>({ shown: Infinity, beat: 0, done: true, paused: false });
 	// svelte-ignore state_referenced_locally

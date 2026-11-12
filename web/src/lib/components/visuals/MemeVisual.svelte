@@ -1,6 +1,8 @@
 <script lang="ts">
+	import { imageLoading } from '#lib/imageLoading.ts';
 	import type { MemeVisual, ResolvedImages } from '#lib/types.ts';
 	let { visual, resolved }: { visual: MemeVisual; resolved: ResolvedImages | null } = $props();
+	const loading = imageLoading();
 </script>
 
 {#if resolved?.images?.length}
@@ -9,7 +11,8 @@
 		src={resolved.images[0]}
 		width={resolved.width}
 		height={resolved.height}
-		loading="lazy"
+		{loading}
+		decoding="async"
 		alt={visual.lines.join(' / ')}
 	/>
 {:else}

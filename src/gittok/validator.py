@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+from collections.abc import Iterator
 from functools import cache
 from importlib.resources import files
 
@@ -885,6 +886,39 @@ def _check_secrets(card: dict, ctx: _Ctx) -> None:
             )
 
 
+# Diagram text goes to the client's Mermaid renderer. These parts can change its settings,
+# attach handlers or links, or load something from another place; a diagram never needs them.
+# `\w*script:` covers every URL scheme that runs script.
+_MERMAID_UNSAFE = (
+    (re.compile(r"%%\s*\{"), "a %%{...}%% directive"),
+    (re.compile(r"\A\s*---"), "a front-matter config block"),
+    (re.compile(r"^\s*(click|callback)\s", re.I | re.M), "a click or callback statement"),
+    (re.compile(r"\b(https?|\w*script)\s*:|\bdata:(?=\S)", re.I), "a URL"),
+)
+
+
+def _mermaid_sources(value) -> Iterator[str]:
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if k == "mermaid" and isinstance(v, str):
+                yield v
+            else:
+                yield from _mermaid_sources(v)
+    elif isinstance(value, list):
+        for v in value:
+            yield from _mermaid_sources(v)
+
+
+def _check_diagrams(card: dict) -> None:
+    for source in _mermaid_sources(card):
+        for pattern, what in _MERMAID_UNSAFE:
+            if pattern.search(source):
+                raise _Reject(
+                    "unsafe_diagram",
+                    f"the mermaid text has {what}. Use plain nodes, edges and labels only",
+                )
+
+
 def _validate_one(card: dict, gc: _GitCache, ctx: _Ctx) -> tuple[dict, dict, str, list]:
     personas = ctx.personas
     ctx.card_repos = tuple(card.get("repos", ())) if isinstance(card, dict) else ()
@@ -895,6 +929,7 @@ def _validate_one(card: dict, gc: _GitCache, ctx: _Ctx) -> tuple[dict, dict, str
         raise _Reject("schema", "; ".join(errs[:3]))
     card = copy.deepcopy(card)
     _check_secrets(card, ctx)
+    _check_diagrams(card)
     _check_format(card)
     _check_fit(card)
     _check_interaction_shape(card)

@@ -119,7 +119,8 @@ def test_api_serves_web_from_shared_bundle(tmp_path, monkeypatch, bundle):
 
     monkeypatch.setenv("GITTOK_HOME", str(tmp_path / "home"))
     monkeypatch.chdir(tmp_path)
-    r = TestClient(api.create_app(load_config)).get("/")
+    # A real config does not know the TestClient default host ("testserver").
+    r = TestClient(api.create_app(load_config), base_url="http://localhost").get("/")
     assert "bundled" in r.text
 
 

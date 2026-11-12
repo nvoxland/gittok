@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { imageLoading } from '#lib/imageLoading.ts';
 	import type { ComicVisual, ResolvedImages } from '#lib/types.ts';
 	let {
 		visual,
@@ -13,6 +14,7 @@
 		visual.panels.map((p, i) => ({ p, i })).filter(({ i }) => !playing || i === current)
 	);
 	const cols = $derived(playing ? 1 : visual.panels.length === 3 ? 3 : 2);
+	const loading = imageLoading();
 </script>
 
 <div class="grid cols-{cols}">
@@ -23,7 +25,8 @@
 					src={resolved.images[i]}
 					width={resolved.width}
 					height={resolved.height}
-					loading="lazy"
+					{loading}
+					decoding="async"
 					alt={p.caption}
 				/>
 			{/if}

@@ -278,3 +278,253 @@ def test_fetch_ref_failure_returns_failed(cloned, tmp_path):
     gitq._last_fetch.clear()
     _git(clone, "remote", "set-url", "origin", str(tmp_path / "missing.git"))
     assert gitq.fetch_ref(clone, "origin/master") == "failed"
+
+
+# --- config-driven execution -------------------------------------------------------------------
+
+
+def _raw_git(cwd, *args, stdin=None):
+    import subprocess
+
+    ident = ["-c", "user.name=T", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"]
+    return subprocess.run(
+        ["git", "-C", str(cwd), *ident, *args], check=True, capture_output=True, input=stdin
+    ).stdout
+
+
+def _hostile_config(marks) -> str:
+    """Git config that runs a script (touching a file in `marks`) at every knob we know."""
+    marks.mkdir(exist_ok=True)
+    bin_dir = marks.parent / "evil-bin"
+    bin_dir.mkdir(exist_ok=True)
+
+    def script(name, then="exit 0"):
+        path = bin_dir / name
+        path.write_text(f"#!/bin/sh\ntouch {marks / name}\n{then}\n")
+        path.chmod(0o755)
+        return path
+
+    return (
+        '[diff "evil"]\n'
+        f"\ttextconv = {script('textconv', 'cat "$1"')}\n"
+        f"\tcommand = {script('driver')}\n"
+        "[diff]\n"
+        f"\texternal = {script('external')}\n"
+        "[core]\n"
+        f"\tfsmonitor = {script('fsmonitor')}\n"
+        f"\tpager = {script('pager', 'cat')}\n"
+        "[pager]\n"
+        "\tshow = true\n\tlog = true\n\tdiff = true\n\tblame = true\n\tgrep = true\n"
+        "[log]\n\tshowSignature = true\n"
+        f"[gpg]\n\tprogram = {script('gpg', 'exit 1')}\n"
+    )
+
+
+def _hostile_repo(tmp_path):
+    """A normal checkout whose .git/config and attributes try to run commands."""
+    repo = tmp_path / "hostile"
+    repo.mkdir()
+    _raw_git(repo, "init", "-q", "-b", "main")
+    (repo / "a.txt").write_text("one\ntwo\n")
+    _raw_git(repo, "add", "-A")
+    _raw_git(repo, "commit", "-q", "-m", "first")
+    (repo / "a.txt").write_text("one\nTWO\nthree\n")
+    _raw_git(repo, "add", "-A")
+    _raw_git(repo, "commit", "-q", "-m", "second")
+    # a "signed" tip, so log.showSignature would call gpg.program
+    body = _raw_git(repo, "cat-file", "commit", "HEAD")
+    head, sep, msg = body.partition(b"\n\n")
+    sig = b"gpgsig -----BEGIN PGP SIGNATURE-----\n \n iQEzBAAB\n -----END PGP SIGNATURE-----"
+    signed = _raw_git(
+        repo, "hash-object", "-t", "commit", "-w", "--stdin", stdin=head + b"\n" + sig + sep + msg
+    )
+    _raw_git(repo, "update-ref", "refs/heads/main", signed.decode().strip())
+    (repo / ".git" / "info").mkdir(exist_ok=True)
+    (repo / ".git" / "info" / "attributes").write_text("* diff=evil\n")
+    marks = tmp_path / "marks"
+    with (repo / ".git" / "config").open("a") as fh:
+        fh.write(_hostile_config(marks))
+    return repo, marks
+
+
+def _every_read(repo):
+    """Each kind of git call the package makes, through gitq."""
+    calls = [
+        ("show", "HEAD"),
+        ("show", "--format=", "--stat", "HEAD"),
+        ("show", "-s", "--format=%B", "HEAD"),
+        ("show", "HEAD:a.txt"),
+        ("log", "-p", "-n2", "HEAD"),
+        ("log", "-n2", "--format=%H", "HEAD"),
+        ("diff", "HEAD~1", "HEAD"),
+        ("diff", "--name-only", "HEAD~1..HEAD"),
+        ("blame", "--date=short", "-L", "1,2", "HEAD", "--", "a.txt"),
+        ("grep", "-n", "-I", "-F", "-e", "one", "HEAD", "--"),
+        ("ls-tree", "-r", "HEAD"),
+        ("rev-list", "-n", "1", "HEAD"),
+        ("status", "--porcelain"),
+    ]
+    for args in calls:
+        try:
+            gitq.run(repo, *args)
+        except gitq.GitError:
+            pass
+    for fn in (
+        lambda: gitq.blame_range(repo, "HEAD", "a.txt", 1, 2),
+        lambda: gitq.changed_old_ranges(repo, "HEAD", "a.txt"),
+        lambda: gitq.log_new_hunks(repo, "HEAD", None, 5),
+        lambda: gitq.grep_word(repo, "HEAD", "one"),
+        lambda: gitq.show_file(repo, "HEAD", "a.txt"),
+        lambda: gitq.read_blobs(repo, list(gitq.ls_tree_blobs(repo, "HEAD").values())),
+        lambda: gitq.recent_commits(repo, "HEAD", 0),
+        lambda: gitq.remote_url(repo),
+    ):
+        try:
+            fn()
+        except gitq.GitError:
+            pass
+
+
+def test_hostile_repo_config_runs_without_the_hardening(tmp_path):
+    """The fixture is real: plain git does run the configured commands."""
+    import subprocess
+
+    repo, marks = _hostile_repo(tmp_path)
+    for args in (["show", "HEAD"], ["diff", "HEAD~1", "HEAD"], ["blame", "HEAD", "--", "a.txt"]):
+        subprocess.run(["git", "-C", str(repo), *args], capture_output=True)
+    made = {p.name for p in marks.iterdir()}
+    assert {"textconv", "gpg"} <= made and made & {"driver", "external"}
+
+
+def test_repo_config_cannot_run_commands_through_gitq(tmp_path):
+    repo, marks = _hostile_repo(tmp_path)
+    _every_read(repo)
+    assert sorted(p.name for p in marks.iterdir()) == []
+    # the reads still work
+    assert "TWO" in gitq.run(repo, "show", "HEAD")
+    assert gitq.blame_range(repo, "HEAD", "a.txt", 1, 1)[0]["author"] == "T"
+    assert gitq.changed_old_ranges(repo, "HEAD", "a.txt") == [(2, 2)]
+
+
+def _embedded_git_dir(tmp_path):
+    """An outer repo that has, as ordinary committed files, a directory laid out like a bare
+    git dir (HEAD, config, objects, refs) with a hostile config."""
+    import shutil
+
+    hostile, marks = _hostile_repo(tmp_path)
+    outer = tmp_path / "outer"
+    outer.mkdir()
+    _raw_git(outer, "init", "-q", "-b", "main")
+    (outer / "README").write_text("outer\n")
+    inner = outer / "vendor" / "data"
+    shutil.copytree(hostile / ".git", inner)
+    cfg = (inner / "config").read_text().replace("bare = false", "bare = true")
+    (inner / "config").write_text(cfg)
+    _raw_git(outer, "add", "-A", "-f")
+    _raw_git(outer, "commit", "-q", "-m", "outer")
+    for p in marks.iterdir():
+        p.unlink()
+    return outer, inner, marks
+
+
+def test_embedded_bare_git_dir_is_not_used_as_a_repo(tmp_path):
+    outer, inner, marks = _embedded_git_dir(tmp_path)
+    assert (inner / "HEAD").is_file() and (inner / "objects").is_dir()
+    _every_read(inner)
+    assert sorted(p.name for p in marks.iterdir()) == []
+    # git refuses the directory; it never reads the embedded config or history
+    with pytest.raises(gitq.GitError, match="bare repository"):
+        gitq.run(inner, "log", "-n1", "--format=%s", "HEAD")
+    assert gitq.run(outer, "log", "-n1", "--format=%s", "HEAD").strip() == "outer"
+
+
+def test_fetch_does_not_run_repo_hooks_or_ext_transport(tmp_path):
+    repo, marks = _hostile_repo(tmp_path)
+    origin = tmp_path / "origin.git"
+    _raw_git(tmp_path, "clone", "-q", "--bare", str(repo), str(origin))
+    _raw_git(repo, "remote", "add", "origin", str(origin))
+    _raw_git(repo, "fetch", "-q", "origin")
+    hooks = tmp_path / "hooks"
+    hooks.mkdir()
+    hook = hooks / "reference-transaction"
+    hook.write_text(f"#!/bin/sh\ntouch {marks / 'hook'}\n")
+    hook.chmod(0o755)
+    _raw_git(repo, "config", "core.hooksPath", str(hooks))
+    for p in marks.iterdir():
+        p.unlink()
+    _raw_git(repo, "update-ref", "-d", "refs/remotes/origin/main")
+    assert (marks / "hook").exists()  # the hook is live for plain git
+    _raw_git(repo, "-c", "core.hooksPath=/dev/null", "fetch", "-q", "origin")
+    for p in marks.iterdir():
+        p.unlink()
+    assert gitq.fetch_ref(repo, "origin/main") == "fetched"
+    assert sorted(p.name for p in marks.iterdir()) == []
+    _raw_git(repo, "remote", "set-url", "origin", f"ext::sh -c 'touch {marks / 'ext'}'")
+    for p in marks.iterdir():
+        p.unlink()
+    assert gitq.fetch_ref(repo, "origin/main") == "failed"
+    assert sorted(p.name for p in marks.iterdir()) == []
+
+
+# --- clone (for repos added by URL) ------------------------------------------------------------
+
+
+@pytest.fixture
+def bare_remote(fixture_repo, tmp_path):
+    """A local bare repo that stands in for a remote. No network."""
+    remote = tmp_path / "remote.git"
+    _raw_git(tmp_path, "clone", "-q", "--bare", str(fixture_repo.path), str(remote))
+    return remote
+
+
+def test_clone_makes_a_full_non_bare_clone_without_a_checkout(bare_remote, fixture_repo, tmp_path):
+    dest = tmp_path / "home" / "repos" / "proj"
+    gitq.clone(str(bare_remote), dest)
+    assert (dest / ".git").is_dir()
+    assert [p.name for p in dest.iterdir()] == [".git"]  # no files checked out
+    assert gitq.default_remote_ref(dest) == "origin/main"
+    assert gitq.rev_parse(dest, "origin/main") == fixture_repo.shas["head"]
+    assert not (dest / ".git" / "shallow").exists()
+    assert gitq.rev_parse(dest, fixture_repo.shas["initial"])  # full history
+    assert gitq.run(dest, "tag").strip() == ""
+    assert gitq.fetch_ref(dest, "origin/main") == "fetched"
+
+
+def test_clone_failure_removes_the_partial_directory(tmp_path):
+    dest = tmp_path / "home" / "repos" / "gone"
+    with pytest.raises(gitq.GitError, match="clone"):
+        gitq.clone(str(tmp_path / "missing.git"), dest)
+    assert not dest.exists()
+
+
+def test_clone_refuses_an_existing_target_and_leaves_it(bare_remote, tmp_path):
+    dest = tmp_path / "taken"
+    dest.mkdir()
+    (dest / "keep.txt").write_text("mine")
+    with pytest.raises(gitq.GitError, match="already exists"):
+        gitq.clone(str(bare_remote), dest)
+    assert (dest / "keep.txt").read_text() == "mine"
+
+
+def test_clone_never_runs_a_command_from_the_source(tmp_path):
+    mark = tmp_path / "mark"
+    for source in (f"ext::sh -c 'touch {mark}'", f"--upload-pack=touch {mark}", "-x"):
+        dest = tmp_path / "out"
+        with pytest.raises(gitq.GitError):
+            gitq.clone(source, dest)
+        assert not dest.exists() and not mark.exists()
+
+
+def test_clone_and_fetch_do_not_prompt(monkeypatch):
+    monkeypatch.delenv("GIT_SSH_COMMAND", raising=False)
+    monkeypatch.delenv("GIT_SSH", raising=False)
+    monkeypatch.setattr(gitq, "_configured_ssh_command", lambda repo: "")
+    env = gitq._net_env(None)
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+    assert "BatchMode=yes" in env["GIT_SSH_COMMAND"]
+    # the user's own ssh command wins, from the environment or from git config
+    monkeypatch.setenv("GIT_SSH_COMMAND", "ssh -i ~/.ssh/work")
+    assert gitq._net_env(None)["GIT_SSH_COMMAND"] == "ssh -i ~/.ssh/work"
+    monkeypatch.delenv("GIT_SSH_COMMAND")
+    monkeypatch.setattr(gitq, "_configured_ssh_command", lambda repo: "ssh -i ~/.ssh/work")
+    assert "GIT_SSH_COMMAND" not in gitq._net_env(None)

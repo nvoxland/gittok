@@ -35,7 +35,7 @@
 `visual`: `{"kind": "chart", "chart": "top_churn_files", "repo": "storefront", "window": "90", "title": "Where the edits go"}`. `chart`: `top_churn_files`, `top_churn_dirs`, `commit_hours`, `author_shares`, `co_change`. `window`: `"30"`, `"90"` or `"365"` (churn charts only). `dir`: required for `author_shares` (a top-level dir or `"."`). `title`: at most 80 characters. Never write numbers; the server computes them. Good: the chart choice matches the lead, and the `depth` explains what the bars mean.
 
 ### Format: `diagram`
-`visual`: `{"kind": "diagram", "title": "Request flow", "mermaid": "flowchart LR\n  A[api] --> B[store]"}`. `mermaid`: at most 2000 characters, valid Mermaid. Good: 4 to 8 nodes that are real modules or functions.
+`visual`: `{"kind": "diagram", "title": "Request flow", "mermaid": "flowchart LR\n  A[api] --> B[store]"}`. `mermaid`: at most 2000 characters, valid Mermaid. Plain nodes, edges and labels only: no `%%{init}%%` directive, no front matter, no `click`/`callback` line, no URL (rejected as `unsafe_diagram`). Good: 4 to 8 nodes that are real modules or functions.
 
 ### Format: `iceberg`
 `visual`: `{"kind": "template", "template": "iceberg", "data": {"title", "layers": [{"label", "items": [str, 1 to 5]}]}}`. 3 or 4 layers, surface first, deepest last, 1 or 2 items each, each under 60 characters (the front budget). The feed reveals one layer at a time, so the deepest layer is the punchline. Good: each layer is more obscure than the one above.

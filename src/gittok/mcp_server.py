@@ -156,9 +156,16 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
 
     @tool
     def list_repos(cfg: Config) -> list[dict]:
-        """List the configured repos: name, group, ref, and mascot."""
+        """List the configured repos: name, group, ref, mascot, and remote (the URL when
+        GitTok cloned the repo itself, else null)."""
         return [
-            {"name": r.name, "group": r.group, "ref": r.ref, "mascot": r.mascot}
+            {
+                "name": r.name,
+                "group": r.group,
+                "ref": r.ref,
+                "mascot": r.mascot,
+                "remote": r.remote,
+            }
             for r in cfg.repos.values()
         ]
 
@@ -172,8 +179,16 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
 
         Without `count`, makes as many cards as feed_health says the feed needs. When that is
         none, returns nothing_to_do and the health numbers, and opens no run. An explicit
-        `count` always opens a run.
+        `count` always opens a run. With no repos configured, returns nothing_to_do, no_repos
+        and a message for the user, and opens no run.
         """
+        if not cfg.repos:
+            return {
+                "run_id": None,
+                "nothing_to_do": True,
+                "no_repos": True,
+                "message": f"{steering.NO_REPOS} (the user runs this in a terminal).",
+            }
         names = [cfg.repo(repo).name] if repo else sorted(cfg.repos)
         with _db(cfg) as conn:
             if count is None:
@@ -504,7 +519,15 @@ def build_server(get_config: Callable[[], Config] = load_config) -> MCPServer:
     ) -> dict:
         """Add a git repo to local/repos.yaml. Later tool calls see it at once.
 
-        Example: add_repo(name="harbor", path="~/src/harbor", group="work").
+        `path` is a local directory or a remote URL.
+        A local path must be a repo root inside the allowed roots (`repos.allowed_roots`, or
+        the parent directories of the repos already added). For any other place, the user runs
+        `gittok repos add <name> <path>` in a terminal.
+        A remote URL (https://, ssh://, git:// or user@host:path, with no password or token in
+        it) is cloned from the network into GitTok's home directory, and fetched before each
+        analysis. Only clone a URL the user gave you. The clone can take minutes.
+        Examples: add_repo(name="harbor", path="~/src/harbor", group="work");
+        add_repo(name="harbor", path="https://example.com/acme/harbor.git").
         """
         return steering.add_repo(cfg, name, path, ref=ref, group=group, mascot=mascot)
 

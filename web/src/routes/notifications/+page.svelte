@@ -51,7 +51,7 @@
 <style>
 	.back {
 		display: block;
-		padding: 0.5rem 16px 0;
+		padding: calc(0.5rem + var(--safe-top)) max(16px, var(--safe-right)) 0 max(16px, var(--safe-left));
 		color: var(--muted);
 		text-decoration: none;
 		font-size: 0.85rem;
@@ -60,10 +60,10 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		padding-right: 16px;
+		padding-right: max(16px, var(--safe-right));
 	}
 	h1 {
-		margin: 0.5rem 16px;
+		margin: 0.5rem max(16px, var(--safe-right)) 0.5rem max(16px, var(--safe-left));
 		font-size: 1.25rem;
 	}
 	.all {
@@ -80,7 +80,7 @@
 	ul {
 		list-style: none;
 		margin: 0;
-		padding: 0 16px 16px;
+		padding: 0 max(16px, var(--safe-right)) calc(16px + var(--safe-bottom)) max(16px, var(--safe-left));
 	}
 	li {
 		border-bottom: 1px solid var(--border);

@@ -9,7 +9,7 @@
 <style>
 	.back {
 		display: block;
-		padding: 0.5rem 16px 0;
+		padding: calc(0.5rem + var(--safe-top)) max(16px, var(--safe-right)) 0 max(16px, var(--safe-left));
 		color: var(--muted);
 		text-decoration: none;
 		font-size: 0.85rem;

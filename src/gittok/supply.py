@@ -116,9 +116,11 @@ def notify_low_runway(conn, cfg, now: datetime) -> int:
 def signal_wants_cards(conn, cfg, now: datetime) -> int:
     """Append one fixed line to WANTS_FILE when the feed wants cards. Returns 1 if written.
 
-    No line while a run started in the cooldown is still open, or within the cooldown of
-    the last line. The line holds only a time and a count, never repo text.
+    No line when there are no repos, while a run started in the cooldown is still open, or
+    within the cooldown of the last line. The line holds only a time and a count, never repo text.
     """
+    if not cfg.repos:
+        return 0  # nothing to generate from: do not wake a session
     agent = cfg.settings.agent
     cooldown = timedelta(hours=agent.wake_cooldown_hours)
     path = cfg.settings.data_dir / WANTS_FILE

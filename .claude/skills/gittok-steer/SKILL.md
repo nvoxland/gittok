@@ -8,7 +8,7 @@ model: sonnet
 
 You change what the feed shows through **rules**, and you explain what the feed has learned. You do not generate cards here (that is the `gittok-generate` skill). Do the work yourself. Do not launch subagents.
 
-Requires the `gittok` MCP server (tools named `mcp__gittok__*`). If those tools are missing, tell the user to restart the Claude Code session in the GitTok repo (its `.mcp.json` starts `gittok mcp --ui --lan`) and check `/mcp` for errors, then stop.
+Requires the `gittok` MCP server (tools named `mcp__gittok__*`). If those tools are missing, tell the user to restart the Claude Code session in the GitTok repo (its `.mcp.json` starts `gittok mcp --ui`) and check `/mcp` for errors, then stop.
 
 ## Tools
 

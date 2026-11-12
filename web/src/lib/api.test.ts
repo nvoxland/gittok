@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchCard, fetchFeed, fetchStories, fetchNotifications, markNotificationsRead, markStoriesSeen, fetchRepo, fetchSaved, postAnswer, postEvents } from './api';
+import { ApiError, fetchRepos, fetchCard, fetchFeed, fetchStories, fetchNotifications, markNotificationsRead, markStoriesSeen, fetchRepo, fetchSaved, postAnswer, postEvents } from './api';
 
 const fetchMock = vi.fn();
 
@@ -147,5 +147,35 @@ describe('markNotificationsRead', () => {
 		fetchMock.mockResolvedValue({ ok: true, json: async () => ({}) });
 		await markNotificationsRead('all');
 		expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ all: true });
+	});
+});
+
+describe('errors the page must tell apart', () => {
+	it('fetchFeed keeps the HTTP status, so the page can tell "not paired" (401) from a failure', async () => {
+		fetchMock.mockResolvedValue({ ok: false, status: 401 });
+		const err = await fetchFeed().catch((e) => e);
+		expect(err).toBeInstanceOf(ApiError);
+		expect(err.status).toBe(401);
+		expect(err.message).toContain('401');
+	});
+});
+
+describe('fetchRepos', () => {
+	it('returns the configured repos', async () => {
+		fetchMock.mockResolvedValue({
+			ok: true,
+			json: async () => ({ repos: [{ name: 'storefront', ref: 'HEAD', head_sha: null, group: null }] })
+		});
+		const repos = await fetchRepos();
+		expect(fetchMock.mock.calls[0][0]).toBe('/api/repos');
+		expect(repos.map((r) => r.name)).toEqual(['storefront']);
+	});
+	it('throws when the body has no repos list', async () => {
+		fetchMock.mockResolvedValue({ ok: true, json: async () => ({ cards: [] }) });
+		await expect(fetchRepos()).rejects.toThrow();
+	});
+	it('throws on non-ok', async () => {
+		fetchMock.mockResolvedValue({ ok: false, status: 500 });
+		await expect(fetchRepos()).rejects.toThrow('500');
 	});
 });

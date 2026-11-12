@@ -34,9 +34,13 @@ gittok install --apply    # MCP at http://127.0.0.1:8008/mcp, skills, LaunchAgen
 
 The LaunchAgent runs `gittok serve` from your home folder. To run it by hand, use `gittok serve`. The feed is at `http://127.0.0.1:8008`.
 
-Add a repo in one of two ways:
+Add a repo in one of these ways:
 
-- Ask Claude to call the `add_repo` MCP tool.
+- Run `gittok repos add <name> <path-or-url>` in a terminal.
+  - A local path must be the root of a git repo that has a commit. GitTok reads it and never changes it.
+  - A remote URL (`https://`, `ssh://`, `git://` or `git@host:org/repo.git`) is cloned into the GitTok home folder, at `repos/<name>` (installed: `~/.gittok/repos/<name>`). For a URL the name is optional: `gittok repos add https://example.com/acme/harbor.git` uses `harbor`. GitTok fetches this clone before each analysis.
+  - A URL must not hold a password or token. For a private repo, use an ssh URL or a git credential helper. The clone does not ask for a password; it fails.
+- Ask Claude to call the `add_repo` MCP tool. For a local path, the tool only accepts a repo inside `repos.allowed_roots` (`local/settings.yaml`), or next to a local repo you already added. It accepts a remote URL in all cases.
 - Write `~/.gittok/local/repos.yaml` yourself:
 
 ```yaml
@@ -44,6 +48,8 @@ repos:
   myapp:
     path: ~/src/myapp
 ```
+
+`gittok repos` lists the repos. `gittok repos remove <name>` removes one. It deletes the clone only when GitTok made it (a repo added by URL); it never touches a directory you gave. Cards already made from the repo stay.
 
 Upgrade with `uv tool upgrade gittok`, then run `gittok install --apply --force` to refresh the skills. Uninstall with `gittok install --uninstall --launchd --apply`, then `uv tool uninstall gittok`. Your `~/.gittok` folder stays until you delete it.
 
@@ -190,4 +196,61 @@ Fetch updates remote-tracking refs only. It never changes the working tree, the 
 
 ## LAN notes
 
-`gittok serve --lan` and `gittok mcp --ui --lan` (what the project `.mcp.json` runs) bind all interfaces. The feed and `/api/*` need a pairing cookie from non-loopback peers: open the `pair:` URL printed at start-up once on each device. The token lives in `<data_dir>/lan_token` (mode 0600). `/mcp` is loopback-only and refuses LAN peers. PWA install and offline mode need HTTPS, because service workers do not register on plain-HTTP LAN origins. See `docs/social.md`.
+LAN serving is off by default: the project `.mcp.json` runs `gittok mcp --ui`, which serves loopback only. To turn it on, pass `--lan` to `gittok serve` or `gittok mcp --ui`, or set `server.lan: true` in `local/settings.yaml` (the LaunchAgent's `gittok serve` and the `.mcp.json` session then serve the LAN without a flag). With LAN serving on, the server binds all interfaces. A bind to any other non-loopback `--host` is token-protected in the same way. The feed and `/api/*` need a pairing cookie from non-loopback peers: open the `pair:` URL printed at start-up once on each device. The token lives in `<data_dir>/lan_token` (mode 0600). `/mcp` is loopback-only and refuses LAN peers. PWA install and offline mode need HTTPS, because service workers do not register on plain-HTTP LAN origins. See `docs/social.md`.
+
+## HTTPS on a LAN (optional, for PWA install)
+
+You do not need this to use the feed. Plain HTTP on the LAN works in a browser tab. HTTPS is needed only for "Add to Home Screen" as an installed app with offline mode, because browsers register a service worker only on HTTPS or `localhost`.
+
+**The project does not test these recipes.** GitTok itself serves plain HTTP only. The recipes use a second program on the same computer that holds the certificate and forwards to `http://127.0.0.1:8008`. Read the two warnings first.
+
+**Warning 1: a proxy on the same computer skips pairing and opens `/mcp`.** GitTok decides "local or LAN" from the address of the peer, and it does not read `X-Forwarded-For`. Every request that comes through a local proxy looks like a loopback request. So the pairing token is not asked for, and `/mcp` (which can read your configured repos) answers too. Whoever can reach the proxy can reach all of GitTok. Block `/mcp` in the proxy when the proxy can do that, and limit who can reach the proxy.
+
+**Warning 2: the proxy's host name must be allowed.** GitTok answers only to `Host` names it knows (`127.0.0.1`, `localhost`, the LAN addresses, this computer's host name and `<short name>.local`). Any other name gets HTTP 421. Add the name that the phone uses to `server.allowed_hosts` in `local/settings.yaml` (installed: `~/.gittok/local/settings.yaml`), then restart `gittok serve`:
+
+```yaml
+server:
+  allowed_hosts: [mymac.example-tailnet.ts.net]
+```
+
+### Recipe A: Tailscale Serve
+
+For devices in your own tailnet. Tailscale gets a real certificate, so the phone needs no setup beyond Tailscale itself. HTTPS certificates must be on for the tailnet (Tailscale admin console, DNS page).
+
+```bash
+tailscale serve --bg 8008        # serves https://<machine>.<tailnet>.ts.net to the tailnet
+tailscale serve status           # shows the URL
+```
+
+Put `<machine>.<tailnet>.ts.net` in `server.allowed_hosts`. Keep `server.lan` off: Tailscale connects to `127.0.0.1`. Tailscale Serve forwards every path, also `/mcp` (warning 1), so every device and user that your tailnet ACLs let reach this computer can use it. Do not use `tailscale funnel`: it opens the server to the internet.
+
+### Recipe B: mkcert and a local reverse proxy
+
+For devices on the same Wi-Fi. [mkcert](https://github.com/FiloSottile/mkcert) makes a private certificate authority and a certificate for a name of your choice. Each phone must then trust that authority, which is the hard part.
+
+```bash
+mkcert -install
+mkcert mymac.local               # writes mymac.local.pem and mymac.local-key.pem
+mkcert -CAROOT                   # the folder with rootCA.pem: install this file on each phone
+```
+
+On iOS, open `rootCA.pem` to install the profile, then turn it on in Settings, General, About, Certificate Trust Settings. On Android, install it as a CA certificate in the security settings. Never share `rootCA-key.pem`.
+
+A [Caddy](https://caddyserver.com) config that forwards to GitTok and blocks `/mcp`:
+
+```
+mymac.local:8443 {
+	tls /path/to/mymac.local.pem /path/to/mymac.local-key.pem
+	@mcp path /mcp /mcp/*
+	respond @mcp 403
+	reverse_proxy 127.0.0.1:8008
+}
+```
+
+Open `https://mymac.local:8443` on the phone. If the name is this computer's own `<short name>.local`, it is already allowed. For any other name, add it to `server.allowed_hosts`.
+
+### If it does not work
+
+- HTTP 421 `unknown Host`: the name in the address bar is not in `server.allowed_hosts`.
+- HTTP 403 `cross-origin request` on taps (like, save, answer): the same cause; the check uses the same list.
+- The page loads but there is no install prompt or offline mode: the certificate is not trusted on that device. A page with a certificate warning does not register a service worker.

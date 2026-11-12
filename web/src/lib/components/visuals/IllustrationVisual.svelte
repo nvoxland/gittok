@@ -1,7 +1,9 @@
 <script lang="ts">
+	import { imageLoading } from '#lib/imageLoading.ts';
 	import type { IllustrationVisual, ResolvedImages } from '#lib/types.ts';
 	let { visual, resolved }: { visual: IllustrationVisual; resolved: ResolvedImages | null } =
 		$props();
+	const loading = imageLoading();
 </script>
 
 {#if resolved?.images?.length}
@@ -10,7 +12,8 @@
 			src={resolved.images[0]}
 			width={resolved.width}
 			height={resolved.height}
-			loading="lazy"
+			{loading}
+			decoding="async"
 			alt={visual.caption}
 		/>
 		<figcaption class="caption">{visual.caption}</figcaption>

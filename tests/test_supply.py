@@ -129,3 +129,12 @@ def test_wants_cards_signal_is_silent_while_a_run_is_open_or_feed_is_full(conn, 
     fill(conn, cfg, 30)
     assert supply.signal_wants_cards(conn, cfg, NOW) == 0
     assert not log.exists()
+
+
+def test_wants_cards_signal_is_silent_with_no_repos(conn, cfg):
+    """Nothing can be generated yet, so the watch must not wake a session."""
+    from dataclasses import replace
+
+    empty = replace(cfg, repos={})
+    assert supply.signal_wants_cards(conn, empty, NOW) == 0
+    assert not (cfg.settings.data_dir / supply.WANTS_FILE).exists()

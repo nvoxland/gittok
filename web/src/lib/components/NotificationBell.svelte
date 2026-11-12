@@ -56,7 +56,7 @@
 		min-width: 16px;
 		padding: 0 4px;
 		border-radius: 8px;
-		background: #e5484d;
+		background: var(--news);
 		color: #fff;
 		font-size: 0.65rem;
 		font-weight: 700;

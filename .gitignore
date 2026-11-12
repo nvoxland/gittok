@@ -9,5 +9,6 @@ __pycache__/
 .ruff_cache/
 .claude/worktrees/
 local/
+/repos/
 dist/
 *.db

@@ -4,7 +4,17 @@
 	import StoriesRow from '#lib/components/StoriesRow.svelte';
 	import StoryViewer from '#lib/components/StoryViewer.svelte';
 	import NotificationBell from '#lib/components/NotificationBell.svelte';
-	import { fetchCard, fetchFeed, fetchPrefs, fetchStories, markStoriesSeen, postEvents } from '#lib/api.ts';
+	import GestureHints from '#lib/components/GestureHints.svelte';
+	import {
+		ApiError,
+		fetchCard,
+		fetchFeed,
+		fetchPrefs,
+		fetchRepos,
+		fetchStories,
+		markStoriesSeen,
+		postEvents
+	} from '#lib/api.ts';
 	import { setPlaybackSpeed } from '#lib/beats.ts';
 	import { createBatcher } from '#lib/batcher.ts';
 	import { clearAnswers } from '#lib/cardState.ts';
@@ -27,13 +37,19 @@
 		cards = [];
 		nextCursor = null;
 		atEnd = false;
-		loading = true;
 		void load();
 	}
 
 	let cards = $state<Card[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+	// HTTP 401: this device has no pairing cookie (a LAN device that never opened the pairing link).
+	let unpaired = $state(false);
+	// A failed next page or a failed "check for new cards": shown with a retry, never hidden.
+	let moreError = $state<string | null>(null);
+	let checkError = $state<string | null>(null);
+	// No cards and no configured repos: a new install, not a feed that is caught up.
+	let noRepos = $state(false);
 	let fromCache = $state(false);
 	let nextCursor: string | null = null;
 	// No more pages: the feed ends with the caught-up card.
@@ -121,7 +137,21 @@
 		);
 	}
 
+	const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+	/** Records a failed call. A 401 from any call means the whole page needs pairing. */
+	function failed(e: unknown, set: (msg: string) => void) {
+		if (e instanceof ApiError && e.status === 401) unpaired = true;
+		else set(message(e));
+	}
+
 	async function load() {
+		loading = true;
+		error = null;
+		unpaired = false;
+		moreError = null;
+		checkError = null;
+		checkedEmpty = false;
 		try {
 			// The speed must be set before beat cards mount; a failed prefs call keeps the default.
 			const [feed, prefs] = await Promise.all([fetchFeed(undefined, 20, filter), fetchPrefs().catch(() => null)]);
@@ -131,11 +161,16 @@
 			// Cards the server serves again are new or due for review: let them be answered again.
 			// The resumed card is the one on screen before the reload: keep its answer.
 			clearAnswers(fresh.map((c) => c.id).filter((id) => id !== feed.resume_card_id && id !== readCurrent()));
+			// An empty feed with no repos is a new install. A failed repos call keeps the caught-up card.
+			noRepos =
+				fresh.length === 0 && !filtered
+					? await fetchRepos().then((r) => r.length === 0, () => false)
+					: false;
 			cards = fresh;
 			nextCursor = feed.next_cursor;
 			atEnd = nextCursor === null;
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			failed(e, (msg) => (error = msg));
 		} finally {
 			loading = false;
 		}
@@ -153,8 +188,10 @@
 			cards = [...cards, ...fresh];
 			nextCursor = feed.next_cursor;
 			atEnd = nextCursor === null;
-		} catch {
-			// Keep the cursor; the next card near the end tries again.
+			moreError = null;
+		} catch (e) {
+			// Keep the cursor: the Try again button and the next card near the end both try again.
+			failed(e, (msg) => (moreError = msg));
 		} finally {
 			loadingMore = false;
 		}
@@ -164,6 +201,7 @@
 	async function checkAgain() {
 		checking = true;
 		checkedEmpty = false;
+		checkError = null;
 		try {
 			const feed = await fetchFeed(undefined, 20, filter);
 			const have = new Set(cards.map((c) => c.id));
@@ -173,8 +211,9 @@
 			nextCursor = feed.next_cursor;
 			atEnd = nextCursor === null;
 			checkedEmpty = fresh.length === 0;
-		} catch {
-			checkedEmpty = true;
+		} catch (e) {
+			// Not "no new cards": the check itself failed.
+			failed(e, (msg) => (checkError = msg));
 		} finally {
 			checking = false;
 		}
@@ -210,13 +249,43 @@
 
 
 <main>
-	{#if error}
-		<p class="status error" role="alert">Failed to load feed: {error}</p>
-	{:else if loading}
+	{#if loading}
 		<p class="status">Loading...</p>
+	{:else if unpaired}
+		<div class="status" role="alert">
+			<h2>This device is not paired</h2>
+			<p>
+				On the computer that runs GitTok, find the pairing link that the server prints when it
+				starts (a line that begins with <code>pair:</code>). Open that link on this device, once.
+			</p>
+			<button type="button" onclick={load}>Try again</button>
+		</div>
+	{:else if error}
+		<div class="status" role="alert">
+			<p class="error">Failed to load feed: {error}</p>
+			<button type="button" onclick={load}>Try again</button>
+		</div>
+	{:else if noRepos}
+		<section class="end" aria-label="No repos configured">
+			<h2>No repos yet</h2>
+			<p>No repos are configured, so there is nothing to make cards from.</p>
+			<p>
+				On the computer that runs GitTok, add one:
+				<code>gittok repos add &lt;name&gt; &lt;path&gt;</code>
+			</p>
+			<p>Then open Claude Code and run <code>/gittok-generate</code>.</p>
+			<button type="button" onclick={load}>Check again</button>
+		</section>
 	{:else}
 		{#if cards.length > 0}
 			<Feed {cards} onEvent={(e) => batcher.push(e)} onNearEnd={loadMore} onActive={rememberCurrent} />
+			<GestureHints />
+		{/if}
+		{#if moreError}
+			<section class="end" aria-label="Could not load more cards">
+				<p class="error" role="alert">Could not load more cards: {moreError}</p>
+				<button type="button" onclick={loadMore}>Try again</button>
+			</section>
 		{/if}
 		{#if atEnd}
 			<section class="end" aria-label="End of feed">
@@ -227,8 +296,11 @@
 					<code>/gittok-generate</code>.
 				</p>
 				<button type="button" onclick={checkAgain} disabled={checking}>
-					{checking ? 'Checking…' : 'Check for new cards'}
+					{checking ? 'Checking…' : checkError ? 'Try again' : 'Check for new cards'}
 				</button>
+				{#if checkError}
+					<p class="error" role="alert">Could not check for new cards: {checkError}</p>
+				{/if}
 				{#if checkedEmpty}
 					<p class="muted" role="status">No new cards yet.</p>
 				{/if}
@@ -244,6 +316,8 @@
 		display: flex;
 		align-items: center;
 		border-bottom: 1px solid var(--border);
+		padding-top: env(safe-area-inset-top);
+		padding-left: env(safe-area-inset-left);
 	}
 	.stories-slot {
 		flex: 1;
@@ -255,7 +329,7 @@
 		align-items: center;
 		gap: 0.5rem;
 		margin-left: auto;
-		padding: 0 16px 0 8px;
+		padding: 0 max(16px, env(safe-area-inset-right)) 0 8px;
 	}
 	.links a {
 		display: inline-flex;
@@ -295,7 +369,8 @@
 		right: 0;
 		z-index: 20;
 		margin: 0;
-		padding: 0.5rem 16px;
+		padding: 0.5rem max(16px, env(safe-area-inset-right)) calc(0.5rem + env(safe-area-inset-bottom))
+			max(16px, env(safe-area-inset-left));
 		background: var(--surface);
 		border-top: 1px solid var(--border);
 		color: var(--muted);
@@ -303,11 +378,25 @@
 		text-align: center;
 	}
 	.status {
-		display: grid;
-		place-items: center;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 0.75rem;
 		height: calc(100dvh - var(--chrome-h, 0px));
 		margin: 0;
+		padding: 0 max(16px, env(safe-area-inset-right)) env(safe-area-inset-bottom)
+			max(16px, env(safe-area-inset-left));
+		text-align: center;
 		color: var(--muted);
+	}
+	.status h2 {
+		margin: 0;
+		color: var(--text);
+	}
+	.status p {
+		margin: 0;
+		max-width: 30rem;
 	}
 	.end {
 		height: 100dvh;
@@ -316,7 +405,8 @@
 		flex-direction: column;
 		justify-content: center;
 		gap: 0.75rem;
-		padding: 0 16px;
+		padding: env(safe-area-inset-top) max(16px, env(safe-area-inset-right)) env(safe-area-inset-bottom)
+			max(16px, env(safe-area-inset-left));
 		text-align: center;
 	}
 	.end h2,
@@ -326,6 +416,7 @@
 	.end code {
 		font-size: 0.95em;
 	}
+	.status button,
 	.end button {
 		align-self: center;
 		margin-top: 0.5rem;
@@ -342,6 +433,6 @@
 		font-size: 0.9rem;
 	}
 	.error {
-		color: #e5484d;
+		color: var(--bad);
 	}
 </style>

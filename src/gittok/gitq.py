@@ -1,10 +1,11 @@
-"""The only module that spawns git. Every call is read-only."""
+"""The only module that spawns git. Calls are read-only, except `fetch_ref` and `clone`."""
 
 from __future__ import annotations
 
 import logging
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -26,8 +27,45 @@ _ENV_OVERRIDES = {
 }
 
 
+# A repo's own config can name programs that git runs during a read. These options go before
+# the subcommand on every call and win over the repo, user and system config files.
+_SAFE_CONFIG = (
+    "safe.bareRepository=explicit",  # a directory that only looks like a git dir is not a repo
+    "core.fsmonitor=false",  # else a program named there runs on each index refresh
+    "core.hooksPath=/dev/null",  # no hooks (fetch would run reference-transaction)
+    "core.pager=cat",
+    "log.showSignature=false",  # else log/show run gpg.program on signed commits
+    "protocol.ext.allow=never",  # a remote URL `ext::<command>` runs the command
+    "core.quotepath=off",
+)
+# Diff drivers (`diff.<name>.textconv`, `diff.<name>.command`, `diff.external`) have no config
+# switch; these subcommands take flags that turn them off.
+_SAFE_FLAGS = {
+    "show": ("--no-ext-diff", "--no-textconv"),
+    "log": ("--no-ext-diff", "--no-textconv"),
+    "diff": ("--no-ext-diff", "--no-textconv"),
+    "blame": ("--no-textconv",),
+    "grep": ("--no-textconv",),
+}
+
+
 class GitError(Exception):
     pass
+
+
+def _command(repo: Path | str | None, *args: str, literal_pathspecs: bool = False) -> list[str]:
+    """The full argv for one git call: the safe config, then `args` with the safe flags.
+
+    `repo` None means no repo (clone, or a read of the user's own config)."""
+    cmd = ["git"] if repo is None else ["git", "-C", str(repo)]
+    for item in _SAFE_CONFIG:
+        cmd += ["-c", item]
+    cmd.append("--no-pager")
+    if literal_pathspecs:
+        cmd.append("--literal-pathspecs")
+    if args:
+        cmd += [args[0], *_SAFE_FLAGS.get(args[0], ()), *args[1:]]
+    return cmd
 
 
 def _env() -> dict[str, str]:
@@ -42,8 +80,7 @@ def run_bytes(
     literal_pathspecs: bool = True,
 ) -> tuple[int, bytes]:
     """Run git. Pathspecs are literal (no globs or `:(magic)`) unless asked otherwise."""
-    lit = ["--literal-pathspecs"] if literal_pathspecs else []
-    cmd = ["git", "-C", str(repo), "-c", "core.quotepath=off", "--no-pager", *lit, *args]
+    cmd = _command(repo, *args, literal_pathspecs=literal_pathspecs)
     try:
         proc = subprocess.Popen(
             cmd,
@@ -385,7 +422,7 @@ def read_blobs(repo: Path | str, shas: list[str], chunk: int = 400) -> dict[str,
                 raise GitError(f"invalid blob id: {sha!r}")
         try:
             proc = subprocess.run(
-                ["git", "-C", str(repo), "--no-pager", "cat-file", "--batch"],
+                _command(repo, "cat-file", "--batch"),
                 input=("\n".join(batch) + "\n").encode(),
                 capture_output=True,
                 env=_env(),
@@ -417,6 +454,78 @@ def paths_changed_since(repo: Path | str, ref: str, since_ts: int) -> set[str]:
 
 
 FETCH_TIMEOUT_S = 60
+CLONE_TIMEOUT_S = 15 * 60
+
+
+def _configured_ssh_command(repo: Path | str | None) -> str:
+    """`core.sshCommand` as git config gives it (with `repo`: its own config too), or ''."""
+    try:
+        proc = subprocess.run(
+            _command(repo, "config", "--get", "core.sshCommand"),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            env=_env(),
+            timeout=TIMEOUT_S,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return proc.stdout.decode(errors="replace").strip() if proc.returncode == 0 else ""
+
+
+def _net_env(repo: Path | str | None) -> dict[str, str]:
+    """Environment for clone and fetch: fail, never ask for a password or a host key.
+
+    ssh gets BatchMode only when the user set no ssh command of their own."""
+    env = _env()
+    if "GIT_SSH_COMMAND" in env or "GIT_SSH" in env or _configured_ssh_command(repo):
+        return env
+    env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
+    return env
+
+
+def clone(source: str, dest: Path, timeout_s: int = CLONE_TIMEOUT_S) -> None:
+    """Clone `source` into the new directory `dest`: full history, no tags, no checkout.
+
+    Writes only `dest`, which must not exist. A failure removes it again. The caller checks
+    that `source` is an allowed remote; here it only must not look like an option.
+    """
+    if not source or source.startswith("-"):
+        raise GitError("git clone failed: the source is not a remote")
+    if dest.exists():
+        raise GitError(f"git clone failed: {dest} already exists")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    cmd = _command(None, "clone", "--quiet", "--no-checkout", "--no-recurse-submodules")
+    cmd += ["--no-tags", "--origin", "origin", "--", source, str(dest)]
+    try:
+        subprocess.run(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            env=_net_env(None),
+            timeout=timeout_s,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        shutil.rmtree(dest, ignore_errors=True)
+        if isinstance(e, subprocess.TimeoutExpired):
+            raise GitError(f"git clone timed out after {timeout_s} seconds") from None
+        detail = (getattr(e, "stderr", b"") or b"")[:MAX_STDERR_BYTES]
+        text = detail.decode(errors="replace").strip() or str(e)
+        raise GitError(f"git clone failed: {text}") from None
+
+
+def default_remote_ref(repo: Path | str) -> str:
+    """The default branch of `origin` as a remote-tracking ref, e.g. 'origin/main'."""
+    code, out = run_bytes(
+        repo, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD", ok_codes=(0, 1, 128)
+    )
+    full = out.decode(errors="replace").strip()
+    prefix = "refs/remotes/"
+    if code != 0 or not full.startswith(prefix + "origin/"):
+        raise GitError("the remote has no default branch (is it empty?)")
+    return full[len(prefix) :]
+
+
 _last_fetch: dict[str, float] = {}  # repo path -> time.monotonic() of the last attempt
 _fetch_lock = threading.Lock()
 
@@ -462,13 +571,15 @@ def fetch_ref(
             return "throttled"
         _last_fetch[key] = time.monotonic()  # failures count too: a dead network is not retried hot
     remote, branch = split
-    cmd = ["git", "-C", str(repo), "fetch", "--no-tags", "--quiet", remote, branch]
+    # No automatic gc after the fetch: it would repack the user's repo.
+    cmd = _command(repo, "-c", "gc.auto=0", "-c", "maintenance.auto=false")
+    cmd += ["fetch", "--no-tags", "--quiet", remote, branch]
     try:
         subprocess.run(
             cmd,
             stdin=subprocess.DEVNULL,
             capture_output=True,
-            env=_env(),
+            env=_net_env(repo),
             timeout=timeout_s,
             check=True,
         )

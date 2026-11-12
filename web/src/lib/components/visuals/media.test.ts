@@ -13,6 +13,7 @@ describe('MemeVisual', () => {
 		expect(img.getAttribute('width')).toBe('1024');
 		expect(img.getAttribute('height')).toBe('1024');
 		expect(img.getAttribute('loading')).toBe('lazy');
+		expect(img.getAttribute('decoding')).toBe('async');
 		expect(img.getAttribute('alt')).toBe('Reading the docs / Reading git blame');
 		expect(container.querySelector('.caption')).toBeNull();
 	});
@@ -59,5 +60,16 @@ describe('ComicVisual', () => {
 		const panel = container.querySelector('.panel')!;
 		expect(panel.lastElementChild!.tagName).toBe('FIGCAPTION');
 		expect(panel.querySelector('figcaption')).toHaveClass('below');
+	});
+});
+
+describe('image decoding', () => {
+	it('illustration and comic images load lazily and decode off the main thread', () => {
+		const a = render(IllustrationVisual, { visual: illustrationVisual(), resolved: images() });
+		const b = render(ComicVisual, { visual: comicVisual(3), resolved: images(3) });
+		for (const img of [...a.container.querySelectorAll('img'), ...b.container.querySelectorAll('img')]) {
+			expect(img.getAttribute('loading')).toBe('lazy');
+			expect(img.getAttribute('decoding')).toBe('async');
+		}
 	});
 });

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import ipaddress
 import json
 import os
 import shutil
@@ -84,13 +85,23 @@ def _migrate(args) -> int:
 def _repos(args) -> int:
     if getattr(args, "repos_fn", None):
         return args.repos_fn(args)
-    for r in load_config().repos.values():
-        print(f"{r.name}\t{r.ref}\t{r.group or '-'}\t{r.path}")
+    repos = load_config().repos
+    if not repos:
+        print(steering.NO_REPOS)
+    for r in repos.values():
+        line = f"{r.name}\t{r.ref}\t{r.group or '-'}\t{r.path}"
+        print(f"{line}\t{r.remote}" if r.remote else line)
     return 0
+
+
+def _need_repos(cfg) -> None:
+    if not cfg.repos:
+        raise SteeringError(steering.NO_REPOS)
 
 
 def _analyze(args) -> int:
     cfg = load_config()
+    _need_repos(cfg)
     names = [cfg.repo(args.repo).name] if args.repo else sorted(cfg.repos)
     with closing(db.open_db(_db_path(cfg))) as conn:
         for name in names:
@@ -110,6 +121,7 @@ def _analyze(args) -> int:
 
 def _brief(args) -> int:
     cfg = load_config()
+    _need_repos(cfg)
     names = [cfg.repo(args.repo).name] if args.repo else sorted(cfg.repos)
     with closing(db.open_db(_db_path(cfg))) as conn:
         repo_signals = {
@@ -150,17 +162,33 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _banner(port: int, host: str, lan: bool, out) -> str | None:
-    """Print the feed URLs to `out`; with `lan`, also the pairing URLs. Returns the LAN token."""
-    shown = "127.0.0.1" if lan else host
+_ALL_INTERFACES = ("0.0.0.0", "::")
+
+
+def _is_loopback_host(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _banner(port: int, host: str, out) -> str | None:
+    """Print the feed URLs to `out`. A bind that other machines can reach is token-protected:
+    this also prints the pairing URLs and returns the LAN token."""
+    everywhere = host in _ALL_INTERFACES
+    shown = "127.0.0.1" if everywhere else host
     print(f"feed: http://{shown}:{port}", file=out)
     print(f"mcp:  http://{shown}:{port}/mcp", file=out)
-    if not lan:
+    if _is_loopback_host(host):
         return None
-    for url in social.lan_urls(port):
-        print(f"lan:  {url}", file=out)
+    addresses = social.lan_addresses() if everywhere else [host]
+    if everywhere:
+        for url in social.lan_urls(port, addresses):
+            print(f"lan:  {url}", file=out)
     lan_token = social.ensure_lan_token(load_config().settings.data_dir)
-    for a in social.lan_addresses():
+    for a in addresses:
         print(f"pair: http://{a}:{port}/pair?t={lan_token}", file=out)
     print("The feed is token-protected: open a pairing URL once on each device.", file=out)
     print("MCP (/mcp) is loopback-only and is never reachable from the LAN.", file=out)
@@ -182,15 +210,17 @@ def _feed_app(lan_token: str | None):
     )
 
 
-def _bind(args) -> tuple[str, int]:
+def _bind(args) -> tuple[str, int, bool]:
+    """(host, port, lan). `--lan` or `settings.server.lan` binds all interfaces."""
     server = load_config().settings.server
-    host = "0.0.0.0" if args.lan else (args.host or server.host)
-    return host, args.port or server.port
+    lan = bool(args.lan or server.lan)
+    host = "0.0.0.0" if lan else (args.host or server.host)
+    return host, args.port or server.port, lan
 
 
 def _serve(args) -> int:
-    host, port = _bind(args)
-    lan_token = _banner(port, host, args.lan, sys.stdout)
+    host, port, _lan = _bind(args)
+    lan_token = _banner(port, host, sys.stdout)  # None only for a loopback bind
     if not args.reload:
         uvicorn.run(_feed_app(lan_token), host=host, port=port)
         return 0
@@ -260,6 +290,10 @@ def _gc(args) -> int:
 
 def _health(args) -> int:
     cfg = load_config()
+    if args.hint and not cfg.repos:
+        # Nothing can be generated or profiled yet: one line, and no other hint.
+        print(f"GitTok has no repos yet. {steering.NO_REPOS.partition('. ')[2]}")
+        return 0
     with closing(db.open_db(_db_path(cfg))) as conn:
         h = supply.feed_health(conn, cfg, _now())
         stale = [] if not args.hint else _stale_analyzer_repos(conn, cfg)
@@ -507,12 +541,41 @@ def _card(args, cfg, conn) -> int:
     return 0
 
 
+REPOS_ADD_USAGE = "gittok repos add <name> <path-or-url>"
+
+
 def _repos_add(args) -> int:
+    name, path = args.name, args.path
+    if path is None:  # one argument: a URL, and the name comes from its last part
+        remote = steering.parse_remote(name)
+        if remote is None:
+            raise SteeringError(f"Give a name and a path: {REPOS_ADD_USAGE}")
+        path, name = remote
+    remote = steering.parse_remote(path)
+    if remote:
+        print(f"cloning {path} (a large repo takes some minutes)", flush=True)
+    # The user typed this path at a terminal, so the allowed roots do not apply (any_root).
     out = steering.add_repo(
-        load_config(), args.name, args.path, ref=args.ref, group=args.group, mascot=args.mascot
+        load_config(),
+        name,
+        path,
+        ref=args.ref,
+        group=args.group,
+        mascot=args.mascot,
+        created_by="user",
+        any_root=True,
     )
+    if remote:
+        print(f"cloned {out['remote']} into {out['path']}")
     print(f"added repo {out['name']} ({out['path']})")
     print(out["next"])
+    return 0
+
+
+def _repos_remove(args) -> int:
+    out = steering.remove_repo(load_config(), args.name)
+    what = "its clone is deleted" if out["deleted_clone"] else "the directory is not touched"
+    print(f"removed repo {out['name']} ({out['path']}): {what}")
     return 0
 
 
@@ -578,7 +641,8 @@ def _install_env(cfg, args) -> install.Env:
         home=Path.home(),
         repo_root=cfg.shared or cfg.root,
         data_dir=cfg.settings.data_dir,
-        host=server.host,
+        # The MCP URL is for a client on this machine; "all interfaces" is not an address.
+        host="127.0.0.1" if server.host in _ALL_INTERFACES else server.host,
         port=server.port,
         uid=os.getuid(),
         apply=args.apply,
@@ -643,11 +707,11 @@ def _refeature(args) -> int:
 
 def _mcp(args) -> int:
     if args.ui:
-        host, port = _bind(args)
+        host, port, lan = _bind(args)
         if _port_free(host, port):
             # A child `serve --reload` picks up feed and API code changes on save.
             cmd = [sys.executable, "-m", "gittok", "serve", "--reload"]
-            cmd += ["--host", host, "--port", str(port)] + (["--lan"] if args.lan else [])
+            cmd += ["--host", host, "--port", str(port)] + (["--lan"] if lan else [])
             env = {**os.environ, "GITTOK_PARENT_PID": str(os.getpid())}
             _stop_at_exit(_spawn_ui(cmd, env))
         else:
@@ -705,16 +769,27 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(fn=_validate)
     p = sub.add_parser("migrate", help="create or migrate the database")
     p.set_defaults(fn=_migrate)
-    p = sub.add_parser("repos", help="list configured repos (or: add, group)")
+    p = sub.add_parser("repos", help="list configured repos (or: add, remove, group)")
     p.set_defaults(fn=_repos, repos_fn=None)
     rsub = p.add_subparsers(dest="repos_cmd")
-    q = rsub.add_parser("add", help="add a git repo to local/repos.yaml")
-    q.add_argument("name")
-    q.add_argument("path")
-    q.add_argument("--ref")
+    q = rsub.add_parser(
+        "add",
+        help="add a git repo: a local directory, or a remote URL that GitTok clones",
+        description="Add a repo to local/repos.yaml. Give a local git checkout, or a remote "
+        "(https://, ssh://, git:// or user@host:path). GitTok clones a remote into its home "
+        "directory (repos/<name>) and fetches it before each analysis.",
+    )
+    q.add_argument("name", help="repo name (optional for a URL: default is its last part)")
+    q.add_argument("path", nargs="?", metavar="path-or-url")
+    q.add_argument("--ref", help="branch to read (default: HEAD, or the remote default branch)")
     q.add_argument("--group")
     q.add_argument("--mascot")
     q.set_defaults(repos_fn=_repos_add)
+    q = rsub.add_parser(
+        "remove", help="remove a repo; a clone that GitTok made is deleted, your own is not"
+    )
+    q.add_argument("name")
+    q.set_defaults(repos_fn=_repos_remove)
     q = rsub.add_parser("group", help="put a repo in a group")
     q.add_argument("repo")
     q.add_argument("group", nargs="?")
@@ -739,7 +814,11 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("serve", help="serve the feed, web app, and MCP endpoint")
     p.add_argument("--host")
     p.add_argument("--port", type=int)
-    p.add_argument("--lan", action="store_true", help="bind 0.0.0.0 and print LAN URLs")
+    p.add_argument(
+        "--lan",
+        action="store_true",
+        help="bind 0.0.0.0 and print LAN pairing URLs (or set server.lan in settings)",
+    )
     p.add_argument("--reload", action="store_true", help="restart when src/gittok changes")
     p.set_defaults(fn=_serve)
     p = sub.add_parser("mcp", help="stdio MCP server; --ui also serves the feed")

@@ -139,7 +139,7 @@
 		opacity: 0.75;
 	}
 	.status {
-		color: #e5484d;
+		color: var(--bad);
 		font-size: 0.85rem;
 	}
 </style>

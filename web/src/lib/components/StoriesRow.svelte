@@ -23,6 +23,7 @@
 							<img
 								src={story.mascot_image}
 								alt=""
+								decoding="async"
 								onerror={() => (failed[story.repo] = true)}
 							/>
 						{:else}

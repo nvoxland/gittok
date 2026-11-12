@@ -24,6 +24,7 @@ class Repo:
     group: str | None = None
     fetch: bool = False  # refresh the remote-tracking ref before analysis (docs/install.md)
     url: str | None = None  # web URL of the repo (GitHub); None means derive it from `origin`
+    remote: str | None = None  # set by `repos add <url>`: GitTok cloned it into <home>/repos
 
 
 def _as_bool(value: object, what: str, file: object) -> bool:
@@ -145,6 +146,9 @@ class MemeTemplate:
 class ServerSettings:
     host: str = "127.0.0.1"
     port: int = 8008
+    lan: bool = False  # true: `serve` and `mcp --ui` act as if `--lan` was passed
+    # Extra Host names the server answers to (its own names and addresses are always allowed).
+    allowed_hosts: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -322,6 +326,13 @@ def _section(cls: type, data: Any, what: str, file: Path) -> Any:
         kwargs["git_identities"] = tuple(ids)
     if "churn_windows_days" in kwargs:
         kwargs["churn_windows_days"] = tuple(kwargs["churn_windows_days"])
+    if cls is ServerSettings:
+        if not isinstance(kwargs.get("lan", False), bool):
+            raise ConfigError(f"{what}.lan must be true or false ({file})")
+        hosts = kwargs.get("allowed_hosts") or []
+        if not isinstance(hosts, list) or not all(isinstance(h, str) for h in hosts):
+            raise ConfigError(f"{what}.allowed_hosts must be a list of host names ({file})")
+        kwargs["allowed_hosts"] = tuple(hosts)
     return cls(**kwargs)
 
 
@@ -417,7 +428,10 @@ def _load_repos(root: Path) -> tuple[dict[str, Repo], dict[str, Group]]:
     for rname, raw in raw_repos.items():
         raw = _mapping(raw, f"repo '{rname}'", file)
         _check_keys(
-            raw, {"path", "ref", "mascot", "group", "url", "fetch"}, f"repo '{rname}'", file
+            raw,
+            {"path", "ref", "mascot", "group", "url", "fetch", "remote"},
+            f"repo '{rname}'",
+            file,
         )
         if not raw.get("path"):
             raise ConfigError(f"repo '{rname}' is missing 'path' ({file})")
@@ -433,6 +447,7 @@ def _load_repos(root: Path) -> tuple[dict[str, Repo], dict[str, Group]]:
             mascot=raw.get("mascot"),
             group=assigned.get(rname),
             url=raw.get("url"),
+            remote=raw.get("remote"),
             fetch=_as_bool(raw.get("fetch", False), f"repo '{rname}' fetch", file),
         )
 

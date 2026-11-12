@@ -526,8 +526,9 @@ def test_add_repo_appends_entry_checks_git_and_keeps_comments(ycfg, fixture_repo
 
     plain = tmp_path / "plain"
     plain.mkdir()
+    with pytest.raises(steering.SteeringError, match="git repo"):
+        steering.add_repo(_with_roots(ycfg, tmp_path), "delta", str(plain))
     for args, word in [
-        (("delta", str(plain)), "git repo"),
         (("alpha", str(fixture_repo.path)), "already"),
         (("bad name", str(fixture_repo.path)), "repo name"),
         (("delta", str(fixture_repo.path)), None),
@@ -647,17 +648,171 @@ def test_edit_writes_through_replace_and_takes_a_lock_file(ycfg, monkeypatch):
     assert not (ycfg.root / "config" / ".edit.lock").exists()
 
 
-def test_add_repo_requires_an_allowed_root(ycfg, fixture_repo, tmp_path):
+def _commit_in(path, init=True):
+    """`git init` at `path` (when asked) and one commit."""
     import subprocess
 
+    path.mkdir(parents=True, exist_ok=True)
+    ident = ["-c", "user.name=T", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"]
+    if init:
+        subprocess.run(["git", "init", "-q", "-b", "main", str(path)], check=True)
+    (path / "f.txt").write_text("x\n")
+    for args in (["add", "-A", "-f"], ["commit", "-q", "-m", "c"]):
+        subprocess.run(["git", "-C", str(path), *ident, *args], check=True, capture_output=True)
+
+
+def _with_roots(cfg, *roots):
+    from dataclasses import replace
+
+    settings = replace(
+        cfg.settings,
+        repos=config_mod.ReposSettings(allowed_roots=tuple(r.resolve() for r in roots)),
+    )
+    return replace(cfg, settings=settings)
+
+
+def _git_calls(monkeypatch):
+    """Record the repo of every git call add_repo makes."""
+    calls = []
+    real = steering.gitq.run_bytes
+
+    def spy(repo, *args, **kw):
+        calls.append(str(repo))
+        return real(repo, *args, **kw)
+
+    monkeypatch.setattr(steering.gitq, "run_bytes", spy)
+    return calls
+
+
+def test_add_repo_checks_the_roots_before_it_runs_git(ycfg, tmp_path, monkeypatch):
     elsewhere = tmp_path / "elsewhere" / "secrets"
-    elsewhere.mkdir(parents=True)
-    subprocess.run(["git", "init", "-q", str(elsewhere)], check=True)
+    _commit_in(elsewhere)
+    calls = _git_calls(monkeypatch)
     with pytest.raises(steering.SteeringError, match="allowed_roots"):
         steering.add_repo(ycfg, "secrets", str(elsewhere))
-    # a subdirectory of an allowed repo is not a repo root
-    sub = fixture_repo.path / "src"
+    assert calls == []
+
+
+def test_add_repo_refuses_an_embedded_git_dir_without_a_git_call(ycfg, tmp_path, monkeypatch):
+    from tests.test_gitq import _embedded_git_dir
+
+    outer, inner, marks = _embedded_git_dir(tmp_path)
+    cfg = _with_roots(ycfg, tmp_path)
+    calls = _git_calls(monkeypatch)
     with pytest.raises(steering.SteeringError, match="repo root"):
+        steering.add_repo(cfg, "evil", str(inner))
+    assert calls == []
+    assert list(marks.iterdir()) == []
+    steering.add_repo(cfg, "outer", str(outer))  # the real repo around it is fine
+    assert list(marks.iterdir()) == []
+    assert "evil" not in config_mod.load_config(ycfg.root).repos
+
+
+def test_add_repo_needs_a_dot_git_and_the_path_must_be_the_toplevel(ycfg, tmp_path):
+    cfg = _with_roots(ycfg, tmp_path)
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    with pytest.raises(steering.SteeringError, match="not a git repo"):
+        steering.add_repo(cfg, "plain", str(plain))
+    with pytest.raises(steering.SteeringError, match="does not exist"):
+        steering.add_repo(cfg, "gone", str(tmp_path / "gone"))
+    outer = tmp_path / "outer2"
+    _commit_in(outer)
+    fake = outer / "fake"
+    (fake / ".git").mkdir(parents=True)  # a `.git` that is not a git dir: git walks up to outer
+    with pytest.raises(steering.SteeringError, match="repo root"):
+        steering.add_repo(cfg, "fake", str(fake))
+
+
+def test_add_repo_accepts_a_linked_worktree(ycfg, tmp_path):
+    import subprocess
+
+    main = tmp_path / "main-checkout"
+    _commit_in(main)
+    wt = tmp_path / "linked"
+    subprocess.run(
+        ["git", "-C", str(main), "worktree", "add", "-q", "-b", "side", str(wt)],
+        check=True,
+        capture_output=True,
+    )
+    assert (wt / ".git").is_file()
+    out = steering.add_repo(_with_roots(ycfg, tmp_path), "linked", str(wt))
+    assert out["path"] == str(wt.resolve())
+
+
+def test_add_repo_refuses_a_path_inside_a_configured_repo(ycfg, tmp_path):
+    cfg = _with_roots(ycfg, tmp_path)
+    outer = tmp_path / "outer3"
+    _commit_in(outer)
+    steering.add_repo(cfg, "outer3", str(outer))
+    cfg = _with_roots(config_mod.load_config(ycfg.root), tmp_path)
+    nested = outer / "third_party" / "lib"
+    _commit_in(nested)
+    with pytest.raises(steering.SteeringError, match="inside the repo 'outer3'"):
+        steering.add_repo(cfg, "lib", str(nested))
+    with pytest.raises(steering.SteeringError, match="inside the repo 'outer3'"):
+        steering.add_repo(cfg, "lib", str(nested), any_root=True)
+
+
+def test_add_repo_refuses_a_repo_with_no_commits(ycfg, tmp_path):
+    import subprocess
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    subprocess.run(["git", "init", "-q", str(empty)], check=True)
+    with pytest.raises(steering.SteeringError, match="no commits"):
+        steering.add_repo(_with_roots(ycfg, tmp_path), "empty", str(empty))
+    assert "empty" not in config_mod.load_config(ycfg.root).repos
+
+
+@pytest.fixture
+def fresh_cfg(tmp_path):
+    """A first-run config: no repos, no allowed roots."""
+    d = tmp_path / "fresh" / "config"
+    d.mkdir(parents=True)
+    (d / "settings.yaml").write_text("{}\n")
+    (d / "mascots.yaml").write_text("mascots: {}\n")
+    (d / "personas.yaml").write_text(PERSONAS_YAML)
+    return config_mod.load_config(tmp_path / "fresh")
+
+
+def test_add_repo_on_a_fresh_install_tells_the_agent_what_the_user_must_do(fresh_cfg, tmp_path):
+    assert fresh_cfg.repos == {}
+    repo = tmp_path / "code" / "first"
+    _commit_in(repo)
+    with pytest.raises(steering.SteeringError) as e:
+        steering.add_repo(fresh_cfg, "first", str(repo))
+    msg = str(e.value)
+    assert "gittok repos add first" in msg and "allowed_roots" in msg
+    assert "local/settings.yaml" in msg and "terminal" in msg
+    assert config_mod.load_config(fresh_cfg.root).repos == {}
+
+
+def test_add_repo_any_root_is_the_users_own_act_and_skips_the_roots(fresh_cfg, tmp_path):
+    repo = tmp_path / "code" / "first"
+    _commit_in(repo)
+    out = steering.add_repo(fresh_cfg, "first", str(repo), any_root=True)
+    assert out["path"] == str(repo.resolve())
+    assert list(config_mod.load_config(fresh_cfg.root).repos) == ["first"]
+    # the other checks still apply
+    other = tmp_path / "code" / "second"
+    _commit_in(other)
+    (other / "sub").mkdir()
+    with pytest.raises(steering.SteeringError, match="repo root"):
+        steering.add_repo(fresh_cfg, "sub", str(other / "sub"), any_root=True)
+    with pytest.raises(steering.SteeringError, match="not a git repo"):
+        steering.add_repo(fresh_cfg, "none", str(repo.parent), any_root=True)
+
+
+def test_add_repo_requires_an_allowed_root(ycfg, fixture_repo, tmp_path):
+    elsewhere = tmp_path / "elsewhere" / "secrets"
+    elsewhere.mkdir(parents=True)
+    _commit_in(elsewhere)
+    with pytest.raises(steering.SteeringError, match="allowed_roots"):
+        steering.add_repo(ycfg, "secrets", str(elsewhere))
+    # a subdirectory of a configured repo is not a repo of its own
+    sub = fixture_repo.path / "src"
+    with pytest.raises(steering.SteeringError, match="inside the repo 'alpha'"):
         steering.add_repo(ycfg, "sub", str(sub))
     # a symlink out of the roots resolves to where it points
     link = fixture_repo.path.parent / "link-out"
@@ -678,9 +833,7 @@ def test_add_repo_honours_configured_roots_and_refuses_home_and_slash(
 
     elsewhere = tmp_path / "elsewhere2" / "ok"
     elsewhere.mkdir(parents=True)
-    import subprocess
-
-    subprocess.run(["git", "init", "-q", str(elsewhere)], check=True)
+    _commit_in(elsewhere)
     settings = replace(
         ycfg.settings, repos=config_mod.ReposSettings(allowed_roots=(elsewhere.parent.resolve(),))
     )
@@ -784,3 +937,188 @@ def test_add_rule_verdict(conn, cfg):
     with pytest.raises(steering.SteeringError, match="verdict"):
         steering.add_rule(conn, cfg, type="ban", feature="verdict", value="meh")
     steering.explain_weights(conn, cfg, feature="verdict")
+
+
+# --- repos added by remote URL (a clone that GitTok manages) -----------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "name"),
+    [
+        ("https://example.com/org/proj.git", "proj"),
+        ("https://example.com/org/proj", "proj"),
+        ("https://example.com:8443/org/sub/proj.git/", "proj"),
+        ("ssh://git@example.com/org/proj.git", "proj"),
+        ("ssh://git@example.com:2222/org/proj.git", "proj"),
+        ("git://example.com/org/proj.git", "proj"),
+        ("git@example.com:org/proj.git", "proj"),
+        ("git@example.com:proj", "proj"),
+    ],
+)
+def test_parse_remote_accepts_the_allowed_forms(text, name):
+    assert steering.parse_remote(text) == (text, name)
+
+
+@pytest.mark.parametrize("text", ["~/src/proj", "/srv/git/proj.git", "proj", "./a:b", "C:/x"])
+def test_parse_remote_reads_other_text_as_a_local_path(text):
+    assert steering.parse_remote(text) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "word"),
+    [
+        ("file:///srv/git/proj.git", "file"),
+        ("http://example.com/org/proj.git", "http"),
+        ("ftp://example.com/proj.git", "ftp"),
+        ("ext::sh -c 'touch x'", "ext"),
+        ("fd::7", "fd"),
+        ("--upload-pack=touch x", "'-'"),
+        ("-x", "'-'"),
+        ("https://-oProxyCommand=x/org/proj", "host"),
+        ("ssh://-oProxyCommand=x/org/proj", "host"),
+        ("-oProxyCommand=x@example.com:org/proj", "'-'"),
+        ("git@-oProxyCommand=x:org/proj", "host"),
+        ("https://example.com", "path"),
+        ("https://example.com/org/proj.git\nx", "space"),
+        ("https://example.com/org/pr oj.git", "space"),
+    ],
+)
+def test_parse_remote_refuses_everything_else(text, word):
+    with pytest.raises(steering.SteeringError, match=word):
+        steering.parse_remote(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "https://alice:s3cr3tTOKEN@example.com/org/proj.git",
+        "https://s3cr3tTOKEN@example.com/org/proj.git",
+        "ssh://git:s3cr3tTOKEN@example.com/org/proj.git",
+        "git://s3cr3tTOKEN@example.com/org/proj.git",
+    ],
+)
+def test_parse_remote_refuses_credentials_and_does_not_repeat_them(text):
+    with pytest.raises(steering.SteeringError, match="credential helper") as e:
+        steering.parse_remote(text)
+    assert "s3cr3tTOKEN" not in str(e.value)
+
+
+URL = "https://example.com/org/proj.git"
+
+
+@pytest.fixture
+def remote(fixture_repo, tmp_path, monkeypatch):
+    """Clones of any URL come from a local bare repo, so no test touches the network."""
+    import subprocess
+
+    bare = tmp_path / "remote.git"
+    subprocess.run(
+        ["git", "clone", "-q", "--bare", str(fixture_repo.path), str(bare)],
+        check=True,
+        capture_output=True,
+    )
+    asked = []
+    real = steering.gitq.clone
+
+    def local_clone(source, dest, **kw):
+        asked.append(source)
+        return real(str(bare), dest, **kw)
+
+    monkeypatch.setattr(steering.gitq, "clone", local_clone)
+    return SimpleNamespace(bare=bare, asked=asked)
+
+
+def test_add_repo_by_url_clones_into_the_home_dir(fresh_cfg, remote, fixture_repo):
+    out = steering.add_repo(fresh_cfg, "proj", URL)  # no allowed roots needed
+    dest = (fresh_cfg.root / "repos" / "proj").resolve()
+    assert remote.asked == [URL]
+    assert out["path"] == str(dest) and out["ref"] == "origin/main" and out["remote"] == URL
+    assert (dest / ".git").is_dir()
+    new = config_mod.load_config(fresh_cfg.root)
+    r = new.repos["proj"]
+    assert (r.path, r.ref, r.fetch, r.remote) == (dest, "origin/main", True, URL)
+    assert steering.is_managed(new, r)
+    # analysis and research read the clone like any repo
+    from gittok import research
+
+    assert "fix rounding in invoice" in research.git_log(new, "proj")
+    assert fixture_repo.shas["head"] == steering.gitq.rev_parse(r.path, r.ref)
+
+
+def test_add_repo_by_url_takes_a_ref_and_checks_it(fresh_cfg, remote):
+    with pytest.raises(steering.SteeringError, match="ref"):
+        steering.add_repo(fresh_cfg, "proj", URL, ref="origin/nope")
+    assert not (fresh_cfg.root / "repos" / "proj").exists()  # the clone is removed again
+    assert config_mod.load_config(fresh_cfg.root).repos == {}
+    # a branch name means the remote branch: the local branch of the clone never moves
+    out = steering.add_repo(fresh_cfg, "proj", URL, ref="main")
+    assert out["ref"] == "origin/main"
+
+
+def test_add_repo_by_url_cleans_up_when_the_clone_fails(fresh_cfg, tmp_path, monkeypatch):
+    real = steering.gitq.clone
+    monkeypatch.setattr(
+        steering.gitq, "clone", lambda source, dest, **kw: real(str(tmp_path / "no.git"), dest)
+    )
+    with pytest.raises(steering.SteeringError, match="Could not clone"):
+        steering.add_repo(fresh_cfg, "proj", URL)
+    assert not (fresh_cfg.root / "repos" / "proj").exists()
+    assert config_mod.load_config(fresh_cfg.root).repos == {}
+
+
+def test_add_repo_by_url_checks_cheap_things_before_it_clones(fresh_cfg, remote):
+    taken = fresh_cfg.root / "repos" / "proj"
+    taken.mkdir(parents=True)
+    (taken / "keep.txt").write_text("mine")
+    with pytest.raises(steering.SteeringError, match="already exists"):
+        steering.add_repo(fresh_cfg, "proj", URL)
+    assert (taken / "keep.txt").read_text() == "mine"
+    for kw, word in [({"mascot": "ghost"}, "mascot"), ({"group": "bad name!"}, "group name")]:
+        with pytest.raises(steering.SteeringError, match=word):
+            steering.add_repo(fresh_cfg, "other", URL, **kw)
+    with pytest.raises(steering.SteeringError, match="file"):
+        steering.add_repo(fresh_cfg, "other", "file:///srv/x.git")
+    with pytest.raises(steering.SteeringError, match="credential helper"):
+        steering.add_repo(fresh_cfg, "other", "https://u:pw@example.com/o/p.git")
+    assert remote.asked == []
+    assert not (fresh_cfg.root / "repos" / "other").exists()
+
+
+def test_remove_repo_deletes_a_managed_clone(fresh_cfg, remote):
+    steering.add_repo(fresh_cfg, "proj", URL, group="work")
+    cfg = config_mod.load_config(fresh_cfg.root)
+    dest = cfg.repos["proj"].path
+    out = steering.remove_repo(cfg, "proj")
+    assert out == {"name": "proj", "path": str(dest), "deleted_clone": True}
+    assert not dest.exists()
+    new = config_mod.load_config(fresh_cfg.root)
+    assert new.repos == {} and new.groups["work"].repos == ()
+    with pytest.raises(steering.SteeringError, match="Unknown repo"):
+        steering.remove_repo(new, "proj")
+
+
+def test_remove_repo_never_deletes_a_directory_it_does_not_manage(ycfg, fixture_repo, tmp_path):
+    before = comments(text(ycfg, "repos.yaml"))
+    out = steering.remove_repo(ycfg, "beta")
+    assert out["deleted_clone"] is False and fixture_repo.path.exists()
+    new = config_mod.load_config(ycfg.root)
+    assert list(new.repos) == ["alpha"] and new.groups["ops"].repos == ()
+    assert comments(text(ycfg, "repos.yaml")) == before
+    # an entry that names a remote but points outside <home>/repos is not managed
+    mine = tmp_path / "mine"
+    _commit_in(mine)
+    with (ycfg.root / "local" / "repos.yaml").open("a") as fh:
+        fh.write(f"  sly:\n    path: {mine}\n    remote: {URL}\n")
+    cfg = config_mod.load_config(ycfg.root)
+    assert not steering.is_managed(cfg, cfg.repos["sly"])
+    assert steering.remove_repo(cfg, "sly")["deleted_clone"] is False
+    assert (mine / "f.txt").exists()
+
+
+def test_a_managed_clone_does_not_open_an_allowed_root(fresh_cfg, remote, tmp_path):
+    steering.add_repo(fresh_cfg, "proj", URL)
+    cfg = config_mod.load_config(fresh_cfg.root)
+    local = tmp_path / "code" / "mine"
+    _commit_in(local)
+    with pytest.raises(steering.SteeringError, match="No directory is allowed yet"):
+        steering.add_repo(cfg, "mine", str(local))

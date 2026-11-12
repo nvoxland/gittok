@@ -34,7 +34,8 @@ export async function fetchFeed(
 	if (filter.repo) params.set('repo', filter.repo);
 	if (filter.dir) params.set('dir', filter.dir);
 	const res = await fetch(`/api/feed?${params}`);
-	if (!res.ok) throw new Error(`GET /api/feed failed: ${res.status}`);
+	// The status lets the page tell "this device is not paired" (401) from other failures.
+	if (!res.ok) throw new ApiError(`GET /api/feed failed: ${res.status}`, res.status);
 	const feed = (await res.json()) as FeedResponse;
 	// The service worker marks responses it served from cache.
 	if (res.headers?.get('X-From-Cache') === '1') feed.fromCache = true;
@@ -48,6 +49,17 @@ export async function postEvents(events: FeedEvent[]): Promise<void> {
 		body: JSON.stringify({ events })
 	});
 	if (!res.ok) throw new Error(`POST /api/events failed: ${res.status}`);
+}
+
+export type RepoSummary = { name: string; ref: string; head_sha: string | null; group: string | null };
+
+/** The configured repos. An empty list means GitTok has nothing to make cards from. */
+export async function fetchRepos(): Promise<RepoSummary[]> {
+	const res = await fetch('/api/repos');
+	if (!res.ok) throw new ApiError(`GET /api/repos failed: ${res.status}`, res.status);
+	const body = (await res.json()) as { repos?: RepoSummary[] };
+	if (!Array.isArray(body.repos)) throw new Error('GET /api/repos: no repos list');
+	return body.repos;
 }
 
 export async function fetchRepo(name: string): Promise<RepoProfile> {

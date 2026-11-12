@@ -14,7 +14,7 @@
 	<a class="back" href="/">&larr; Feed</a>
 	<header>
 		{#if profile.mascot_image}
-			<img class="mascot" src={profile.mascot_image} alt={profile.mascot ?? 'mascot'} width="72" height="72" />
+			<img class="mascot" src={profile.mascot_image} alt={profile.mascot ?? 'mascot'} width="72" height="72" decoding="async" />
 		{:else}
 			<div class="mascot placeholder" aria-hidden="true">{profile.name.slice(0, 1).toUpperCase()}</div>
 		{/if}
@@ -90,7 +90,7 @@
 
 <style>
 	.profile {
-		padding: 0.75rem 16px 2rem;
+		padding: calc(0.75rem + var(--safe-top)) max(16px, var(--safe-right)) calc(2rem + var(--safe-bottom)) max(16px, var(--safe-left));
 		max-width: 48rem;
 		margin: 0 auto;
 	}

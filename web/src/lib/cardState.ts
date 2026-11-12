@@ -1,6 +1,8 @@
 // Per-card like/save state and per-session quiz answers.
 // Memory first; localStorage / sessionStorage are best-effort.
 
+import type { Reply } from './types.ts';
+
 const KEY = 'gittok.card-state';
 const ANSWER_KEY = 'gittok.answers';
 
@@ -86,7 +88,22 @@ export function setPlayed(id: string): void {
 	save(() => localStorage, PLAYED_KEY, played);
 }
 
+// Replies sent in this page load. The feed unmounts cards far from the screen; a card that
+// mounts again reads its replies from here, because its `card.replies` is from the first fetch.
+const sentReplies = new Map<string, Reply[]>();
+
+export function addSentReply(cardId: string, reply: Reply): void {
+	sentReplies.set(cardId, [...(sentReplies.get(cardId) ?? []), reply]);
+}
+
+/** The server's replies plus the ones sent since, each once. */
+export function withSentReplies(cardId: string, fromServer: Reply[]): Reply[] {
+	const have = new Set(fromServer.map((r) => r.id));
+	return [...fromServer, ...(sentReplies.get(cardId) ?? []).filter((r) => !have.has(r.id))];
+}
+
 export function resetCardStateForTest(): void {
+	sentReplies.clear();
 	flagsCache = undefined;
 	answersCache = undefined;
 	playedCache = undefined;

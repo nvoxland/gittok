@@ -1,7 +1,9 @@
 <script lang="ts">
+	import { imageLoading } from '#lib/imageLoading.ts';
 	import { initials } from '#lib/account.ts';
 	let { handle, size = 28 }: { handle: string; size?: number } = $props();
 	let failed = $state(false);
+	const loading = imageLoading();
 </script>
 
 {#if failed}
@@ -14,7 +16,8 @@
 		width={size}
 		height={size}
 		alt=""
-		loading="lazy"
+		{loading}
+		decoding="async"
 		onerror={() => (failed = true)}
 	/>
 {/if}

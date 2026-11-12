@@ -11,6 +11,7 @@ import fcntl
 import json
 import os
 import re
+import shutil
 import tempfile
 import threading
 import zlib
@@ -843,19 +844,62 @@ def set_group(cfg, repo: str, group: str | None, created_by: str = "agent") -> d
     return {"repo": repo, "group": group}
 
 
+NO_REPOS = "No repos yet. Add one with: gittok repos add <name> <path>"
+
+
 def _allowed_roots(cfg) -> list[Path]:
     home = Path.home().resolve()
     configured = list(cfg.settings.repos.allowed_roots)
-    roots = configured or [r.path.parent for r in cfg.repos.values()]
+    # a clone GitTok made (repo added by URL) sits in its own directory: it opens no root
+    roots = configured or [r.path.parent for r in cfg.repos.values() if not is_managed(cfg, r)]
     return [r for r in (p.resolve() for p in roots) if r != Path("/") and r != home]
 
 
-def _check_allowed_path(cfg, full: Path) -> None:
-    """Refuse home, `/`, subdirectories of a repo, and repos outside the allowed roots."""
+def _check_allowed_path(cfg, name: str, full: Path) -> None:
+    """Refuse a path outside the allowed roots. Makes no git call."""
+    roots = _allowed_roots(cfg)
+    by_hand = (
+        f"the user must run `gittok repos add {name} {full}` in a terminal, or add its parent "
+        "directory to `repos.allowed_roots` in local/settings.yaml"
+    )
+    if not roots:
+        raise SteeringError(
+            "No directory is allowed yet: there are no local repos and `repos.allowed_roots` "
+            f"is empty. To add this repo, {by_hand}."
+        )
+    if not any(full.is_relative_to(r) for r in roots):
+        shown = ", ".join(str(r) for r in roots)
+        raise SteeringError(
+            f"'{full}' is outside the allowed roots ({shown}). To allow it, {by_hand}."
+        )
+
+
+def _check_repo_root(cfg, full: Path) -> None:
+    """Refuse anything that is not the top directory of a git checkout with a commit.
+
+    The path checks come first: git runs only in a directory that has its own `.git`.
+    """
     if full == Path("/") or full == Path.home().resolve():
         raise SteeringError(
             f"'{full}' is the root or home directory. Register one repo, not a whole tree."
         )
+    if not full.is_dir():
+        raise SteeringError(f"'{full}' does not exist or is not a directory.")
+    for r in cfg.repos.values():
+        inside = r.path.resolve()
+        if full != inside and full.is_relative_to(inside):
+            raise SteeringError(
+                f"'{full}' is inside the repo '{r.name}' ({inside}). GitTok reads it as part "
+                "of that repo; it cannot be a repo of its own."
+            )
+    if not (full / ".git").exists():
+        above = next((p for p in full.parents if (p / ".git").exists()), None)
+        if above is not None:
+            raise SteeringError(
+                f"'{full}' is a subdirectory of the repo at '{above}'. Register the repo root "
+                "instead."
+            )
+        raise SteeringError(f"'{full}' is not a git repo. Give the path of a git checkout.")
     try:
         top = Path(gitq.run(full, "rev-parse", "--show-toplevel").strip()).resolve()
     except (gitq.GitError, OSError):
@@ -866,13 +910,12 @@ def _check_allowed_path(cfg, full: Path) -> None:
         raise SteeringError(
             f"'{full}' is a subdirectory of the repo at '{top}'. Register the repo root instead."
         )
-    roots = _allowed_roots(cfg)
-    if not any(full.is_relative_to(r) for r in roots):
-        shown = ", ".join(str(r) for r in roots) or "none"
+    try:
+        gitq.rev_parse(full, "HEAD")
+    except gitq.GitError:
         raise SteeringError(
-            f"'{full}' is outside the allowed roots ({shown}). To allow it, the user must add "
-            "its parent directory to `repos.allowed_roots` in local/settings.yaml."
-        )
+            f"The repo at '{full}' has no commits yet. Make the first commit, then add it."
+        ) from None
 
 
 def add_repo(
@@ -883,27 +926,21 @@ def add_repo(
     group: str | None = None,
     mascot: str | None = None,
     created_by: str = "agent",
+    any_root: bool = False,
 ) -> dict:
-    """Add a repo to local/repos.yaml. The path must be the root of a git repo that sits
-    inside one of the allowed roots (settings `repos.allowed_roots`)."""
+    """Add a repo to local/repos.yaml. `path` is a local directory or a remote URL.
+
+    A local path must be the root of a git checkout that has a commit and is not inside a
+    configured repo. It must also sit inside one of the allowed roots (settings
+    `repos.allowed_roots`), unless `any_root` is true. Only the CLI sets `any_root`: there
+    the user typed the path.
+
+    A remote URL (see `parse_remote`) is cloned from the network into <home>/repos/<name>.
+    The entry gets `fetch: true`, the remote's default branch as `ref`, and `remote: <url>`.
+    The allowed roots do not apply: the clone is in GitTok's own directory."""
     _check_name("repo name", name)
     if name in cfg.repos:
         raise SteeringError(f"Repo '{name}' already exists. Use set_group to change its group.")
-    full = Path(path).expanduser().resolve()
-    try:
-        gitq.run(full, "rev-parse", "--git-dir")
-    except (gitq.GitError, OSError):
-        raise SteeringError(
-            f"'{full}' is not a git repo. Give the path of a git checkout."
-        ) from None
-    _check_allowed_path(cfg, full)
-    if ref is not None:
-        try:
-            gitq.rev_parse(full, ref)
-        except gitq.GitError:
-            raise SteeringError(
-                f"Unknown ref '{ref}' in {full}. Use a branch, tag, or HEAD."
-            ) from None
     if mascot is not None and mascot not in cfg.mascots:
         raise SteeringError(
             f"Unknown mascot '{mascot}'. Known: {', '.join(cfg.mascots) or 'none'}. "
@@ -911,27 +948,165 @@ def add_repo(
         )
     if group is not None:
         _check_name("group name", group)
+    remote = None
+    if parse_remote(path) is not None:
+        remote = path
+        full, ref = _clone_remote(cfg, name, remote, ref)
+    else:
+        full = Path(path).expanduser().resolve()
+        if not any_root:
+            _check_allowed_path(cfg, name, full)
+        _check_repo_root(cfg, full)
+        if ref is not None:
+            try:
+                gitq.rev_parse(full, ref)
+            except gitq.GitError:
+                raise SteeringError(
+                    f"Unknown ref '{ref}' in {full}. Use a branch, tag, or HEAD."
+                ) from None
 
     def edit(lines: list[str]) -> None:
-        _set_fields(lines, "repos", name, {"path": str(full), "ref": ref, "mascot": mascot})
+        fields = {"path": str(full), "ref": ref, "mascot": mascot}
+        if remote is not None:
+            fields |= {"fetch": True, "remote": remote}
+        _set_fields(lines, "repos", name, fields)
         if group is not None:
             _group_edit(lines, cfg, name, group)
 
-    _edit_files(cfg, {"repos.yaml": edit})
-    _audit(
-        cfg,
-        "add_repo",
-        {"name": name, "path": str(full), "ref": ref, "group": group, "mascot": mascot},
-        created_by,
-    )
+    try:
+        _edit_files(cfg, {"repos.yaml": edit})
+    except BaseException:
+        if remote is not None:
+            shutil.rmtree(full, ignore_errors=True)
+        raise
+    out = {"name": name, "path": str(full), "ref": ref, "group": group, "mascot": mascot}
+    if remote is not None:
+        out["remote"] = remote
+    _audit(cfg, "add_repo", out, created_by)
     return {
-        "name": name,
-        "path": str(full),
-        "ref": ref,
-        "group": group,
-        "mascot": mascot,
+        **out,
         "next": f"Next: run /gittok-profile-repo {name} to teach GitTok this codebase.",
     }
+
+
+REMOTE_SCHEMES = ("https", "ssh", "git")
+_SCHEME = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*)://(.*)$", re.S)
+_TRANSPORT = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*)::")
+_SCP = re.compile(r"^([^@/:\s]+)@([^/:]*):(.*)$", re.S)  # user@host:path
+_HOST = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?")
+_USER = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*")
+_REMOTE_FORMS = "https://host/path, ssh://user@host/path, git://host/path or user@host:path"
+
+
+def parse_remote(text: str) -> tuple[str, str] | None:
+    """(url, default repo name) when `text` is a remote that GitTok may clone; None when it
+    reads as a local path. SteeringError for any other remote form.
+
+    Allowed: https://, ssh://, git:// and scp-style user@host:path, with no password or token
+    in it. The error text never repeats `text`, because it can hold a secret."""
+    if text.startswith("-"):
+        raise SteeringError("A repo path or URL must not start with '-'.")
+    if m := _TRANSPORT.match(text):
+        raise SteeringError(
+            f"The '{m[1]}::' transport is not allowed. Use one of: {_REMOTE_FORMS}."
+        )
+    user = None
+    if m := _SCHEME.match(text):
+        scheme = m[1].lower()
+        if scheme not in REMOTE_SCHEMES:
+            raise SteeringError(
+                f"'{scheme}://' URLs are not allowed. Use one of: {_REMOTE_FORMS}. "
+                "For a repo on this machine, give its directory."
+            )
+        authority, _, path = m[2].partition("/")
+        userinfo, at, hostport = authority.rpartition("@")
+        if at and (scheme != "ssh" or ":" in userinfo):
+            raise SteeringError(
+                "The URL holds a user name, password or token. GitTok does not store "
+                "credentials: use a git credential helper, or an ssh URL."
+            )
+        user = userinfo if at else None
+        host, colon, port = hostport.partition(":")
+        if colon and not port.isdigit():
+            raise SteeringError("The URL has a bad port number after the host.")
+    elif m := _SCP.match(text):
+        user, host, path = m[1], m[2], m[3]
+    else:
+        return None
+    if _CONTROL.search(text) or any(c.isspace() for c in text):
+        raise SteeringError("A repo URL must not contain a space or a control character.")
+    if user is not None and not _USER.fullmatch(user):
+        raise SteeringError("The URL has a bad user name before the host.")
+    if not _HOST.fullmatch(host):
+        raise SteeringError("The URL has a bad host name.")
+    last = path.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
+    if not last:
+        raise SteeringError("The URL has no repo path after the host.")
+    return text, last
+
+
+def managed_dir(cfg, name: str) -> Path:
+    """Where GitTok keeps its own clone of a repo added by URL: <home>/repos/<name>."""
+    return (cfg.root / "repos").resolve() / name
+
+
+def is_managed(cfg, repo) -> bool:
+    """True when GitTok made this repo's clone and may delete it."""
+    dest = managed_dir(cfg, repo.name)
+    return bool(repo.remote) and repo.path == dest and not dest.is_symlink()
+
+
+def _clone_remote(cfg, name: str, url: str, ref: str | None) -> tuple[Path, str]:
+    """Clone `url` into the managed dir. Returns (path, remote-tracking ref)."""
+    dest = managed_dir(cfg, name)
+    if dest.exists() or dest.is_symlink():
+        raise SteeringError(
+            f"'{dest}' already exists. Delete it or use another repo name, then try again."
+        )
+    try:
+        gitq.clone(url, dest)
+    except gitq.GitError as e:
+        raise SteeringError(f"Could not clone the remote. {e}") from None
+    try:
+        if ref is None:
+            return dest, gitq.default_remote_ref(dest)
+        for candidate in (f"origin/{ref}", ref):  # `main` means the remote's main
+            try:
+                gitq.rev_parse(dest, candidate)
+                return dest, candidate
+            except gitq.GitError:
+                continue
+        raise SteeringError(
+            f"Unknown ref '{ref}' in the remote. Use a branch name, for example main."
+        )
+    except BaseException as e:
+        shutil.rmtree(dest, ignore_errors=True)
+        if isinstance(e, gitq.GitError):
+            raise SteeringError(f"Cannot use the remote: {e}.") from None
+        raise
+
+
+def remove_repo(cfg, name: str, created_by: str = "user") -> dict:
+    """Take a repo out of local/repos.yaml and its groups. A clone that GitTok made (repo
+    added by URL) is deleted; a directory the user gave is never touched."""
+    repo = cfg.repos.get(name)
+    if repo is None:
+        raise SteeringError(f"Unknown repo '{name}'. Known: {', '.join(cfg.repos) or 'none'}.")
+    managed = is_managed(cfg, repo)
+
+    def edit(lines: list[str]) -> None:
+        _drop_from_groups(lines, name, None)
+        entry = _entry(lines, "repos", name, create=False)
+        if entry is None:
+            raise SteeringError(f"Cannot find '{name}' in local/repos.yaml. Edit it by hand.")
+        del lines[entry[0] : entry[1]]
+
+    _edit_files(cfg, {"repos.yaml": edit})
+    if managed:
+        shutil.rmtree(repo.path, ignore_errors=True)
+    out = {"name": name, "path": str(repo.path), "deleted_clone": managed}
+    _audit(cfg, "remove_repo", out, created_by)
+    return out
 
 
 def set_mascot(

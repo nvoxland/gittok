@@ -10,8 +10,10 @@
 	import { isClipped } from '#lib/lightbox.ts';
 	import Poster from './Poster.svelte';
 	import { visuals } from './visuals/index.ts';
-	import { getAnswer, getFlags, setFlag } from '#lib/cardState.ts';
+	import { addSentReply, getAnswer, getFlags, setFlag, withSentReplies } from '#lib/cardState.ts';
 	import { postReply } from '#lib/api.ts';
+	import { setEagerImages } from '#lib/imageLoading.ts';
+	import { scrollBehavior } from '#lib/motion.ts';
 	import type { Card, FeedEventType, Reply, ResolvedCode, ResolvedDiff } from '#lib/types.ts';
 
 	let {
@@ -29,6 +31,8 @@
 		onAction?: (type: FeedEventType, data?: Record<string, unknown>) => void;
 	} = $props();
 	let row: HTMLElement | undefined = $state();
+	// The first card is on screen at once; later cards load their images when they come near.
+	setEagerImages(() => first);
 	let answered = $state(card.interaction ? getAnswer(card.id) !== undefined : true);
 	let liked = $state(getFlags(card.id).liked ?? false);
 	let saved = $state(getFlags(card.id).saved ?? false);
@@ -107,7 +111,7 @@
 	);
 
 	// The reader's replies (shown only to them), the open reply box, and its draft.
-	let replies: Reply[] = $state(card.replies ?? []);
+	let replies: Reply[] = $state(withSentReplies(card.id, card.replies ?? []));
 	let replyOpen: string | null = $state(null);
 	let draft = $state('');
 	let replyError = $state('');
@@ -125,7 +129,9 @@
 		sending = true;
 		replyError = '';
 		try {
-			replies = [...replies, await postReply(card.id, idx, text)];
+			const reply = await postReply(card.id, idx, text);
+			addSentReply(card.id, reply);
+			replies = [...replies, reply];
 			replyOpen = null;
 			draft = '';
 		} catch {
@@ -137,8 +143,47 @@
 	const showComments = $derived(visibleComments.length > 0);
 	const count = $derived(1 + card.depth.length + (showComments ? 1 : 0));
 
+	function goToPanel(i: number) {
+		row?.scrollTo({ left: i * row.clientWidth, behavior: scrollBehavior() });
+	}
+
 	function openComments() {
-		row?.scrollTo({ left: (card.depth.length + 1) * row.clientWidth, behavior: 'smooth' });
+		goToPanel(card.depth.length + 1);
+	}
+
+	const DEPTH_NAMES = { explain: 'Explanation', code: 'Code', code_diff: 'Diff' } as const;
+	function panelLabel(i: number): string {
+		const name =
+			i === 0 ? 'Card' : i <= card.depth.length ? DEPTH_NAMES[card.depth[i - 1].kind] : 'Comments';
+		return `Panel ${i + 1} of ${count}: ${name}`;
+	}
+
+	// Keyboard: left and right move between panels, Home and End jump to the ends. Up and down
+	// scroll a long depth panel; everywhere else they are left to the feed (next and previous card).
+	const KEY_SCROLL_PX = 80;
+	function onKey(e: KeyboardEvent) {
+		if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+		if ((e.target as Element | null)?.closest?.('input, textarea, select, [contenteditable]')) return;
+		let next: number | null = null;
+		if (e.key === 'ArrowRight') next = panel + 1;
+		else if (e.key === 'ArrowLeft') next = panel - 1;
+		else if (e.key === 'Home') next = 0;
+		else if (e.key === 'End') next = count - 1;
+		if (next !== null) {
+			if (next < 0 || next >= count || next === panel) return;
+			e.preventDefault();
+			goToPanel(next);
+			return;
+		}
+		if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+		const section = row?.querySelector<HTMLElement>(`section[data-panel="${panel}"]`);
+		if (!section || panel === 0 || section.scrollHeight <= section.clientHeight) return;
+		const down = e.key === 'ArrowDown';
+		// At the end of the panel the key goes on to the feed.
+		if (down && section.scrollTop + section.clientHeight >= section.scrollHeight - 1) return;
+		if (!down && section.scrollTop <= 0) return;
+		e.preventDefault();
+		section.scrollBy({ top: down ? KEY_SCROLL_PX : -KEY_SCROLL_PX, behavior: scrollBehavior() });
 	}
 </script>
 
@@ -195,8 +240,25 @@
 		{/if}
 		<span class="tone">{card.tone}</span>
 	</header>
-	<div class="panels" bind:this={row} onscroll={onScroll}>
-		<section data-panel="0" class="front">
+	<!-- A carousel: focus it, then use the arrow keys. svelte-ignore: a group that takes keys. -->
+	<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+	<div
+		class="panels"
+		role="group"
+		aria-roledescription="carousel"
+		aria-label="Card panels, panel {panel + 1} of {count}. Use the left and right arrow keys."
+		tabindex="0"
+		bind:this={row}
+		onscroll={onScroll}
+		onkeydown={onKey}
+	>
+		<section
+			data-panel="0"
+			class="front"
+			role="group"
+			aria-roledescription="slide"
+			aria-label={panelLabel(0)}
+		>
 			<!-- Keyboard and screen reader users open it with the Expand button. -->
 			<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 			<div class="visual" bind:this={visualEl} onclick={tapVisual}>
@@ -247,7 +309,12 @@
 			{/if}
 		</section>
 		{#each card.depth as d, i (i)}
-			<section data-panel={i + 1}>
+			<section
+				data-panel={i + 1}
+				role="group"
+				aria-roledescription="slide"
+				aria-label={panelLabel(i + 1)}
+			>
 				{#if d.kind === 'explain'}
 					<ExplainPanel
 						text={d.text}
@@ -279,7 +346,13 @@
 			</section>
 		{/each}
 		{#if showComments}
-			<section data-panel={card.depth.length + 1} class="comments-panel">
+			<section
+				data-panel={card.depth.length + 1}
+				class="comments-panel"
+				role="group"
+				aria-roledescription="slide"
+				aria-label={panelLabel(card.depth.length + 1)}
+			>
 				<ul class="comments">
 					{#each visibleComments as c (c.idx)}
 						{@render commentRow(c, 'panel')}
@@ -324,7 +397,8 @@
 			<span class="icon" aria-hidden="true">{knewIt ? '✔' : '✓'}</span>
 			<span class="label" aria-hidden="true">Knew it</span>
 		</button>
-		<div class="dots">
+		<!-- The panel row's label says the same in words. -->
+		<div class="dots" aria-hidden="true">
 			{#each { length: count } as _, i (i)}
 				<span class="dot" class:active={i === panel}></span>
 			{/each}
@@ -349,13 +423,16 @@
 		scroll-snap-align: start;
 		display: flex;
 		flex-direction: column;
-		padding: 0.75rem 16px;
+		/* Clear of the notch, the rounded corners and the home indicator. */
+		padding: max(0.75rem, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+			calc(0.75rem + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
 	}
 	/* The first card shares the screen with the top bar and snaps by its bottom edge, so
 	   scrolling back to it shows the bar again. */
 	article.first {
 		height: calc(100dvh - var(--chrome-h, 0px));
 		scroll-snap-align: end;
+		padding-top: 0.75rem; /* the top bar above it holds the top inset */
 	}
 	header {
 		display: flex;
@@ -397,6 +474,11 @@
 		overflow-x: auto;
 		overflow-y: hidden;
 		scroll-snap-type: x mandatory;
+	}
+	.panels:focus-visible {
+		outline: 2px solid var(--accent);
+		outline-offset: 2px;
+		border-radius: 4px;
 	}
 	section {
 		flex: 0 0 100%;
@@ -594,8 +676,8 @@
 	}
 	.actions {
 		position: absolute;
-		right: 10px;
-		bottom: 3.5rem; /* above the bottom row */
+		right: calc(10px + env(safe-area-inset-right));
+		bottom: calc(3.5rem + env(safe-area-inset-bottom)); /* above the bottom row */
 		display: flex;
 		flex-direction: column;
 		gap: 0.35rem;

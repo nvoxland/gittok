@@ -203,3 +203,41 @@ async def test_set_playback_speed_changes_client_prefs(server, fixture_repo, tmp
     cfg = make_config(fixture_repo, tmp_path)
     with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         assert steering.get_prefs(conn) == {"playback_speed": 1.5}
+
+
+async def test_add_repo_by_url_clones_and_the_research_tools_read_it(
+    fixture_repo, tmp_path, monkeypatch
+):
+    import subprocess
+
+    from gittok import steering
+
+    ycfg = make_ycfg(fixture_repo, tmp_path)
+    bare = tmp_path / "remote.git"
+    subprocess.run(
+        ["git", "clone", "-q", "--bare", str(fixture_repo.path), str(bare)],
+        check=True,
+        capture_output=True,
+    )
+    real = steering.gitq.clone
+    monkeypatch.setattr(steering.gitq, "clone", lambda src, dest, **kw: real(str(bare), dest))
+    server = mcp_server.build_server(lambda: config_mod.load_config(ycfg.root))
+    url = "https://example.com/org/proj.git"
+    async with Client(server) as client:
+        tools = {t.name: t for t in (await client.list_tools()).tools}
+        assert "network" in tools["add_repo"].description
+        added = data(await client.call_tool("add_repo", {"name": "proj", "path": url}))
+        assert added["ref"] == "origin/main" and added["remote"] == url
+        assert added["path"] == str((ycfg.root / "repos" / "proj").resolve())
+        repos = {r["name"]: r for r in data(await client.call_tool("list_repos", {}))}
+        assert repos["proj"]["remote"] == url and repos["alpha"]["remote"] is None
+        log = await client.call_tool("git_log", {"repo": "proj"})
+        assert "fix rounding in invoice" in log.content[0].text
+        shown = await client.call_tool("read_file", {"repo": "proj", "path": "billing/invoice.py"})
+        assert "def total" in shown.content[0].text
+        bad = await client.call_tool(
+            "add_repo", {"name": "leak", "path": "https://u:tok3n@example.com/o/p.git"}
+        )
+        assert bad.is_error and "tok3n" not in bad.content[0].text
+        assert "credential helper" in bad.content[0].text
+        assert "remove_repo" not in tools  # removing a repo is a user act (CLI only)

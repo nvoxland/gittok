@@ -63,7 +63,7 @@ A format/kind mismatch is rejected with reason `format_kind_mismatch`.
 ```json
 {"kind": "diagram", "title": "Request flow", "mermaid": "flowchart LR\n  A[api] --> B[store]"}
 ```
-- `mermaid`: at most 2000 characters. Rendered by the client; a parse failure shows the source as text.
+- `mermaid`: at most 2000 characters. Rendered by the client; a parse failure shows the source as text. The validator rejects (`unsafe_diagram`) a source with a `%%{...}%%` directive, a front-matter config block, a `click` or `callback` statement, or a URL (`http:`, `https:`, `javascript:`, `data:`).
 
 ### template
 ```json

@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
+import base64
+import hashlib
 import hmac
 import ipaddress
+import logging
 import random
 import re
+import socket
+import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager, closing
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
@@ -114,20 +121,204 @@ def _is_loopback(scope) -> bool:
         return False
 
 
-class SecurityMiddleware:
-    """Loopback-only MCP, LAN pairing cookie, and a request body size limit."""
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+HOSTS_TTL_S = 30.0  # the LAN address can change while the server runs
+HOSTS_RETRY_S = 2.0  # an unknown Host starts a new lookup at most this often
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+_HOST_PORT = re.compile(r"(:\d{0,5})?")
+_INLINE_SCRIPT = re.compile(rb"<script(\s[^>]*)?>(.*?)</script\s*>", re.S | re.I)
+_now = time.monotonic
 
-    def __init__(self, app, lan_token: str | None = None, api_log: Callable[[], Any] | None = None):
+
+def host_name(value: str) -> str | None:
+    """The lower-case host of a Host header value, without the port. None when malformed."""
+    v = value.strip().lower()
+    if v.startswith("["):
+        name, bracket, rest = v[1:].partition("]")
+        if not bracket:
+            return None
+    else:
+        name, colon, port = v.partition(":")
+        rest = colon + port
+    if not _HOST_PORT.fullmatch(rest):
+        return None
+    name = name.removesuffix(".")
+    return name or None
+
+
+def own_hosts(extra: tuple[str, ...] = ()) -> frozenset[str]:
+    """Names this server answers to: loopback, its LAN addresses, its host names, and `extra`."""
+    names = set(LOOPBACK_HOSTS) | set(social.lan_addresses())
+    try:
+        own = socket.gethostname().strip().lower().removesuffix(".")
+    except OSError:
+        own = ""
+    if own:
+        short = own.split(".")[0]
+        names |= {own, short, f"{short}.local"}
+    names |= {h.strip().lower().removesuffix(".") for h in extra}
+    names.discard("")
+    return frozenset(names)
+
+
+class HostAllowlist:
+    """The Host names the server accepts. A page that rebinds its own name to this machine
+    sends its own name in Host, so a request with an unknown Host is refused."""
+
+    def __init__(self, get_config: Callable[[], Config]):
+        self._get_config = get_config
+        self._names: frozenset[str] = frozenset()
+        self._at: float | None = None
+
+    def _refresh(self) -> None:
+        try:
+            extra = tuple(self._get_config().settings.server.allowed_hosts)
+        except Exception:  # a broken config file must not open or close the server
+            extra = ()
+        self._names = own_hosts(extra)
+        self._at = _now()
+
+    async def allows(self, name: str | None) -> bool:
+        if self._at is None or _now() - self._at > HOSTS_TTL_S:
+            await asyncio.to_thread(self._refresh)
+        if name in self._names:
+            return True
+        if name and _now() - self._at >= HOSTS_RETRY_S:
+            await asyncio.to_thread(self._refresh)  # the LAN address may be new
+            return name in self._names
+        return False
+
+
+CSP_BASE = (
+    ("default-src", "'self'"),
+    # 'wasm-unsafe-eval': the code highlighter compiles its regex engine from WebAssembly.
+    ("script-src", "'self' 'wasm-unsafe-eval'"),
+    # Highlighted code and diagrams set colours with inline styles.
+    ("style-src", "'self' 'unsafe-inline'"),
+    ("img-src", "'self' data: blob:"),
+    ("font-src", "'self' data:"),
+    ("connect-src", "'self'"),
+    ("worker-src", "'self'"),
+    ("manifest-src", "'self'"),
+    ("object-src", "'none'"),
+    ("base-uri", "'self'"),
+    ("form-action", "'self'"),
+    ("frame-ancestors", "'none'"),
+)
+
+
+def inline_script_hashes(html: bytes) -> list[str]:
+    """CSP hash sources for the inline scripts of a page (the web build has one bootstrap)."""
+    out = []
+    for attrs, body in _INLINE_SCRIPT.findall(html):
+        if re.search(rb"\ssrc\s*=", attrs or b"", re.I) or not body.strip():
+            continue
+        out.append(f"'sha256-{base64.b64encode(hashlib.sha256(body).digest()).decode()}'")
+    return out
+
+
+def csp_header(script_hashes: list[str] | tuple[str, ...] = ()) -> str:
+    parts = []
+    for name, value in CSP_BASE:
+        if name == "script-src" and script_hashes:
+            value = " ".join([value, *script_hashes])
+        parts.append(f"{name} {value}")
+    return "; ".join(parts)
+
+
+class _Csp:
+    """The Content-Security-Policy value. It follows the built `index.html`: each web build
+    has a new inline bootstrap script, and only the scripts in that file may run inline."""
+
+    def __init__(self, get_config: Callable[[], Config]):
+        self._get_config = get_config
+        self._index: Path | None = None
+        self._looked: float | None = None
+        self._key: tuple | None = None
+        self._value = csp_header()
+
+    def _find(self) -> Path | None:
+        if self._index is not None and self._index.is_file():
+            return self._index
+        if self._looked is not None and _now() - self._looked < HOSTS_RETRY_S:
+            return None
+        self._looked = _now()
+        try:
+            index = _web_dir(self._get_config()) / "index.html"
+        except Exception:
+            return None
+        self._index = index if index.is_file() else None
+        return self._index
+
+    def value(self) -> str:
+        index = self._find()
+        try:
+            key = (index, index.stat().st_mtime_ns) if index else None
+            if key != self._key:
+                self._value = csp_header(inline_script_hashes(index.read_bytes()) if index else ())
+                self._key = key
+        except OSError:
+            self._key, self._value = None, csp_header()
+        return self._value
+
+
+class PairTokenFilter(logging.Filter):
+    """Removes the query of `/pair?t=<token>` from access log lines."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple):
+            record.args = tuple(
+                "/pair?[redacted]" if isinstance(a, str) and a.startswith("/pair?") else a
+                for a in args
+            )
+        return True
+
+
+def hide_pair_token_in_access_log() -> None:
+    logger = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, PairTokenFilter) for f in logger.filters):
+        logger.addFilter(PairTokenFilter())
+
+
+class SecurityMiddleware:
+    """Host allowlist, Origin check, loopback-only MCP, LAN pairing cookie, a request body
+    size limit, and the security headers of every response."""
+
+    def __init__(
+        self,
+        app,
+        lan_token: str | None = None,
+        api_log: Callable[[], Any] | None = None,
+        get_config: Callable[[], Config] = load_config,
+    ):
         self.app = app
         self.token = lan_token
         self.api_log = api_log  # returns the log file path; /api/ requests are logged there
+        self.hosts = HostAllowlist(get_config)
+        self.csp = _Csp(get_config)
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
+        send = self._with_headers(send)
         if self.api_log and scope["path"].startswith("/api/"):
             return await self._logged(scope, receive, send)
         return await self._handle(scope, receive, send)
+
+    def _with_headers(self, send):
+        async def send_with_headers(msg):
+            if msg["type"] == "http.response.start":
+                extra = {
+                    b"content-security-policy": self.csp.value().encode(),
+                    b"x-content-type-options": b"nosniff",
+                    b"referrer-policy": b"no-referrer",
+                }
+                kept = [(k, v) for k, v in msg.get("headers", []) if k.lower() not in extra]
+                msg = {**msg, "headers": kept + list(extra.items())}
+            await send(msg)
+
+        return send_with_headers
 
     async def _logged(self, scope, receive, send):
         status = 0
@@ -156,6 +347,15 @@ class SecurityMiddleware:
 
         def reply(response):
             return response(scope, receive, send)
+
+        hosts = [v for k, v in scope["headers"] if k == b"host"]
+        name = host_name(hosts[0].decode("latin-1")) if len(hosts) == 1 else None
+        if not await self.hosts.allows(name):
+            return await reply(JSONResponse({"detail": "unknown Host"}, 421))
+        if scope["method"] not in SAFE_METHODS:
+            for k, v in scope["headers"]:
+                if k == b"origin" and not await self.hosts.allows(_origin_host(v)):
+                    return await reply(JSONResponse({"detail": "cross-origin request"}, 403))
 
         if path == "/mcp" or path.startswith("/mcp/"):
             if not loopback:
@@ -197,6 +397,14 @@ class SecurityMiddleware:
         except _BodyTooLarge:
             if not started:
                 await reply(JSONResponse({"detail": "request body too large"}, 413))
+
+
+def _origin_host(value: bytes) -> str | None:
+    try:
+        host = urlsplit(value.decode("latin-1").strip()).hostname
+    except ValueError:
+        return None
+    return host.lower().removesuffix(".") if host else None
 
 
 class _BodyTooLarge(Exception):
@@ -434,7 +642,9 @@ def create_app(
         SecurityMiddleware,
         lan_token=lan_token,
         api_log=lambda: get_config().settings.data_dir / "logs" / "api.log",
+        get_config=get_config,
     )
+    hide_pair_token_in_access_log()
 
     @app.exception_handler(RequestValidationError)
     async def log_rejected_events(request: Request, exc: RequestValidationError):

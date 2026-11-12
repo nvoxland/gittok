@@ -2,6 +2,8 @@ data_dir: data                 # relative to the project root, or absolute / ~
 server:
   host: 127.0.0.1
   port: 8008
+  lan: false                   # true: serve the feed to the LAN (same as --lan); needs pairing
+  allowed_hosts: []            # extra Host names the server answers to, such as a VPN name
 agent:
   default_count: 10            # cards per get_brief
   max_count: 20                # get_brief refuses larger counts
@@ -47,9 +49,13 @@ render:
   mflux_model: z-image-turbo
   max_illustrations_per_run: 6
 repos:
-  # add_repo (the MCP tool and CLI) only accepts a git repo root inside one of these directories.
-  # Empty = the parent directories of the repos in local/repos.yaml. To allow a new place,
-  # add its directory here, for example: allowed_roots: [~/src, ~/work]
+  # The add_repo MCP tool (an agent calls it) only accepts a git repo root inside one of these
+  # directories. Empty = the parent directories of the repos in local/repos.yaml; with no
+  # repos yet, the tool accepts nothing. `gittok repos add <name> <path>` in a terminal is
+  # your own act and accepts any git repo root. To let the tool add repos in a new place,
+  # set this in local/settings.yaml, for example: allowed_roots: [~/src, ~/work]
+  # A repo added by URL is cloned into GitTok's home directory (repos/<name>); this list
+  # does not apply to it.
   allowed_roots: []
 gc:
   seen_after_cards: 20         # delete a seen (rewarded), unliked, unsaved card once this many other cards were shown after it

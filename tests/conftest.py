@@ -36,7 +36,8 @@ def make_config(fixture_repo, tmp_path, **agent):
         groups={},
         settings=Settings(
             data_dir=tmp_path / "data",
-            server=ServerSettings(),
+            # Test-only: Starlette's TestClient sends `Host: testserver`.
+            server=ServerSettings(allowed_hosts=("testserver",)),
             agent=AgentSettings(**{"max_count": 20, "per_day_runs": 4, **agent}),
             analysis=AnalysisSettings(),
             research=ResearchSettings(),

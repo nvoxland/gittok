@@ -298,3 +298,34 @@ def test_local_mascots_merge_over_config(tmp_path):
     wl(tmp_path, "mascots.yaml", "mascots:\n  m: {seed: 5}\n  n: {style: t}\n")
     got = load_config(tmp_path).mascots
     assert got["m"].style == "s" and got["m"].seed == 5 and got["n"].style == "t"
+
+
+def test_server_lan_and_allowed_hosts_default_off_and_load_from_the_overlay(tmp_path):
+    write(tmp_path, "settings.yaml", "server:\n  port: 9000\n")
+    s = load_config(tmp_path).settings.server
+    assert s.lan is False and s.allowed_hosts == ()
+    (tmp_path / "local").mkdir()
+    (tmp_path / "local" / "settings.yaml").write_text(
+        "server:\n  lan: true\n  allowed_hosts: [feed.example.net]\n"
+    )
+    s = load_config(tmp_path).settings.server
+    assert s.lan is True and s.allowed_hosts == ("feed.example.net",)
+    assert s.port == 9000
+
+
+def test_shipped_settings_keep_lan_off():
+    import yaml
+
+    shipped = Path(__file__).parents[1] / "config" / "settings.yaml"
+    server = yaml.safe_load(shipped.read_text())["server"]
+    assert server["lan"] is False and server["allowed_hosts"] == []
+    assert server["host"] == "127.0.0.1"
+
+
+@pytest.mark.parametrize(
+    "text", ["lan: maybe", "lan: 1", "allowed_hosts: one.example", "allowed_hosts: [1, 2]"]
+)
+def test_server_settings_reject_wrong_types(tmp_path, text):
+    write(tmp_path, "settings.yaml", f"server:\n  {text}\n")
+    with pytest.raises(ConfigError, match="settings.server"):
+        load_config(tmp_path)

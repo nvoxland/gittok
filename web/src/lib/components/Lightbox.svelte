@@ -3,6 +3,7 @@
 	// document.body, outside the feed's snap scroller, and scrolls on its own.
 	import { onMount, type Component } from 'svelte';
 	import { isDismissSwipe } from '#lib/lightbox.ts';
+	import { setEagerImages } from '#lib/imageLoading.ts';
 	import type { Card } from '#lib/types.ts';
 
 	let {
@@ -15,6 +16,9 @@
 		Visual: Component<any>;
 		onClose: () => void;
 	} = $props();
+
+	// The lightbox is on screen as soon as it opens.
+	setEagerImages(() => true);
 
 	let dialog: HTMLElement | undefined = $state();
 	let body: HTMLElement | undefined = $state();
@@ -126,7 +130,8 @@
 		display: flex;
 		align-items: flex-start;
 		gap: 0.5rem;
-		padding: 0.75rem 16px 0.5rem;
+		padding: calc(0.75rem + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 0.5rem
+			max(16px, env(safe-area-inset-left));
 	}
 	.caption {
 		flex: 1;
@@ -149,7 +154,8 @@
 		flex: 1;
 		min-height: 0;
 		overflow: auto;
-		padding: 0 16px 24px;
+		padding: 0 max(16px, env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom))
+			max(16px, env(safe-area-inset-left));
 		overscroll-behavior: contain;
 		-webkit-overflow-scrolling: touch;
 		/* The content sits on a card-like surface so themed visuals stay readable on the dark backdrop. */

@@ -3,7 +3,7 @@
     "gittok": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "gittok", "mcp", "--ui", "--lan"]
+      "args": ["run", "gittok", "mcp", "--ui"]
     }
   }
 }

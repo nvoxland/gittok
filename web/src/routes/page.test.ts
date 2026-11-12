@@ -70,6 +70,7 @@ describe('feed page', () => {
 				if (target.getAttribute('data-card-id') === 'c_1')
 					near = () => this.cb([{ target, isIntersecting: true, intersectionRatio: 0.9 }]);
 			}
+			unobserve() {}
 			disconnect() {}
 		}
 		vi.stubGlobal('IntersectionObserver', FakeIO);
@@ -253,6 +254,187 @@ describe('feed page', () => {
 		expect(await screen.findByRole('region', { name: 'End of feed' })).toHaveTextContent(
 			'/gittok-generate'
 		);
+	});
+
+	describe('errors, empty and unpaired states', () => {
+		const card = (n: number) => fakeCard({ id: `c_${n}`, hook: `Hook ${n}` });
+		beforeEach(() => localStorage.clear());
+
+		type Reply = { status?: number; body?: unknown };
+		/** `feed(url, n)` answers the n-th /api/feed call; other routes get `rest` or an empty body. */
+		function serve(feed: (url: string, n: number) => Reply, rest: Record<string, Reply> = {}) {
+			let n = 0;
+			fetchMock.mockImplementation(async (url: string) => {
+				const key = Object.keys(rest).find((k) => url.startsWith(k));
+				const r: Reply = url.startsWith('/api/feed')
+					? feed(url, n++)
+					: key
+						? rest[key]
+						: { body: { notifications: [], unread: 0, stories: [] } };
+				const status = r.status ?? 200;
+				return {
+					ok: status < 400,
+					status,
+					headers: { get: () => null },
+					json: async () => structuredClone(r.body ?? {})
+				};
+			});
+		}
+		function nearEnd() {
+			let near: (() => void) | undefined;
+			class FakeIO {
+				constructor(public cb: (e: Partial<IntersectionObserverEntry>[]) => void) {}
+				observe(target: Element) {
+					if (target.getAttribute('data-card-id') === 'c_1')
+						near = () => this.cb([{ target, isIntersecting: true, intersectionRatio: 0.9 }]);
+				}
+				unobserve() {}
+				disconnect() {}
+			}
+			vi.stubGlobal('IntersectionObserver', FakeIO);
+			return () => near!();
+		}
+
+		it('says so when the next page fails, and Try again loads it', async () => {
+			const fire = nearEnd();
+			let fail = true;
+			serve((url) => {
+				if (!url.includes('cursor=cur1')) return { body: { cards: [card(1), card(2)], next_cursor: 'cur1' } };
+				return fail ? { status: 500 } : { body: { cards: [card(3)], next_cursor: null } };
+			});
+			render(Page);
+			await screen.findByText('Hook 1');
+			fire();
+			const alert = await screen.findByRole('alert');
+			expect(alert).toHaveTextContent(/could not load more cards/i);
+			expect(alert).toHaveTextContent('500');
+			expect(screen.getAllByRole('article')).toHaveLength(2); // the cards on screen stay
+			fail = false;
+			await fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+			expect(await screen.findByText('Hook 3')).toBeInTheDocument();
+			expect(screen.queryByRole('alert')).toBeNull();
+		});
+
+		it('says so when Check for new cards fails; it is not "no new cards"', async () => {
+			let fail = true;
+			serve((_url, n) => {
+				if (n === 0) return { body: { cards: [card(1)], next_cursor: null } };
+				return fail ? { status: 503 } : { body: { cards: [card(1), card(2)], next_cursor: null } };
+			});
+			render(Page);
+			await screen.findByText('Hook 1');
+			await fireEvent.click(screen.getByRole('button', { name: /check for new cards/i }));
+			const alert = await screen.findByRole('alert');
+			expect(alert).toHaveTextContent(/could not check for new cards/i);
+			expect(alert).toHaveTextContent('503');
+			expect(screen.queryByText('No new cards yet.')).toBeNull();
+			fail = false;
+			await fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+			expect(await screen.findByText('Hook 2')).toBeInTheDocument();
+			expect(screen.queryByRole('alert')).toBeNull();
+		});
+
+		it('with no repos configured, says how to add one instead of "all caught up"', async () => {
+			serve(() => ({ body: { cards: [], next_cursor: null } }), { '/api/repos': { body: { repos: [] } } });
+			render(Page);
+			const empty = await screen.findByRole('region', { name: 'No repos configured' });
+			expect(empty).toHaveTextContent(/no repos are configured/i);
+			expect(empty).toHaveTextContent('gittok repos add <name> <path>');
+			expect(empty).toHaveTextContent('/gittok-generate');
+			expect(screen.queryByText(/caught up/i)).toBeNull();
+			expect(screen.queryByRole('note')).toBeNull(); // no swipe hints with nothing to swipe
+		});
+
+		it('with repos but no cards, keeps the caught-up card', async () => {
+			serve(() => ({ body: { cards: [], next_cursor: null } }), {
+				'/api/repos': { body: { repos: [{ name: 'storefront', ref: 'HEAD', head_sha: null, group: null }] } }
+			});
+			render(Page);
+			expect(await screen.findByRole('region', { name: 'End of feed' })).toHaveTextContent(/caught up/i);
+			expect(screen.queryByRole('region', { name: 'No repos configured' })).toBeNull();
+		});
+
+		it('keeps the caught-up card when the repos call fails', async () => {
+			serve(() => ({ body: { cards: [], next_cursor: null } }), { '/api/repos': { status: 500 } });
+			render(Page);
+			expect(await screen.findByRole('region', { name: 'End of feed' })).toBeInTheDocument();
+		});
+
+		it('the empty state checks again, and shows the feed once a repo has cards', async () => {
+			let repos: unknown[] = [];
+			serve((_url, n) => ({ body: { cards: n === 0 ? [] : [card(1)], next_cursor: null } }), {
+				'/api/repos': { get body() { return { repos }; } }
+			});
+			render(Page);
+			await screen.findByRole('region', { name: 'No repos configured' });
+			repos = [{ name: 'storefront', ref: 'HEAD', head_sha: null, group: null }];
+			await fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+			expect(await screen.findByText('Hook 1')).toBeInTheDocument();
+			expect(screen.queryByRole('region', { name: 'No repos configured' })).toBeNull();
+		});
+
+		it('on 401, says the device is not paired and how to pair it; Try again reloads', async () => {
+			let paired = false;
+			serve(() => (paired ? { body: { cards: [card(1)], next_cursor: null } } : { status: 401 }));
+			render(Page);
+			const alert = await screen.findByRole('alert');
+			expect(alert).toHaveTextContent(/this device is not paired/i);
+			expect(alert).toHaveTextContent(/pairing link/i);
+			expect(alert).toHaveTextContent(/on the computer that runs GitTok/i);
+			expect(alert).not.toHaveTextContent(/failed to load feed/i);
+			paired = true;
+			await fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+			expect(await screen.findByText('Hook 1')).toBeInTheDocument();
+			expect(screen.queryByRole('alert')).toBeNull();
+		});
+
+		it('another first-load failure shows the error with a Try again button', async () => {
+			let fail = true;
+			serve(() => (fail ? { status: 500 } : { body: { cards: [card(1)], next_cursor: null } }));
+			render(Page);
+			const alert = await screen.findByRole('alert');
+			expect(alert).toHaveTextContent(/failed to load feed/i);
+			expect(alert).toHaveTextContent('500');
+			fail = false;
+			await fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+			expect(await screen.findByText('Hook 1')).toBeInTheDocument();
+		});
+
+		it('a 401 on a later page also says the device is not paired', async () => {
+			const fire = nearEnd();
+			serve((url) =>
+				url.includes('cursor=cur1')
+					? { status: 401 }
+					: { body: { cards: [card(1), card(2)], next_cursor: 'cur1' } }
+			);
+			render(Page);
+			await screen.findByText('Hook 1');
+			fire();
+			expect(await screen.findByRole('alert')).toHaveTextContent(/this device is not paired/i);
+		});
+	});
+
+	describe('gesture hints', () => {
+		beforeEach(() => localStorage.clear());
+
+		it('shows the one-time swipe hints over the feed, and not after they were dismissed', async () => {
+			route({ '/api/feed': { cards: [fakeCard({ hook: 'A hook' })], next_cursor: 'more' } });
+			const first = render(Page);
+			await screen.findByText('A hook');
+			expect(screen.getByRole('note', { name: 'How to use the feed' })).toBeInTheDocument();
+			await fireEvent.click(screen.getByRole('button', { name: 'Got it' }));
+			first.unmount();
+			render(Page);
+			await screen.findByText('A hook');
+			expect(screen.queryByRole('note')).toBeNull();
+		});
+
+		it('shows no hints while the feed is loading or failed', async () => {
+			fetchMock.mockResolvedValue({ ok: false, status: 500, headers: { get: () => null } });
+			render(Page);
+			await screen.findByRole('alert');
+			expect(screen.queryByRole('note')).toBeNull();
+		});
 	});
 
 	it('has a bell linking to /notifications', async () => {

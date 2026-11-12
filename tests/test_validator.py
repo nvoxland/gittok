@@ -1077,3 +1077,41 @@ def test_learn_is_capitalised_and_length_checked_after_stripping(fixture_repo, r
     short = "After this card you know it is fast."
     _, rejected = check([example_card(fixture_repo, learn=short)], repos)
     assert reasons(rejected) == ["schema"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "%%{init: {'theme': 'base', 'themeCSS': '*{display:none}'}}%%\nflowchart LR\n  A --> B",
+        "flowchart LR\n  %%{ init: {} }%%\n  A --> B",
+        "---\nconfig:\n  theme: forest\n---\nflowchart LR\n  A --> B",
+        'flowchart LR\n  A --> B\n  click A callback "tip"',
+        "flowchart LR\n  A --> B\n  CLICK A call go()",
+        'flowchart LR\n  A --> B\n\tclick A href "/x"',
+        'classDiagram\n  class Shape\n  callback Shape "go"',
+        "flowchart LR\n  A[see https://example.com/x] --> B",
+        "flowchart LR\n  A[HTTP://example.com] --> B",
+        "flowchart LR\n  A[\"<a href='javascript:alert(1)'>x</a>\"] --> B",
+        "flowchart LR\n  A[JavaScript : go] --> B",
+        'flowchart LR\n  A["<img src=data:image/svg+xml;base64,AAAA>"] --> B',
+    ],
+)
+def test_diagram_with_directives_callbacks_or_urls_is_rejected(fixture_repo, repos, source):
+    v = {"kind": "diagram", "title": "Flow", "mermaid": source}
+    accepted, rejected = check2([C.diagram_card(fixture_repo, visual=v)], repos)
+    assert accepted == [] and reasons(rejected) == ["unsafe_diagram"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "flowchart LR\n  A[api] --> B[store]",
+        "flowchart LR\n  %% a plain comment\n  A[api] -->|click path| B[on click handler]",
+        "sequenceDiagram\n  web->>api: POST /events (data: batch)\n  api-->>web: 200",
+        "flowchart TD\n  A[metadata: none] --- B[https only]\n  B --> clicker",
+    ],
+)
+def test_plain_diagrams_stay_accepted(fixture_repo, repos, source):
+    v = {"kind": "diagram", "title": "Flow", "mermaid": source}
+    accepted, rejected = check2([C.diagram_card(fixture_repo, visual=v)], repos)
+    assert rejected == [] and len(accepted) == 1

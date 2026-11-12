@@ -53,7 +53,7 @@
 
 <style>
 	.profile {
-		padding: 0.75rem 16px 2rem;
+		padding: calc(0.75rem + var(--safe-top)) max(16px, var(--safe-right)) calc(2rem + var(--safe-bottom)) max(16px, var(--safe-left));
 		max-width: 48rem;
 		margin: 0 auto;
 	}

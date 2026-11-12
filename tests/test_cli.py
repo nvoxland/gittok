@@ -772,3 +772,208 @@ def test_install_dry_run_works_without_a_local_dir(tmp_path, monkeypatch, capsys
     assert not (tmp_path / "local").exists()
     assert cli.main(["install", "--launchd"]) == 0
     assert not (tmp_path / "local").exists()
+
+
+def _lan_setting(cfg, monkeypatch, **server):
+    """Make `load_config` return `cfg` with these `settings.server` values."""
+    from dataclasses import replace
+
+    settings = replace(cfg.settings, server=replace(cfg.settings.server, **server))
+    new = replace(cfg, settings=settings)
+    monkeypatch.setattr(cli, "load_config", lambda *a, **kw: new)
+    return new
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "192.168.1.5", "::", "feed.example.net"])
+def test_serve_on_a_non_loopback_host_needs_pairing_even_without_lan(
+    cfg, monkeypatch, capsys, host
+):
+    calls = []
+    monkeypatch.setattr(cli.uvicorn, "run", lambda app, **kw: calls.append((app, kw)))
+    monkeypatch.setattr(cli.social, "lan_addresses", lambda: ["192.168.1.5"])
+    seen = {}
+    monkeypatch.setattr(cli, "_feed_app", lambda token: seen.update(token=token) or "app")
+    assert cli.main(["serve", "--host", host, "--port", "9123"]) == 0
+    assert calls == [("app", {"host": host, "port": 9123})]
+    tok = (cfg.settings.data_dir / "lan_token").read_text().strip()
+    assert seen["token"] == tok
+    out = capsys.readouterr().out
+    assert f"/pair?t={tok}" in out and "token-protected" in out
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1", "127.0.0.2"])
+def test_serve_on_loopback_has_no_token(cfg, monkeypatch, capsys, host):
+    seen = {}
+    monkeypatch.setattr(cli.uvicorn, "run", lambda app, **kw: seen.update(kw))
+    monkeypatch.setattr(cli, "_feed_app", lambda token: seen.update(token=token) or "app")
+    assert cli.main(["serve", "--host", host]) == 0
+    assert seen["token"] is None and seen["host"] == host
+    assert "pair:" not in capsys.readouterr().out
+    assert not (cfg.settings.data_dir / "lan_token").exists()
+
+
+def test_serve_reload_on_a_non_loopback_host_passes_the_token_to_the_worker(cfg, monkeypatch):
+    monkeypatch.setattr(cli.uvicorn, "run", lambda app, **kw: None)
+    monkeypatch.setattr(cli.social, "lan_addresses", lambda: ["192.168.1.5"])
+    monkeypatch.delenv("GITTOK_LAN_TOKEN", raising=False)
+    assert cli.main(["serve", "--reload", "--host", "0.0.0.0"]) == 0
+    tok = (cfg.settings.data_dir / "lan_token").read_text().strip()
+    assert os.environ["GITTOK_LAN_TOKEN"] == tok
+
+
+def test_server_lan_setting_makes_serve_act_as_with_lan(cfg, monkeypatch, capsys):
+    cfg = _lan_setting(cfg, monkeypatch, lan=True)
+    calls = []
+    monkeypatch.setattr(cli.uvicorn, "run", lambda app, **kw: calls.append(kw))
+    monkeypatch.setattr(cli.social, "lan_addresses", lambda: ["192.168.1.5"])
+    assert cli.main(["serve"]) == 0
+    assert calls == [{"host": "0.0.0.0", "port": 8008}]
+    tok = (cfg.settings.data_dir / "lan_token").read_text().strip()
+    assert f"http://192.168.1.5:8008/pair?t={tok}" in capsys.readouterr().out
+
+
+def test_server_lan_setting_makes_mcp_ui_start_a_lan_child(cfg, monkeypatch):
+    _lan_setting(cfg, monkeypatch, lan=True)
+    seen = _mcp_ui(cfg, monkeypatch)
+    assert cli.main(["mcp", "--ui"]) == 0
+    cmd = seen["order"][0][1]
+    assert cmd[-1] == "--lan" and "0.0.0.0" in cmd
+
+
+def test_shipped_mcp_json_does_not_serve_the_lan():
+    import json
+
+    root = Path(cli.__file__).parents[2]
+    args = json.loads((root / ".mcp.json").read_text())["mcpServers"]["gittok"]["args"]
+    assert "--lan" not in args and args[-2:] == ["mcp", "--ui"]
+
+
+# --- first run: no repos yet -------------------------------------------------------------------
+
+
+@pytest.fixture
+def no_repos(cfg, monkeypatch):
+    from dataclasses import replace
+
+    empty = replace(cfg, repos={})
+    monkeypatch.setattr(cli, "load_config", lambda: empty)
+    return empty
+
+
+def _one_line(text):
+    lines = text.strip().splitlines()
+    assert len(lines) == 1, text
+    return lines[0]
+
+
+def test_repos_with_no_repos_says_how_to_add_one(no_repos, capsys):
+    assert cli.main(["repos"]) == 0
+    assert "gittok repos add <name> <path>" in _one_line(capsys.readouterr().out)
+
+
+def test_brief_with_no_repos_is_one_clean_error_line(no_repos, capsys):
+    assert cli.main(["brief"]) == 1
+    got = capsys.readouterr()
+    assert got.out == ""
+    line = _one_line(got.err)
+    assert "no repos" in line.lower() and "gittok repos add <name> <path>" in line
+
+
+def test_analyze_with_no_repos_is_one_clean_error_line(no_repos, capsys):
+    assert cli.main(["analyze"]) == 1
+    assert "gittok repos add <name> <path>" in _one_line(capsys.readouterr().err)
+
+
+def test_health_hint_with_no_repos_says_add_a_repo_not_generate(no_repos, capsys):
+    assert cli.main(["health", "--hint"]) == 0
+    line = _one_line(capsys.readouterr().out)
+    assert "gittok repos add <name> <path>" in line
+    assert "/gittok-generate" not in line
+
+
+def test_repos_add_on_a_fresh_install_adds_any_repo_and_prints_it(tmp_path, monkeypatch, capsys):
+    """The user typed the path at a terminal, so the allowed roots do not apply."""
+    from gittok import config as config_mod
+    from tests.test_steering import _commit_in
+
+    home = tmp_path / "fresh"
+    (home / "config").mkdir(parents=True)
+    (home / "config" / "settings.yaml").write_text("{}\n")
+    monkeypatch.setattr(cli, "load_config", lambda: config_mod.load_config(home))
+    repo = tmp_path / "code" / "first"
+    _commit_in(repo)
+    assert cli.main(["repos", "add", "first", str(repo)]) == 0
+    out = capsys.readouterr().out
+    assert f"added repo first ({repo.resolve()})" in out and "/gittok-profile-repo first" in out
+    assert list(config_mod.load_config(home).repos) == ["first"]
+    assert cli.main(["repos"]) == 0
+    assert "first" in capsys.readouterr().out
+    assert cli.main(["repos", "add", "sub", str(repo.parent)]) == 1
+    assert "not a git repo" in _one_line(capsys.readouterr().err)
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "::", "127.0.0.1"])
+def test_install_mcp_url_uses_loopback_for_a_bind_to_all_interfaces(cfg, monkeypatch, host):
+    import argparse
+
+    cfg = _lan_setting(cfg, monkeypatch, host=host)
+    env = cli._install_env(cfg, argparse.Namespace(apply=False, force=False))
+    assert env.url == "http://127.0.0.1:8008/mcp"  # the server refuses `Host: 0.0.0.0`
+
+
+# --- repos by remote URL -----------------------------------------------------------------------
+
+
+def test_repos_add_url_list_and_remove(tmp_path, fixture_repo, monkeypatch, capsys):
+    import subprocess
+
+    from gittok import config as config_mod
+
+    home = tmp_path / "fresh"
+    (home / "config").mkdir(parents=True)
+    (home / "config" / "settings.yaml").write_text("{}\n")
+    monkeypatch.setattr(cli, "load_config", lambda: config_mod.load_config(home))
+    bare = tmp_path / "remote.git"
+    subprocess.run(
+        ["git", "clone", "-q", "--bare", str(fixture_repo.path), str(bare)],
+        check=True,
+        capture_output=True,
+    )
+    real = cli.steering.gitq.clone
+    monkeypatch.setattr(cli.steering.gitq, "clone", lambda src, dest, **kw: real(str(bare), dest))
+    url = "git@example.com:org/proj.git"
+
+    assert cli.main(["repos", "add", url]) == 0  # the name comes from the URL
+    out = capsys.readouterr().out
+    dest = (home / "repos" / "proj").resolve()
+    assert f"cloned {url} into {dest}" in out and "added repo proj" in out
+    assert (dest / ".git").is_dir()
+
+    assert cli.main(["repos", "add", "second", "https://example.com/org/proj.git"]) == 0
+    capsys.readouterr()
+    assert cli.main(["repos"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert any(ln.startswith("proj\torigin/main\t") and ln.endswith(url) for ln in lines)
+
+    assert cli.main(["repos", "remove", "proj"]) == 0
+    out = capsys.readouterr().out
+    assert "removed repo proj" in out and str(dest) in out
+    assert not dest.exists()
+    assert list(config_mod.load_config(home).repos) == ["second"]
+    assert cli.main(["repos", "remove", "proj"]) == 1
+    assert "Unknown repo" in capsys.readouterr().err
+
+
+def test_repos_add_needs_a_name_for_a_local_path(cfg, fixture_repo, capsys):
+    assert cli.main(["repos", "add", str(fixture_repo.path)]) == 1
+    assert "gittok repos add <name> <path-or-url>" in capsys.readouterr().err
+
+
+def test_repos_remove_keeps_a_directory_the_user_gave(ycfg, fixture_repo, monkeypatch, capsys):
+    from gittok import config as config_mod
+
+    monkeypatch.setattr(cli, "load_config", lambda: config_mod.load_config(ycfg.root))
+    assert cli.main(["repos", "remove", "beta"]) == 0
+    out = capsys.readouterr().out
+    assert "removed repo beta" in out and "not touched" in out
+    assert fixture_repo.path.exists()
