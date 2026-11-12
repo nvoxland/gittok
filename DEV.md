@@ -12,17 +12,19 @@ You need macOS, [uv](https://docs.astral.sh/uv/), git, Node 22, and Claude Code.
 ```bash
 git clone <this-repo-url> gittok
 cd gittok
-uv sync                                                  # Python 3.13 and the dependencies
+uv sync --group images                                   # Python 3.13, the dependencies, and mflux
 npm --prefix web install && npm --prefix web run build   # the web app, into web/build
 ```
 
-For illustration and comic cards, and the persona avatars, also install mflux (Apple silicon, a large download):
+The `images` group installs mflux (Apple silicon, a large download). GitTok uses it for illustration and comic cards, and for the persona avatars. Always pass `--group images` to `uv sync`: a plain `uv sync` removes the group again.
+
+To work without mflux, use a plain `uv sync` instead:
 
 ```bash
-uv sync --group images
+uv sync                                                  # Python 3.13 and the dependencies, no mflux
 ```
 
-A plain `uv sync` removes the `images` group again. Once you use the group, always pass `--group images`.
+Without mflux, GitTok makes no illustration or comic cards and no avatars. Everything else works.
 
 ## Run from the clone
 
