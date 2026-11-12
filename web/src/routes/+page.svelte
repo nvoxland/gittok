@@ -294,7 +294,7 @@
 				<h2>You're all caught up</h2>
 				<p>You have seen every card for now.</p>
 				<p>
-					To make more, open Claude Code in the GitTok repo and run
+					To make more, open Claude Code in your GitTok directory and run
 					<code>/gittok-generate</code>.
 				</p>
 				<button type="button" onclick={checkAgain} disabled={checking}>

@@ -39,25 +39,12 @@ def lan_app(cfg):
 
 
 @pytest.mark.parametrize("path", ["/mcp", "/mcp/", "/mcp/x"])
-@pytest.mark.parametrize("peer", ["192.168.1.9", "10.0.0.2", "fe80::1", "garbage"])
-def test_mcp_rejects_non_loopback_peer_even_with_localhost_host(cfg, path, peer):
-    app = api.create_app(lambda: cfg)
-    r = call(app, "POST", path, peer, headers={"Host": "localhost:8008"}, json={})
-    assert r.status_code == 403
-
-
-def test_mcp_is_not_rejected_for_loopback_peers(cfg):
-    from fastapi.testclient import TestClient
-
-    for peer in ("127.0.0.1", "127.5.5.5", "::1"):
-        app = api.create_app(lambda: cfg)
-        with TestClient(app, client=(peer, 5000)) as c:
-            assert c.get("/mcp").status_code != 403
-
-
-def test_mcp_rejected_even_with_valid_lan_cookie(lan_app):
-    r = call(lan_app, "GET", "/mcp", "192.168.1.9", cookies={"cs_lan": TOKEN})
-    assert r.status_code == 403
+def test_there_is_no_mcp_endpoint_for_any_peer(cfg, lan_app, path):
+    """MCP is stdio only. `/mcp` is an ordinary unknown path: pairing first, then no route."""
+    assert call(lan_app, "POST", path, "192.168.1.9", json={}).status_code == 401
+    for peer, cookies in (("192.168.1.9", {"cs_lan": TOKEN}), ("127.0.0.1", None)):
+        r = call(lan_app, "POST", path, peer, json={}, cookies=cookies)
+        assert r.status_code in (404, 405), (peer, r.status_code)
 
 
 def test_api_requires_cookie_for_lan_peers(lan_app):
@@ -163,7 +150,7 @@ def _free_port():
         return s.getsockname()[1]
 
 
-def test_real_server_on_all_interfaces_blocks_mcp_and_api_from_lan_ip(cfg):
+def test_real_server_on_all_interfaces_blocks_the_api_from_a_lan_ip(cfg):
     addrs = social.lan_addresses()
     if not addrs:
         pytest.skip("no LAN address")
@@ -179,7 +166,7 @@ def test_real_server_on_all_interfaces_blocks_mcp_and_api_from_lan_ip(cfg):
             time.sleep(0.05)
         base = f"http://{addrs[0]}:{port}"
         r = httpx.post(f"{base}/mcp", headers={"Host": f"localhost:{port}"}, json={})
-        assert r.status_code == 403
+        assert r.status_code == 401  # no MCP endpoint: the ordinary pairing rule
         assert httpx.get(f"{base}/api/feed").status_code == 401
     finally:
         server.should_exit = True
@@ -231,7 +218,7 @@ def strict_app(strict_cfg, monkeypatch):
     return api.create_app(lambda: strict_cfg, lan_token=TOKEN)
 
 
-@pytest.mark.parametrize("path", ["/api/feed", "/", "/pair", "/mcp", "/assets/mascots/x.png"])
+@pytest.mark.parametrize("path", ["/api/feed", "/", "/pair", "/assets/mascots/x.png"])
 @pytest.mark.parametrize("host", ["evil.example", "evil.example:8008", "testserver", ""])
 def test_unknown_host_is_421_on_every_path_even_from_loopback(strict_app, path, host):
     r = raw(strict_app, "GET", path, {"Host": host})
@@ -478,16 +465,6 @@ def test_a_proxied_request_from_a_loopback_peer_needs_the_pairing_cookie(lan_app
         assert ok.status_code == 200
 
 
-@pytest.mark.parametrize("headers", PROXY_HEADERS)
-@pytest.mark.parametrize("path", ["/mcp", "/mcp/", "/mcp/x"])
-def test_mcp_refuses_a_proxied_request_even_with_the_cookie(cfg, lan_app, headers, path):
-    for app in (lan_app, api.create_app(lambda: cfg)):  # with and without a pairing token
-        cookies = {"cs_lan": TOKEN}
-        r = call(app, "POST", path, "127.0.0.1", headers=headers, json={}, cookies=cookies)
-        assert r.status_code == 403
-        assert r.json()["detail"] == "MCP is loopback-only"
-
-
 def test_a_proxied_device_can_still_pair(lan_app):
     headers = {"X-Forwarded-For": "100.64.0.7"}
     r = call(lan_app, "GET", f"/pair?t={TOKEN}", "127.0.0.1", headers=headers)
@@ -524,9 +501,6 @@ def test_middleware_errors_carry_a_code_next_to_detail(cfg, lan_app, strict_app)
     lan = "192.168.1.9"
     assert body(call(lan_app, "GET", "/api/feed", lan)) == (
         401, {"detail": "pair this device", "code": "unpaired"},
-    )  # fmt: skip
-    assert body(call(lan_app, "GET", "/mcp", lan)) == (
-        403, {"detail": "MCP is loopback-only", "code": "mcp_loopback_only"},
     )  # fmt: skip
     assert body(call(lan_app, "GET", "/pair?t=wrong", lan)) == (
         401, {"detail": "bad pairing token", "code": "bad_pairing_token"},

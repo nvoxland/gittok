@@ -58,6 +58,14 @@ def test_wheel_has_shared_files(wheel_names):
     assert "gittok/prompts/generate.md" in wheel_names
 
 
+def test_wheel_has_everything_that_init_writes(wheel_names):
+    for name in ("mcp.json", "settings.json", "AGENTS.md", "CLAUDE.md", "gitignore", "repos.yaml"):
+        assert f"gittok/templates/{name}" in wheel_names, name
+    assert "gittok/home.py" in wheel_names and "gittok/install.py" not in wheel_names
+    # The clone's own session settings (`uv run ...` commands) are not shipped.
+    assert not any(n.endswith("claude/settings.json") for n in wheel_names)
+
+
 def test_wheel_has_no_local_or_data(wheel_names):
     assert not any("/local/" in n or n.startswith("data/") for n in wheel_names)
 

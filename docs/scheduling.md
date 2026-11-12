@@ -6,7 +6,7 @@ Cards are written by a Claude Code session. GitTok does not start a model by its
 
 | Job | How |
 |---|---|
-| The server: feed, MCP, and the render, learning, profile, notification and garbage-collection workers | `gittok serve`. `gittok install --launchd --apply` adds a LaunchAgent that keeps it running. In a clone, a Claude Code session starts it instead (the project `.mcp.json`) |
+| The feed server: the feed, and the render, learning, profile, notification and garbage-collection workers | A Claude Code session in the GitTok directory starts it (`.mcp.json`) and it stops with the session. `gittok serve` starts it by hand. Nothing keeps it running when no session is open |
 | Analysis of the repos | `gittok analyze` (cached by head commit). `get_brief` also runs it |
 | Notifications | `gittok notify`. The server also runs this pass |
 
@@ -19,7 +19,7 @@ Cards are written by a Claude Code session. GitTok does not start a model by its
 | The feed watch | `gittok feed-watch` blocks until the server says the feed wants cards, then exits. A session that runs it in the background is woken at that moment and runs `/gittok-generate`, then starts the watch again |
 | `/loop 4h /gittok-generate` in a session you leave open | Most ticks end at `nothing_to_do` and cost one MCP call |
 
-In a clone, the project `.claude/settings.json` has both hooks. For an installed tool, add them yourself: see `docs/install.md`, "Session hooks".
+`gittok init` writes both hooks to `.claude/settings.json` of the GitTok directory (`docs/install.md`, "Session hooks"). A clone has them in its own project file.
 
 ## How the feed watch works
 

@@ -488,7 +488,7 @@ def ensure_lan_token(data_dir) -> str:
 LAN_NOTICE = (
     "GitTok serves the feed to your local network over plain HTTP, not HTTPS. Any device on "
     "the network can reach the port, but it gets nothing until it opens the pairing link or "
-    "QR code once. The MCP endpoint is never served to the network. Someone who can watch "
+    "QR code once. Someone who can watch "
     "traffic on that network could read the pairing token and the cards, and cards hold "
     "excerpts of your code. Use it on a network you trust, such as your home network, and "
     "take care on shared or public Wi-Fi. To turn it off, ask Claude to turn off phone access "
@@ -503,11 +503,10 @@ LAN_NOTE = (
     "off phone access."
 )
 LAN_RESTART = (
-    "The server reads this setting when it starts, so it must start again. A server that a "
-    "Claude Code session owns (a clone with .mcp.json): ask the user to run /mcp, pick "
-    "gittok, and Reconnect. A server that the LaunchAgent runs: run "
-    "`launchctl kickstart -k gui/$(id -u)/dev.gittok.serve` with Bash. A server started by "
-    "hand: the user stops it and starts `gittok serve` again."
+    "The server reads this setting when it starts, so it must start again. The Claude Code "
+    "session owns the server: ask the user to run /mcp, pick gittok, and Reconnect, or to "
+    "start a new session in the GitTok directory. A server started by hand: the user stops "
+    "it and starts `gittok serve` again."
 )
 ALL_INTERFACES = ("0.0.0.0", "::")
 PAIRING_PAGE = "/pairing"  # loopback-only page with the QR codes; its URL holds no token
@@ -560,9 +559,9 @@ def pairing_link(
     if not _accepts(local, port):
         out["message"] = (
             f"The feed server does not answer on {local}:{port}, so there is nothing to pair "
-            "with. Start it, then call pairing_link again. In a clone: the user runs /mcp, "
-            "picks gittok, and Reconnect. Installed: run `gittok install --launchd --apply` "
-            "with Bash, or the user starts `gittok serve`."
+            "with. The Claude Code session starts it: ask the user to run /mcp, pick gittok, "
+            "and Reconnect. Then call pairing_link again. If the port is in use by another "
+            "program, the user sets another `server.port` in local/settings.yaml."
         )
         return out
     if wide:

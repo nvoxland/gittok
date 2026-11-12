@@ -54,9 +54,8 @@ def test_no_module_that_writes_under_the_data_dir_calls_mkdir_itself():
     left only where the directory is not under the data dir."""
     not_data = {
         "private.py",  # the helper
-        "config.py",  # the home directory
         "gitq.py",  # the parent of a clone (repos/)
-        "install.py",  # ~/.claude and ~/Library/LaunchAgents
+        "home.py",  # the files of a new GitTok directory (`gittok init`)
         "profiling.py",  # local/profiles
         "refit.py",  # an export directory the user names
         "steering.py",  # local/

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from mcp import Client
 
-from gittok import candidates, db, install, mcp_server
+from gittok import candidates, db, home, mcp_server
 from tests.conftest import make_config
 from tests.fixture_repo import _Builder, build_history_repo
 from tests.test_mcp_e2e import data
@@ -137,7 +137,7 @@ def test_scout_agent_file_has_only_the_two_tools():
     tools = next(ln for ln in head.splitlines() if ln.startswith("tools:"))
     got = {t.strip() for t in tools.removeprefix("tools:").split(",")}
     assert got == {"mcp__gittok__get_candidates", "mcp__gittok__rate_candidates"}
-    assert "gittok-scout.md" in install.AGENT_FILES
+    assert "gittok-scout.md" in home.AGENT_FILES
 
 
 def test_skill_has_scout_step():

@@ -6,7 +6,6 @@ import argparse
 import atexit
 import json
 import os
-import shutil
 import signal
 import socket
 import subprocess
@@ -26,7 +25,7 @@ from gittok import (
     facts,
     gc,
     gitq,
-    install,
+    home,
     learning,
     mcp_server,
     profile,
@@ -42,7 +41,7 @@ from gittok import (
     validator,
 )
 from gittok.api import create_app
-from gittok.config import ConfigError, load_config
+from gittok.config import ConfigError, is_clone, load_config, resolve_roots
 from gittok.steering import SteeringError
 
 FACTS_CHUNK = 5000  # the same per-call cap as the submit_facts MCP tool
@@ -143,7 +142,6 @@ def _banner(port: int, host: str, out) -> str | None:
     everywhere = host in _ALL_INTERFACES
     shown = "127.0.0.1" if everywhere else host
     print(f"feed: http://{shown}:{port}", file=out)
-    print(f"mcp:  http://{shown}:{port}/mcp", file=out)
     if _is_loopback_host(host):
         return None
     addresses = social.lan_addresses() if everywhere else [host]
@@ -160,7 +158,6 @@ def _banner(port: int, host: str, out) -> str | None:
         "trust. To serve this computer only: --no-lan, or `server.lan: false`.",
         file=out,
     )
-    print("MCP (/mcp) is loopback-only and is never reachable from the LAN.", file=out)
     print("PWA install and offline mode need HTTPS: service workers do not register", file=out)
     print("on plain-HTTP LAN origins. The feed still works in the browser over HTTP.", file=out)
     print('For HTTPS, see docs/install.md, "HTTPS on a LAN".', file=out)
@@ -194,6 +191,9 @@ def _serve(args) -> int:
     host, port, _lan = _bind(args)
     lan_token = _banner(port, host, sys.stdout)  # None only for a loopback bind
     if not args.reload:
+        parent = os.environ.get("GITTOK_PARENT_PID")
+        if parent:  # started by `mcp --ui`: the session owns this server
+            _watch_parent(int(parent), _stop_server)
         uvicorn.run(_feed_app(lan_token), host=host, port=port)
         return 0
     # The reloaded worker is a fresh process: it gets the token through the environment.
@@ -218,6 +218,10 @@ def reload_app():
     if parent:
         _watch_parent(int(parent), _stop_reloader)
     return _feed_app(os.environ.get("GITTOK_LAN_TOKEN"))
+
+
+def _stop_server() -> None:
+    os.kill(os.getpid(), signal.SIGTERM)  # uvicorn shuts down cleanly on SIGTERM
 
 
 def _stop_reloader() -> None:
@@ -265,6 +269,10 @@ def _health(args) -> int:
     # Keys the code ignored (a typo, or a key from another version) stay visible here.
     for w in cfg.warnings:
         print(f"GitTok config warning: {w}", file=sys.stdout if args.hint else sys.stderr)
+    if args.hint:
+        for line in (home.version_hint(cfg.root, home.installed_version()), _port_hint(cfg)):
+            if line:
+                print(line)
     if args.hint and not cfg.repos:
         # Nothing can be generated or profiled yet: one line, and no other hint.
         print(f"GitTok: {steering.NO_REPOS_AGENT}")
@@ -293,11 +301,14 @@ def _health(args) -> int:
     return 0
 
 
-FEED_WATCH_HINT = (
-    "GitTok feed watch: start `uv run --quiet gittok feed-watch` with Bash "
-    "run_in_background now (once per session). When it exits, run /gittok-generate, "
-    "then start the watch again."
-)
+def feed_watch_hint(clone: bool) -> str:
+    """The line that arms the feed watch. It names the command of this mode, the same one
+    that the permission entry of the session settings allows."""
+    return (
+        f"GitTok feed watch: start `{home.feed_watch_command(clone)}` with Bash "
+        "run_in_background now (once per session). When it exits, run /gittok-generate, "
+        "then start the watch again."
+    )
 
 
 def _feed_watch(args) -> int:
@@ -306,7 +317,7 @@ def _feed_watch(args) -> int:
     Only whole lines that `supply.parse_wants` accepts count. The output is built from the
     parsed time and count, never copied from the file."""
     if args.hint:
-        print(FEED_WATCH_HINT)
+        print(feed_watch_hint(is_clone(resolve_roots()[1])))
         return 0
     cfg = load_config()
     path = cfg.settings.data_dir / supply.WANTS_FILE
@@ -629,38 +640,73 @@ def _avatars(args) -> int:
     return 0
 
 
-def _install_env(cfg, args) -> install.Env:
-    server = cfg.settings.server
-    installed = cfg.shared is not None and cfg.shared != cfg.root
-    return install.Env(
-        home=Path.home(),
-        repo_root=cfg.shared or cfg.root,
-        data_dir=cfg.settings.data_dir,
-        # The MCP URL is for a client on this machine; "all interfaces" is not an address.
-        host="127.0.0.1" if server.host in _ALL_INTERFACES else server.host,
-        port=server.port,
-        uid=os.getuid(),
-        apply=args.apply,
-        force=args.force,
-        installed=installed,
-        exe=_own_executable() if installed else None,
-        work_dir=cfg.root,
-        lan=server.lan,
+def _init(args) -> int:
+    print("\n".join(home.init(Path(args.dir), home.installed_version())))
+    return 0
+
+
+def _update(args) -> int:
+    target = Path(args.dir) if args.dir else resolve_roots()[1]
+    if not args.dir and is_clone(target):
+        raise home.InitError(
+            f"{target} is a GitTok source clone, not a GitTok directory: there is nothing "
+            "to update."
+        )
+    print("\n".join(home.update(target, home.installed_version())))
+    return 0
+
+
+def _server_dir(port: int) -> str | None:
+    """The GitTok directory of the feed server on this computer's `port`, if one answers."""
+    import httpx
+
+    try:
+        data = httpx.get(f"http://127.0.0.1:{port}/healthz", timeout=2.0).json()
+    except (httpx.HTTPError, ValueError):
+        return None
+    found = data.get("dir") if isinstance(data, dict) else None
+    return found if isinstance(found, str) else None
+
+
+OTHER_PORT = (
+    "To serve both, the user sets another `server.port` in local/settings.yaml of one "
+    "directory, then starts its session again."
+)
+
+
+def _port_note(cfg, port: int, owner: str | None) -> str:
+    """What a session is told when its feed server did not start because the port is taken."""
+    if owner is None:
+        return (
+            f"The feed server of this session did not start: port {port} is in use by a "
+            "program that is not a GitTok feed server. The MCP tools work, but there is no "
+            f"feed. Tell the user. {OTHER_PORT}"
+        )
+    if Path(owner) == cfg.root:
+        return (
+            f"The feed server of this session did not start: another Claude Code session in "
+            f"this directory ({owner}) already serves the feed on port {port}. The MCP tools "
+            "and the feed work. The feed stops when that session ends; then run /mcp, pick "
+            "gittok, and Reconnect here to start it again."
+        )
+    return (
+        f"The feed server of this session did not start: port {port} is in use by the feed "
+        f"server of another GitTok directory, {owner}. The MCP tools here work on this "
+        f"directory ({cfg.root}), but the feed on port {port} shows the cards of {owner}, "
+        f"not the cards of this directory. Tell the user. {OTHER_PORT}"
     )
 
 
-def _own_executable() -> str | None:
-    """The `gittok` script next to this Python, else the first one on PATH."""
-    near = Path(sys.executable).parent / "gittok"
-    return str(near) if near.is_file() else shutil.which("gittok")
-
-
-def _install(args) -> int:
-    cfg = load_config()
-    parts = tuple(p for p in install.PARTS if getattr(args, p)) or install.PARTS
-    env = _install_env(cfg, args)
-    print("\n".join(install.run_install(env, parts, uninstall=args.uninstall)))
-    return 0
+def _port_hint(cfg) -> str | None:
+    """One SessionStart line when another GitTok directory serves this directory's port."""
+    port = cfg.settings.server.port
+    owner = _server_dir(port)
+    if owner is None or Path(owner) == cfg.root:
+        return None
+    return (
+        f"GitTok: port {port} is in use by the feed server of another GitTok directory, "
+        f"{owner}. This session will have no feed of its own. Tell the user. {OTHER_PORT}"
+    )
 
 
 def _port_free(host: str, port: int) -> bool:
@@ -702,17 +748,22 @@ def _refeature(args) -> int:
 
 
 def _mcp(args) -> int:
+    cfg = load_config()  # fails here, with one line, outside a GitTok directory
+    note = None
     if args.ui:
         host, port, lan = _bind(args)
         if _port_free(host, port):
-            # A child `serve --reload` picks up feed and API code changes on save.
-            cmd = [sys.executable, "-m", "gittok", "serve", "--reload"]
+            # The child lives as long as this session. In a source clone it also reloads
+            # when the feed or API code changes; an installed tool has no source to watch.
+            cmd = [sys.executable, "-m", "gittok", "serve"]
+            cmd += ["--reload"] if is_clone(cfg.root) else []
             cmd += ["--host", host, "--port", str(port)] + (["--lan"] if lan else [])
             env = {**os.environ, "GITTOK_PARENT_PID": str(os.getpid())}
             _stop_at_exit(_spawn_ui(cmd, env))
         else:
-            print(f"port {port} is in use: feed not started, MCP only", file=sys.stderr)
-    mcp_server.main()
+            note = _port_note(cfg, port, _server_dir(port))
+            print(f"port {port} is in use: feed not started, MCP only. {note}", file=sys.stderr)
+    mcp_server.main(note=note)
     return 0
 
 
@@ -757,20 +808,34 @@ def _submit_facts(args) -> int:
     return 0
 
 
-def _version() -> str:
-    """The installed package version (from the package metadata)."""
-    from importlib.metadata import PackageNotFoundError, version
-
-    try:
-        return version("gittok")
-    except PackageNotFoundError:  # run from a source tree that is not installed
-        return "unknown"
-
-
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="gittok")
-    parser.add_argument("--version", action="version", version=f"gittok {_version()}")
+    parser = argparse.ArgumentParser(
+        prog="gittok",
+        description="GitTok runs in a GitTok directory. Make one with `gittok init <dir>`, "
+        "then start Claude Code there. The other commands work only inside such a directory.",
+    )
+    parser.add_argument("--version", action="version", version=f"gittok {home.installed_version()}")
     sub = parser.add_subparsers(dest="command", required=True)
+    p = sub.add_parser(
+        "init",
+        help="make a GitTok directory (the path must be new or empty)",
+        description="Make a GitTok directory: the MCP entry, the skills and agents, the "
+        "session hooks, and a place for your cards and settings. The directory is made if "
+        "it does not exist. A directory that is not empty is refused. Nothing is written "
+        "outside it.",
+    )
+    p.add_argument("dir", help="the directory to make, for example ~/gittok")
+    p.set_defaults(fn=_init)
+    p = sub.add_parser(
+        "update",
+        help="rewrite the files that `init` made, after an upgrade of the tool",
+        description="Rewrite .mcp.json, the skills, the agents, the session settings and "
+        "CLAUDE.md of a GitTok directory with the files of the installed version. A file "
+        "that you edited is saved as <name>.bak first. local/, data/ and repos/ are not "
+        "touched.",
+    )
+    p.add_argument("dir", nargs="?", help="the GitTok directory (default: the one you are in)")
+    p.set_defaults(fn=_update)
     p = sub.add_parser("validate", help="validate a JSON file of cards (does not store)")
     p.add_argument("file")
     p.set_defaults(fn=_validate)
@@ -783,7 +848,7 @@ def main(argv: list[str] | None = None) -> int:
         "add",
         help="add a git repo: a local directory, or a remote URL that GitTok clones",
         description="Add a repo to local/repos.yaml. Give a local git checkout, or a remote "
-        "(https://, ssh://, git:// or user@host:path). GitTok clones a remote into its home "
+        "(https://, ssh://, git:// or user@host:path). GitTok clones a remote into the GitTok "
         "directory (repos/<name>) and fetches it before each analysis.",
     )
     q.add_argument("name", help="repo name (optional for a URL: default is its last part)")
@@ -818,7 +883,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--repo")
     p.add_argument("--count", type=int)
     p.set_defaults(fn=_brief)
-    p = sub.add_parser("serve", help="serve the feed, web app, and MCP endpoint")
+    p = sub.add_parser("serve", help="serve the feed and the web app by hand, with no session")
     p.add_argument("--host")
     p.add_argument("--port", type=int)
     p.add_argument(
@@ -830,7 +895,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--no-lan", action="store_true", help="serve this computer only (127.0.0.1)")
     p.add_argument("--reload", action="store_true", help="restart when src/gittok changes")
     p.set_defaults(fn=_serve)
-    p = sub.add_parser("mcp", help="stdio MCP server; --ui also serves the feed")
+    p = sub.add_parser("mcp", help="the MCP server (stdio); --ui also serves the feed")
     p.add_argument("--ui", action="store_true", help="serve the feed while the session runs")
     p.add_argument("--host")
     p.add_argument("--port", type=int)
@@ -936,18 +1001,10 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("avatars", help="generate persona avatar PNGs with mflux")
     p.add_argument("--force", action="store_true")
     p.set_defaults(fn=_avatars)
-    p = sub.add_parser("install", help="register MCP, copy skills, add a LaunchAgent (dry run)")
-    p.add_argument("--apply", action="store_true", help="make the changes (default: print only)")
-    p.add_argument("--force", action="store_true", help="overwrite differing skill files")
-    p.add_argument("--uninstall", action="store_true", help="remove the LaunchAgent")
-    p.add_argument("--mcp", action="store_true", help="only the MCP entry")
-    p.add_argument("--skills", action="store_true", help="only the skills")
-    p.add_argument("--launchd", action="store_true", help="only the LaunchAgent")
-    p.set_defaults(fn=_install)
     args = parser.parse_args(argv)
     try:
         return args.fn(args)
-    except (ConfigError, SteeringError) as e:
+    except (ConfigError, SteeringError, home.InitError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
 

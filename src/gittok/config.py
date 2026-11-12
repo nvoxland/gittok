@@ -255,31 +255,47 @@ def claude_dir(shared: Path) -> Path:
     return dot if dot.is_dir() else shared / "claude"
 
 
-def home_dir() -> Path:
-    """The user's GitTok home for an installed app (GITTOK_HOME or ~/.gittok)."""
-    env = os.environ.get("GITTOK_HOME")
-    return (Path(env).expanduser() if env else Path.home() / ".gittok").resolve()
+MARKER = "gittok.yaml"  # written by `gittok init`; a directory that has it is a GitTok directory
+NO_ROOT = (
+    "not inside a GitTok directory. Make one with `gittok init <dir>` and start Claude Code "
+    "there."
+)
+
+
+def is_clone(root: Path) -> bool:
+    """True for a source clone (it has the shipped `config/`), false for a GitTok directory."""
+    return (root / "config" / "settings.yaml").is_file()
+
+
+def _roots_at(d: Path) -> tuple[Path, Path] | None:
+    if (d / MARKER).is_file():
+        return shipped_root(), d
+    if is_clone(d):
+        return d, d
+    return None
 
 
 def resolve_roots(start: Path | None = None) -> tuple[Path, Path]:
-    """(shared root, home). Clone mode: both are the clone. Installed mode: bundle and home.
+    """(shared root, home). A GitTok directory: the shipped files and the directory. A source
+    clone: both are the clone.
 
-    Order: GITTOK_ROOT, a clone found by walking up from `start`, the installed bundle.
+    The home is found by walking up from `start` (default: the current directory) to a
+    directory with the marker of `gittok init`, or to a clone. `GITTOK_ROOT` names one of
+    the two directly. Nothing is created here.
     """
     env = os.environ.get("GITTOK_ROOT")
     if env:
         r = Path(env).expanduser().resolve()
-        return r, r
+        found = _roots_at(r)
+        if found is None:
+            raise ConfigError(f"GITTOK_ROOT={env} is not a GitTok directory (no {MARKER})")
+        return found
     here = (start or Path.cwd()).resolve()
     for d in (here, *here.parents):
-        if (d / "config" / "settings.yaml").is_file():
-            return d, d
-    b = bundle_dir()
-    if (b / "config" / "settings.yaml").is_file():
-        home = home_dir()
-        home.mkdir(parents=True, exist_ok=True)
-        return b, home
-    raise ConfigError("project root not found: no config/settings.yaml in any parent directory")
+        found = _roots_at(d)
+        if found is not None:
+            return found
+    raise ConfigError(NO_ROOT)
 
 
 def shared_root(start: Path | None = None) -> Path:

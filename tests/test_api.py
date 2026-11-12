@@ -170,39 +170,22 @@ def test_prefs_default_and_follow_the_steering_setting(cfg, client):
     assert client.get("/api/prefs").json() == {"playback_speed": 1.5}
 
 
-def test_mcp_is_served_over_http_on_the_same_app(cfg):
-    import socket
-    import threading
-    import time
+def test_the_feed_server_has_no_mcp_endpoint(cfg):
+    """MCP is stdio only (`gittok mcp`). The feed server gives no MCP reply on any method."""
+    app = api.create_app(lambda: cfg)
+    assert not [r for r in app.routes if getattr(r, "path", "").startswith("/mcp")]
+    init = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
+    with TestClient(app, client=("127.0.0.1", 5000)) as c:
+        assert c.post("/mcp", json=init).status_code in (404, 405)
+        assert c.get("/mcp").status_code == 404
 
-    import uvicorn
-    from mcp import Client
 
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
-    server = uvicorn.Server(
-        uvicorn.Config(api.create_app(lambda: cfg), host="127.0.0.1", port=port, log_level="error")
-    )
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    try:
-        for _ in range(100):
-            if server.started:
-                break
-            time.sleep(0.05)
-        assert server.started
-        import anyio
-
-        async def tools():
-            async with Client(f"http://127.0.0.1:{port}/mcp") as client:
-                return {t.name for t in (await client.list_tools()).tools}
-
-        names = anyio.run(tools)
-    finally:
-        server.should_exit = True
-        thread.join(timeout=5)
-    assert {"get_brief", "submit_cards"} <= names
+def test_healthz_names_the_gittok_directory_to_this_computer_only(cfg):
+    app = api.create_app(lambda: cfg)
+    with TestClient(app, client=("127.0.0.1", 5000)) as c:
+        assert c.get("/healthz").json() == {"ok": True, "dir": str(cfg.root)}
+    with TestClient(app, client=("192.168.1.9", 5000)) as c:
+        assert c.get("/healthz").json() == {"ok": True}
 
 
 @pytest.mark.parametrize("cursor", ["!!!notbase64", "e30=", "bm90LWpzb24=", "NQ=="])

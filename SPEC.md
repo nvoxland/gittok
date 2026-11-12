@@ -47,10 +47,14 @@ This document describes the design. The exact contracts are in `docs/`: card for
                    Browser or phone (web app)
 ```
 
-One Python process serves the feed API, the web app, the MCP endpoint, and the background workers (render, learning, notifications, garbage collection). It runs in one of two ways:
+GitTok lives in one directory, the GitTok directory, that `gittok init <dir>` makes. It holds the MCP entry, the skills and agents, the session hooks, and all the user's files. Nothing is installed outside it, and nothing starts by itself.
 
-- **A Claude Code session owns it.** In a clone, the project `.mcp.json` starts `gittok mcp --ui`: MCP over stdio, plus a child `gittok serve` for the feed while the session runs.
-- **Standalone.** `gittok serve` runs the same app, with MCP over streamable HTTP at `/mcp`. `gittok install` adds a LaunchAgent that keeps it running.
+There are two processes, and a Claude Code session owns both:
+
+- **The MCP server.** The `.mcp.json` of the directory starts `gittok mcp --ui` when a session starts there. It speaks MCP over stdio. This is the only MCP transport.
+- **The feed server.** The MCP server starts it as a child (`gittok serve`). It serves the feed API and the web app and runs the background workers (render, learning, notifications, garbage collection). It has no MCP endpoint. It stops when the session ends.
+
+`gittok serve` can also be started by hand, for a look at the feed without a session.
 
 ## 4. Stack
 

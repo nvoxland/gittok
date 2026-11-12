@@ -1,0 +1,24 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "gittok health --hint 2>/dev/null || true"
+          },
+          {
+            "type": "command",
+            "command": "gittok feed-watch --hint 2>/dev/null || true"
+          }
+        ],
+        "matcher": ""
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(gittok feed-watch)"
+    ]
+  }
+}

@@ -8,7 +8,7 @@ model: sonnet
 
 A profile is data in `local/profiles/<repo>.yaml`. It tells GitTok which code in this repo a new reader should see. GitTok runs the rules and scores the hits. You write the data. You never write code. Do the work yourself. Do not launch subagents.
 
-Requires the `gittok` MCP server (tools named `mcp__gittok__*`). If those tools are missing, say so and help the user start the server, then stop. In a GitTok clone: the user restarts the Claude Code session in the clone (its `.mcp.json` starts `gittok mcp --ui`) and checks `/mcp` for errors. With an installed GitTok: offer to run `gittok install --apply` (it registers the MCP server and starts `gittok serve`); the user then starts a new session and checks `/mcp`.
+Requires the `gittok` MCP server (tools named `mcp__gittok__*`). If those tools are missing, say so and help the user start the server, then stop. The server starts with the Claude Code session, from the `.mcp.json` of a GitTok directory (or of a GitTok clone). So the session must be open in that directory: the user starts `claude` there, approves the `gittok` MCP server, and checks `/mcp` for errors. If the user has no GitTok directory, `gittok init <dir>` makes one.
 
 ## Tools
 

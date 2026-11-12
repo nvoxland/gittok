@@ -3,17 +3,17 @@
 GitTok reads two kinds of files:
 
 - **Shared files** in `config/`. They ship with GitTok. Do not edit them: an upgrade replaces them, and in an installed tool they are inside the package.
-- **Your files** in `local/`. GitTok never ships these. All of them are optional.
+- **Your files** in `local/` of your GitTok directory. GitTok never ships these. All of them are optional.
 
 ## The two roots
 
-GitTok works with two folders: the **shared root** (holds `config/`) and the **home** (holds `local/`, the data directory, and `repos/`). It picks them in this order:
+GitTok works with two folders: the **shared root** (holds `config/`) and the **home** (holds `local/`, the data directory, and `repos/`). The home is your GitTok directory, the one that `gittok init <dir>` made. GitTok picks the two in this order:
 
-1. `GITTOK_ROOT`, if set: that clone is both roots.
-2. A clone found by walking up from the current directory (a folder with `config/settings.yaml`): that clone is both roots.
-3. Otherwise the installed tool: the shared root is inside the package, and the home is `GITTOK_HOME` (default `~/.gittok`). GitTok makes the home on first use.
+1. `GITTOK_ROOT`, if set: that GitTok directory (or that clone of the source).
+2. Otherwise it walks up from the current directory. A folder with `gittok.yaml` is a GitTok directory: it is the home, and the shared root is inside the package. A folder with `config/settings.yaml` is a clone of the source: it is both roots.
+3. With neither, the command stops with an error: not inside a GitTok directory.
 
-So in a clone your files are `<clone>/local/...`, and with an installed tool they are `~/.gittok/local/...`. The paths below are relative to the home.
+So your files are `<gittok dir>/local/...`, and in a clone they are `<clone>/local/...`. The paths below are relative to the home. `gittok.yaml` itself is not a config file: `gittok init` and `gittok update` write it, and you do not edit it.
 
 | File | What it holds | Who writes it |
 |---|---|---|
@@ -104,7 +104,7 @@ The values below are the shipped ones.
 | Key | Value | Meaning |
 |---|---|---|
 | `host` | `127.0.0.1` | The address the server binds |
-| `port` | `8008` | The port of the feed and of `/mcp` |
+| `port` | `8008` | The port of the feed. Give each GitTok directory its own port if two of them have a session at the same time |
 | `lan` | `true` | Serve the feed to the local network, for a phone. The feed goes over plain HTTP, and each device must pair once. `false`: the server answers this computer only (the same as `--no-lan`). Read `docs/install.md`, "Phone access", for what this means on a network you do not trust. To change it, ask Claude ("turn off phone access"), or write the key; then restart the server |
 | `allowed_hosts` | `[]` | Extra `Host` names the server answers to, such as a VPN name. Its own names and addresses are always allowed |
 
@@ -268,5 +268,4 @@ An unknown top-level key in `config/reward.yaml`, or an unknown key in its `weig
 
 | Variable | Meaning |
 |---|---|
-| `GITTOK_HOME` | The home of an installed tool (default `~/.gittok`) |
-| `GITTOK_ROOT` | A clone to use as both roots, from any directory |
+| `GITTOK_ROOT` | A GitTok directory (or a clone of the source) to use from any directory. Without it, GitTok walks up from the current directory |

@@ -1,0 +1,7 @@
+# The repos that GitTok reads. Ask Claude to add one ("add the repo at ~/src/myapp"),
+# or run `gittok repos add <name> <path-or-url>`. Both write this file.
+#
+# repos:
+#   myapp:
+#     path: /path/to/myapp
+#     ref: main

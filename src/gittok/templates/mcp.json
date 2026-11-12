@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "gittok": {
+      "type": "stdio",
+      "command": "gittok",
+      "args": ["mcp", "--ui"]
+    }
+  }
+}

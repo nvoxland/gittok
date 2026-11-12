@@ -1,4 +1,4 @@
-"""FastAPI app: feed API, static web build, and the MCP endpoint in one process."""
+"""FastAPI app: the feed API and the static web build. It has no MCP endpoint (MCP is stdio)."""
 
 from __future__ import annotations
 
@@ -38,7 +38,6 @@ from gittok import (
     gitq,
     knowledge,
     learning,
-    mcp_server,
     private,
     profile,
     render,
@@ -371,7 +370,7 @@ def _error_json(status: int, code: str, detail: str) -> JSONResponse:
 
 
 class SecurityMiddleware:
-    """Host allowlist, Origin check, loopback-only MCP, LAN pairing cookie, a request body
+    """Host allowlist, Origin check, loopback-only pairing page, LAN pairing cookie, a request body
     size limit, and the security headers of every response."""
 
     def __init__(
@@ -446,10 +445,7 @@ class SecurityMiddleware:
                 if k == b"origin" and not await self.hosts.allows(_origin_host(v)):
                     return await reply(_error_json(403, "cross_origin", "cross-origin request"))
 
-        if path == "/mcp" or path.startswith("/mcp/"):
-            if not loopback:
-                return await reply(_error_json(403, "mcp_loopback_only", "MCP is loopback-only"))
-        elif path == social.PAIRING_PAGE:
+        if path == social.PAIRING_PAGE:
             # The page shows the pairing token: only this computer gets it, never a paired
             # device and never a proxied request.
             if not loopback:
@@ -710,11 +706,6 @@ def create_app(
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     lan_token: str | None = None,
 ):
-    mcp = mcp_server.build_server(get_config)
-    mcp_app = mcp.streamable_http_app(
-        streamable_http_path="/mcp", stateless_http=True, json_response=True
-    )
-
     @asynccontextmanager
     async def lifespan(_app):
         worker = render.RenderWorker(get_config, renderers) if render_worker else None
@@ -731,8 +722,7 @@ def create_app(
             if w:
                 w.start()
         try:
-            async with mcp.session_manager.run():
-                yield
+            yield
         finally:
             for w in workers:
                 if w:
@@ -974,11 +964,12 @@ def create_app(
             return steering.get_prefs(c)
 
     @app.get("/healthz")
-    def healthz():
+    def healthz(request: Request):
+        # This computer also learns which GitTok directory this server belongs to: a second
+        # session that finds the port taken tells its user who has it.
+        if _is_loopback(request.scope):
+            return {"ok": True, "dir": str(get_config().root)}
         return {"ok": True}
-
-    # MCP routes go before the static catch-all mount.
-    app.router.routes.extend(mcp_app.routes)
 
     web = _web_dir(get_config())
     if web.is_dir():

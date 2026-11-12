@@ -750,7 +750,7 @@ def _register_config_tools(tool: ToolDecorator, open_url: Callable[[str], Any]) 
         the user asked to remove that repo.
 
         The directory is deleted only for a clone that GitTok made itself: the entry has a
-        `remote` and its path is exactly <GitTok home>/repos/<name>, not a symlink. A
+        `remote` and its path is exactly <GitTok directory>/repos/<name>, not a symlink. A
         directory that the user gave is never touched. Cards already made from the repo stay.
         Returns name, path and deleted_clone.
         Example: remove_repo(name="storefront").
@@ -1000,10 +1000,13 @@ _TOOL_GROUPS = (
 def build_server(
     get_config: Callable[[], Config] = load_config,
     open_url: Callable[[str], Any] = webbrowser.open,
+    note: str | None = None,
 ) -> MCPServer:
     """The GitTok MCP server. `get_config` is called on every tool call, so a change to the
-    user's config files is seen at once. `open_url` opens the pairing page in a browser."""
-    server = GitTokServer("gittok", instructions=INSTRUCTIONS)
+    user's config files is seen at once. `open_url` opens the pairing page in a browser.
+    `note` is one more paragraph of instructions (the state of this session's feed server)."""
+    text = f"{INSTRUCTIONS}\n{note}" if note else INSTRUCTIONS
+    server = GitTokServer("gittok", instructions=text)
     tool = _tool_decorator(server, get_config)
     for register in _TOOL_GROUPS:
         register(tool)
@@ -1011,5 +1014,6 @@ def build_server(
     return server
 
 
-def main() -> None:
-    build_server().run("stdio")
+def main(note: str | None = None) -> None:
+    """Serve MCP over stdio, the only transport."""
+    build_server(note=note).run("stdio")

@@ -118,6 +118,28 @@ jobs:
           [ "$got" = "gittok $VERSION" ] \
             || { echo "::error::gittok --version printed \"$got\", expected \"gittok $VERSION\"."; exit 1; }
 
+      - name: Make a GitTok directory with the wheel
+        run: |
+          gittok="$RUNNER_TEMP/smoke/bin/gittok"
+          home="$RUNNER_TEMP/gittok-home"
+          "$gittok" init "$home"
+          for f in gittok.yaml .mcp.json CLAUDE.md .gitignore local/repos.yaml \
+                   .claude/settings.json \
+                   .claude/skills/gittok-generate/SKILL.md \
+                   .claude/skills/gittok-steer/SKILL.md \
+                   .claude/skills/gittok-profile-repo/SKILL.md \
+                   .claude/agents/gittok-writer.md \
+                   .claude/agents/gittok-scout.md; do
+            test -f "$home/$f" || { echo "::error::gittok init did not write $f."; exit 1; }
+          done
+          if "$gittok" init "$home"; then
+            echo "::error::gittok init accepted a directory that is not empty."; exit 1
+          fi
+          (cd "$home" && "$gittok" repos && "$gittok" update)
+          if (cd "$RUNNER_TEMP" && "$gittok" repos); then
+            echo "::error::gittok ran outside a GitTok directory."; exit 1
+          fi
+
       - uses: actions/upload-artifact@v6
         with:
           name: dist
@@ -164,6 +186,14 @@ jobs:
             Install:
 
             ```bash
+            uv tool install 'gittok[images]==${{ needs.validate-version.outputs.version }}'
+            gittok init ~/gittok
+            cd ~/gittok
+            claude
+            ```
+
+            Without illustrated cards (a smaller install):
+
+            ```bash
             uv tool install gittok==${{ needs.validate-version.outputs.version }}
-            gittok install --apply
             ```

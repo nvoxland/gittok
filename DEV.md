@@ -32,26 +32,28 @@ Start Claude Code in the clone:
 claude
 ```
 
-The project `.mcp.json` makes Claude Code start `uv run gittok mcp --ui`. Approve the `gittok` MCP server when Claude Code asks. That process is the MCP server (stdio). It also starts a child `gittok serve --reload` that serves the feed on port 8008 while the session runs. The child restarts when a file in `src/gittok/` changes. A change to the MCP tools themselves needs `/mcp`, gittok, Reconnect.
+The project `.mcp.json` makes Claude Code start `uv run gittok mcp --ui`. Approve the `gittok` MCP server when Claude Code asks. That process is the MCP server (stdio). It also starts a child `gittok serve --reload` that serves the feed on port 8008 while the session runs (an installed tool starts the child without `--reload`). The child restarts when a file in `src/gittok/` changes. A change to the MCP tools themselves needs `/mcp`, gittok, Reconnect.
 
-In a clone, the clone is the GitTok home: your repo list and settings are in `local/`, the database is in `data/`, and clones of repos added by URL are in `repos/`. All three are in `.gitignore`. `GITTOK_ROOT=<clone>` makes a `gittok` command in any directory use the clone.
+A clone is its own GitTok directory: your repo list and settings are in `local/`, the database is in `data/`, and clones of repos added by URL are in `repos/`. All three are in `.gitignore`. `GITTOK_ROOT=<dir>` makes a `gittok` command in any directory use that clone or GitTok directory. It is the only such variable.
 
 Then use GitTok as the README says: ask Claude to add a repo, profile it, make cards, and pair a phone. The project `.claude/settings.json` has the two SessionStart hooks (`docs/scheduling.md`).
 
 Commands that help during development (`uv run gittok --help` lists all):
 
 ```bash
-uv run gittok serve                  # the server without a Claude session (feed and /mcp on :8008)
+uv run gittok serve                  # the feed server by hand, without a session (:8008, no MCP)
 uv run gittok serve --no-lan         # the same, for this computer only
 uv run gittok repos add <name> <path-or-url>
 uv run gittok structure --prefetch   # download the tree-sitter grammars (once, needs network)
 uv run gittok brief                  # print the brief without opening a run
 uv run gittok health                 # feed health as JSON
 uv run gittok render                 # one render pass
-uv run gittok install                # dry run of the installer, from the clone
+uv run gittok init /tmp/gittok-try   # make a GitTok directory with the code of the clone
 ```
 
-If port 8008 is in use (for example by a LaunchAgent), `gittok mcp --ui` runs MCP only.
+If port 8008 is in use (another session, or a `gittok serve` that you started), `gittok mcp --ui` runs MCP only and tells Claude which directory has the port.
+
+A directory from `uv run gittok init` has a `.mcp.json` that runs the `gittok` on your PATH, not the clone. To try the clone's code in such a directory, install the clone as the tool first (`uv tool install --editable .`), or build and install the wheel (below).
 
 ## Test and lint
 
@@ -81,17 +83,18 @@ npm --prefix web run build      # the web build goes into the wheel
 uv build                        # writes dist/gittok-<version>.tar.gz and dist/gittok-<version>-py3-none-any.whl
 ```
 
-The build stops with an error if `web/build/index.html` is missing. The wheel bundles `config/`, the web build, and the Claude Code skills and agents. A git URL install (`uv tool install git+<url>`) does not work, because the web build is not committed.
+The build stops with an error if `web/build/index.html` is missing. The wheel bundles `config/`, the web build, and the Claude Code skills and agents (`gittok/_bundled/`). The files that `gittok init` writes from templates are package data in `src/gittok/templates/`. A git URL install (`uv tool install git+<url>`) does not work, because the web build is not committed.
 
 Until the first release is on PyPI, `uv tool install gittok` does not work. Install a wheel that you built:
 
 ```bash
 uv tool install ./dist/gittok-<version>-py3-none-any.whl
 uv tool install 'gittok[images] @ ./dist/gittok-<version>-py3-none-any.whl'   # with mflux
-gittok install --apply
+gittok init ~/gittok
+cd ~/gittok && claude
 ```
 
-An installed tool keeps its files in `~/.gittok/` (`GITTOK_HOME`), not in the clone. `docs/install.md` describes the installer and how GitTok picks its folders.
+An installed tool keeps your files in the GitTok directory that you made, not in the clone. `docs/install.md` describes `gittok init`, `gittok update`, and how GitTok picks its folders.
 
 ## Release
 
@@ -123,7 +126,7 @@ What the workflow does:
 |---|---|
 | `validate-version` | Fails when the tag (without the `v`) is not the version in `pyproject.toml` and in `src/gittok/__init__.py`. The error names the file to fix |
 | `test` | On macOS: `uv sync`, `ruff check`, `pytest`, then the web tests on Node 22 |
-| `build` | On Linux: builds the web app, runs `uv build` (sdist, then the wheel from the sdist), checks that both hold the web build, installs the wheel into a fresh environment and runs `gittok --version`, and uploads `dist/*` |
+| `build` | On Linux: builds the web app, runs `uv build` (sdist, then the wheel from the sdist), checks that both hold the web build, installs the wheel into a fresh environment, runs `gittok --version`, makes a GitTok directory with `gittok init` and checks its files, and uploads `dist/*` |
 | `publish-pypi` | After the three jobs above pass: publishes `dist/*` to PyPI |
 | `create-release` | After PyPI: makes the GitHub release `Release vX.Y.Z` with generated notes and attaches the sdist and the wheel |
 

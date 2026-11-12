@@ -1,0 +1,7 @@
+# For when you put this GitTok directory under git.
+# The database, card images and logs:
+data/
+# Clones of the repos you added by URL:
+repos/
+# Old copies that `gittok update` saved:
+*.bak

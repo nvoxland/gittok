@@ -9,7 +9,7 @@ import pytest
 from mcp import Client
 
 from gittok import config as config_mod
-from gittok import install, mcp_server, social
+from gittok import home, mcp_server, social
 from tests.conftest import make_config
 from tests.test_mcp_e2e import data
 from tests.test_steering import make_ycfg
@@ -56,7 +56,8 @@ def test_pairing_link_gives_a_link_per_address_and_opens_the_qr_page(cfg, net):
 
 def test_the_lan_notice_states_the_facts():
     text = social.LAN_NOTICE
-    for fact in ("plain HTTP", "not HTTPS", "pairing link or QR code", "MCP endpoint",
+    assert "MCP" not in text  # MCP is stdio only: the feed server has no MCP endpoint
+    for fact in ("plain HTTP", "not HTTPS", "pairing link or QR code",
                  "watch traffic", "excerpts of your code", "network you trust",
                  "public Wi-Fi", "turn off phone access", "server.lan: false",
                  "docs/install.md"):  # fmt: skip
@@ -112,7 +113,9 @@ def test_pairing_link_when_the_setting_is_on_but_the_server_did_not_restart(cfg,
     out = social.pairing_link(_lan(cfg), open_url=opened.append)
     assert out["lan"] is False and out["links"] == [] and opened == []
     assert "start again" in out["message"] and "Reconnect" in out["message"]
-    assert install.LABEL in social.LAN_RESTART
+    for old in ("launchctl", "LaunchAgent", "gittok install"):
+        assert old not in social.LAN_RESTART
+    assert "new session" in social.LAN_RESTART and "gittok serve" in social.LAN_RESTART
 
 
 def test_pairing_link_when_the_server_is_not_running(cfg, net):
@@ -120,6 +123,7 @@ def test_pairing_link_when_the_server_is_not_running(cfg, net):
     out = social.pairing_link(_lan(cfg), open_url=opened.append)
     assert out["links"] == [] and out["opened"] is False and out["qr_page"] is None
     assert "does not answer" in out["message"] and "8008" in out["message"]
+    assert "Reconnect" in out["message"] and "gittok install" not in out["message"]
     assert opened == []
 
 
@@ -247,7 +251,7 @@ async def test_config_tools_exist_and_no_agent_has_one(cfg):
     async with Client(mcp_server.build_server(lambda: cfg)) as client:
         registered = {t.name for t in (await client.list_tools()).tools}
     assert CONFIG_TOOLS <= registered
-    for name in install.AGENT_FILES:
+    for name in home.AGENT_FILES:
         tools = _agent_tools(name)
         assert tools <= registered, name  # every listed tool is a real one
         assert not tools & CONFIG_TOOLS, (name, tools & CONFIG_TOOLS)

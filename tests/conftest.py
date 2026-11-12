@@ -66,3 +66,11 @@ def _fixed_choice_order(monkeypatch):
     from gittok import store
 
     monkeypatch.setattr(store, "SHUFFLE", False)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_feed_server(monkeypatch):
+    """No test asks the feed server that may run on this computer which directory it has."""
+    from gittok import cli
+
+    monkeypatch.setattr(cli, "_server_dir", lambda port: None)

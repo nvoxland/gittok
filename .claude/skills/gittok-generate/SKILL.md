@@ -8,7 +8,7 @@ model: sonnet
 
 You are the **driver**. You only hand out packet ids and close the run. Writers fetch their own packet, research, and submit their own cards. You never see card JSON, guidance, or leads. Keep it that way: that is what keeps a run cheap.
 
-Requires the `gittok` MCP server (tools named `mcp__gittok__*`). If those tools are missing, say so and help the user start the server, then stop. In a GitTok clone: the user restarts the Claude Code session in the clone (its `.mcp.json` starts `gittok mcp --ui`) and checks `/mcp` for errors. With an installed GitTok: offer to run `gittok install --apply` (it registers the MCP server and starts `gittok serve`); the user then starts a new session and checks `/mcp`.
+Requires the `gittok` MCP server (tools named `mcp__gittok__*`). If those tools are missing, say so and help the user start the server, then stop. The server starts with the Claude Code session, from the `.mcp.json` of a GitTok directory (or of a GitTok clone). So the session must be open in that directory: the user starts `claude` there, approves the `gittok` MCP server, and checks `/mcp` for errors. If the user has no GitTok directory, `gittok init <dir>` makes one.
 
 ## Steps
 
@@ -19,7 +19,7 @@ Requires the `gittok` MCP server (tools named `mcp__gittok__*`). If those tools 
    - `model`: `haiku`
    - `prompt`: exactly `batch_id: <id>` and nothing else.
 
-   If the `gittok-scout` type is not available, use `general-purpose` with `model: haiku` and this prompt: `Read the agent file gittok-scout.md (in .claude/agents/ of this project, or else in ~/.claude/agents/) and follow it. batch_id: <id>`.
+   If the `gittok-scout` type is not available, use `general-purpose` with `model: haiku` and this prompt: `Read the agent file gittok-scout.md (in .claude/agents/ of this directory) and follow it. batch_id: <id>`.
 
    Wait for every scout to reply with its one-line result. Do not redo or fix ratings yourself, and do not call `get_candidates` or `rate_candidates`: you never see candidate content. Then continue to step 1.
 
@@ -32,7 +32,7 @@ Requires the `gittok` MCP server (tools named `mcp__gittok__*`). If those tools 
    - `model`: the packet's `suggested_model` (`haiku` or `sonnet`). **Never use opus** unless the user asked for it in this request.
    - `prompt`: exactly `run_id: <run_id>\npacket_id: <packet id>` and nothing else.
 
-   If the `gittok-writer` type is not available (the session started before it was installed), use `general-purpose` with the same model and this prompt: `Read the agent file gittok-writer.md (in .claude/agents/ of this project, or else in ~/.claude/agents/) and follow it. run_id: <run_id> packet_id: <packet id>`.
+   If the `gittok-writer` type is not available (the session started before it was installed), use `general-purpose` with the same model and this prompt: `Read the agent file gittok-writer.md (in .claude/agents/ of this directory) and follow it. run_id: <run_id> packet_id: <packet id>`.
 
 3. **Wait for every writer** to reply with its one-line result. Do not resubmit, fix, or redo anything yourself. If a writer reports 0 accepted, note it as an empty packet.
 

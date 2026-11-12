@@ -153,6 +153,7 @@ def test_data_dir_tilde(tmp_path, monkeypatch):
 
 
 def test_project_root_env(tmp_path, monkeypatch):
+    write(tmp_path, "settings.yaml", "{}\n")
     monkeypatch.setenv("GITTOK_ROOT", str(tmp_path))
     assert resolve_roots()[1] == tmp_path.resolve()
 

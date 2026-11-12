@@ -9,6 +9,8 @@ from gittok import cli, db
 from tests.cards import example_card, text_card
 from tests.conftest import make_config
 
+REAL_SERVER_DIR = cli._server_dir  # conftest replaces it in every test
+
 
 @pytest.fixture
 def cfg(fixture_repo, tmp_path, monkeypatch):
@@ -94,12 +96,12 @@ def test_serve_runs_uvicorn_and_prints_urls(cfg, monkeypatch, capsys):
     assert hasattr(app, "router")
     out = capsys.readouterr().out
     assert "http://127.0.0.1:9123" in out
-    assert "http://127.0.0.1:9123/mcp" in out
+    assert "/mcp" not in out and "MCP" not in out  # the feed server has no MCP endpoint
 
 
 def test_mcp_command_runs_stdio_server(cfg, monkeypatch):
     called = []
-    monkeypatch.setattr(cli.mcp_server, "main", lambda: called.append(True))
+    monkeypatch.setattr(cli.mcp_server, "main", lambda note=None: called.append(True))
     assert cli.main(["mcp"]) == 0
     assert called == [True]
 
@@ -367,7 +369,7 @@ def test_serve_lan_binds_all_interfaces_and_warns(cfg, monkeypatch, capsys):
     assert "http://127.0.0.1:9123" in out
     assert "http://192.168.1.5:9123" in out and "http://10.0.0.2:9123" in out
     assert "token-protected" in out
-    assert "loopback-only" in out
+    assert "this computer only" in out and "MCP" not in out
     assert "HTTPS" in out
     tok = (cfg.settings.data_dir / "lan_token").read_text().strip()
     assert f"http://192.168.1.5:9123/pair?t={tok}" in out
@@ -431,59 +433,6 @@ def test_notify_runs_one_pass_and_prints_counts(cfg, monkeypatch, capsys):
     assert capsys.readouterr().out.strip() == "new_cards=0 srs_due=0 hot_file=0 new_kind=0"
 
 
-# ---- install ----
-
-
-def _install_env(monkeypatch, tmp_path, cfg, **kw):
-    from gittok import install
-
-    seen = {}
-
-    def fake(cfg_, args):
-        seen["args"] = args
-        return install.Env(
-            home=tmp_path / "home",
-            repo_root=cfg_.root,
-            data_dir=cfg_.settings.data_dir,
-            host="127.0.0.1",
-            port=8008,
-            runner=lambda cmd: (0, ""),
-            which=lambda n: f"/bin/{n}",
-            uid=501,
-            apply=args.apply,
-            force=args.force,
-        )
-
-    monkeypatch.setattr(cli, "_install_env", fake)
-    return seen
-
-
-def test_install_defaults_to_dry_run_all_parts(cfg, tmp_path, monkeypatch, capsys):
-    seen = _install_env(monkeypatch, tmp_path, cfg)
-    assert cli.main(["install"]) == 0
-    out = capsys.readouterr().out
-    assert "DRY RUN" in out
-    assert "mcp:" in out and "launchd:" in out
-    assert seen["args"].apply is False
-    assert not (tmp_path / "home").exists()
-
-
-def test_install_part_flags_select_parts(cfg, tmp_path, monkeypatch, capsys):
-    _install_env(monkeypatch, tmp_path, cfg)
-    assert cli.main(["install", "--launchd"]) == 0
-    out = capsys.readouterr().out
-    assert "launchd:" in out and "mcp:" not in out
-
-
-def test_install_apply_and_uninstall(cfg, tmp_path, monkeypatch, capsys):
-    _install_env(monkeypatch, tmp_path, cfg)
-    assert cli.main(["install", "--launchd", "--apply"]) == 0
-    plist = tmp_path / "home" / "Library" / "LaunchAgents" / "dev.gittok.serve.plist"
-    assert plist.exists()
-    assert cli.main(["install", "--uninstall", "--launchd", "--apply"]) == 0
-    assert not plist.exists()
-
-
 def _mcp_ui(cfg, monkeypatch, free=True):
     seen = {"order": []}
     monkeypatch.setattr(cli, "_port_free", lambda host, port: free)
@@ -491,21 +440,56 @@ def _mcp_ui(cfg, monkeypatch, free=True):
         cli, "_spawn_ui", lambda cmd, env: seen["order"].append(("ui", cmd, env)) or "proc"
     )
     monkeypatch.setattr(cli, "_stop_at_exit", lambda proc: seen.update(stopped=proc))
-    monkeypatch.setattr(cli.mcp_server, "main", lambda: seen["order"].append("mcp"))
+    def fake_main(note=None):
+        seen["order"].append("mcp")
+        seen["note"] = note
+
+    monkeypatch.setattr(cli.mcp_server, "main", fake_main)
+    monkeypatch.setattr(cli, "_server_dir", lambda port: seen.get("owner"))
     return seen
 
 
-def test_mcp_ui_runs_a_reloading_feed_child_before_stdio(cfg, monkeypatch, capsys):
+def _make_clone(cfg):
+    (cfg.root / "config").mkdir()
+    (cfg.root / "config" / "settings.yaml").write_text("{}\n")
+
+
+def test_mcp_ui_runs_a_feed_child_before_stdio(cfg, monkeypatch, capsys):
     seen = _mcp_ui(cfg, monkeypatch)
     assert cli.main(["mcp", "--ui"]) == 0
     ((tag, cmd, env), mcp) = seen["order"]
     assert (tag, mcp) == ("ui", "mcp")
-    assert cmd[1:] == [
-        "-m", "gittok", "serve", "--reload", "--host", "0.0.0.0", "--port", "8008", "--lan",
-    ]  # fmt: skip
+    # A GitTok directory runs an installed tool: there is no source to watch, so no --reload.
+    assert cmd[1:] == ["-m", "gittok", "serve", "--host", "0.0.0.0", "--port", "8008", "--lan"]
     assert env["GITTOK_PARENT_PID"] == str(os.getpid())
-    assert seen["stopped"] == "proc"
+    assert seen["stopped"] == "proc" and seen["note"] is None
     assert capsys.readouterr().out == ""  # stdout carries the MCP protocol
+
+
+def test_mcp_ui_in_a_source_clone_runs_a_reloading_child(cfg, monkeypatch):
+    _make_clone(cfg)
+    seen = _mcp_ui(cfg, monkeypatch)
+    assert cli.main(["mcp", "--ui"]) == 0
+    cmd = seen["order"][0][1]
+    assert cmd[1:5] == ["-m", "gittok", "serve", "--reload"]
+
+
+def test_serve_started_by_a_session_stops_when_the_session_is_gone(cfg, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(cli.uvicorn, "run", lambda app, **kw: None)
+    monkeypatch.setattr(cli, "_watch_parent", lambda pid, on_gone: seen.update(pid=pid, f=on_gone))
+    monkeypatch.setenv("GITTOK_PARENT_PID", "4242")
+    assert cli.main(["serve", "--no-lan"]) == 0
+    assert seen["pid"] == 4242 and seen["f"] is cli._stop_server
+
+
+def test_serve_by_hand_watches_no_parent(cfg, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(cli.uvicorn, "run", lambda app, **kw: None)
+    monkeypatch.setattr(cli, "_watch_parent", lambda pid, on_gone: seen.update(pid=pid))
+    monkeypatch.delenv("GITTOK_PARENT_PID", raising=False)
+    assert cli.main(["serve", "--no-lan"]) == 0
+    assert seen == {}
 
 
 def test_mcp_ui_lan_passes_lan_to_the_child(cfg, monkeypatch):
@@ -515,11 +499,91 @@ def test_mcp_ui_lan_passes_lan_to_the_child(cfg, monkeypatch):
     assert cmd[-1] == "--lan" and "0.0.0.0" in cmd
 
 
-def test_mcp_ui_skips_the_feed_when_the_port_is_taken(cfg, monkeypatch, capsys):
+def test_mcp_ui_skips_the_feed_when_another_directory_has_the_port(cfg, monkeypatch, capsys):
     seen = _mcp_ui(cfg, monkeypatch, free=False)
+    seen["owner"] = "/somewhere/other-gittok"
     assert cli.main(["mcp", "--ui"]) == 0
     assert seen["order"] == ["mcp"]
-    assert "8008 is in use" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "8008 is in use" in err and "/somewhere/other-gittok" in err
+    # The same text reaches Claude in the MCP instructions.
+    note = seen["note"]
+    assert "/somewhere/other-gittok" in note and "8008" in note
+    assert "another GitTok directory" in note and "server.port" in note
+    assert "not the cards of this directory" in note
+
+
+def test_mcp_ui_when_a_session_of_the_same_directory_has_the_port(cfg, monkeypatch, capsys):
+    seen = _mcp_ui(cfg, monkeypatch, free=False)
+    seen["owner"] = str(cfg.root)
+    assert cli.main(["mcp", "--ui"]) == 0
+    assert seen["order"] == ["mcp"]
+    note = seen["note"]
+    assert "another Claude Code session" in note and "this directory" in note
+    assert "stops when that session ends" in note
+
+
+def test_mcp_ui_when_an_unknown_program_has_the_port(cfg, monkeypatch, capsys):
+    seen = _mcp_ui(cfg, monkeypatch, free=False)
+    assert cli.main(["mcp", "--ui"]) == 0
+    assert "not a GitTok feed server" in seen["note"] and "server.port" in seen["note"]
+
+
+def test_server_dir_reads_healthz_of_a_real_server(cfg):
+    import threading
+
+    from gittok import api
+
+    port = _free_port_number()
+    server = cli.uvicorn.Server(
+        cli.uvicorn.Config(
+            api.create_app(lambda: cfg), host="127.0.0.1", port=port, log_level="error"
+        )
+    )
+    t = threading.Thread(target=server.run, daemon=True)
+    t.start()
+    try:
+        for _ in range(100):
+            if server.started:
+                break
+            cli.time.sleep(0.05)
+        assert REAL_SERVER_DIR(port) == str(cfg.root)
+    finally:
+        server.should_exit = True
+        t.join(5)
+    assert REAL_SERVER_DIR(port) is None  # nothing answers
+
+
+def _free_port_number():
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def test_health_hint_says_when_another_directory_serves_the_port(cfg, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_server_dir", lambda port: "/somewhere/other-gittok")
+    assert cli.main(["health", "--hint"]) == 0
+    (line,) = [ln for ln in capsys.readouterr().out.splitlines() if "other-gittok" in ln]
+    assert "8008" in line and "server.port" in line
+
+
+def test_health_hint_is_quiet_about_the_port_when_this_directory_serves_it(
+    cfg, monkeypatch, capsys
+):
+    monkeypatch.setattr(cli, "_server_dir", lambda port: str(cfg.root))
+    assert cli.main(["health", "--hint"]) == 0
+    assert "server.port" not in capsys.readouterr().out
+
+
+def test_mcp_server_puts_the_note_in_its_instructions(cfg):
+    from gittok import mcp_server
+
+    plain = mcp_server.build_server(lambda: cfg)
+    noted = mcp_server.build_server(lambda: cfg, note="NOTE-TEXT")
+    assert "NOTE-TEXT" not in plain.instructions
+    assert noted.instructions.endswith("NOTE-TEXT")
 
 
 def test_serve_reload_runs_the_app_factory_with_reload(cfg, monkeypatch, capsys):
@@ -862,15 +926,6 @@ def test_feed_watch_fires_at_once_for_a_signal_no_run_answered(cfg, capsys):
     assert "want 20 cards" in capsys.readouterr().out
 
 
-def test_install_dry_run_works_without_a_local_dir(tmp_path, monkeypatch, capsys):
-    (tmp_path / "config").mkdir()
-    (tmp_path / "config" / "settings.yaml").write_text("{}\n")
-    monkeypatch.setenv("GITTOK_ROOT", str(tmp_path))
-    assert not (tmp_path / "local").exists()
-    assert cli.main(["install", "--launchd"]) == 0
-    assert not (tmp_path / "local").exists()
-
-
 def _lan_setting(cfg, monkeypatch, **server):
     """Make `load_config` return `cfg` with these `settings.server` values."""
     from dataclasses import replace
@@ -941,8 +996,9 @@ def test_shipped_mcp_json_leaves_lan_serving_to_the_setting():
     import json
 
     root = Path(cli.__file__).parents[2]
-    args = json.loads((root / ".mcp.json").read_text())["mcpServers"]["gittok"]["args"]
-    assert "--lan" not in args and args[-2:] == ["mcp", "--ui"]
+    for file in (root / ".mcp.json", root / "src" / "gittok" / "templates" / "mcp.json"):
+        args = json.loads(file.read_text())["mcpServers"]["gittok"]["args"]
+        assert "--lan" not in args and args[-2:] == ["mcp", "--ui"]
 
 
 # --- first run: no repos yet -------------------------------------------------------------------
@@ -1013,15 +1069,6 @@ def test_repos_add_on_a_fresh_install_adds_any_repo_and_prints_it(tmp_path, monk
     assert "first" in capsys.readouterr().out
     assert cli.main(["repos", "add", "sub", str(repo.parent)]) == 1
     assert "not a git repo" in _one_line(capsys.readouterr().err)
-
-
-@pytest.mark.parametrize("host", ["0.0.0.0", "::", "127.0.0.1"])
-def test_install_mcp_url_uses_loopback_for_a_bind_to_all_interfaces(cfg, monkeypatch, host):
-    import argparse
-
-    cfg = _lan_setting(cfg, monkeypatch, host=host)
-    env = cli._install_env(cfg, argparse.Namespace(apply=False, force=False))
-    assert env.url == "http://127.0.0.1:8008/mcp"  # the server refuses `Host: 0.0.0.0`
 
 
 # --- repos by remote URL -----------------------------------------------------------------------
