@@ -121,7 +121,10 @@ describe('feed page', () => {
 	describe('returning to the page (e43)', () => {
 		const card = (n: number) => fakeCard({ id: `c_${n}`, hook: `Hook ${n}` });
 		const order = () => screen.getAllByRole('article').map((a) => a.textContent ?? '');
-		beforeEach(() => sessionStorage.clear());
+		beforeEach(() => {
+			sessionStorage.clear();
+			localStorage.clear();
+		});
 
 		// Fires the 60%-visible callback for a card, like a user scrolling it into view.
 		function fakeIO() {
@@ -144,12 +147,12 @@ describe('feed page', () => {
 			render(Page);
 			await screen.findByText('Hook 1');
 			fire['c_2']();
-			expect(sessionStorage.getItem('codescroll.current')).toBe('c_2');
+			expect(localStorage.getItem('codescroll.current')).toBe('c_2');
 			expect(history.scrollRestoration).toBe('manual');
 		});
 
 		it('a reload with a changed feed puts the remembered card first; unseen cards stay below', async () => {
-			sessionStorage.setItem('codescroll.current', 'c_3');
+			localStorage.setItem('codescroll.current', 'c_3');
 			// The server resumes on c_1 (its event log lags) and serves c_3 again further down.
 			route({
 				'/api/feed': { cards: [card(1), card(4), card(3), card(5)], next_cursor: 'm', resume_card_id: 'c_1' }
@@ -164,7 +167,7 @@ describe('feed page', () => {
 		});
 
 		it('fetches the remembered card when the new batch does not hold it', async () => {
-			sessionStorage.setItem('codescroll.current', 'c_9');
+			localStorage.setItem('codescroll.current', 'c_9');
 			fetchMock.mockImplementation(async (url: string) => ({
 				ok: true,
 				headers: { get: () => null },
@@ -178,6 +181,27 @@ describe('feed page', () => {
 			render(Page);
 			await screen.findByText('Hook 9');
 			expect(order()[0]).toContain('Hook 9');
+		});
+
+		it('going hidden sends the queued events with sendBeacon, which iOS does not cancel', async () => {
+			const fire = fakeIO();
+			const beacon = vi.fn(() => true);
+			vi.stubGlobal('navigator', { ...navigator, sendBeacon: beacon });
+			route({ '/api/feed': { cards: [card(1), card(2)], next_cursor: null } });
+			render(Page);
+			await screen.findByText('Hook 1');
+			fire['c_2']();
+			const vis = vi.spyOn(document, 'visibilityState', 'get');
+			vis.mockReturnValue('hidden');
+			document.dispatchEvent(new Event('visibilitychange'));
+			vis.mockRestore();
+			expect(beacon).toHaveBeenCalledTimes(1);
+			const [url, blob] = beacon.mock.calls[0] as unknown as [string, Blob];
+			expect(url).toBe('/api/events');
+			const body = JSON.parse(await blob.text());
+			expect(body.events.some((e: { card_id: string; type: string }) => e.card_id === 'c_2' && e.type === 'impression')).toBe(true);
+			const posted = fetchMock.mock.calls.filter(([u]) => String(u) === '/api/events');
+			expect(posted).toHaveLength(0);
 		});
 
 		it('hidden then visible does not refetch or change the list', async () => {

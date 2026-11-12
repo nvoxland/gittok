@@ -51,6 +51,7 @@ export function createBatcher(
 			queue.push({ ...e, data: { ...e.data, event_id: randomId() } });
 		},
 		flush,
+		flushOnExit,
 		start() {
 			timer ??= setInterval(() => void flush(), intervalMs);
 			window.addEventListener('pagehide', onPageHide);

@@ -45,19 +45,20 @@
 	let openStory = $state<number | null>(null);
 	let chromeH = $state(0);
 
-	// The card on screen, kept for this tab so a reload (iOS drops background pages) resumes on it
-	// even when the server's event log has not caught up.
+	// The card on screen, kept on this device so a reload (iOS drops background pages) resumes on it
+	// even when the server's event log has not caught up. localStorage, not sessionStorage: a
+	// browser restart or tab restore (Brave on iOS) starts a new session and would lose it.
 	const CURRENT_KEY = 'codescroll.current';
 	function rememberCurrent(id: string) {
 		try {
-			sessionStorage.setItem(CURRENT_KEY, id);
+			localStorage.setItem(CURRENT_KEY, id);
 		} catch {
 			// storage unavailable: the server resume card still applies
 		}
 	}
 	function readCurrent(): string | null {
 		try {
-			return sessionStorage.getItem(CURRENT_KEY);
+			return localStorage.getItem(CURRENT_KEY);
 		} catch {
 			return null;
 		}
@@ -90,7 +91,8 @@
 		}
 		batcher.start();
 		const onVis = () => {
-			if (document.visibilityState === 'hidden') void batcher.flush();
+			// iOS suspends a hidden page and can cancel a normal request: send with sendBeacon.
+			if (document.visibilityState === 'hidden') batcher.flushOnExit();
 		};
 		document.addEventListener('visibilitychange', onVis);
 		void load();
