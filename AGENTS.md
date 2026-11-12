@@ -20,8 +20,9 @@ bd ready              # Find available work
 bd show <id>          # View issue details
 bd update <id> --claim  # Claim work atomically
 bd close <id>         # Complete work
-bd dolt push          # Push beads data to remote
 ```
+
+Issues in this repo are local only: `.beads/` is gitignored. Do not commit it and do not run `bd dolt push`.
 
 ## Non-Interactive Shell Commands
 
@@ -71,7 +72,7 @@ bd close <id>         # Complete work
 
 ## Session Completion
 
-This repo has no git remote. When ending a work session: file issues for remaining work, run quality gates (`uv run pytest`, `uv run ruff check`, `npm --prefix web test`), update issue status, **commit** all changes (do not push), and hand off a short summary.
+When ending a work session: file issues for remaining work, run quality gates (`uv run pytest`, `uv run ruff check`, `npm --prefix web test`), update issue status, **commit** all changes (push only when the user asks), and hand off a short summary.
 <!-- END BEADS INTEGRATION -->
 
 ## Build & Test
