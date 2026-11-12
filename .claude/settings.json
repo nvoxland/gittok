@@ -20,11 +20,11 @@
           },
           {
             "type": "command",
-            "command": "uv run --quiet codescroll health --hint 2>/dev/null || true"
+            "command": "uv run --quiet gittok health --hint 2>/dev/null || true"
           },
           {
             "type": "command",
-            "command": "uv run --quiet codescroll feed-watch --hint 2>/dev/null || true"
+            "command": "uv run --quiet gittok feed-watch --hint 2>/dev/null || true"
           }
         ],
         "matcher": ""
@@ -33,7 +33,7 @@
   },
   "permissions": {
     "allow": [
-      "Bash(uv run --quiet codescroll feed-watch)"
+      "Bash(uv run --quiet gittok feed-watch)"
     ]
   }
 }
