@@ -40,6 +40,11 @@
 	box-sizing: border-box;
 }
 
+/* No pull-to-refresh or bounce at the top: scrolling back up past the first card reloaded the feed. */
+html {
+	overscroll-behavior-y: none;
+}
+
 html,
 body {
 	margin: 0;

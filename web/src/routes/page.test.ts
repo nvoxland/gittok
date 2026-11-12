@@ -12,6 +12,12 @@ afterEach(() => {
 });
 
 describe('feed page', () => {
+	it('stops the browser pull-to-refresh at the top of the feed (scrolling back up reloaded it)', async () => {
+		const { readFileSync } = await import('node:fs');
+		const css = readFileSync(`${process.cwd()}/src/app.css`, 'utf8');
+		expect(css).toMatch(/html\s*\{[^}]*overscroll-behavior-y:\s*none/);
+	});
+
 	it('has a Saved link in the top bar', async () => {
 		fetchMock.mockResolvedValue({
 			ok: true,
