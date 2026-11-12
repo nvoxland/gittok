@@ -6,6 +6,7 @@ import argparse
 import atexit
 import json
 import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -572,16 +573,26 @@ def _avatars(args) -> int:
 
 def _install_env(cfg, args) -> install.Env:
     server = cfg.settings.server
+    installed = cfg.shared is not None and cfg.shared != cfg.root
     return install.Env(
         home=Path.home(),
-        repo_root=cfg.root,
+        repo_root=cfg.shared or cfg.root,
         data_dir=cfg.settings.data_dir,
         host=server.host,
         port=server.port,
         uid=os.getuid(),
         apply=args.apply,
         force=args.force,
+        installed=installed,
+        exe=_own_executable() if installed else None,
+        work_dir=cfg.root,
     )
+
+
+def _own_executable() -> str | None:
+    """The `blamescroll` script next to this Python, else the first one on PATH."""
+    near = Path(sys.executable).parent / "blamescroll"
+    return str(near) if near.is_file() else shutil.which("blamescroll")
 
 
 def _install(args) -> int:

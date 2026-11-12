@@ -1,11 +1,71 @@
 # Installing Blamescroll for daily use
 
+## Install without a clone
+
+You do not need a clone to use Blamescroll. You need `uv` and `git`.
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh        # if you do not have uv yet
+uv tool install ./blamescroll-0.1.0-py3-none-any.whl   # from a wheel file
+uv tool install blamescroll                            # or from PyPI, when it is published
+```
+
+To build the wheel in a clone: `npm --prefix web run build`, then `uv build --wheel` (the file goes to `dist/`). A git URL install does not work yet, because the web build is not committed.
+
+Optional extras:
+
+```bash
+uv tool install 'blamescroll[structure,profiles]'      # tree-sitter layer, ast-grep rules
+uv tool install 'blamescroll[images]'                  # mflux art (Apple silicon only)
+```
+
+The package carries its own shared files: `config/`, the web app, and the skills and agents. You edit none of them. Your own files live in one home folder:
+
+- `~/.blamescroll/local/`: `repos.yaml`, `profiles/`, and the `settings.yaml`, `personas.yaml`, `mascots.yaml` overlays.
+- `~/.blamescroll/data/`: the database, card images, and logs.
+
+Set `BLAMESCROLL_HOME` to use another folder. Blamescroll makes it on first use.
+
+Then set up Claude Code and the background server:
+
+```bash
+blamescroll install            # dry run: shows what it would do
+blamescroll install --apply    # MCP at http://127.0.0.1:8008/mcp, skills, LaunchAgent (macOS)
+```
+
+The LaunchAgent runs `blamescroll serve` from your home folder. To run it by hand, use `blamescroll serve`. The feed is at `http://127.0.0.1:8008`.
+
+Add a repo in one of two ways:
+
+- Ask Claude to call the `add_repo` MCP tool.
+- Write `~/.blamescroll/local/repos.yaml` yourself:
+
+```yaml
+repos:
+  myapp:
+    path: ~/src/myapp
+```
+
+Upgrade with `uv tool upgrade blamescroll`, then run `blamescroll install --apply --force` to refresh the skills. Uninstall with `blamescroll install --uninstall --launchd --apply`, then `uv tool uninstall blamescroll`. Your `~/.blamescroll` folder stays until you delete it.
+
+The project `.mcp.json` flow (a Claude session owns the server) works only in a clone. A clone keeps working as before: it uses its own `config/`, `local/` and `data/`. `BLAMESCROLL_ROOT` points to a clone from any directory.
+
+How Blamescroll picks its folders:
+
+1. `BLAMESCROLL_ROOT`, if set: that clone holds everything.
+2. A clone found by walking up from the current directory (a `config/settings.yaml`).
+3. Otherwise the installed app: shared files from the package, your files from `BLAMESCROLL_HOME`.
+
+To build a wheel yourself: `npm --prefix web install && npm --prefix web run build && uv build`. The build fails if `web/build` is missing.
+
+## What `blamescroll install` does
+
 `blamescroll install` sets up three things on your machine. It has three parts.
 
 | Part | Flag | What it does |
 |---|---|---|
 | MCP | `--mcp` | Runs `claude mcp add --scope user --transport http blamescroll http://<host>:<port>/mcp`. Claude Code then sees the server from any directory. Skipped if `claude mcp get blamescroll` already shows the same URL. |
-| Skills | `--skills` | Copies `blamescroll-generate` and `blamescroll-steer` from `.claude/skills/` to `~/.claude/skills/`. |
+| Skills | `--skills` | Copies `blamescroll-generate`, `blamescroll-steer` and `blamescroll-profile-repo` (and the writer and scout agents) from `.claude/` in a clone, or from the package when installed, to `~/.claude/skills/`. |
 | LaunchAgent | `--launchd` | Writes `~/Library/LaunchAgents/dev.blamescroll.serve.plist` and loads it. `blamescroll serve` then starts at login and restarts if it stops. Logs go to `<data_dir>/logs/serve.log`. |
 
 With no part flag, all three run. Host and port come from `config/settings.yaml` (`server.host`, `server.port`).
@@ -32,7 +92,7 @@ The dry run only runs read-only checks (`claude mcp get`). It ends with a checkl
 
 Rules for safe changes:
 
-- If a skill file in `~/.claude/skills/` exists and differs from the repo, it is skipped. The output shows a short diff. Use `--force` to overwrite.
+- If a skill file in `~/.claude/skills/` exists and differs from the shipped copy, it is skipped. The output shows a short diff. Use `--force` to overwrite.
 - If `claude` is not on PATH, the MCP command is printed for you to run.
 - If `launchctl` is not on PATH, the plist is written and the `launchctl bootstrap` command is printed.
 - The LaunchAgent PATH holds the directories of `uv`, `git`, and `claude` as found at install time. Run `install --launchd --apply` again if you move them.

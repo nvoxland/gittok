@@ -323,3 +323,50 @@ def test_writer_agent_has_no_check_cards_step():
 
 def test_profile_repo_skill_is_registered():
     assert "blamescroll-profile-repo" in install.SKILL_NAMES
+
+
+# ---- installed mode (shared files in a bundle, user files in a home) ----
+
+
+def make_bundle_env(tmp_path, *, apply=False, which=which_all):
+    bundle = tmp_path / "bundle"
+    for name in install.SKILL_NAMES:
+        (bundle / "claude" / "skills" / name).mkdir(parents=True)
+        (bundle / "claude" / "skills" / name / "SKILL.md").write_text(f"skill {name}\n")
+    (bundle / "claude" / "agents").mkdir(parents=True)
+    for name in install.AGENT_FILES:
+        (bundle / "claude" / "agents" / name).write_text(f"agent {name}\n")
+    return install.Env(
+        home=tmp_path / "home",
+        repo_root=bundle,
+        data_dir=tmp_path / "bh" / "data",
+        host="127.0.0.1",
+        port=8008,
+        runner=FakeRunner(),
+        which=which,
+        uid=501,
+        apply=apply,
+        installed=True,
+        exe="/tool/bin/blamescroll",
+        work_dir=tmp_path / "bh",
+    )
+
+
+def test_skills_copy_from_bundle_claude_dir(tmp_path):
+    env = make_bundle_env(tmp_path, apply=True)
+    install.install_skills(env)
+    assert (env.home / ".claude" / "skills" / "blamescroll-steer" / "SKILL.md").is_file()
+    assert (env.home / ".claude" / "agents" / "blamescroll-writer.md").is_file()
+
+
+def test_installed_plist_runs_the_executable(tmp_path):
+    env = make_bundle_env(tmp_path)
+    plist = install.build_plist(env)
+    assert plist["ProgramArguments"] == ["/tool/bin/blamescroll", "serve"]
+    assert plist["WorkingDirectory"] == str(env.work_dir)
+    assert plist["EnvironmentVariables"]["PATH"].split(":")[0] == "/tool/bin"
+
+
+def test_installed_plist_needs_no_uv(tmp_path):
+    env = make_bundle_env(tmp_path, which=lambda n: None)
+    assert install.build_plist(env)["ProgramArguments"][0] == "/tool/bin/blamescroll"

@@ -112,12 +112,12 @@ def _queries_dir() -> Path:
     from . import config
 
     try:
-        d = config.project_root() / "config" / "queries"
+        d = config.shared_root() / "config" / "queries"
         if d.is_dir():
             return d
     except config.ConfigError:
         pass
-    return Path(__file__).parents[2] / "config" / "queries"
+    return config.shipped_root() / "config" / "queries"
 
 
 @cache

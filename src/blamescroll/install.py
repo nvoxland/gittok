@@ -14,6 +14,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from .config import claude_dir
+
 SKILL_NAMES = ("blamescroll-generate", "blamescroll-steer", "blamescroll-profile-repo")
 AGENT_FILES = (
     "blamescroll-writer.md",
@@ -35,7 +37,7 @@ def default_runner(cmd: list[str]) -> tuple[int, str]:
 @dataclass
 class Env:
     home: Path
-    repo_root: Path
+    repo_root: Path  # the shared root: the clone, or the bundle of an installed app
     data_dir: Path
     host: str
     port: int
@@ -44,6 +46,9 @@ class Env:
     uid: int = 0
     apply: bool = False
     force: bool = False
+    installed: bool = False  # installed app (no clone): LaunchAgent runs `exe serve`
+    exe: str | None = None  # the `blamescroll` executable of an installed app
+    work_dir: Path | None = None  # LaunchAgent working directory in installed mode
 
     @property
     def url(self) -> str:
@@ -97,13 +102,12 @@ def _diff_summary(src: Path, dst: Path, rel: Path, limit: int = 12) -> list[str]
 
 def install_skills(env: Env) -> list[str]:
     """Copy our skills to ~/.claude/skills and our subagent files to ~/.claude/agents."""
+    src_claude = claude_dir(env.repo_root)
     items = [
-        (name, env.repo_root / ".claude" / "skills" / name, env.home / ".claude" / "skills" / name,
-         None)
+        (name, src_claude / "skills" / name, env.home / ".claude" / "skills" / name, None)
         for name in SKILL_NAMES
     ] + [
-        (f"agent {name}", env.repo_root / ".claude" / "agents", env.home / ".claude" / "agents",
-         [Path(name)])
+        (f"agent {name}", src_claude / "agents", env.home / ".claude" / "agents", [Path(name)])
         for name in AGENT_FILES
     ]  # fmt: skip
     lines: list[str] = []
@@ -117,7 +121,7 @@ def install_skills(env: Env) -> list[str]:
             elif target.read_bytes() != (src / rel).read_bytes():
                 (todo if env.force else blocked).append(rel)
         if blocked:
-            lines.append(f"skills: skipped {label}: {dst} differs from the repo (use --force)")
+            lines.append(f"skills: skipped {label}: {dst} differs (use --force)")
             for rel in blocked:
                 lines.append(f"  {rel}")
                 lines += _diff_summary(src / rel, dst / rel, rel)
@@ -143,7 +147,7 @@ def plist_path(env: Env) -> Path:
 
 
 def _path_value(env: Env) -> str:
-    dirs: list[str] = []
+    dirs: list[str] = [str(Path(env.exe).parent)] if env.installed and env.exe else []
     for tool in ("uv", "git", "claude"):
         found = env.which(tool)
         if found:
@@ -153,20 +157,31 @@ def _path_value(env: Env) -> str:
 
 
 def build_plist(env: Env) -> dict:
-    uv = env.which("uv")
-    if not uv:
-        raise FileNotFoundError("uv not found on PATH")
+    if env.installed:
+        if not env.exe:
+            raise FileNotFoundError("blamescroll executable not found")
+        args = [env.exe, "serve"]
+        work = env.work_dir or env.home
+    else:
+        uv = env.which("uv")
+        if not uv:
+            raise FileNotFoundError("uv not found on PATH")
+        args = [uv, "run", "--project", str(env.repo_root), "blamescroll", "serve"]
+        work = env.repo_root
     log = str(env.data_dir / "logs" / "serve.log")
-    return {
+    plist = {
         "Label": LABEL,
-        "ProgramArguments": [uv, "run", "--project", str(env.repo_root), "blamescroll", "serve"],
-        "WorkingDirectory": str(env.repo_root),
+        "ProgramArguments": args,
+        "WorkingDirectory": str(work),
         "RunAtLoad": True,
         "KeepAlive": True,
         "StandardOutPath": log,
         "StandardErrorPath": log,
         "EnvironmentVariables": {"PATH": _path_value(env)},
     }
+    if env.installed:
+        plist["EnvironmentVariables"]["BLAMESCROLL_HOME"] = str(work)
+    return plist
 
 
 def _launchctl(env: Env, verb: str) -> list[str]:
@@ -177,7 +192,8 @@ def install_launchd(env: Env) -> list[str]:
     try:
         plist = build_plist(env)
     except FileNotFoundError:
-        return ["launchd: `uv` not found on PATH, cannot build the LaunchAgent"]
+        what = "`blamescroll`" if env.installed else "`uv`"
+        return [f"launchd: {what} not found on PATH, cannot build the LaunchAgent"]
     data = plistlib.dumps(plist)
     plistlib.loads(data)  # validate
     path = plist_path(env)

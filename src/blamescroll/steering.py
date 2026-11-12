@@ -764,7 +764,7 @@ def _edit_locked(cfg, root: Path, edits: dict) -> None:
             lines = (original[f] or "").splitlines()
             fn(lines)
             _write_atomic(root / f, "\n".join(lines) + "\n")
-        load_config(cfg.root)
+        load_config(cfg.root, cfg.shared)
     except BaseException as e:
         for f, old in original.items():
             if old is None:

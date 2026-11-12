@@ -11,7 +11,6 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 from functools import lru_cache
-from pathlib import Path
 
 import yaml
 
@@ -48,7 +47,9 @@ def entropy(s: str) -> float:
 
 @lru_cache(maxsize=1)
 def _spec() -> tuple[tuple[_Pattern, ...], re.Pattern]:
-    file = Path(__file__).parents[2] / "config" / "secrets.yaml"
+    from . import config
+
+    file = config.shipped_root() / "config" / "secrets.yaml"
     data = yaml.safe_load(file.read_text()) or {}
     pats = []
     for p in data["patterns"]:

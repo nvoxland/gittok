@@ -50,7 +50,9 @@ def _strong(source: str | None) -> bool:
 
 @cache
 def _claims() -> dict:
-    for root in (Path.cwd(), Path(__file__).parents[2]):
+    from . import config
+
+    for root in (Path.cwd(), config.shipped_root()):
         file = root / "config" / "claims.yaml"
         if file.is_file():
             return yaml.safe_load(file.read_text()) or {}

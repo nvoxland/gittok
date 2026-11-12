@@ -9,6 +9,7 @@ import re
 from collections.abc import Callable
 from contextlib import asynccontextmanager, closing
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -257,6 +258,15 @@ class NotificationsRead(BaseModel):
 
 class EventBatch(BaseModel):
     events: list[Event] = Field(max_length=500)
+
+
+def _web_dir(cfg: Config) -> Path:
+    """The built web app: `web/build` in a clone, `web` in the installed bundle."""
+    for rel in (("web", "build"), ("web",)):
+        d = cfg.shared_path(*rel)
+        if (d / "index.html").is_file():
+            return d
+    return cfg.shared_path("web", "build")
 
 
 NO_BUILD_HTML = (
@@ -648,7 +658,7 @@ def create_app(
     # MCP routes go before the static catch-all mount.
     app.router.routes.extend(mcp_app.routes)
 
-    web = get_config().root / "web" / "build"
+    web = _web_dir(get_config())
     if web.is_dir():
         app.mount("/", SPAStaticFiles(directory=web, html=True), name="web")
     else:

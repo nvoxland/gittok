@@ -107,6 +107,7 @@ Blamescroll (working name; see `SPEC.md`) is a personal TikTok-style feed of car
 - `web/` is a SvelteKit static app: vertical snap-scroll feed, horizontal depth panels.
 - Card formats, visual kinds, and the `resolved` shapes the client renders are specified in `docs/formats.md`. Meme, illustration, and comic cards are stored `pending_render` and appear in the feed after the render worker draws them (memegen for memes, mflux for illustrations).
 - Config lives in `config/*.yaml`; the card contract is `src/blamescroll/schema/card.schema.json`; agent guidance is `src/blamescroll/prompts/generate.md`; runtime data goes in `data/` (gitignored).
+- **Two roots.** `config.resolve_roots()` gives (shared, home). Shared files (`config/`, `web/build`, `.claude/skills|agents`) come from `cfg.shared_path(...)`; user files (`local/`, relative `data_dir`) come from `cfg.root`. In a clone both are the clone. Installed (`uv tool install`), shared is the wheel's `blamescroll/_bundled/` and home is `BLAMESCROLL_HOME` (default `~/.blamescroll`). Never use `parents[2]`; use `config.shipped_root()`. A wheel needs `web/build` first (`hatch_build.py` checks). See `docs/install.md`.
 
 ## Conventions & Patterns
 

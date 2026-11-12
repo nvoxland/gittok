@@ -85,7 +85,7 @@ class RewardConfigError(ValueError):
 def load_reward_config(cfg) -> RewardConfig:
     """Read config/reward.yaml; missing file means built-in defaults, unknown keys are errors."""
     base = RewardConfig()
-    path = cfg.root / "config" / "reward.yaml"
+    path = (getattr(cfg, "shared", None) or cfg.root) / "config" / "reward.yaml"
     if not path.is_file():
         return base
     data = yaml.safe_load(path.read_text()) or {}

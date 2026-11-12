@@ -193,6 +193,11 @@ class Config:
     languages: dict = field(default_factory=dict)  # config/languages.yaml
     profiles: dict = field(default_factory=dict)  # repo -> profiles.Profile (local/profiles/)
     scan_defaults: dict = field(default_factory=dict)  # config/scan_defaults.yaml
+    shared: Path | None = None  # where config/, web/ and claude/ live; None means `root`
+
+    def shared_path(self, *parts: str) -> Path:
+        """A path under the shared root (the clone, or the bundle in an installed app)."""
+        return (self.shared or self.root).joinpath(*parts)
 
     def repo(self, name: str) -> Repo:
         try:
@@ -217,15 +222,57 @@ class Config:
         return self.profile(repo).role_for(path)
 
 
-def project_root(start: Path | None = None) -> Path:
+def bundle_dir() -> Path:
+    """The shared files bundled in the installed package (absent in a clone)."""
+    return Path(__file__).parent / "_bundled"
+
+
+def shipped_root() -> Path:
+    """Where the shipped `config/` lives: the bundle when installed, else the clone."""
+    b = bundle_dir()
+    return b if (b / "config").is_dir() else Path(__file__).parents[2]
+
+
+def claude_dir(shared: Path) -> Path:
+    """The folder with `skills/` and `agents/`: `.claude` in a clone, `claude` in the bundle."""
+    dot = shared / ".claude"
+    return dot if dot.is_dir() else shared / "claude"
+
+
+def home_dir() -> Path:
+    """The user's Blamescroll home for an installed app (BLAMESCROLL_HOME or ~/.blamescroll)."""
+    env = os.environ.get("BLAMESCROLL_HOME")
+    return (Path(env).expanduser() if env else Path.home() / ".blamescroll").resolve()
+
+
+def resolve_roots(start: Path | None = None) -> tuple[Path, Path]:
+    """(shared root, home). Clone mode: both are the clone. Installed mode: bundle and home.
+
+    Order: BLAMESCROLL_ROOT, a clone found by walking up from `start`, the installed bundle.
+    """
     env = os.environ.get("BLAMESCROLL_ROOT")
     if env:
-        return Path(env).expanduser().resolve()
+        r = Path(env).expanduser().resolve()
+        return r, r
     here = (start or Path.cwd()).resolve()
     for d in (here, *here.parents):
         if (d / "config" / "settings.yaml").is_file():
-            return d
+            return d, d
+    b = bundle_dir()
+    if (b / "config" / "settings.yaml").is_file():
+        home = home_dir()
+        home.mkdir(parents=True, exist_ok=True)
+        return b, home
     raise ConfigError("project root not found: no config/settings.yaml in any parent directory")
+
+
+def project_root(start: Path | None = None) -> Path:
+    """The home: the folder with `local/` and a relative `data_dir`."""
+    return resolve_roots(start)[1]
+
+
+def shared_root(start: Path | None = None) -> Path:
+    return resolve_roots(start)[0]
 
 
 def _read(path: Path, required: bool = False) -> Any:
@@ -297,13 +344,13 @@ _SETTINGS_KEYS = {
 }  # fmt: skip
 
 
-def _load_settings(root: Path) -> Settings:
+def _load_settings(root: Path, shared: Path | None = None) -> Settings:
     """config/settings.yaml, with the optional local/settings.yaml merged over it.
 
     Top-level keys replace; mapping sections merge key by key. Each file is checked on its
     own first, so an unknown key names the file that holds it.
     """
-    base_file = root / "config" / "settings.yaml"
+    base_file = (shared or root) / "config" / "settings.yaml"
     local_file = root / "local" / "settings.yaml"
     base = _mapping(_read(base_file), "settings", base_file)
     local = _mapping(_read(local_file), "settings", local_file)
@@ -398,15 +445,15 @@ def _load_repos(root: Path) -> tuple[dict[str, Repo], dict[str, Group]]:
 
 
 def _overlay_entries(
-    root: Path, fname: str, top: str, kind: str, allowed: set[str]
+    root: Path, fname: str, top: str, kind: str, allowed: set[str], shared: Path | None = None
 ) -> dict[str, tuple[dict, Path]]:
     """Entries of `config/<fname>` with `local/<fname>` merged over them per name, field by field.
 
     Each entry comes with the file that last set it, for error messages.
     """
     out: dict[str, tuple[dict, Path]] = {}
-    for folder in ("config", "local"):
-        file = root / folder / fname
+    for folder, base in (("config", shared or root), ("local", root)):
+        file = base / folder / fname
         data = _mapping(_read(file), fname, file)
         _check_keys(data, {top}, fname, file)
         for name, raw in _text_keys(_mapping(data.get(top), top, file), kind, file).items():
@@ -416,10 +463,10 @@ def _overlay_entries(
     return out
 
 
-def _load_personas(root: Path) -> dict[str, Persona]:
+def _load_personas(root: Path, shared: Path | None = None) -> dict[str, Persona]:
     out: dict[str, Persona] = {}
     entries = _overlay_entries(
-        root, "personas.yaml", "personas", "persona", {"name", "voice", "bio"}
+        root, "personas.yaml", "personas", "persona", {"name", "voice", "bio"}, shared
     )
     for handle, (raw, file) in entries.items():
         for req in ("name", "voice"):
@@ -429,9 +476,11 @@ def _load_personas(root: Path) -> dict[str, Persona]:
     return out
 
 
-def _load_mascots(root: Path) -> dict[str, Mascot]:
+def _load_mascots(root: Path, shared: Path | None = None) -> dict[str, Mascot]:
     out: dict[str, Mascot] = {}
-    entries = _overlay_entries(root, "mascots.yaml", "mascots", "mascot", {"repo", "style", "seed"})
+    entries = _overlay_entries(
+        root, "mascots.yaml", "mascots", "mascot", {"repo", "style", "seed"}, shared
+    )
     for name, (raw, file) in entries.items():
         if not raw.get("style"):
             raise ConfigError(f"mascot '{name}' is missing 'style' ({file})")
@@ -440,7 +489,7 @@ def _load_mascots(root: Path) -> dict[str, Mascot]:
 
 
 def _load_meme_templates(root: Path) -> dict[str, MemeTemplate]:
-    file = root / "config" / "meme_templates.yaml"
+    file = root / "config" / "meme_templates.yaml"  # `root` is the shared root here
     data = _mapping(_read(file), "meme_templates.yaml", file)
     _check_keys(data, {"templates"}, "meme_templates.yaml", file)
     out: dict[str, MemeTemplate] = {}
@@ -469,7 +518,7 @@ def load_languages(root: Path | None = None) -> dict:
     """config/languages.yaml as {"thresholds": {...}, "languages": {name: {...}}}."""
     import re
 
-    root = project_root() if root is None else Path(root)
+    root = shared_root() if root is None else Path(root)
     file = root / "config" / "languages.yaml"
     data = _mapping(_read(file), "languages.yaml", file)
     _check_keys(data, {"languages", "thresholds"}, "languages.yaml", file)
@@ -497,10 +546,10 @@ _SCAN_KEYS = {"scan", "ignore", "kinds", "generated_markers", "noise"}
 
 def load_scan_defaults(root: Path | None = None) -> dict:
     """config/scan_defaults.yaml: the file set of a repo that has no profile."""
-    root = project_root() if root is None else Path(root)
+    root = shared_root() if root is None else Path(root)
     file = root / "config" / "scan_defaults.yaml"
     if not file.is_file():  # a test root without the file: use the shipped one
-        file = Path(__file__).parents[2] / "config" / "scan_defaults.yaml"
+        file = shipped_root() / "config" / "scan_defaults.yaml"
     data = _mapping(_read(file, required=True), "scan_defaults.yaml", file)
     _check_keys(data, _SCAN_KEYS, "scan_defaults.yaml", file)
     return data
@@ -514,10 +563,10 @@ _FILE_TYPE_KEYS = {
 
 def load_file_types(root: Path | None = None) -> dict:
     """config/file_types.yaml: extension tables, noise file names, manifest names."""
-    root = project_root() if root is None else Path(root)
+    root = shared_root() if root is None else Path(root)
     file = root / "config" / "file_types.yaml"
     if not file.is_file():  # a test root without the file: use the shipped one
-        file = Path(__file__).parents[2] / "config" / "file_types.yaml"
+        file = shipped_root() / "config" / "file_types.yaml"
     data = _mapping(_read(file, required=True), "file_types.yaml", file)
     _check_keys(data, _FILE_TYPE_KEYS, "file_types.yaml", file)
     return data
@@ -533,7 +582,7 @@ def _file_types_cached() -> dict:
     try:
         return load_file_types()
     except ConfigError:
-        return load_file_types(Path(__file__).parents[2])
+        return load_file_types(shipped_root())
 
 
 @cache
@@ -545,7 +594,7 @@ def language_extensions() -> frozenset[str]:
     try:
         langs = load_languages()
     except ConfigError:
-        langs = load_languages(Path(__file__).parents[2])
+        langs = load_languages(shipped_root())
     out = {e for raw in langs["languages"].values() for e in raw["extensions"]}
     out |= set(structure._by_ext())
     return frozenset(out)
@@ -562,23 +611,33 @@ def file_word_extensions() -> frozenset[str]:
     return frozenset(e.lstrip(".") for e in exts) | frozenset(file_types().get("file_words") or ())
 
 
-def load_config(root: Path | None = None) -> Config:
-    root = project_root() if root is None else Path(root).resolve()
+def load_config(root: Path | None = None, shared: Path | None = None) -> Config:
+    """Load all config. `root` is the home (`local/`, data); `shared` holds `config/`.
+
+    With no `root`, both come from `resolve_roots()`. With a `root` alone, shared is the root.
+    """
+    if root is None:
+        shared_dir, root = resolve_roots()
+        shared = shared or shared_dir
+    else:
+        root = Path(root).resolve()
+        shared = Path(shared).resolve() if shared else root
     from .profiles import load_profiles
 
     repos, groups = _load_repos(root)
-    defaults_file = root / "config" / "defaults.yaml"
+    defaults_file = shared / "config" / "defaults.yaml"
     defaults = _mapping(_read(defaults_file), "defaults.yaml", defaults_file)
     return Config(
         root=root,
+        shared=shared,
         repos=repos,
         groups=groups,
-        settings=_load_settings(root),
+        settings=_load_settings(root, shared),
         defaults=defaults,
-        personas=_load_personas(root),
-        mascots=_load_mascots(root),
-        meme_templates=_load_meme_templates(root),
-        languages=load_languages(root),
+        personas=_load_personas(root, shared),
+        mascots=_load_mascots(root, shared),
+        meme_templates=_load_meme_templates(shared),
+        languages=load_languages(shared),
         profiles=load_profiles(root),
-        scan_defaults=load_scan_defaults(root),
+        scan_defaults=load_scan_defaults(shared),
     )

@@ -25,7 +25,6 @@ import posixpath
 import re
 from dataclasses import dataclass, field
 from functools import cache
-from pathlib import Path
 
 from . import config, db, detectors, gitq, secrets, structure
 from .config import AnalysisSettings
@@ -139,7 +138,7 @@ def _default_languages() -> dict:
     try:
         return config.load_languages()
     except config.ConfigError:
-        return config.load_languages(Path(__file__).parents[2])
+        return config.load_languages(config.shipped_root())
 
 
 def compiled_languages() -> dict[str, Lang]:
