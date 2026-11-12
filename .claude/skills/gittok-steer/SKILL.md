@@ -12,11 +12,27 @@ Requires the `gittok` MCP server (tools named `mcp__gittok__*`). If those tools 
 
 ## Tools
 
-`get_taste_profile`, `feed_health`, `explain_weights(feature)`, `list_rules`, `add_rule`, `remove_rule`, `reset_defaults`, `coverage(repo)`, `recent_cards`, `card_stats`, `list_repos`. Config tools: `add_repo`, `remove_repo`, `set_group`, `set_mascot`, `edit_persona`, `set_playback_speed`, `set_lan`, `pairing_link`. A config tool changes the user's own setup: call one only for a request the user made in this conversation.
+`get_taste_profile`, `feed_health`, `explain_weights(feature)`, `list_rules`, `add_rule`, `remove_rule`, `reset_defaults`, `coverage(repo)`, `recent_cards(limit, repo)`, `card_stats`, `list_repos`, `recent_runs(limit)`, `status`. Config tools: `add_repo`, `remove_repo`, `set_group`, `set_mascot`, `edit_persona`, `set_playback_speed`, `set_lan`, `pairing_link`. A config tool changes the user's own setup: call one only for a request the user made in this conversation.
 
 ## Steps
 
 "How is the feed doing": call `feed_health` and report backlog, runway_days, and image_share.
+
+### Q. Questions about GitTok's state
+
+Answer these with the tools. Do not read the database or run the CLI for them.
+
+| The user asks | Call |
+|---|---|
+| Which repos are set up? Are they profiled? Are there cards for repo X yet? When were the last ones made? | `list_repos` (`profiled`, `cards`, `unseen`, `last_card_at`) |
+| What is in the feed now? How long will it last? | `feed_health` (`backlog`, `by_repo`, `runway_days`, `want`) |
+| What were the last cards (of repo X)? How did card Y do? | `recent_cards(limit, repo)`, `card_stats(card_id)` |
+| Did the last run work? Why were cards rejected? Is a run open now? | `recent_runs(limit)` |
+| Which version is this? Is the directory up to date? Is the feed server up? | `status` |
+| Is phone access on? What is the address? | `status` (`server.lan`), `pairing_link` |
+| Which rules are active? What did it learn? | `list_rules`, `get_taste_profile`, `explain_weights(feature)` |
+| Which parts of repo X did I see? | `coverage(repo)` |
+| Are the grammars of repo X downloaded? What is in its profile? | `survey_repo(repo)`, `rule_stats(repo)` |
 
 ### R. The user asks to add or remove a repo
 
@@ -26,7 +42,7 @@ Requires the `gittok` MCP server (tools named `mcp__gittok__*`). If those tools 
    - Tell the user in one line that you now profile the repo so that GitTok learns which code is worth teaching, that it takes a few minutes and some model quota, and that it may ask permission to run a code analyzer. Then run the `gittok-profile-repo` skill for it (`/gittok-profile-repo <name>`). That skill offers the grammar download when grammars are missing.
    - After the profile, tell the user in one line that you make the first cards. Then run the `gittok-generate` skill (`/gittok-generate`). It stops by itself when the feed has enough cards (`get_brief` answers `nothing_to_do`); then say that in one line.
    - If the user said not to profile the repo or not to make cards, do not.
-4. **Remove.** Call `list_repos` if the name is unclear, then `remove_repo(name)`. Tell the user what the result says: the entry is gone; a clone that GitTok made is deleted (`deleted_clone` true); a directory of their own is not touched; cards already made from the repo stay.
+4. **Remove.** Call `list_repos` if the name is unclear, then `remove_repo(name)`. It removes the entry and all that GitTok made for the repo, and it cannot be undone. Tell the user what the result says, with the counts: how many cards and files are gone (`cards_removed`, `files_removed`), rules on the repo (`rules_removed`), the profile (`profile_removed`), a mascot that is gone (`mascots_removed`) or kept and why (`mascots_kept`); a clone that GitTok made is deleted (`deleted_clone` true); a directory of their own is not touched; the learned weights stay. If the result has `pending`, say that the cards go with the next clean-up. Pass `keep_data=true` only when the user asks to keep the cards: then the cards, the profile and the mascot stay, and the feed does not show them until a repo of the same name is added again.
 5. "Which repos do you have": `list_repos`. "Put X in group Y": `set_group`.
 
 ### P. Phone access: the pairing QR code, and turning it off or on

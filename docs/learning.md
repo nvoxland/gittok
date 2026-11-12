@@ -199,6 +199,25 @@ Liked means the latest `like` event has `on: true`. If gc already removed the li
 
 Deleting a card removes its `card_features`, its `assets` rows, its files in `data/assets/<card_id>/`, and its `srs` row. `notifications.card_id` becomes NULL.
 
+Repos that are not configured. A pass also deletes all that GitTok holds for a repo that is not in `local/repos.yaml` any more (removed by hand, or left by an older version): its cards with every row that hangs off them, the rows keyed by the repo, and the files. This rule does not look at age, saved marks or review dates. The counts are `orphan_repos`, `orphan_cards` and `orphan_files`, also in a dry run. A repo removed with `keep_data` is not touched. The feed and the backlog count never include cards of a repo that is not configured, so such cards are not shown between the removal and the next pass.
+
+Removing a repo (`remove_repo`, `gittok repos remove`) uses the same code at once. `gc.delete_cards` is the one function that deletes cards, and `gc.purge_repo` deletes a repo's data:
+
+| what | on removal of the repo |
+|---|---|
+| `cards` whose own repo (the first of `repos`) is the repo, with `card_features`, `assets`, `srs` | deleted |
+| `events`, `rewards`, `knowledge_events`, `saved_cards`, `replies`, `requests`, `notifications` of those cards | deleted (an old card deleted by the rules above keeps them) |
+| `replies.answered_card_id`, `digests.card_id` that point at such a card | set to NULL |
+| `stories` of the repo | deleted, unless a card of another repo still has the story key |
+| `leads`, `candidates`, `candidate_ratings`, `scout_batches`, `knowledge`, `knowledge_symbols`, `digests`, `requests`, `story_views` of the repo | deleted |
+| `git_signals`, `fact_*`, `repo_groups`, `mascots` rows of the repo, and its `repos` row | deleted |
+| `hot_file` notifications of the repo, `rules` on the repo (`feature = repo`), followed paths of the repo | deleted |
+| `runs` of the repo | kept without the repo and the brief (the daily run cap counts them); an open run becomes `expired`; the folder `data/runs/<id>/` is deleted |
+| `weights` | kept: they are about the reader |
+| files | `data/assets/<card_id>/` of each card, after the rows are committed |
+
+The rows go in one transaction and the files after it, so a crash leaves a whole database. Before the rows go, `process_events` runs once, so closed impressions of these cards still reach the weights. An impression that is still open (the last minutes) is lost. A card of another repo that only cites the removed repo stays: it is drawn from its stored `resolved` data, and a source in the removed repo has no link.
+
 What stays, and why:
 
 - `stories`: the duplicate check reads it, so a deleted story is not made again.

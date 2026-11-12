@@ -582,9 +582,8 @@ def _repos_add(args) -> int:
 
 
 def _repos_remove(args) -> int:
-    out = steering.remove_repo(load_config(), args.name)
-    what = "its clone is deleted" if out["deleted_clone"] else "the directory is not touched"
-    print(f"removed repo {out['name']} ({out['path']}): {what}")
+    out = steering.remove_repo(load_config(), args.name, keep_data=args.keep_data)
+    print(steering.removal_summary(out))
     return 0
 
 
@@ -663,14 +662,7 @@ def _update(args) -> int:
 
 def _server_dir(port: int) -> str | None:
     """The GitTok directory of the feed server on this computer's `port`, if one answers."""
-    import httpx
-
-    try:
-        data = httpx.get(f"http://127.0.0.1:{port}/healthz", timeout=2.0).json()
-    except (httpx.HTTPError, ValueError):
-        return None
-    found = data.get("dir") if isinstance(data, dict) else None
-    return found if isinstance(found, str) else None
+    return home.server_dir(port)
 
 
 OTHER_PORT = (
@@ -755,6 +747,7 @@ def _refeature(args) -> int:
 def _mcp(args) -> int:
     cfg = load_config()  # fails here, with one line, outside a GitTok directory
     note = None
+    owns = False
     if args.ui:
         host, port, lan = _bind(args)
         if _port_free(host, port):
@@ -765,10 +758,11 @@ def _mcp(args) -> int:
             cmd += ["--host", host, "--port", str(port)] + (["--lan"] if lan else [])
             env = {**os.environ, "GITTOK_PARENT_PID": str(os.getpid())}
             _stop_at_exit(_spawn_ui(cmd, env))
+            owns = True
         else:
             note = _port_note(cfg, port, _server_dir(port))
             print(f"port {port} is in use: feed not started, MCP only. {note}", file=sys.stderr)
-    mcp_server.main(note=note)
+    mcp_server.main(note=note, owns_server=owns)
     return 0
 
 
@@ -863,9 +857,22 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--mascot")
     q.set_defaults(repos_fn=_repos_add)
     q = rsub.add_parser(
-        "remove", help="remove a repo; a clone that GitTok made is deleted, your own is not"
+        "remove",
+        help="remove a repo and all that GitTok made for it; your own directory is not touched",
+        description="Remove a repo from local/repos.yaml and its groups. Also removed: its "
+        "cards with their events, saved marks and image files; its analysis, facts, leads and "
+        "knowledge; steering rules on the repo; its profile (local/profiles/<name>.yaml); a "
+        "mascot of the repo that you defined and no other repo uses; and the clone, when "
+        "GitTok made it from a URL. Kept: the learned weights and shipped mascots. The "
+        "directory you gave is never touched.",
     )
     q.add_argument("name")
+    q.add_argument(
+        "--keep-data",
+        action="store_true",
+        help="remove only the entry: keep the cards, the profile and the mascot (the feed "
+        "does not show them until a repo of this name is added again)",
+    )
     q.set_defaults(repos_fn=_repos_remove)
     q = rsub.add_parser("group", help="put a repo in a group")
     q.add_argument("repo")

@@ -281,13 +281,14 @@ Every other `GET` path serves the built web app; an unknown path serves `index.h
 `feed_health()` is a read-only MCP tool. `gittok health` prints the same JSON.
 
 ```json
-{ "backlog": 41, "burn_per_day": 12.0, "runway_days": 3.4, "target_days": 3,
+{ "backlog": 41, "by_repo": { "storefront": 30, "api-server": 11 }, "burn_per_day": 12.0, "runway_days": 3.4, "target_days": 3,
   "want": 0, "pending_render": 2, "render_failed": 0,
   "image_share": { "ready": 0.02, "shown_7d": 0.0 }, "db_mb": 3.1, "assets_mb": 0.6,
   "gc": { "at": "2026-06-01T12:00:00Z", "counts": { "seen": 4, "liked": 0, "unseen": 1 } } }
 ```
 
-- `backlog`: ready cards with no impression in the last `repeat_days`.
+- `backlog`: ready cards with no impression in the last `repeat_days`. Cards of a repo that is not configured do not count.
+- `by_repo`: the backlog per configured repo.
 - `burn_per_day`: distinct cards shown per day, mean of 7 days, never below `agent.min_burn_per_day`.
 - `want`: how many cards to make so the backlog lasts `agent.target_runway_days`. It is 0, or between `agent.min_run_count` and `agent.max_count`.
 - `gc`: when the last real garbage collection pass ran and what it deleted, or `null` before the first pass (see docs/learning.md).

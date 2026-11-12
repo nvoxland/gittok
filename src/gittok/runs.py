@@ -322,6 +322,35 @@ def _summary(run: dict) -> dict:
     }
 
 
+def recent(conn, limit: int = 5) -> list[dict]:
+    """The newest runs first: counts, times and the top reject reasons. No card text."""
+    rows = conn.execute(
+        "SELECT u.id, p.name AS repo FROM runs u LEFT JOIN repos p ON p.id = u.repo_id "
+        "ORDER BY u.started_at DESC, u.id DESC LIMIT ?",
+        (max(0, int(limit)),),
+    ).fetchall()
+    out = []
+    for r in rows:
+        run = get_run(conn, r["id"])
+        s = _summary(run)
+        out.append(
+            {
+                "run_id": s["run_id"],
+                "status": s["status"],
+                "repo": r["repo"],
+                "started_at": run["started_at"],
+                "finished_at": run["finished_at"],
+                "requested": run["requested"],
+                "accepted": s["accepted"],
+                "rejected": s["rejected"],
+                "submissions": s["submissions"],
+                "duration_ms": s["duration_ms"],
+                "top_reject_reasons": s["top_reject_reasons"],
+            }
+        )
+    return out
+
+
 def finish_run(conn, run_id: str, notes: dict | None = None, now: datetime | None = None) -> dict:
     now = now or datetime.now(UTC)
     run = get_run(conn, run_id)

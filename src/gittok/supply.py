@@ -16,8 +16,44 @@ MB = 1024 * 1024
 WANTS_FILE = "feed-wants-cards.log"  # the server appends; `gittok feed-watch` waits on it
 
 
+def unconfigured_cards(conn, cfg) -> set[str]:
+    """Ids of the cards whose own repo is not configured now. The feed never shows them."""
+    return {
+        r["id"]
+        for r in conn.execute("SELECT c.id, r.name FROM cards c JOIN repos r ON r.id = c.repo_id")
+        if r["name"] not in cfg.repos
+    }
+
+
+def repo_card_counts(conn) -> dict[str, dict]:
+    """Stored cards per repo, in one query: {name: {cards, last_card_at}}. A repo with no
+    card is not in it."""
+    rows = conn.execute(
+        "SELECT r.name, COUNT(*) AS n, MAX(c.created_at) AS last FROM cards c "
+        "JOIN repos r ON r.id = c.repo_id GROUP BY r.name"
+    )
+    return {r["name"]: {"cards": r["n"], "last_card_at": r["last"]} for r in rows}
+
+
+def unseen_by_repo(conn, cfg, rc, now: datetime) -> dict[str, int]:
+    """Unseen ready cards per configured repo (0 for a repo with none)."""
+    ids = unseen_ready(conn, rc, now)
+    out = dict.fromkeys(cfg.repos, 0)
+    for i in range(0, len(ids), 500):
+        chunk = ids[i : i + 500]
+        for r in conn.execute(
+            "SELECT r.name, COUNT(*) AS n FROM cards c JOIN repos r ON r.id = c.repo_id "
+            f"WHERE c.id IN ({','.join('?' * len(chunk))}) GROUP BY r.name",
+            chunk,
+        ):
+            if r["name"] in out:
+                out[r["name"]] += r["n"]
+    return out
+
+
 def unseen_ready(conn, rc, now: datetime) -> list[str]:
-    """Ready cards with no impression in the last `repeat_days`, by id."""
+    """Ready cards with no impression in the last `repeat_days`, by id. Cards of every stored
+    repo: a caller that serves or counts the feed takes out `unconfigured_cards`."""
     from gittok import slotter  # slotter imports this module
 
     cutoff_ms = int((now - timedelta(days=slotter._knobs(rc)["repeat_days"])).timestamp() * 1000)
@@ -80,7 +116,8 @@ def feed_health(conn, cfg, now: datetime) -> dict:
     from gittok import learning
 
     agent = cfg.settings.agent
-    backlog = len(unseen_ready(conn, learning.load_reward_config(cfg), now))
+    by_repo = unseen_by_repo(conn, cfg, learning.load_reward_config(cfg), now)
+    backlog = sum(by_repo.values())  # cards of a repo that is not configured do not count
     burn = max(burn_per_day(conn, now), agent.min_burn_per_day)
     short = math.ceil(agent.target_runway_days * burn) - backlog
     # A run has a fixed start-up cost: when one is needed, make at least min_run_count cards.
@@ -90,6 +127,7 @@ def feed_health(conn, cfg, now: datetime) -> dict:
     db_file = conn.execute("PRAGMA database_list").fetchone()["file"]
     return {
         "backlog": backlog,
+        "by_repo": by_repo,
         "burn_per_day": round(burn, 1),
         "runway_days": round(backlog / burn, 1),
         "target_days": agent.target_runway_days,
@@ -172,7 +210,7 @@ def signal_wants_cards(conn, cfg, now: datetime) -> int:
         return 0
     last = path.stat().st_mtime if path.exists() else None
     if last is not None and now.timestamp() - last < agent.wake_cooldown_hours * 3600:
-        if unseen_ready(conn, learning.load_reward_config(cfg), now):
+        if any(unseen_by_repo(conn, cfg, learning.load_reward_config(cfg), now).values()):
             return 0
         answered = conn.execute(
             "SELECT 1 FROM runs WHERE started_at > ?", (_iso(datetime.fromtimestamp(last, UTC)),)

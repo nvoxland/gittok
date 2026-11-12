@@ -302,6 +302,7 @@ def build_batch(conn, cfg, limit: int, served: set[str], seed: int, now: datetim
     rc = learning.load_reward_config(cfg)
     rng = random.Random(seed)
     knobs = _knobs(rc)
+    served = served | supply.unconfigured_cards(conn, cfg)  # a removed repo is never shown
     due = [d for d in srs.due_cards(conn, now) if d not in served]
     ids = [i for i in supply.unseen_ready(conn, rc, now) if i not in served and i not in due]
     # Variants of one story are never close together: skip stories shown within repeat_days.

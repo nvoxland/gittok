@@ -352,6 +352,8 @@ def test_recent_cards_newest_first_with_engagement(conn, cfg):
     assert [r["id"] for r in rows] == [new, old]
     assert rows[0] == {
         "id": new,
+        "repo": "fixture",
+        "group": None,
         "created_at": "2026-05-30T00:00:00Z",
         "story_type": "rip",
         "format": "text_post",
@@ -1114,7 +1116,8 @@ def test_remove_repo_deletes_a_managed_clone(fresh_cfg, remote):
     cfg = config_mod.load_config(fresh_cfg.root)
     dest = cfg.repos["proj"].path
     out = steering.remove_repo(cfg, "proj")
-    assert out == {"name": "proj", "path": str(dest), "deleted_clone": True}
+    assert (out["name"], out["path"], out["deleted_clone"]) == ("proj", str(dest), True)
+    assert (out["cards_removed"], out["files_removed"], out["kept_data"]) == (0, 0, False)
     assert not dest.exists()
     new = config_mod.load_config(fresh_cfg.root)
     assert new.repos == {} and new.groups["work"].repos == ()

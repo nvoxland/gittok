@@ -456,6 +456,7 @@ The MCP server is named `gittok`. Its tools fall into these groups:
 | Read-only research | `git_log`, `git_show`, `git_blame`, `git_grep`, `read_file`, `list_dir`, `defined_where`, `who_calls`, `what_calls`, `symbol_history`, `facts_for` |
 | Repo profiles | `survey_repo`, `test_detector`, `save_profile`, `rule_stats`, `submit_facts` |
 | What the feed learned | `get_taste_profile`, `explain_weights`, `feed_health`, `coverage`, `recent_cards`, `card_stats` |
+| State | `status`, `recent_runs` (with `list_repos`, `feed_health` and `recent_cards`, these answer questions about GitTok's state, so the agent does not read the database or run the CLI) |
 | Steering | `list_rules`, `add_rule`, `remove_rule`, `reset_defaults`, `set_playback_speed` |
 | Config | `list_repos`, `add_repo`, `remove_repo`, `set_group`, `set_mascot`, `edit_persona` |
 | Phone access | `pairing_link`, `set_lan` |
@@ -465,7 +466,8 @@ Every repo tool takes a configured repo name, never a path. The one exception is
 The user manages GitTok by asking the agent in plain words: the server's MCP instructions and the `gittok-steer` skill map such requests to the Config, Phone access and Steering tools. These tools change the user's setup, so they are only for a request the user made in the conversation. The writer and scout subagents do not have them, and the generation and profiling skills forbid them.
 
 - `add_repo` accepts the root of any git repo on the machine (own `.git`, top of the checkout, has a commit, not inside a configured repo). The permission prompt of Claude Code is the consent. `repos.allowed_roots`, when the user set it, limits the tool to those directories.
-- `remove_repo` removes the entry. It deletes the directory only for a clone that GitTok made (`remote` set, path exactly `<home>/repos/<name>`, not a symlink).
+- `remove_repo` removes the entry and all that GitTok made for the repo: its cards with every row and file that hangs off them, the rows keyed by the repo, its profile, the rules on the repo, and a mascot of the repo that the user defined and no other repo uses. The learned weights stay. A card of another repo that only cites the repo stays. `keep_data` removes only the entry. It deletes the directory only for a clone that GitTok made (`remote` set, path exactly `<home>/repos/<name>`, not a symlink). Garbage collection does the same for a repo that is no longer configured, and the feed never serves its cards (`docs/learning.md`, "Garbage collection").
+- `list_repos` gives per repo `profiled`, `cards`, `unseen` and `last_card_at`. `feed_health` gives the backlog, also per repo (`by_repo`). `recent_cards(limit, repo)` names the repo and group of each card. `recent_runs(limit)` gives the last runs with counts and the top reject reasons. `status` gives the version, the directory and its files version, and the state of the feed server.
 - `pairing_link` returns the pairing links, opens the loopback-only QR page (`/pairing`) in the browser, and carries a `notice` about LAN serving that the agent relays to the user. `set_lan` writes only `server.lan` in `local/settings.yaml`; the change needs a server restart.
 
 The server writes `<data_dir>/profile.md`, a plain-English summary of the learned taste, once a day. The CLI (`gittok --help`) gives the same functions without an agent.
@@ -485,7 +487,7 @@ One database file in the data directory. The schema is `src/gittok/migrations/`.
 - `card_features`, `assets`.
 - `events`, `rewards`, `weights`, `rules`, `srs`, `prefs`.
 - `notifications`, `story_views`, `replies`.
-- `stories`: one row per story ever made. Garbage collection never deletes it, so duplicate checks survive card deletion.
+- `stories`: one row per story ever made. Garbage collection never deletes it, so duplicate checks survive card deletion. The exception is a removed repo: all its data goes.
 - `saved_cards`: the cards the reader saved. Garbage collection never deletes a saved card.
 - `leads`: the lead ledger, one row per commit lead or per path and blob. Garbage collection deletes only leads that are old and were never covered.
 - `candidates`, `candidate_ratings`, `scout_batches`: mined code windows and their scout ratings.

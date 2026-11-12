@@ -318,7 +318,7 @@ def test_run_files_pruned(conn, cfg):
 def test_social_rows_pruned(conn, cfg):
     conn.executemany(
         "INSERT INTO story_views(repo, sha, seen_at) VALUES (?, ?, ?)",
-        [("a", "1", iso(40)), ("a", "2", iso(5))],
+        [("fixture", "1", iso(40)), ("fixture", "2", iso(5))],
     )
     conn.executemany(
         "INSERT INTO notifications(kind, text, created_at, read_at) VALUES ('k', 't', ?, ?)",
@@ -395,7 +395,7 @@ def add_lead(conn, path, seen_days_ago, covered=0):
     conn.execute(
         "INSERT INTO leads(repo, story_type, kind, path, lead_key, text, strength, head_sha, "
         "first_seen_at, last_seen_at, times_covered) "
-        "VALUES ('r', 'hot_spot', 'path', ?, 'p:' || ?, 't', 1.0, 'h', ?, ?, ?)",
+        "VALUES ('fixture', 'hot_spot', 'path', ?, 'p:' || ?, 't', 1.0, 'h', ?, ?, ?)",
         (path, path, iso(400), iso(seen_days_ago), covered),
     )
     conn.commit()

@@ -83,13 +83,17 @@ def decode_cursor(cursor: str) -> tuple[list[str], int]:
     return served, seed
 
 
-def last_seen_card(conn) -> str | None:
-    """The card of the newest impression that is still a ready card (None when there is none)."""
+def last_seen_card(conn, cfg=None) -> str | None:
+    """The card of the newest impression that is still a ready card (None when there is none).
+    With `cfg`, None also when that card's repo is not configured."""
     row = conn.execute(
-        "SELECT c.id FROM events e JOIN cards c ON c.id = e.card_id "
+        "SELECT c.id, r.name FROM events e JOIN cards c ON c.id = e.card_id "
+        "JOIN repos r ON r.id = c.repo_id "
         "WHERE e.type = 'impression' AND c.status = 'ready' ORDER BY e.ts DESC LIMIT 1"
     ).fetchone()
-    return row[0] if row else None
+    if row is None or (cfg is not None and row["name"] not in cfg.repos):
+        return None
+    return row[0]
 
 
 def filter_excluded(conn, repo: str | None, dir: str | None) -> set[str]:
@@ -134,7 +138,7 @@ def page(
     if cursor:
         served, seed = decode_cursor(cursor)
     elif not (repo or dir):
-        resume = last_seen_card(conn)
+        resume = last_seen_card(conn, cfg)
     hidden = filter_excluded(conn, repo, dir) if (repo or dir) else set()
     seen = {token(t) for t in served}
     served_ids = (

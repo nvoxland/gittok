@@ -95,6 +95,8 @@ Ask Claude:
 
 Claude calls the `add_repo`, `list_repos` and `remove_repo` MCP tools. Claude Code asks for your permission before each call.
 
+Removing a repo removes all that GitTok made for it: its cards (also the saved ones) with their images, its analysis, its profile (`local/profiles/<name>.yaml`), the rules on the repo, and a mascot of the repo that you defined yourself and no other repo uses. A clone that GitTok made from a URL is deleted. A directory of your own is never touched, and what the feed learned about your taste stays. Claude tells you the counts. To keep the cards, the profile and the mascot, say so ("remove storefront but keep its cards"; the command is `gittok repos remove storefront --keep-data`): the feed does not show them until you add a repo with the same name again.
+
 - A local path must be the root of a git repo that has a commit, and not a directory inside a repo that is already added. It may be anywhere on this computer. GitTok reads it and never changes it.
 - A remote URL (`https://`, `ssh://`, `git://` or `git@host:org/repo.git`) is cloned into the GitTok directory, at `repos/<name>`. GitTok fetches this clone before each analysis.
 - A URL must not hold a password or token. For a private repo, use an ssh URL or a git credential helper. The clone does not ask for a password; it fails.
@@ -109,7 +111,7 @@ The same steps as commands:
 gittok repos add myapp ~/src/myapp
 gittok repos add https://example.com/acme/storefront.git    # the name comes from the URL: storefront
 gittok repos                                            # list
-gittok repos remove storefront
+gittok repos remove storefront                          # also its cards, profile and mascot; --keep-data keeps them
 ```
 
 `gittok repos add` in a terminal is your own act: `repos.allowed_roots` does not apply to it. You can also write `local/repos.yaml` yourself:

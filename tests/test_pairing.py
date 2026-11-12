@@ -194,9 +194,13 @@ async def test_remove_repo_tool_removes_the_entry_and_keeps_the_directory(fixtur
         tools = {t.name: t for t in (await client.list_tools()).tools}
         doc = " ".join(tools["remove_repo"].description.split())
         assert "local/repos.yaml" in doc and "never" in doc
-        assert "Cards already made from the repo stay" in doc
+        for said in ("cards", "profile", "mascot", "learned weights", "never touched", "keep_data"):
+            assert said in doc, said
+        assert "stay" not in doc
         out = data(await client.call_tool("remove_repo", {"name": "beta"}))
         assert out["name"] == "beta" and out["deleted_clone"] is False
+        assert (out["cards_removed"], out["profile_removed"], out["kept_data"]) == (0, False, False)
+        assert out["mascots_removed"] == [] and out["mascots_kept"] == []
         assert fixture_repo.path.exists()
         names = {r["name"] for r in data(await client.call_tool("list_repos", {}))}
         assert names == {"alpha"}

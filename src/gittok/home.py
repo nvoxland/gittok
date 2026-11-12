@@ -47,6 +47,18 @@ def installed_version() -> str:
         return "unknown"
 
 
+def server_dir(port: int) -> str | None:
+    """The GitTok directory of the feed server on this computer's `port`, if one answers."""
+    import httpx
+
+    try:
+        data = httpx.get(f"http://127.0.0.1:{port}/healthz", timeout=2.0).json()
+    except (httpx.HTTPError, ValueError):
+        return None
+    found = data.get("dir") if isinstance(data, dict) else None
+    return found if isinstance(found, str) else None
+
+
 def cli_command(clone: bool) -> str:
     """How a session runs the command line: through uv in a clone, the tool elsewhere."""
     return "uv run --quiet gittok" if clone else "gittok"

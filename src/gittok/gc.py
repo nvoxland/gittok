@@ -1,7 +1,9 @@
 """Garbage collection: delete cards and files that have no further use.
 
 Kept for good: `stories` (duplicate checks), `rewards` and `weights` (learning), `runs` rows,
-covered `leads`, and saved cards (`saved_cards`).
+covered `leads`, and saved cards (`saved_cards`). A repo that is no longer configured is the
+exception: `purge_repo` deletes all that GitTok holds for it, except the weights.
+`delete_cards` is the one place that knows how to delete a card.
 See docs/learning.md, "Garbage collection".
 """
 
@@ -16,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from gittok import db, private
+from gittok.characters import FOLLOW_KEY
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +39,187 @@ def _is_liked(like_data: str | None, story_liked: int | None) -> bool:
         return bool(story_liked)
     data = db.loads(like_data)
     return bool(data.get("on", True)) if isinstance(data, dict) else True
+
+
+# --- deleting cards and repos ----------------------------------------------------------------
+
+# Tables with a `card_id` column. `delete_cards` handles each one.
+CARD_TABLES = frozenset({
+    "card_features", "assets", "events", "rewards", "srs", "notifications", "saved_cards",
+    "knowledge_events", "replies", "requests", "digests",
+})  # fmt: skip
+# Tables with a `repo` (name) or `repo_id` column. `_delete_repo_rows` handles each one.
+_BY_NAME = (
+    "story_views", "candidates", "candidate_ratings", "scout_batches", "leads", "knowledge",
+    "knowledge_symbols", "digests", "requests",
+)  # fmt: skip
+_BY_REPO_ID = (
+    "git_signals", "repo_groups", "mascots", "fact_builds", "fact_defines", "fact_calls",
+    "fact_imports", "fact_touched", "fact_analyzers", "fact_schema",
+)  # fmt: skip
+REPO_TABLES = frozenset({*_BY_NAME, *_BY_REPO_ID, "stories", "runs", "cards"})
+_FORGET = ("events", "rewards", "knowledge_events", "saved_cards", "replies", "requests")
+KEPT_KEY = "kept_repos"  # prefs: repos removed with keep_data, which gc must leave
+_CHUNK = 500
+
+
+def delete_cards(conn, ids: list[str], forget: bool = False) -> None:
+    """Delete the rows of these cards. The caller owns the transaction; `card_dirs` gives the
+    files, which go after the commit.
+
+    Always: the card, its features, its asset rows and its review schedule (`srs`). Without
+    `forget` (a card that got old) what the reader did stays: events, rewards, replies,
+    requests, and a notification loses only its link. With `forget` (the repo is gone) all of
+    that goes too, and so does a saved mark."""
+    for i in range(0, len(ids), _CHUNK):
+        chunk = ids[i : i + _CHUNK]
+        marks = ",".join("?" * len(chunk))
+        conn.execute(f"DELETE FROM srs WHERE card_id IN ({marks})", chunk)
+        if forget:
+            for table in _FORGET:
+                conn.execute(f"DELETE FROM {table} WHERE card_id IN ({marks})", chunk)
+            conn.execute(f"DELETE FROM notifications WHERE card_id IN ({marks})", chunk)
+            conn.execute(
+                f"UPDATE replies SET answered_card_id = NULL WHERE answered_card_id IN ({marks})",
+                chunk,
+            )
+            conn.execute(f"UPDATE digests SET card_id = NULL WHERE card_id IN ({marks})", chunk)
+        else:
+            conn.execute(
+                f"UPDATE notifications SET card_id = NULL WHERE card_id IN ({marks})", chunk
+            )
+        conn.execute(f"DELETE FROM card_features WHERE card_id IN ({marks})", chunk)
+        conn.execute(f"DELETE FROM assets WHERE card_id IN ({marks})", chunk)
+        conn.execute(f"DELETE FROM cards WHERE id IN ({marks})", chunk)
+
+
+def card_dirs(cfg, ids: list[str]) -> list[Path]:
+    """The image folders of these cards that exist: <data_dir>/assets/<card id>."""
+    root = cfg.settings.data_dir / "assets"
+    return [root / i for i in ids if (root / i).is_dir()]
+
+
+def _file_count(dirs: list[Path]) -> int:
+    return sum(1 for d in dirs for p in d.rglob("*") if p.is_file())
+
+
+def repo_card_ids(conn, name: str) -> list[str]:
+    """Ids of the cards whose own repo (the first of their `repos`) is `name`."""
+    rows = conn.execute(
+        "SELECT c.id FROM cards c JOIN repos r ON r.id = c.repo_id WHERE r.name = ? ORDER BY c.id",
+        (name,),
+    )
+    return [r[0] for r in rows]
+
+
+def kept_repos(conn) -> set[str]:
+    """Repos removed with keep_data: not configured, but their data is kept on purpose."""
+    row = conn.execute("SELECT value FROM prefs WHERE key = ?", (KEPT_KEY,)).fetchone()
+    return set(json.loads(row["value"])) if row else set()
+
+
+def set_kept(conn, name: str, keep: bool) -> None:
+    """Add `name` to the kept repos or take it out (the caller commits)."""
+    names = kept_repos(conn)
+    if (name in names) == keep:
+        return
+    names = names | {name} if keep else names - {name}
+    conn.execute(
+        "INSERT INTO prefs(key, value, updated_at) VALUES (?, ?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        (KEPT_KEY, json.dumps(sorted(names)), db.now_iso()),
+    )
+
+
+def _stored_repos(conn) -> set[str]:
+    """Every repo name the database holds a row for."""
+    names = {r[0] for r in conn.execute("SELECT name FROM repos")}
+    for table in (*_BY_NAME, "stories"):
+        names |= {
+            r[0] for r in conn.execute(f"SELECT DISTINCT repo FROM {table}") if r[0] is not None
+        }
+    return names
+
+
+def orphan_repos(conn, cfg) -> list[str]:
+    """Repos with stored rows that are not configured and were not kept on purpose.
+
+    None when no repo is configured at all: that is more likely a lost or broken
+    repos.yaml than a wish to delete every card, so nothing is purged then."""
+    if not cfg.repos:
+        return []
+    return sorted(_stored_repos(conn) - set(cfg.repos) - kept_repos(conn))
+
+
+def _repo_runs(conn, name: str) -> list[str]:
+    rows = conn.execute(
+        "SELECT u.id FROM runs u JOIN repos r ON r.id = u.repo_id WHERE r.name = ?", (name,)
+    )
+    return [r[0] for r in rows]
+
+
+def _delete_repo_rows(conn, name: str) -> int:
+    """Delete every row GitTok holds for the repo `name`, in the caller's transaction.
+    Returns how many steering rules went. Learned weights stay: they are about the reader."""
+    delete_cards(conn, repo_card_ids(conn, name), forget=True)
+    for table in _BY_NAME:
+        conn.execute(f"DELETE FROM {table} WHERE repo = ?", (name,))
+    # A story row stays only when a card of another repo still tells that story.
+    conn.execute(
+        "DELETE FROM stories WHERE repo = ? AND story_key NOT IN (SELECT story_key FROM cards)",
+        (name,),
+    )
+    conn.execute("DELETE FROM notifications WHERE dedup_key LIKE ?", (f"hot_file:{name}:%",))
+    rules = conn.execute(
+        "DELETE FROM rules WHERE feature = 'repo' AND value = ?", (name,)
+    ).rowcount
+    row = conn.execute("SELECT value FROM prefs WHERE key = ?", (FOLLOW_KEY,)).fetchone()
+    if row:
+        left = [f for f in json.loads(row["value"]) if f[0] != name]
+        conn.execute("UPDATE prefs SET value = ? WHERE key = ?", (json.dumps(left), FOLLOW_KEY))
+    set_kept(conn, name, False)
+    rid = conn.execute("SELECT id FROM repos WHERE name = ?", (name,)).fetchone()
+    if rid is None:
+        return rules
+    for table in _BY_REPO_ID:
+        conn.execute(f"DELETE FROM {table} WHERE repo_id = ?", (rid[0],))
+    # Run rows stay (the daily run cap and the run history count them) without the repo's
+    # brief; a run that is still open cannot go on.
+    conn.execute(
+        "UPDATE runs SET repo_id = NULL, brief = NULL, "
+        "status = CASE status WHEN 'open' THEN 'expired' ELSE status END WHERE repo_id = ?",
+        (rid[0],),
+    )
+    if conn.execute("SELECT 1 FROM cards WHERE repo_id = ?", (rid[0],)).fetchone() is None:
+        conn.execute("DELETE FROM repos WHERE id = ?", (rid[0],))
+    return rules
+
+
+def _repo_plan(conn, cfg, name: str) -> tuple[list[str], list[Path]]:
+    """(card ids, folders to delete) for the repo `name`."""
+    ids = repo_card_ids(conn, name)
+    runs_root = cfg.settings.data_dir / "runs"
+    run_dirs = [runs_root / r for r in _repo_runs(conn, name) if (runs_root / r).is_dir()]
+    return ids, [*card_dirs(cfg, ids), *run_dirs]
+
+
+def purge_repo(conn, cfg, name: str) -> dict[str, int]:
+    """Delete all that GitTok holds for the repo `name`: its cards with every row that hangs
+    off them, the rows keyed by the repo, and then the card image files and run folders.
+
+    The rows go in one transaction. The files go after the commit, so a crash leaves a whole
+    database and at most some files with no rows. Returns {cards, files, rules}. The config
+    files and the repo's own directory are not touched here."""
+    ids, dirs = _repo_plan(conn, cfg, name)
+    files = _file_count(dirs)
+    with db.immediate(conn):
+        rules = _delete_repo_rows(conn, name)
+    for d in dirs:
+        shutil.rmtree(d, ignore_errors=True)
+    return {"cards": len(ids), "files": files, "rules": rules}
+
+
+# --- the rules for old cards -----------------------------------------------------------------
 
 
 def _card_victims(conn, cfg, now: datetime) -> dict[str, list[str]]:
@@ -125,7 +309,10 @@ def collect(
     data_dir = cfg.settings.data_dir
     victims = _card_victims(conn, cfg, now)
     ids = [i for k in ("seen", "liked", "unseen", "failed") for i in victims[k]]
-    asset_dirs = [data_dir / "assets" / i for i in ids if (data_dir / "assets" / i).is_dir()]
+    asset_dirs = card_dirs(cfg, ids)
+    orphans = orphan_repos(conn, cfg)
+    orphan_plans = [_repo_plan(conn, cfg, name) for name in orphans]
+    orphan_dirs = [d for _, dirs in orphan_plans for d in dirs]
     run_dirs = _run_dirs(conn, cfg, now)
     big_logs = _big_logs(data_dir, g.log_max_kb)
     event_args = (_ms(now - timedelta(days=g.events_after_days)),)
@@ -135,7 +322,11 @@ def collect(
     counts = {k: len(v) for k, v in victims.items()}
     counts["run_files"] = len(run_dirs)
     counts["log_files"] = len(big_logs)
-    counts["asset_files"] = sum(1 for d in asset_dirs for p in d.rglob("*") if p.is_file())
+    counts["asset_files"] = _file_count(asset_dirs)
+    # Repos that are no longer configured: all their data goes, whatever its age.
+    counts["orphan_repos"] = len(orphans)
+    counts["orphan_cards"] = sum(len(i) for i, _ in orphan_plans)
+    counts["orphan_files"] = _file_count(orphan_dirs)
     counts["events"] = conn.execute(
         f"SELECT COUNT(*) FROM events WHERE {_OLD_EVENT}", event_args
     ).fetchone()[0]
@@ -153,20 +344,16 @@ def collect(
         return counts
 
     with db.immediate(conn):
-        marks = ",".join("?" * len(ids))
-        if ids:
-            conn.execute(f"DELETE FROM srs WHERE card_id IN ({marks})", ids)
-            conn.execute(f"UPDATE notifications SET card_id = NULL WHERE card_id IN ({marks})", ids)
-            conn.execute(
-                f"DELETE FROM cards WHERE id IN ({marks})", ids
-            )  # features, assets cascade
+        delete_cards(conn, ids)
+        for name in orphans:
+            _delete_repo_rows(conn, name)
         conn.execute(f"DELETE FROM events WHERE {_OLD_EVENT}", event_args)
         conn.execute("DELETE FROM story_views WHERE seen_at < ?", (social_cut,))
         conn.execute("DELETE FROM leads WHERE last_seen_at < ? AND times_covered = 0", (lead_cut,))
         conn.execute(
             "DELETE FROM notifications WHERE read_at IS NOT NULL AND read_at < ?", (social_cut,)
         )
-    for d in (*asset_dirs, *run_dirs):
+    for d in (*asset_dirs, *run_dirs, *orphan_dirs):
         shutil.rmtree(d, ignore_errors=True)
     for p in big_logs:
         _trim_log(p, g.log_max_kb * 1024 // 2)

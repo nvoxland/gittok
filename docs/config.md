@@ -58,6 +58,8 @@ Fields of one repo:
 | `url` | none | The web URL of the repo on GitHub, for the links on cards. When it is absent, GitTok derives it from the `origin` remote. Only github.com URLs give links |
 | `remote` | none | Set when you add a repo by URL (`add_repo`, or `gittok repos add <url>`): the URL that GitTok cloned into `repos/<name>`. Removing the repo (`remove_repo`, or `gittok repos remove`) deletes the clone only for such an entry |
 
+Removing a repo (`remove_repo`, or `gittok repos remove <name>`) removes the entry, the name in every group, and all that GitTok made for the repo: its cards with their images, its analysis, `local/profiles/<name>.yaml`, the rules on the repo, and a mascot in `local/mascots.yaml` that belongs to the repo and that no other repo uses. A shipped mascot (`config/mascots.yaml`) stays, and a kept mascot in `local/mascots.yaml` loses its `repo: <name>` line. The learned weights stay. `keep_data` (`--keep-data`) removes only the entry. If you delete an entry from `local/repos.yaml` by hand, or change its name, GitTok sees a repo that is not configured: the feed stops showing its cards and the next garbage collection pass deletes its data. A rename by hand is a removal and an addition. One guard: when no repo at all is configured, garbage collection deletes nothing for that reason, because an empty list is more likely a lost `repos.yaml`.
+
 Fields of one group: `repos` (a list of repo names) and `standalone` (true or false; GitTok reads it but does not use it today). A repo can be in one group only.
 
 A name that YAML reads as something other than text (`on`, `null`, `123`) needs quotes.

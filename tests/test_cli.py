@@ -101,9 +101,11 @@ def test_serve_runs_uvicorn_and_prints_urls(cfg, monkeypatch, capsys):
 
 def test_mcp_command_runs_stdio_server(cfg, monkeypatch):
     called = []
-    monkeypatch.setattr(cli.mcp_server, "main", lambda note=None: called.append(True))
+    monkeypatch.setattr(
+        cli.mcp_server, "main", lambda note=None, owns_server=False: called.append(owns_server)
+    )
     assert cli.main(["mcp"]) == 0
-    assert called == [True]
+    assert called == [False]  # no --ui: this session owns no feed server
 
 
 def _with_pending(cfg, fixture_repo, monkeypatch, renderer):
@@ -440,9 +442,10 @@ def _mcp_ui(cfg, monkeypatch, free=True):
         cli, "_spawn_ui", lambda cmd, env: seen["order"].append(("ui", cmd, env)) or "proc"
     )
     monkeypatch.setattr(cli, "_stop_at_exit", lambda proc: seen.update(stopped=proc))
-    def fake_main(note=None):
+    def fake_main(note=None, owns_server=False):
         seen["order"].append("mcp")
         seen["note"] = note
+        seen["owns"] = owns_server
 
     monkeypatch.setattr(cli.mcp_server, "main", fake_main)
     monkeypatch.setattr(cli, "_server_dir", lambda port: seen.get("owner"))
@@ -463,6 +466,7 @@ def test_mcp_ui_runs_a_feed_child_before_stdio(cfg, monkeypatch, capsys):
     assert cmd[1:] == ["-m", "gittok", "serve", "--host", "0.0.0.0", "--port", "8008", "--lan"]
     assert env["GITTOK_PARENT_PID"] == str(os.getpid())
     assert seen["stopped"] == "proc" and seen["note"] is None
+    assert seen["owns"] is True  # the `status` tool reports it
     assert capsys.readouterr().out == ""  # stdout carries the MCP protocol
 
 
@@ -503,7 +507,7 @@ def test_mcp_ui_skips_the_feed_when_another_directory_has_the_port(cfg, monkeypa
     seen = _mcp_ui(cfg, monkeypatch, free=False)
     seen["owner"] = "/somewhere/other-gittok"
     assert cli.main(["mcp", "--ui"]) == 0
-    assert seen["order"] == ["mcp"]
+    assert seen["order"] == ["mcp"] and seen["owns"] is False
     err = capsys.readouterr().err
     assert "8008 is in use" in err and "/somewhere/other-gittok" in err
     # The same text reaches Claude in the MCP instructions.

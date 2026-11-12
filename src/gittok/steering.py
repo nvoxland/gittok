@@ -9,20 +9,36 @@ from __future__ import annotations
 import difflib
 import fcntl
 import json
+import logging
 import os
 import re
 import shutil
+import sqlite3
 import tempfile
 import threading
 import zlib
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from importlib.resources import files
 from pathlib import Path
 
 import yaml
 
-from gittok import brief, gitq, knowledge, learning, private, rule_stats, signals, social
+from gittok import (
+    brief,
+    db,
+    gc,
+    gitq,
+    knowledge,
+    learning,
+    private,
+    rule_stats,
+    signals,
+    social,
+)
 from gittok.config import load_config, unknown_repo
+
+log = logging.getLogger(__name__)
 
 
 class SteeringError(Exception):
@@ -490,18 +506,28 @@ def coverage(conn, cfg, repo: str | None = None) -> list[dict]:
     return out
 
 
-def recent_cards(conn, limit: int = 20) -> list[dict]:
-    """Newest cards first, with how often they were shown and the mean reward."""
+def _group_of(cfg, repo: str) -> str | None:
+    return cfg.repos[repo].group if cfg is not None and repo in cfg.repos else None
+
+
+def recent_cards(conn, limit: int = 20, repo: str | None = None, cfg=None) -> list[dict]:
+    """Newest cards first, with their repo, how often they were shown and the mean reward.
+    `repo` keeps only the cards of that repo. `cfg` gives each row its repo's group."""
+    if repo is not None and cfg is not None and repo not in cfg.repos:
+        raise SteeringError(unknown_repo(cfg.repos, repo))
     rows = conn.execute(
-        "SELECT c.id, c.created_at, c.story_type, c.format, c.status, c.spec, "
+        "SELECT c.id, c.created_at, c.story_type, c.format, c.status, c.spec, p.name AS repo, "
         "(SELECT COUNT(*) FROM events e WHERE e.card_id = c.id AND e.type = 'impression') AS imps, "
         "(SELECT AVG(r.reward) FROM rewards r WHERE r.card_id = c.id) AS mean_reward "
-        "FROM cards c ORDER BY c.created_at DESC, c.id DESC LIMIT ?",
-        (max(0, int(limit)),),
+        "FROM cards c JOIN repos p ON p.id = c.repo_id WHERE (? IS NULL OR p.name = ?) "
+        "ORDER BY c.created_at DESC, c.id DESC LIMIT ?",
+        (repo, repo, max(0, int(limit))),
     ).fetchall()
     return [
         {
             "id": r["id"],
+            "repo": r["repo"],
+            "group": _group_of(cfg, r["repo"]),
             "created_at": r["created_at"],
             "story_type": r["story_type"],
             "format": r["format"],
@@ -514,9 +540,13 @@ def recent_cards(conn, limit: int = 20) -> list[dict]:
     ]
 
 
-def card_stats(conn, card_id: str) -> dict:
-    """Events by type, dwell time, rewards, and answers for one card."""
-    if conn.execute("SELECT 1 FROM cards WHERE id = ?", (card_id,)).fetchone() is None:
+def card_stats(conn, card_id: str, cfg=None) -> dict:
+    """Repo, events by type, dwell time, rewards, and answers for one card."""
+    card = conn.execute(
+        "SELECT p.name AS repo FROM cards c JOIN repos p ON p.id = c.repo_id WHERE c.id = ?",
+        (card_id,),
+    ).fetchone()
+    if card is None:
         raise SteeringError(f"No card with id '{card_id}'. Call recent_cards for ids.")
     events: dict[str, int] = {}
     dwell: list[int] = []
@@ -540,6 +570,8 @@ def card_stats(conn, card_id: str) -> dict:
     ]
     return {
         "card_id": card_id,
+        "repo": card["repo"],
+        "group": _group_of(cfg, card["repo"]),
         "events": dict(sorted(events.items())),
         "dwell_ms": {
             "total": sum(dwell),
@@ -1095,13 +1127,89 @@ def _clone_remote(cfg, name: str, url: str, ref: str | None) -> tuple[Path, str]
         raise
 
 
-def remove_repo(cfg, name: str, created_by: str = "user") -> dict:
-    """Take a repo out of local/repos.yaml and its groups. A clone that GitTok made (repo
-    added by URL) is deleted; a directory the user gave is never touched."""
+def _local_names(cfg, fname: str, top: str) -> set[str]:
+    """Entry names under `top` in the user's own local/<fname>."""
+    try:
+        data = yaml.safe_load((cfg.root / "local" / fname).read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return set()
+    entries = data.get(top) if isinstance(data, dict) else None
+    return {str(k) for k in entries} if isinstance(entries, dict) else set()
+
+
+def _mascot_plan(cfg, name: str) -> tuple[list[str], list[dict]]:
+    """(mascots to delete, mascots to keep with the reason) when the repo `name` goes.
+
+    A mascot belongs to the repo when the repo's entry names it or its own `repo` is `name`.
+    It is deleted only when the user's local/mascots.yaml defines it, the shipped
+    config/mascots.yaml does not, and no other configured repo uses it."""
+    repo = cfg.repos[name]
+    bound = [m.name for m in cfg.mascots.values() if m.repo == name]
+    if repo.mascot in cfg.mascots and repo.mascot not in bound:
+        bound.append(repo.mascot)
+    local = _local_names(cfg, "mascots.yaml", "mascots")
+    try:
+        shipped = yaml.safe_load(cfg.shared_path("config", "mascots.yaml").read_text())
+    except (OSError, yaml.YAMLError):
+        shipped = None
+    shipped = set((shipped or {}).get("mascots") or {}) if isinstance(shipped, dict) else set()
+    remove, keep = [], []
+    for m in sorted(bound):
+        users = sorted(
+            {r.name for r in cfg.repos.values() if r.name != name and r.mascot == m}
+            | ({cfg.mascots[m].repo} - {None, name}) & set(cfg.repos)
+        )
+        if users:
+            keep.append({"name": m, "why": f"the repo {users[0]} uses it"})
+        elif m in shipped:
+            keep.append({"name": m, "why": "it is a shipped mascot (config/mascots.yaml)"})
+        elif m in local:
+            remove.append(m)
+    return remove, keep
+
+
+def _unlink_mascots(lines: list[str], name: str, remove: list[str], keep: list[dict]) -> None:
+    """Edit local/mascots.yaml: delete the `remove` entries; a kept entry loses `repo: name`."""
+    for m in remove:
+        entry = _entry(lines, "mascots", m, create=False)
+        if entry:
+            del lines[entry[0] : entry[1]]
+    for m in (k["name"] for k in keep):
+        entry = _entry(lines, "mascots", m, create=False)
+        if entry is None:
+            continue
+        field = _find(lines, "repo", entry[0] + 1, entry[1], None)
+        if field and yaml.safe_load(lines[field[0]].split(":", 1)[1].split(" #")[0]) == name:
+            del lines[field[0] : field[1]]
+
+
+def remove_repo(cfg, name: str, created_by: str = "user", keep_data: bool = False) -> dict:
+    """Remove a repo and all that GitTok made for it.
+
+    Removed: the entry in local/repos.yaml and in its groups; the repo's cards with all that
+    hangs off them (events, rewards, quiz schedule, saved marks, replies, notifications) and
+    their image files; the analysis, facts, candidates, leads and knowledge of the repo;
+    steering rules on the repo; its profile local/profiles/<name>.yaml; a mascot of the repo
+    that the user defined and no other repo uses; and a clone that GitTok made (repo added by
+    URL). Kept: the learned weights, shipped mascots, and a directory the user gave, which is
+    never touched. A card of another repo that only cites this repo stays.
+
+    `keep_data` removes only the entry (and a clone that GitTok made): cards, profile and
+    mascot stay. The feed does not show them while the repo is not configured, and garbage
+    collection leaves them. They are in use again when a repo of the same name is added."""
     repo = cfg.repos.get(name)
     if repo is None:
         raise SteeringError(unknown_repo(cfg.repos, name))
     managed = is_managed(cfg, repo)
+    gone, kept = ([], []) if keep_data else _mascot_plan(cfg, name)
+    db_file = cfg.settings.data_dir / "gittok.db"
+    if not keep_data and db_file.is_file():
+        # What the reader did with these cards goes into the weights before the events go.
+        try:
+            with closing(db.open_db(db_file)) as conn:
+                learning.process_events(conn, cfg)
+        except Exception:
+            log.warning("could not process events before removing %s", name, exc_info=True)
 
     def edit(lines: list[str]) -> None:
         _drop_from_groups(lines, name, None)
@@ -1110,12 +1218,77 @@ def remove_repo(cfg, name: str, created_by: str = "user") -> dict:
             raise SteeringError(f"Cannot find '{name}' in local/repos.yaml. Edit it by hand.")
         del lines[entry[0] : entry[1]]
 
-    _edit_files(cfg, {"repos.yaml": edit})
+    edits = {"repos.yaml": edit}
+    if (gone or kept) and (cfg.root / "local" / "mascots.yaml").is_file():
+        edits["mascots.yaml"] = lambda lines: _unlink_mascots(lines, name, gone, kept)
+    _edit_files(cfg, edits)
+
+    out = {
+        "name": name,
+        "path": str(repo.path),
+        "deleted_clone": managed,
+        "kept_data": keep_data,
+        "cards_removed": 0,
+        "files_removed": 0,
+        "rules_removed": 0,
+        "profile_removed": False,
+        "mascots_removed": gone,
+        "mascots_kept": kept,
+    }
+    try:
+        with closing(db.open_db(db_file)) as conn:
+            if keep_data:
+                with conn:
+                    gc.set_kept(conn, name, True)
+            else:
+                counts = gc.purge_repo(conn, cfg, name)
+                out |= {
+                    "cards_removed": counts["cards"],
+                    "files_removed": counts["files"],
+                    "rules_removed": counts["rules"],
+                }
+    except sqlite3.Error as e:
+        # The entry is gone already. The feed hides the cards, and the next garbage
+        # collection pass (or `gittok gc`) deletes them.
+        out["pending"] = (
+            f"The database was busy ({e}), so the repo's cards are not deleted yet. The feed "
+            "does not show them, and the next garbage collection pass deletes them."
+        )
+    if not keep_data:
+        profile = cfg.root / "local" / "profiles" / f"{name}.yaml"
+        if profile.is_file():
+            profile.unlink()
+            out["profile_removed"] = True
+        for m in gone:
+            (cfg.settings.data_dir / "assets" / "mascots" / f"{m}.png").unlink(missing_ok=True)
     if managed:
         shutil.rmtree(repo.path, ignore_errors=True)
-    out = {"name": name, "path": str(repo.path), "deleted_clone": managed}
     _audit(cfg, "remove_repo", out, created_by)
     return out
+
+
+def removal_summary(out: dict) -> str:
+    """One line for a person: what `remove_repo` removed and what it kept."""
+    where = "its clone is deleted" if out["deleted_clone"] else "the directory is not touched"
+    head = f"removed repo {out['name']} ({out['path']}): {where}"
+    if out["kept_data"]:
+        return f"{head}; its cards, profile and mascot are kept (--keep-data)"
+
+    def n(count: int, word: str) -> str:
+        return f"{count} {word}" if count == 1 else f"{count} {word}s"
+
+    parts = [f"{n(out['cards_removed'], 'card')} and {n(out['files_removed'], 'file')} removed"]
+    if out["rules_removed"]:
+        parts.append(f"{n(out['rules_removed'], 'rule')} removed")
+    if out["profile_removed"]:
+        parts.append("profile removed")
+    if out["mascots_removed"]:
+        parts.append(f"mascot {', '.join(out['mascots_removed'])} removed")
+    for k in out["mascots_kept"]:
+        parts.append(f"mascot {k['name']} kept ({k['why']})")
+    if out.get("pending"):
+        parts = ["cards not deleted yet (the database was busy; `gittok gc` deletes them)"]
+    return f"{head}; {'; '.join(parts)}; learned weights kept"
 
 
 def _set_key(lines: list[str], section: str, key: str, value) -> None:

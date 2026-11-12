@@ -1860,8 +1860,12 @@ def guidance_markdown(
     meme_templates: dict | None = None,
     mascots: dict | None = None,
     menus: list | None = None,
+    repos=None,
 ) -> str:
     """Card-writing rules for a packet subagent: base guidance plus the format sections.
+
+    `repos` (the configured repo names): a mascot whose repo is not one of them is listed
+    with no repo, so a removed repo is never named.
 
     `formats=None` includes every format section; a list includes only those (`[]` is base only).
     `menus` (a packet's meme menus) limits the meme template list to the templates in them.
@@ -1881,7 +1885,10 @@ def guidance_markdown(
     if menu_ids:
         shown = {t: shown[t] for t in dict.fromkeys(menu_ids) if t in shown}
     tpl = "\n".join(f"- `{t.id}` ({t.lines} lines): {t.hint}" for t in shown.values())
-    masc = "\n".join(f"- `{m.name}` (repo {m.repo or 'none'})" for m in (mascots or {}).values())
+    masc = "\n".join(
+        f"- `{m.name}` (repo {(m.repo if repos is None or m.repo in repos else None) or 'none'})"
+        for m in (mascots or {}).values()
+    )
     body = "\n\n".join(chosen).replace("{meme_templates}", tpl or "(none configured)")
     body = body.replace("{mascots}", masc or "(none configured)")
     return out.rstrip() + "\n\n## Format sections\n\n" + body + "\n"
