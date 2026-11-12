@@ -175,7 +175,7 @@ def _store_facts(cfg, repo_path):
 
 
 def test_path_lead_lists_fact_ids_for_its_window(fixture_repo, tmp_path):
-    """writers never called the fact tools, so the packet hands them the ids."""
+    """Writers never called the fact tools, so the packet hands them the ids."""
     cfg = make_config(fixture_repo, tmp_path)
     _store_facts(cfg, fixture_repo.path)
     text = materials.materials_for(cfg, _ref(kind="path", path="billing/invoice.py", lines=[1, 3]))

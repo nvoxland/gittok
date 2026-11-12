@@ -687,7 +687,7 @@ def _head(cfg):
 
 
 def test_submit_facts_reads_files_and_stores_analyzer_facts(cfg, tmp_path, capsys):
-    """large analyzer results go through a file, not inline MCP arguments."""
+    """Large analyzer results go through a file, not inline MCP arguments."""
     from contextlib import closing
 
     good = [{"defines": {"path": "src/app.py", "name": "main", "line": 1}}]
