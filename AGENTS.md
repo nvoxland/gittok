@@ -50,7 +50,7 @@ Red/green TDD is required: write the failing test first.
 
 ## Architecture Overview
 
-GitTok (working name; see `SPEC.md`) is a personal TikTok-style feed of cards about your own codebases.
+GitTok is a personal TikTok-style feed of cards about your own codebases.
 
 - `src/gittok/` is a Python package. It analyzes git history into signals, builds a brief, validates card specs against git, stores cards in SQLite, and serves the feed API.
 - **The session owns the server.** The project `.mcp.json` makes Claude Code start `gittok mcp --ui`. That process talks MCP over stdio and starts a child `gittok serve --reload` that serves the feed API, the web build, and the render/learning workers on port 8008, on loopback only. LAN serving is opt-in: `--lan`, or `server.lan: true` in `local/settings.yaml` (pairing token; `/mcp` over HTTP stays loopback-only). The server answers only to its own Host names (`docs/social.md`, "LAN access"). The child reloads when a file in `src/gittok/` changes, and it exits when the MCP process ends, even after a hard kill. If 8008 is already taken, it runs MCP only. Changes to the MCP tools themselves need `/mcp` → gittok → Reconnect. `gittok serve` runs the same app without a session.
@@ -59,7 +59,7 @@ GitTok (working name; see `SPEC.md`) is a personal TikTok-style feed of cards ab
 - **Repo profiles.** `local/profiles/<repo>.yaml` holds rules as data (regex or ast-grep patterns, roles, ignore globs) that GitTok runs and scores itself (`docs/learning.md`, "Candidate score and repo profiles"). The `gittok-profile-repo` skill (sonnet) writes and revises them with `survey_repo`, `test_detector`, `save_profile`, `rule_stats`. `gittok health --hint` prints one line when a repo has no profile or its manifests changed; offer `/gittok-profile-repo <repo>`, do not start it unasked.
 - `web/` is a SvelteKit static app: vertical snap-scroll feed, horizontal depth panels.
 - Card formats, visual kinds, and the `resolved` shapes the client renders are specified in `docs/formats.md`. Meme, illustration, and comic cards are stored `pending_render` and appear in the feed after the render worker draws them (memegen for memes, mflux for illustrations).
-- Config lives in `config/*.yaml`; the card contract is `src/gittok/schema/card.schema.json`; agent guidance is `src/gittok/prompts/generate.md`; runtime data goes in `data/` (gitignored).
+- Config lives in `config/*.yaml` (reference: `docs/config.md`); the card contract is `src/gittok/schema/card.schema.json`; agent guidance is `src/gittok/prompts/generate.md`; runtime data goes in `data/` (gitignored).
 - **Two roots.** `config.resolve_roots()` gives (shared, home). Shared files (`config/`, `web/build`, `.claude/skills|agents`) come from `cfg.shared_path(...)`; user files (`local/`, relative `data_dir`) come from `cfg.root`. In a clone both are the clone. Installed (`uv tool install`), shared is the wheel's `gittok/_bundled/` and home is `GITTOK_HOME` (default `~/.gittok`). Never use `parents[2]`; use `config.shipped_root()`. A wheel needs `web/build` first (`hatch_build.py` checks). See `docs/install.md`.
 
 ## Conventions & Patterns

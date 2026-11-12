@@ -46,7 +46,6 @@ from .profiles import fileset_for
 
 log = logging.getLogger(__name__)
 
-SOURCE = "syntax"
 CALLABLE = frozenset({"function", "method", "class"})
 _TABLES = {
     "def": "fact_defines",

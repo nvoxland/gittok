@@ -19,6 +19,7 @@ character, `[abc]` is a class. A glob with no `/` matches the file name at any d
 from __future__ import annotations
 
 import json
+import logging
 import re
 import string
 from dataclasses import dataclass, field
@@ -37,6 +38,52 @@ KINDS = ("test", "fixture", "generated", "docs", "vendored")
 KIND_ORDER = ("vendored", "generated", "fixture", "test", "docs")  # first match wins
 UNMINED = frozenset({"generated", "vendored", "fixture"})  # read, classified, never mined
 DEFAULT_WINDOW = 20
+REGEX_TIMEOUT_S = 0.2  # one search of a profile regex (sinks, conventions, nil guards, markers)
+log = logging.getLogger("gittok.profiles")
+
+
+class SafeRegex:
+    """A regex that came as data (a profile), searched under REGEX_TIMEOUT_S.
+
+    A catastrophic pattern cannot hang analysis: after its first timeout the rule is skipped
+    (`search` gives None from then on), with one log line and one `{rule, reason}` entry in
+    `skipped`. One timeout is enough to drop it, because a rule runs on thousands of texts."""
+
+    def __init__(self, label: str, pattern: str, flags: int = 0, skipped: list | None = None):
+        self.label = label
+        self.rx = regex.compile(pattern, flags)
+        self.reason: str | None = None  # set when the rule is skipped
+        self._skipped = skipped
+
+    def search(self, text: str):
+        if self.reason is not None:
+            return None
+        try:
+            return self.rx.search(text, timeout=REGEX_TIMEOUT_S)
+        except TimeoutError:
+            self.reason = (
+                f"timed out after {REGEX_TIMEOUT_S:g} s on a text of {len(text)} characters"
+            )
+            log.warning(
+                "regex %s (%r) %s; the rule is skipped", self.label, self.rx.pattern, self.reason
+            )
+            if self._skipped is not None:
+                self._skipped.append({"rule": self.label, "reason": self.reason})
+            return None
+
+
+# Generated markers that timed out in this process: pattern -> reason. They stay skipped.
+_skipped_markers: dict[str, str] = {}
+
+
+def skipped_markers() -> dict[str, str]:
+    """The `generated_markers` patterns this process skips, each with the reason."""
+    return dict(_skipped_markers)
+
+
+@cache
+def _marker(pattern: str) -> SafeRegex:
+    return SafeRegex(f"generated_markers {pattern!r}", pattern, regex.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -208,7 +255,16 @@ class FileSet:
 
     def has_generated_marker(self, lines) -> bool:
         head = "\n".join(lines[:5])
-        return any(re.search(m, head, re.IGNORECASE) for m in self.markers)
+        for m in self.markers:
+            if m in _skipped_markers:
+                continue
+            rx = _marker(m)
+            if rx.search(head):
+                return True
+            if rx.reason is not None:  # it timed out: skipped from now on, in every file set
+                _skipped_markers[m] = rx.reason
+                _marker.cache_clear()
+        return False
 
 
 @cache
@@ -339,10 +395,7 @@ def parse(raw, repo: str) -> Profile:
         for g in globs:
             _check_glob(repo, f"kinds.{kind}", g)
     for rx in raw.get("generated_markers") or []:
-        try:
-            re.compile(rx)
-        except re.error as e:
-            _fail(repo, "generated_markers", f"bad regex: {e} ({rx!r})")
+        _check_regex(repo, "generated_markers", rx)
 
     for i, sk in enumerate(raw.get("sinks") or []):
         _check_regex(repo, f"sinks[{i}]", sk["pattern"])

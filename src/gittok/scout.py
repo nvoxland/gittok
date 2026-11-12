@@ -10,7 +10,7 @@ from __future__ import annotations
 import secrets
 from datetime import UTC, datetime, timedelta
 
-from . import candidates, db, gitq, signals
+from . import candidates, db, gitq, research, signals
 from . import secrets as redaction
 from .config import Config
 
@@ -146,10 +146,10 @@ def _split_budget(conn, unrated: dict[str, int], budget: int) -> dict[str, int]:
     return grants
 
 
-def status(conn, cfg: Config, repo: str | None = None, max_: int | None = None) -> dict:
-    """Make batches of unrated candidates (at most `max_` in all). Returns ids and counts."""
+def status(conn, cfg: Config, repo: str | None = None, limit: int | None = None) -> dict:
+    """Make batches of unrated candidates (at most `limit` in all). Returns ids and counts."""
     names = [cfg.repo(repo).name] if repo else sorted(cfg.repos)
-    budget = max_ if max_ is not None else cfg.settings.agent.scout_max
+    budget = limit if limit is not None else cfg.settings.agent.scout_max
     size = max(1, cfg.settings.agent.scout_batch)
     cutoff = (datetime.now(UTC) - timedelta(days=BATCH_KEEP_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
     conn.execute("DELETE FROM scout_batches WHERE created_at < ?", (cutoff,))
@@ -161,7 +161,7 @@ def status(conn, cfg: Config, repo: str | None = None, max_: int | None = None) 
         try:
             head = ensure_candidates(conn, cfg, cfg.repos[name])
         except gitq.GitError as e:
-            skipped.append({"repo": name, "error": str(e)})
+            skipped.append({"repo": name, "error": research.git_cause(cfg.repos[name], e)})
             continue
         todo = _unrated(conn, name, head)
         total += len(todo)

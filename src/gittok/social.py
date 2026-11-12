@@ -12,7 +12,7 @@ from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from gittok import db, gitq, links, srs
+from gittok import db, gitq, links, private, srs
 from gittok.config import Config
 
 log = logging.getLogger(__name__)
@@ -25,11 +25,6 @@ FMT = "%Y-%m-%dT%H:%M:%SZ"
 
 _CACHE: dict[tuple[str, str], list[dict]] = {}
 _CACHE_LOCK = threading.Lock()
-
-
-def clear_cache() -> None:
-    with _CACHE_LOCK:
-        _CACHE.clear()
 
 
 def mascot_info(cfg: Config, name: str) -> tuple[str | None, str | None]:
@@ -477,7 +472,7 @@ def ensure_lan_token(data_dir) -> str:
             return token
     except FileNotFoundError:
         pass
-    data_dir.mkdir(parents=True, exist_ok=True)
+    private.make_dir(data_dir)
     token = secrets.token_urlsafe(32)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:

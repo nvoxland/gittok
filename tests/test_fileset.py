@@ -151,3 +151,18 @@ def test_no_hard_coded_path_lists_in_python():
         if banned.search(line)
     ]
     assert not hits, "\n".join(hits)
+
+
+def test_a_catastrophic_generated_marker_is_skipped_not_a_hang(monkeypatch):
+    import time
+
+    monkeypatch.setattr(profiles, "REGEX_TIMEOUT_S", 0.1)
+    monkeypatch.setattr(profiles, "_skipped_markers", {})
+    f = fs(generated_markers=[r"(a|aa)+$", "^// built by tool"])
+    evil = ["a" * 40 + "b"]
+    started = time.monotonic()
+    for _ in range(40):
+        assert not f.has_generated_marker(evil)
+    assert time.monotonic() - started < 3  # one timeout, then the marker is left out
+    assert f.has_generated_marker(["// built by tool"])  # the other marker still works
+    assert "timed out" in profiles.skipped_markers()[r"(a|aa)+$"]

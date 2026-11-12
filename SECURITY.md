@@ -8,15 +8,19 @@ Please report a security problem in private: use "Report a vulnerability" on the
 
 ## What GitTok protects
 
-- **Your repos are read-only.** GitTok reads git objects. It never writes to a working tree, an index, or a local branch. The one exception is `fetch: true` on a repo, which updates remote-tracking refs only.
-- **Git cannot run programs from a repo's config.** GitTok starts git with external diff, textconv, hooks, and bare-repository discovery turned off.
-- **The feed is local by default.** The server listens on `127.0.0.1`. It answers only requests whose `Host` header is a local name, so another web site cannot read it through DNS rebinding.
-- **LAN access is opt-in and needs pairing.** With `server.lan: true` (or `--lan`), another device must first open the pairing link, which carries a random token. The MCP endpoint over HTTP stays loopback-only.
-- **Secrets are redacted.** Text that leaves the server (cards, tool results, excerpts) passes a secret detector first (`config/secrets.yaml`).
-- **Text from repos is data.** Agents are told to treat commit messages, code, and comments as data, never as instructions. Writer and scout agents get a narrow tool list with no config-editing tools.
+- **Your repos are read-only.** GitTok reads git objects. It never writes to a working tree, an index, or a local branch. There is one exception: a repo with `fetch: true` gets a `git fetch` that updates remote-tracking refs only. A repo that you add by URL is a clone that GitTok makes in its own `repos/` directory, without a checkout and without submodules.
+- **A repo's git config cannot start a program.** GitTok starts every git call with these turned off: hooks, fsmonitor, external diff and textconv programs, signature checks in `log` and `show`, the `ext::` transport, bare-repository discovery, and terminal prompts. A remote URL with a password or token in it is refused.
+- **The feed is local by default.** The server binds `127.0.0.1`. It answers only requests whose `Host` header is one of its own names or addresses (or a name in `server.allowed_hosts`), so another web site cannot read it through DNS rebinding. A write request with an `Origin` from another host is refused.
+- **LAN access is opt-in and needs pairing.** With `server.lan: true` (or `--lan`, or a non-loopback `--host`), a device that is not this machine must first open the pairing link, which carries a random token. The token is stored in `<data_dir>/lan_token` with mode 0600 and is kept out of the access log. The MCP endpoint (`/mcp`) answers loopback peers only, always.
+- **Secrets are masked.** Repo text that leaves the server (tool results, materials for the agent, card code) passes a secret detector first (`config/secrets.yaml`). A card whose own text holds a match is rejected. `research.redact_secrets: false` turns the masking off; do not do that.
+- **Text from repos is data.** The skills and agents are told to treat commit messages, code, and comments as data, never as instructions. The writer and scout agents get a short tool list with no config-editing tools. The `add_repo` tool accepts a local path only inside `repos.allowed_roots`.
+
+`docs/social.md`, "LAN access", and `docs/api.md`, "Access rules", give the exact checks.
 
 ## What it does not protect
 
-- Anyone who can reach the port **and** has the pairing token can read your feed, which contains code excerpts.
+- Anyone who can reach the port **and** has the pairing token can read your feed, which contains code excerpts. Every process and user on this machine can read it without a token, and can use `/mcp`, which reads the repos you added.
 - The feed is served over plain HTTP. On a network you do not trust, keep LAN access off.
-- Card text is written by an AI model from your code. Check a claim against the cited commit before you rely on it.
+- **A reverse proxy on the same machine is not handled.** GitTok decides "this machine or another device" from the address of the TCP peer. It does not read `X-Forwarded-For` or `Forwarded`. A request that comes through a local proxy therefore looks local: it needs no pairing token, and it can reach `/mcp`. If you put a proxy in front of GitTok, block `/mcp` in the proxy and limit who can reach the proxy (`docs/install.md`, "HTTPS on a LAN").
+- The secret detector is a list of patterns. It can miss a secret that matches none of them.
+- Card text is written by an AI model from your code. The server checks citations, numbers and names against git, but it cannot check every sentence. Check a claim against the cited commit before you rely on it.

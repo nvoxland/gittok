@@ -14,6 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import private
 from .config import claude_dir
 
 SKILL_NAMES = ("gittok-generate", "gittok-steer", "gittok-profile-repo")
@@ -207,7 +208,7 @@ def install_launchd(env: Env) -> list[str]:
         ]
     already = path.exists()
     path.parent.mkdir(parents=True, exist_ok=True)
-    (env.data_dir / "logs").mkdir(parents=True, exist_ok=True)
+    private.make_dir(env.data_dir / "logs")  # launchd writes the server log there
     path.write_bytes(data)
     lines = [f"launchd: wrote {path}"]
     if not env.which("launchctl"):

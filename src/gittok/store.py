@@ -85,11 +85,6 @@ def refeature(conn) -> int:
 RENDERED_KINDS = frozenset({"meme", "illustration", "comic"})
 
 
-def store_card(conn, cfg, run_id: str, acc, now: str | None = None) -> str:
-    with conn:
-        return insert_card(conn, cfg, run_id, acc, now)
-
-
 # Tests that pin choice positions turn this off (tests/conftest.py); the app always shuffles.
 SHUFFLE = True
 

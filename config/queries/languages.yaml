@@ -11,6 +11,7 @@
 # not ship). Matched on node type names.
 generic:
   comment: "#"
+  import_split: '[/.]|::'   # candidates.py: splits a module spec into segments
   nesting_regex: '^(if|for|while|switch|match|try|with|loop|unless|until)(_\w+)?$'
   branch_regex: '^(if|elif|elsif|else_if|for|while|until|case|when|catch|except|rescue|match_arm|switch_case|switch_default)(_\w+)?$|^(ternary|conditional)_expression$'
   params: {field: parameters, ignore: [comment]}
@@ -21,6 +22,7 @@ generic:
 # indentation levels. Files with these extensions are never read as text code.
 text_fallback:
   comment_prefixes: ["#", "//", ";", "--", "/*", "*", "%"]
+  comment_strip: "#/;*-% "   # characters removed from the start of a comment for display
   indent_unit_max: 8
   skip_extensions: [.json, .jsonl, .yaml, .yml, .toml, .ini, .cfg, .csv, .tsv, .svg, .html,
                     .css, .scss, .xml, .md, .markdown, .rst, .txt, .adoc, .lock, .map, .sql]
@@ -140,7 +142,7 @@ languages:
     extensions: {.rs: rust}
     comment: "//"
     module_sep: "::"
-    drop_segments: [crate, self, super]
+    drop_segments: [crate, self, super]   # leading segments of a module spec that name no file
     nesting: [if_expression, for_expression, while_expression, loop_expression, match_expression]
     flat: [[if_expression, else_clause]]
     branch: [if_expression, for_expression, while_expression, match_arm]

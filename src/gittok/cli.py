@@ -290,6 +290,9 @@ def _gc(args) -> int:
 
 def _health(args) -> int:
     cfg = load_config()
+    # Keys the code ignored (a typo, or a key from another version) stay visible here.
+    for w in cfg.warnings:
+        print(f"GitTok config warning: {w}", file=sys.stdout if args.hint else sys.stderr)
     if args.hint and not cfg.repos:
         # Nothing can be generated or profiled yet: one line, and no other hint.
         print(f"GitTok has no repos yet. {steering.NO_REPOS.partition('. ')[2]}")
@@ -326,38 +329,53 @@ FEED_WATCH_HINT = (
 
 
 def _feed_watch(args) -> int:
-    """Block until the server appends a line to the wants file; print it and exit."""
+    """Block until the server appends a signal line to the wants file; report it and exit.
+
+    Only whole lines that `supply.parse_wants` accepts count. The output is built from the
+    parsed time and count, never copied from the file."""
     if args.hint:
         print(FEED_WATCH_HINT)
         return 0
     cfg = load_config()
     path = cfg.settings.data_dir / supply.WANTS_FILE
-    start = path.stat().st_size if path.exists() else 0
-    if start and _unanswered_signal(cfg, path):
-        last = path.read_bytes().rstrip(b"\n").rsplit(b"\n", 1)[-1]
-        start -= len(last) + 1  # read the last line again: no run has answered it
+    old = _read_from(path, 0)
+    start = old.rfind(b"\n") + 1  # a half-written last line is read again when it is whole
+    before = supply.parse_wants(old[:start].decode(errors="replace"))
+    if before and _unanswered_signal(cfg, before[-1]["at"]):
+        return _report_signal(before[-1])  # written while no watch ran; no run has answered it
     while True:
         size = path.stat().st_size if path.exists() else 0
         if size < start:  # the file was replaced: read it from the top
             start = 0
         if size > start:
-            with path.open() as f:
-                f.seek(start)
-                new = f.read().strip()
-            print(
-                f"{new}\nThe feed wants cards: run /gittok-generate, then restart the watch."
-            )
-            return 0
+            new = _read_from(path, start)
+            whole = new.rfind(b"\n") + 1
+            start += whole
+            signals = supply.parse_wants(new[:whole].decode(errors="replace"))
+            if signals:
+                return _report_signal(signals[-1])
         time.sleep(args.poll)
 
 
-def _unanswered_signal(cfg, path: Path) -> bool:
-    """True when the last line of the wants file is newer than the newest run start."""
-    lines = path.read_text().split()
+def _read_from(path: Path, start: int) -> bytes:
     try:
-        signal_at = datetime.fromisoformat(lines[-4])
-    except (IndexError, ValueError):
-        return False
+        with path.open("rb") as f:
+            f.seek(start)
+            return f.read()
+    except OSError:
+        return b""
+
+
+def _report_signal(signal: dict) -> int:
+    print(
+        f"{signal['at'].isoformat()} want {signal['want']} cards\n"
+        "The feed wants cards: run /gittok-generate, then restart the watch."
+    )
+    return 0
+
+
+def _unanswered_signal(cfg, signal_at: datetime) -> bool:
+    """True when the signal is newer than the newest run start."""
     with closing(db.open_db(_db_path(cfg))) as conn:
         row = conn.execute("SELECT MAX(started_at) FROM runs").fetchone()
     if not row[0]:
@@ -627,7 +645,9 @@ def _avatars(args) -> int:
     print(f"generated={res['generated']} skipped={res['skipped']}")
     if res["waiting"]:
         print(
-            "error: mflux is not installed. Run `uv sync --group images` and retry.",
+            "error: mflux is not installed. In a clone, run `uv sync --group images`. "
+            "For an installed tool, install the wheel again with the `images` extra "
+            "(docs/install.md). Then retry.",
             file=sys.stderr,
         )
         return 1
@@ -761,8 +781,19 @@ def _submit_facts(args) -> int:
     return 0
 
 
+def _version() -> str:
+    """The installed package version (from the package metadata)."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("gittok")
+    except PackageNotFoundError:  # run from a source tree that is not installed
+        return "unknown"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="gittok")
+    parser.add_argument("--version", action="version", version=f"gittok {_version()}")
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("validate", help="validate a JSON file of cards (does not store)")
     p.add_argument("file")

@@ -1,4 +1,4 @@
-# Learning, ranking, and interactive cards (M3 contract)
+# Learning, ranking, and interactive cards
 
 Implements SPEC §6.3 and §12. All numbers below are defaults in `config/reward.yaml` unless stated.
 
@@ -104,7 +104,7 @@ def reset_weights(conn, feature: str | None = None) -> int
 
 `GET /api/feed?limit=20&cursor=...` builds the next batch. A first page (no cursor) starts with the card of the newest impression, if it is still `ready`, so a reload resumes there (`resume_card_id`); the slots below fill the rest.
 1. Candidates: `ready` cards not impressed in the last `repeat_days` (7), not already served this feed session (the cursor carries served ids), plus due SRS cards.
-2. Rules from the `rules` table (M4 writes them; the slotter honors them now): `ban` removes, `boost`/`prefer` multiply the score, `focus` reserves `slots` per batch for matching cards, `limit` caps the matching share of the batch. `dir` rules use path-prefix matching (`src` covers `src` and `src/api`, not `lib/src`; a leading `repo/` is accepted).
+2. Rules from the `rules` table: `ban` removes, `boost`/`prefer` multiply the score, `focus` reserves `slots` per batch for matching cards, `limit` caps the matching share of the batch. `dir` rules use path-prefix matching (`src` covers `src` and `src/api`, not `lib/src`; a leading `repo/` is accepted).
 3. Exploration: `exploration_share` (0.18) of slots are filled uniformly at random from candidates outside the top half.
 4. Learning boost: 10% of slots go to cards whose dirs have the fewest impressions (coverage).
 5. Rhythm: never more than 2 of the same format in a row; alternate fast formats (meme, text_meme, fun_fact, chart, hot_take) with slow ones (thread, comic, code_card, quiz, iceberg, day_in_life) when both are available.
@@ -151,7 +151,7 @@ Saved state lives in the `saved_cards` table (`card_id`, `saved_at`, `saved_ts`)
 
 ## 9. Reset
 
-`gittok reset-weights [--feature F]` and `learning.reset_weights`. M4's MCP `reset_defaults` calls the same function.
+`gittok reset-weights [--feature F]` and `learning.reset_weights`. The MCP tool `reset_defaults` calls the same function.
 
 ## 10. Which rules change generation (brief) and which only rank (slotter)
 
@@ -287,7 +287,7 @@ The profile also owns the file set. `scan` (globs of files read), `ignore` (glob
 
 `detectors.py` runs the rules over the files of the file set (same size caps). A `regex` rule uses the `regex` module with a 0.2 s limit for each file and rule. A timeout logs the rule and file, and skips them. Lines over 1000 characters are not matched. An `ast_grep` rule needs `ast-grep-py`, a normal dependency. If it is missing, these rules are skipped with one log line. ast-grep supports Python, TypeScript, JavaScript and others, but not Clojure. The profile `ignore` globs also remove built-in candidates. `candidates.rule_id` holds the rule id (NULL for built-ins), and `load_candidates` and `load_rated` return it. `Config.role_for(repo, path)` gives the role of the longest matching dir in `roles`.
 
-Per-rule outcomes (`rule_stats.py`, MCP tool `rule_stats(repo)`, `rule_outcomes` in `get_profile`). Each rule id, and each built-in tag as `builtin:<tag>`, gets: candidates found, rated, mean teachable, cards made, mean reward of those cards, and their `knew_it` and `teach_more` counts. A card traces to its rule through `cards.lead_id -> leads.lead_key "cand:<path>:<start>:<tag>" -> candidates.rule_id`. The outcome factor is `clamp(0.5, 1.5, (5 + N x q) / (5 + N))`. N is rated windows plus rewarded cards. q is the N-weighted mean of `mean teachable / 3` and `mean card reward / mean reward of the repo`. A rule with no data has factor 1.0. `candidate_leads.leads_for` multiplies the lead strength by the factor; `rule_stats.effective_weight(weight, factors, rule)` gives the scaled profile weight. The stored candidate `score` is not changed.
+Per-rule outcomes (`rule_stats.py`, MCP tool `rule_stats(repo)`, `rule_outcomes` in `get_taste_profile`). Each rule id, and each built-in tag as `builtin:<tag>`, gets: candidates found, rated, mean teachable, cards made, mean reward of those cards, and their `knew_it` and `teach_more` counts. A card traces to its rule through `cards.lead_id -> leads.lead_key "cand:<path>:<start>:<tag>" -> candidates.rule_id`. The outcome factor is `clamp(0.5, 1.5, (5 + N x q) / (5 + N))`. N is rated windows plus rewarded cards. q is the N-weighted mean of `mean teachable / 3` and `mean card reward / mean reward of the repo`. A rule with no data has factor 1.0. `candidate_leads.leads_for` multiplies the lead strength by the factor; `rule_stats.effective_weight(weight, factors, rule)` gives the scaled profile weight. The stored candidate `score` is not changed.
 
 Every lead built from git signals passes the repo's file set (`brief.lead_in_files`, applied at the end of `lead_refs_for`, so the ledger refresh and the no-ledger fallback are both clean). A path, or both files of a pair, must be read by the profile and not of kind generated, vendored or fixture; a dir lead must be a code dir; a commit lead with no path is dropped when every path it touched is outside the set (the `huge_diffs`, `late_night` and `recent_commits` signals carry them). `ledger._current` applies the same check to stored rows. Pinned server leads are exempt.
 
@@ -298,7 +298,7 @@ Intro slots use code dirs only (`brief.code_path`: no hidden, test, fixture, cas
 Shipping a regex set per language does not scale, so the miners read code through three layers. A file uses the first layer that can read it.
 
 1. **Structure** (`structure.py`, tree-sitter, a normal dependency). Tree-sitter parses the file. Tags queries in `config/queries/<grammar>.scm` say what a definition, a reference, a comment and an import look like. `config/queries/languages.yaml` holds the rest as data: extensions, which node types nest and branch, how to count parameters, what is public, the head symbols of a Lisp (`def_heads`). Shipped: python, typescript (also tsx, javascript, jsx, svelte `<script>`), clojure, go, ruby, java, rust.
-2. **Regex patterns** (`config/languages.yaml`: python, clojure, typescript). Used when the group or the grammar is missing, and for what is a pattern, not structure: entry points, catch-all, sleep, regex literals, bit operations, skipped tests, metaprogramming, commented-out code, long lines, big literals.
+2. **Regex patterns** (`config/languages.yaml`: python, clojure, typescript). Used when the grammar is missing, and for what is a pattern, not structure: entry points, catch-all, sleep, regex literals, bit operations, skipped tests, metaprogramming, commented-out code, long lines, big literals.
 3. **Plain text**, for a file with neither (a scanned file type with no grammar, such as `.zig` in a profile `scan`). The miners find `smell` markers in comment-like lines (prefixes in `text_fallback.comment_prefixes`), `long_line`, and `deep_nesting` by indentation. Data and prose extensions (`text_fallback.skip_extensions`) and `docs` files are skipped.
 
 The pack downloads a grammar bundle on first use. Mining never starts that download: a grammar counts only when it is already in the local cache (`structure.ready`). `gittok structure --prefetch` fetches the grammars for the languages in the configured repos, and `gittok health --hint` prints one line when the group is installed but a grammar is missing. Until then those files use layer 2 or 3.
@@ -317,7 +317,7 @@ What the structure layer changes in the miners:
 
 A stack we do not ship can still be read. A profile may carry `queries: {<grammar>: "<tags query>"}`, where the key is a tree-sitter-language-pack grammar name (`php`, `kotlin`, ...). It replaces the shipped query for that grammar, or adds one. It is data: a query text, never code. Captures: `@definition.<kind>` on the whole definition with `@name` on its name; `@reference`; `@comment`; `@import` on a statement with `@import.path` on the module spec (and `@import.relative` for a relative one); `@private`. Unknown capture names are rejected. For a grammar with no shape rules in `languages.yaml`, the `generic` block applies (nesting and branch node names by pattern, parameters from the `parameters` field).
 
-`save_profile` checks each query: it must compile for the grammar, use only the captures above, read at least one file of the file set and find something in it. A failure comes back in `errors["queries.<grammar>"]`; a pass returns `queries: {<grammar>: {files, defs}}`. Without the `structure` group the query cannot be checked, so the save is refused. `survey_repo` returns a `structure` block: whether the layer is installed, what is shipped, and the file types in the repo that have a grammar in the pack but no query here (`uncovered`).
+`save_profile` checks each query: it must compile for the grammar, use only the captures above, read at least one file of the file set and find something in it. A failure comes back in `errors["queries.<grammar>"]`; a pass returns `queries: {<grammar>: {files, defs}}`. If tree-sitter cannot be imported (a broken install), the query cannot be checked, so the save is refused. `survey_repo` returns a `structure` block: whether the layer is installed, what is shipped, and the file types in the repo that have a grammar in the pack but no query here (`uncovered`).
 
 ## 13. Story variants
 
@@ -363,7 +363,7 @@ n = n * (1 - 0.25 * own_share)                 # only when settings.user.git_ide
 
 A dir with no row has novelty 1. `commits_30d` comes from the stored churn signal (top 25 dirs per window; others count 0). `own_share` is the reader's share of changed lines in the top-level dir (signal `author_shares`, matched by name, case-insensitive). It lowers novelty by at most 25%, because the reader often studies code that other people wrote. `settings.user.git_identities` defaults to empty.
 
-`knowledge.novelty_map(conn, repo)` gives `{dir: novelty}` for every dir with counts or with a card. The `coverage` tool adds `novelty` to each top-level dir (1.0 when unknown). `get_profile` adds `knowledge`: the 10 most novel dirs.
+`knowledge.novelty_map(conn, repo)` gives `{dir: novelty}` for every dir with counts or with a card. The `coverage` tool adds `novelty` to each top-level dir (1.0 when unknown). `get_taste_profile` adds `knowledge`: the 10 most novel dirs.
 
 ### Knowledge per symbol
 
@@ -371,7 +371,7 @@ The `knowledge_symbols` table (migration 0023) holds the same counts per `(repo,
 
 A card's symbols (`knowledge.card_symbols`): the symbols named by `resolved["facts"]` when the card has them; else the innermost definitions that overlap the lines of its code visual and code panels, plus backticked names (`` `name` `` or `` `name()` ``) that match at most 3 definitions in the card's repos.
 
-`knowledge.symbol_novelty` uses the dir formula without churn and authorship. Lead ranking multiplies the dir novelty by a symbol factor (`knowledge.SymbolContext.factor`), from the innermost definitions in the lead's window:
+A symbol's novelty is the dir formula (`knowledge.combine`) without churn and authorship. Lead ranking multiplies the dir novelty by a symbol factor (`knowledge.SymbolContext.factor`), from the innermost definitions in the lead's window:
 
 ```
 f = 0.5 + 0.5 * max(novelty(symbol))       # all symbols seen: down to 0.5

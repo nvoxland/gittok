@@ -13,7 +13,7 @@ import re
 import socket
 import time
 from collections.abc import Callable
-from contextlib import asynccontextmanager, closing
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -37,6 +37,7 @@ from gittok import (
     knowledge,
     learning,
     mcp_server,
+    private,
     profile,
     render,
     replies,
@@ -111,9 +112,23 @@ def _iso_ms(ts: int) -> str:
     return datetime.fromtimestamp(ts / 1000, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+# A reverse proxy on this machine (tailscale serve, caddy, nginx) connects from 127.0.0.1 and
+# names the real client in one of these headers.
+PROXY_HEADERS = frozenset(
+    {b"x-forwarded-for", b"forwarded", b"x-forwarded-host", b"x-forwarded-proto", b"x-real-ip"}
+)
+
+
 def _is_loopback(scope) -> bool:
+    """True for a request that a program on this machine sent itself.
+
+    The TCP peer must be a loopback address and the request must have no proxy header: a
+    request that a local reverse proxy passed on comes from somewhere else, so it needs the
+    pairing cookie and gets no MCP. A client only loses rights by sending such a header."""
     client = scope.get("client")
     if not client:
+        return False
+    if any(k.lower() in PROXY_HEADERS for k, _ in scope.get("headers") or ()):
         return False
     try:
         return ipaddress.ip_address(client[0].split("%")[0]).is_loopback
@@ -281,6 +296,19 @@ def hide_pair_token_in_access_log() -> None:
         logger.addFilter(PairTokenFilter())
 
 
+class ApiError(HTTPException):
+    """An error with a stable `code` for programs, next to the `detail` text for people."""
+
+    def __init__(self, status_code: int, code: str, detail: str):
+        super().__init__(status_code, detail)
+        self.code = code
+
+
+def _error_json(status: int, code: str, detail: str) -> JSONResponse:
+    """The body of every JSON error: `detail` may be reworded, `code` stays (docs/api.md)."""
+    return JSONResponse({"detail": detail, "code": code}, status)
+
+
 class SecurityMiddleware:
     """Host allowlist, Origin check, loopback-only MCP, LAN pairing cookie, a request body
     size limit, and the security headers of every response."""
@@ -334,9 +362,9 @@ class SecurityMiddleware:
         finally:
             try:
                 path = self.api_log()
-                path.parent.mkdir(parents=True, exist_ok=True)
+                private.make_dir(path.parent)
                 host = (scope.get("client") or ("?",))[0]
-                with path.open("a") as f:
+                with open(path, "a", opener=private.opener) as f:
                     f.write(f"{db.now_iso()} {host} {scope['method']} {scope['path']} {status}\n")
             except OSError:
                 pass  # logging never fails a request
@@ -351,28 +379,28 @@ class SecurityMiddleware:
         hosts = [v for k, v in scope["headers"] if k == b"host"]
         name = host_name(hosts[0].decode("latin-1")) if len(hosts) == 1 else None
         if not await self.hosts.allows(name):
-            return await reply(JSONResponse({"detail": "unknown Host"}, 421))
+            return await reply(_error_json(421, "unknown_host", "unknown Host"))
         if scope["method"] not in SAFE_METHODS:
             for k, v in scope["headers"]:
                 if k == b"origin" and not await self.hosts.allows(_origin_host(v)):
-                    return await reply(JSONResponse({"detail": "cross-origin request"}, 403))
+                    return await reply(_error_json(403, "cross_origin", "cross-origin request"))
 
         if path == "/mcp" or path.startswith("/mcp/"):
             if not loopback:
-                return await reply(JSONResponse({"detail": "MCP is loopback-only"}, 403))
+                return await reply(_error_json(403, "mcp_loopback_only", "MCP is loopback-only"))
         elif self.token and not loopback and path != "/pair":
             cookie = _cookie(scope, LAN_COOKIE)
             if cookie is None or not hmac.compare_digest(cookie.encode(), self.token.encode()):
                 if path.startswith("/api/"):
-                    return await reply(JSONResponse({"detail": "pair this device"}, 401))
+                    return await reply(_error_json(401, "unpaired", "pair this device"))
                 return await reply(HTMLResponse(PAIR_HTML, 401))
 
         headers = dict(scope["headers"])
         try:
             if int(headers.get(b"content-length", b"0")) > MAX_BODY_BYTES:
-                return await reply(JSONResponse({"detail": "request body too large"}, 413))
+                return await reply(_error_json(413, "body_too_large", "request body too large"))
         except ValueError:
-            return await reply(JSONResponse({"detail": "bad content-length"}, 400))
+            return await reply(_error_json(400, "bad_content_length", "bad content-length"))
 
         seen = 0
         started = False
@@ -396,7 +424,7 @@ class SecurityMiddleware:
             await self.app(scope, counting_receive, tracking_send)
         except _BodyTooLarge:
             if not started:
-                await reply(JSONResponse({"detail": "request body too large"}, 413))
+                await reply(_error_json(413, "body_too_large", "request body too large"))
 
 
 def _origin_host(value: bytes) -> str | None:
@@ -651,17 +679,21 @@ def create_app(
         # The client drops a rejected event batch whole, so this log is the only trace of why.
         if request.url.path == "/api/events":
             logs = get_config().settings.data_dir / "logs"
-            logs.mkdir(parents=True, exist_ok=True)
+            private.make_dir(logs)
             host = request.client.host if request.client else "?"
             errors = db.dumps(jsonable_encoder(exc.errors()))[:2000]
-            with (logs / "rejected-events.log").open("a") as f:
+            with open(logs / "rejected-events.log", "a", opener=private.opener) as f:
                 f.write(f"{db.now_iso()} 422 {host} {errors}\n")
         return await request_validation_exception_handler(request, exc)
+
+    @app.exception_handler(ApiError)
+    async def api_error(_request: Request, exc: ApiError):
+        return _error_json(exc.status_code, exc.code, exc.detail)
 
     @app.get("/pair")
     def pair(t: str = ""):
         if not lan_token or not hmac.compare_digest(t.encode(), lan_token.encode()):
-            raise HTTPException(401, "bad pairing token")
+            raise ApiError(401, "bad_pairing_token", "bad pairing token")
         resp = RedirectResponse("/", status_code=303)
         resp.set_cookie(
             LAN_COOKIE, lan_token, max_age=LAN_COOKIE_MAX_AGE, httponly=True, samesite="lax"
@@ -669,7 +701,8 @@ def create_app(
         return resp
 
     def conn():
-        return db.open_db(get_config().settings.data_dir / "gittok.db")
+        """`with conn() as c:` commits (or rolls back on an error), then closes the connection."""
+        return db.session(get_config().settings.data_dir / "gittok.db")
 
     @app.get("/api/feed")
     def feed(
@@ -685,7 +718,7 @@ def create_app(
                     c, cfg, limit, cursor, random.randrange(2**31), datetime.now(UTC), repo, dir
                 )
         except InvalidCursor:
-            raise HTTPException(400, "invalid cursor") from None
+            raise ApiError(400, "invalid_cursor", "invalid cursor") from None
         return {"cards": cards, "next_cursor": next_cursor, "resume_card_id": resume}
 
     @app.get("/api/cards/{card_id}")
@@ -693,7 +726,7 @@ def create_app(
         with conn() as c:
             row = c.execute("SELECT * FROM cards WHERE id = ?", (card_id,)).fetchone()
             if row is None:
-                raise HTTPException(404, f"unknown card {card_id}")
+                raise ApiError(404, "unknown_card", f"unknown card {card_id}")
             card = public_card(row, get_config())
             replies.attach(c, [card])
         return card
@@ -705,11 +738,11 @@ def create_app(
             try:
                 result = srs.record_answer(c, body.card_id, body.choice, now)
             except srs.UnknownCard:
-                raise HTTPException(404, f"unknown card {body.card_id}") from None
+                raise ApiError(404, "unknown_card", f"unknown card {body.card_id}") from None
             except srs.NotInteractive:
-                raise HTTPException(400, "card has no question to answer") from None
+                raise ApiError(400, "not_interactive", "card has no question to answer") from None
             except srs.BadChoice as e:
-                raise HTTPException(400, str(e)) from None
+                raise ApiError(400, "bad_choice", str(e)) from None
             data = {"choice": body.choice, "correct": result["correct"]}
             if body.session:
                 data["session"] = body.session
@@ -738,32 +771,32 @@ def create_app(
             try:
                 return replies.add(c, body.card_id, body.comment_index, body.text)
             except replies.UnknownCard as e:
-                raise HTTPException(404, str(e)) from None
+                raise ApiError(404, "unknown_card", str(e)) from None
             except replies.ReplyError as e:
-                raise HTTPException(400, str(e)) from None
+                raise ApiError(400, "bad_reply", str(e)) from None
 
     @app.get("/api/stories")
     def stories():
-        with closing(conn()) as c:
+        with conn() as c:
             return {"stories": social.stories(c, get_config(), clock())}
 
     @app.post("/api/stories/seen")
     def stories_seen(body: StorySeen):
         if body.repo not in get_config().repos:
-            raise HTTPException(404, f"unknown repo {body.repo}")
-        with closing(conn()) as c:
+            raise ApiError(404, "unknown_repo", f"unknown repo {body.repo}")
+        with conn() as c:
             return {"recorded": social.mark_seen(c, body.repo, body.shas, clock())}
 
     @app.get("/api/notifications")
     def notifications(unread: int = 0):
-        with closing(conn()) as c:
+        with conn() as c:
             return social.list_notifications(c, unread_only=bool(unread))
 
     @app.post("/api/notifications/read")
     def notifications_read(body: NotificationsRead):
         if not body.all and not body.ids:
-            raise HTTPException(400, "send ids or all")
-        with closing(conn()) as c:
+            raise ApiError(400, "missing_ids", "send ids or all")
+        with conn() as c:
             social.mark_read(c, clock(), ids=body.ids, all=body.all)
             return {"unread": social.list_notifications(c)["unread"]}
 
@@ -786,7 +819,7 @@ def create_app(
     def repo_detail(name: str):
         cfg = get_config()
         if name not in cfg.repos:
-            raise HTTPException(404, f"unknown repo {name}")
+            raise ApiError(404, "unknown_repo", f"unknown repo {name}")
         with conn() as c:
             return repo_profile(c, cfg, name)
 
@@ -795,7 +828,7 @@ def create_app(
         with conn() as c:
             page = characters.persona_page(c, get_config(), handle)
         if page is None:
-            raise HTTPException(404, f"unknown persona {handle}")
+            raise ApiError(404, "unknown_persona", f"unknown persona {handle}")
         return page
 
     @app.get("/api/files/{repo}/{path:path}")
@@ -803,13 +836,13 @@ def create_app(
         with conn() as c:
             page = characters.file_page(c, get_config(), repo, path)
         if page is None:
-            raise HTTPException(404, f"unknown repo {repo}")
+            raise ApiError(404, "unknown_repo", f"unknown repo {repo}")
         return page
 
     @app.post("/api/follows")
     def follow(body: FollowBody):
         if body.repo not in get_config().repos:
-            raise HTTPException(404, f"unknown repo {body.repo}")
+            raise ApiError(404, "unknown_repo", f"unknown repo {body.repo}")
         with conn() as c:
             return {"followed": characters.set_follow(c, body.repo, body.path, body.on)}
 
@@ -817,7 +850,7 @@ def create_app(
     def repo_map(name: str):
         cfg = get_config()
         if name not in cfg.repos:
-            raise HTTPException(404, f"unknown repo {name}")
+            raise ApiError(404, "unknown_repo", f"unknown repo {name}")
         with conn() as c:
             return {
                 "name": name,
@@ -841,7 +874,7 @@ def create_app(
     def asset(folder: str, file: str):
         path = asset_path(get_config().settings.data_dir / "assets", folder, file)
         if path is None:
-            raise HTTPException(404, "unknown asset")
+            raise ApiError(404, "unknown_asset", "unknown asset")
         cache = MASCOT_CACHE if folder == "mascots" else ASSET_CACHE
         return FileResponse(path, media_type="image/png", headers={"Cache-Control": cache})
 

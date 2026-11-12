@@ -111,7 +111,8 @@ def test_feed_health_reports_last_gc_pass(conn, cfg):
 def test_wants_cards_signal_appends_a_fixed_line_with_cooldown(conn, cfg):
     log = cfg.settings.data_dir / supply.WANTS_FILE
     assert supply.signal_wants_cards(conn, cfg, NOW) == 1  # empty backlog wants cards
-    assert log.read_text().splitlines() == [f"{NOW.isoformat()} want 20 cards"]
+    assert log.read_text() == f'{{"at":"{NOW.isoformat()}","want":20}}\n'  # one JSON object
+    assert supply.parse_wants(log.read_text()) == [{"at": NOW, "want": 20}]
     assert supply.signal_wants_cards(conn, cfg, NOW + timedelta(hours=1)) == 0  # cooldown
     later = NOW + timedelta(hours=cfg.settings.agent.wake_cooldown_hours, minutes=1)
     assert supply.signal_wants_cards(conn, cfg, later) == 1
@@ -138,3 +139,20 @@ def test_wants_cards_signal_is_silent_with_no_repos(conn, cfg):
     empty = replace(cfg, repos={})
     assert supply.signal_wants_cards(conn, empty, NOW) == 0
     assert not (cfg.settings.data_dir / supply.WANTS_FILE).exists()
+
+
+def test_parse_wants_keeps_only_complete_valid_lines():
+    good = supply.wants_line(NOW, 7)
+    assert good.endswith("\n") and "\n" not in good[:-1]
+    text = (
+        "2026-01-01T00:00:00+00:00 want 20 cards\n"  # not JSON
+        "[1, 2]\n"
+        '{"at": "not a time", "want": 3}\n'
+        '{"at": "2026-01-01T00:00:00+00:00", "want": "many"}\n'
+        '{"at": "2026-01-01T00:00:00+00:00", "want": true}\n'
+        '{"at": "2026-01-01T00:00:00", "want": 3}\n'  # no time zone
+        "\n" + good + good[: len(good) // 2]  # the last line is still being written
+    )
+    assert supply.parse_wants(text) == [{"at": NOW, "want": 7}]
+    assert supply.parse_wants("") == []
+    assert supply.parse_wants(good[:-1]) == []  # no newline yet: not a whole line

@@ -84,6 +84,14 @@ def see(conn, card, ts=T):
     conn.commit()
 
 
+def symbol_novelty(conn, repo: str, symbol: str) -> float:
+    """Novelty of one symbol: the dir formula without churn and authorship (1.0 when unknown)."""
+    row = conn.execute(
+        "SELECT * FROM knowledge_symbols WHERE repo = ? AND symbol = ?", (repo, symbol)
+    ).fetchone()
+    return knowledge.combine(row or {})
+
+
 def run(conn, cfg):
     return learning.process_events(conn, cfg, now=NOW)
 
@@ -94,8 +102,8 @@ def test_card_with_fact_ids_lowers_novelty_of_its_symbol_only(conn, cfg):
     card = add_card(conn, cfg, resolved={"facts": [fid]})
     see(conn, card)
     run(conn, cfg)
-    assert knowledge.symbol_novelty(conn, "fixture", f) < 1.0
-    assert knowledge.symbol_novelty(conn, "fixture", "src/a.py::g") == 1.0
+    assert symbol_novelty(conn, "fixture", f) < 1.0
+    assert symbol_novelty(conn, "fixture", "src/a.py::g") == 1.0
 
 
 def test_symbols_derived_from_cited_ranges_and_backticks(conn, cfg):
@@ -132,7 +140,7 @@ def test_answers_count_per_symbol(conn, cfg):
     run(conn, cfg)
     row = conn.execute("SELECT * FROM knowledge_symbols").fetchone()
     assert (row["quiz_wrong"], row["seen"]) == (1, 0)
-    assert knowledge.symbol_novelty(conn, "fixture", f) > 0.3
+    assert symbol_novelty(conn, "fixture", f) > 0.3
 
 
 def seen_symbol(conn, repo, sym):

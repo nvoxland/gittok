@@ -21,11 +21,9 @@ from __future__ import annotations
 
 from collections import deque
 
-import regex
-
 from . import candidates, db, facts, gitq
 from .config import AnalysisSettings
-from .profiles import DEFAULT_WINDOW, Profile, fileset_for
+from .profiles import DEFAULT_WINDOW, Profile, SafeRegex, fileset_for
 
 MAX_HOPS = 6
 NIL_GUARD_LINES = 2  # a guard counts on the call line or this many lines below it
@@ -33,8 +31,10 @@ CALLABLE = ("function", "method")
 MISMATCH, NIL = candidates.FACT_TAGS
 
 
-def _rx(patterns) -> list:
-    return [regex.compile(p) for p in patterns]
+def _rx(key: str, patterns, skipped: list, keep=lambda i: True) -> list[SafeRegex]:
+    """The profile regexes of `key`, each under a time limit and named `<key>[<index>]`.
+    One that times out is skipped from then on; `skipped` gets its name and the reason."""
+    return [SafeRegex(f"{key}[{i}]", p, skipped=skipped) for i, p in enumerate(patterns) if keep(i)]
 
 
 def _hops(n: int) -> str:
@@ -66,11 +66,21 @@ def _sink_hit(rx_sinks, *texts):
 
 
 def mine(
-    conn, repo: str, path, head: str, profile: Profile | None, settings: AnalysisSettings
+    conn,
+    repo: str,
+    path,
+    head: str,
+    profile: Profile | None,
+    settings: AnalysisSettings,
+    stats: dict | None = None,
 ) -> list[dict]:
-    """Candidates {path, start, end, tag, why, score, fact_ids}. Read-only."""
+    """Candidates {path, start, end, tag, why, score, fact_ids}. Read-only.
+
+    `stats`, when given, collects `skipped_rules`: [{rule, reason}] for the profile regexes
+    that timed out (they are also logged)."""
     if profile is None:
         return []
+    skipped = stats.setdefault("skipped_rules", []) if stats is not None else []
     want_effects = bool(profile.sinks)
     want_nil = bool(profile.nil_markers and profile.nil_guards)
     if not (want_effects or want_nil):
@@ -104,9 +114,9 @@ def mine(
     texts = _texts(path, head, {d["path"] for d in defs} | {c["path"] for c in calls})
     out: list[dict] = []
     if want_effects:
-        out += _effects(profile, defs, calls, by_symbol, by_name, texts)
+        out += _effects(profile, defs, calls, by_symbol, by_name, texts, skipped)
     if want_nil:
-        out += _nil(conn, rid, profile, defs, calls, by_symbol, by_name, texts, fs)
+        out += _nil(conn, rid, profile, defs, calls, by_symbol, by_name, texts, fs, skipped)
     return candidates._bound(out, settings.candidates_per_tag)
 
 
@@ -119,8 +129,8 @@ def _target(call, by_symbol, by_name):
     return None
 
 
-def _effects(profile, defs, calls, by_symbol, by_name, texts) -> list[dict]:
-    sinks = _rx(s.pattern for s in profile.sinks)
+def _effects(profile, defs, calls, by_symbol, by_name, texts, skipped) -> list[dict]:
+    sinks = _rx("sinks", [s.pattern for s in profile.sinks], skipped)
     direct: dict[str, tuple[str, str | None]] = {}  # symbol -> (sink text, call fact id)
     for c in calls:
         hit = _sink_hit(sinks, c["callee_name"], c["callee_symbol"])
@@ -154,8 +164,10 @@ def _effects(profile, defs, calls, by_symbol, by_name, texts) -> list[dict]:
                 step[caller["symbol"]] = (call, by_symbol[sym])
                 queue.append(caller["symbol"])
 
-    effectful = _rx(c.name_regex for c in profile.conventions if c.means == "effectful")
-    pure = _rx(c.name_regex for c in profile.conventions if c.means == "pure")
+    names = [c.name_regex for c in profile.conventions]
+    means = [c.means for c in profile.conventions]
+    effectful = _rx("conventions", names, skipped, lambda i: means[i] == "effectful")
+    pure = _rx("conventions", names, skipped, lambda i: means[i] == "pure")
     out = []
     for d in defs:
         sym, name = d["symbol"], d["name"]
@@ -202,8 +214,8 @@ def _cand(d, window, tag, why, score, ids) -> dict:
     }
 
 
-def _nil(conn, rid, profile, defs, calls, by_symbol, by_name, texts, fs) -> list[dict]:
-    guards = _rx(profile.nil_guards)
+def _nil(conn, rid, profile, defs, calls, by_symbol, by_name, texts, fs, skipped) -> list[dict]:
+    guards = _rx("nil_guards", profile.nil_guards, skipped)
     risky = [
         s
         for s in facts._rows(

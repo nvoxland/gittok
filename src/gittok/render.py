@@ -177,7 +177,7 @@ class IllustrationRenderer:
 
     def _why_unavailable(self) -> str | None:
         if self._cmd() is None:
-            return "mflux is not installed (uv sync --group images)"
+            return "mflux is not installed (clone: uv sync --group images; tool: the images extra)"
         if self._path is not None and not self._path.is_dir():
             return f"saved model {self._path} is missing: run mflux-save (docs/install.md)"
         return None

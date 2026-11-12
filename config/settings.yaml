@@ -31,12 +31,17 @@ analysis:
   blame_max_files: 50
   blame_max_bytes: 2000000
   todo_max_hits: 150
+  candidates_per_tag: 40       # code candidates kept per tag (long_function, smell, ...) per repo
+  candidate_max_file_bytes: 200000  # candidate miners skip bigger files
+  candidate_max_files: 4000    # candidate miners read at most this many files per repo
+  fetch_min_interval_s: 900    # a repo with `fetch: true` is fetched at most once in this many seconds
   facts_max_files: 4000        # syntax facts: files read at head
   facts_max_commits: 300       # syntax facts: newest commits mapped to definitions
   facts_max_defs: 100000       # syntax facts: rows kept per repo, per table
   facts_max_calls: 400000
   facts_max_blob_bytes: 200000 # syntax facts: bigger files are not parsed
   why_min_words: 25            # commit bodies this long are attached as "why" evidence
+  git_timeout_s: 120           # seconds one read-only git call may run before it is stopped (raise it for a very large repo; fetch and clone have their own limits)
 research:
   max_output_bytes: 200000
   max_read_lines: 300
@@ -48,6 +53,12 @@ render:
   mflux_path: ~/.cache/mflux/z-image-turbo-q4
   mflux_model: z-image-turbo
   max_illustrations_per_run: 6
+  mflux_steps: 8               # inference steps per illustration
+  mflux_quantize: 8            # quantization bits when mflux_path is empty (the model is quantized on each run)
+  image_width: 768             # illustration size in pixels
+  image_height: 960
+  memegen_url: http://127.0.0.1:5001  # the memegen server that draws meme cards
+  worker_interval_s: 5.0       # how often the render worker looks for pending cards
 repos:
   # The add_repo MCP tool (an agent calls it) only accepts a git repo root inside one of these
   # directories. Empty = the parent directories of the repos in local/repos.yaml; with no
@@ -69,6 +80,8 @@ gc:
   log_max_kb: 1024             # a data/logs/*.log file over this size keeps its newest half
   leads_after_days: 180        # delete leads not seen at HEAD this long that no card ever covered
   interval_s: 3600             # how often the server runs a pass
+user:
+  git_identities: []           # author names you commit under, as git history shows them; set in local/settings.yaml
 profiles:
   max_hits: 200                # save_profile refuses a rule with more hits than this
   max_ms: 5000                 # ...or one that runs longer than this

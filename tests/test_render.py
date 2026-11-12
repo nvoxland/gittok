@@ -1,6 +1,7 @@
 import dataclasses
 import struct
 import subprocess
+import threading
 import time
 import zlib
 from pathlib import Path
@@ -348,13 +349,15 @@ def test_render_worker_renders_in_background_and_stops(fixture_repo, tmp_path):
     assert not worker.is_alive()
 
 
-def test_render_worker_survives_a_failing_pass(fixture_repo, tmp_path):
+def test_render_worker_survives_a_failing_pass(fixture_repo, tmp_path, monkeypatch):
     def boom():
         raise RuntimeError("config broke")
 
+    handled = threading.Event()  # set when the worker has caught the failure of a pass
+    monkeypatch.setattr(render.log, "exception", lambda *a, **k: handled.set())
     worker = render.RenderWorker(boom, renderers={})
     worker.start()
-    time.sleep(0.05)
+    assert handled.wait(5)
     assert worker.is_alive()
     worker.stop()
     assert not worker.is_alive()

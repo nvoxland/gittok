@@ -242,14 +242,6 @@ def combine(row, commits_30d: int = 0, own_share: float | None = None) -> float:
     return round(max(0.0, min(1.0, nov)), 4)
 
 
-def symbol_novelty(conn, repo: str, symbol: str) -> float:
-    """Novelty of one symbol, the dir formula without churn and authorship (1.0 when unknown)."""
-    row = conn.execute(
-        "SELECT * FROM knowledge_symbols WHERE repo = ? AND symbol = ?", (repo, symbol)
-    ).fetchone()
-    return combine(row or {})
-
-
 class SymbolContext:
     """What the reader has seen in one repo's symbols, for ranking leads.
 

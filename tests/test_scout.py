@@ -126,7 +126,7 @@ async def test_scout_max_caps_the_total(repo, tmp_path):
         st = data(await client.call_tool("scout_status", {}))
         assert st["unrated_total"] == 3
         assert sum(b["count"] for b in st["batches"]) == 2
-        st = data(await client.call_tool("scout_status", {"max": 1}))
+        st = data(await client.call_tool("scout_status", {"limit": 1}))
         assert sum(b["count"] for b in st["batches"]) == 1
 
 
@@ -185,6 +185,6 @@ def test_repo_with_no_ratings_gets_priority(tmp_path):
         row = conn.execute("SELECT items FROM scout_batches WHERE id = ?", (b["id"],)).fetchone()
         scout.rate(conn, b["id"], [good(it["id"]) for it in db.loads(row[0])])
     conn.execute("DELETE FROM scout_batches")
-    got = _per_repo(scout.status(conn, cfg, max_=4))
+    got = _per_repo(scout.status(conn, cfg, limit=4))
     assert got["beta"] >= 2
     assert sum(got.values()) == 4

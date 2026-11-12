@@ -10,7 +10,7 @@ from tests.conftest import make_config
 
 
 def seed(cfg, fixture_repo, cards):
-    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
+    with db.session(cfg.settings.data_dir / "gittok.db") as conn:
         run_id = runs.open_run(conn, cfg, repo=None, brief="b", requested=5)
         res = runs.submit(conn, cfg, run_id, cards)
     return [a["card_id"] for a in res["accepted"]]
@@ -89,7 +89,7 @@ def test_repos_lists_config_with_head_sha(cfg, client, fixture_repo):
         "repos": [{"name": "fixture", "ref": "main", "head_sha": None, "group": None}]
     }
     seed(cfg, fixture_repo, [example_card(fixture_repo)])
-    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
+    with db.session(cfg.settings.data_dir / "gittok.db") as conn:
         conn.execute("UPDATE repos SET last_analyzed_sha = 'abc123'")
         conn.commit()
     assert client.get("/api/repos").json()["repos"][0]["head_sha"] == "abc123"
@@ -102,7 +102,7 @@ def test_events_are_stored(cfg, client):
     ]
     res = client.post("/api/events", json={"events": events})
     assert res.json() == {"stored": 2}
-    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
+    with db.session(cfg.settings.data_dir / "gittok.db") as conn:
         rows = conn.execute("SELECT * FROM events ORDER BY id").fetchall()
     assert [r["type"] for r in rows] == ["impression", "dwell"]
     assert db.loads(rows[1]["data"]) == {"ms": 4200}
@@ -165,7 +165,7 @@ def test_pages_are_revalidated_and_hashed_assets_cached_forever(cfg):
 
 def test_prefs_default_and_follow_the_steering_setting(cfg, client):
     assert client.get("/api/prefs").json() == {"playback_speed": 1.0}
-    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
+    with db.session(cfg.settings.data_dir / "gittok.db") as conn:
         steering.set_playback_speed(conn, cfg, 1.5)
     assert client.get("/api/prefs").json() == {"playback_speed": 1.5}
 
@@ -301,7 +301,7 @@ def test_avatar_prefers_generated_png(cfg, client):
 def analyzed(cfg):
     from gittok import signals
 
-    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
+    with db.session(cfg.settings.data_dir / "gittok.db") as conn:
         return signals.analyze(conn, cfg.repos["fixture"], cfg.settings.analysis)
 
 
@@ -326,7 +326,7 @@ def test_repo_profile_has_stats_and_newest_ready_cards(cfg, client, fixture_repo
 
 def test_repo_profile_excludes_unready_cards_and_caps_at_20(cfg, client, fixture_repo):
     (cid,) = seed(cfg, fixture_repo, [example_card(fixture_repo)])
-    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
+    with db.session(cfg.settings.data_dir / "gittok.db") as conn:
         for i in range(25):
             conn.execute(
                 "INSERT INTO cards(id, run_id, repo_id, story_type, format, persona, tone, "
@@ -382,7 +382,7 @@ def test_lifespan_runs_learning_worker_and_stops_it(cfg, fixture_repo):
 
     ids = seed(cfg, fixture_repo, [example_card(fixture_repo), text_card(fixture_repo)])
     old = int((time.time() - 3 * 3600) * 1000)
-    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
+    with db.session(cfg.settings.data_dir / "gittok.db") as conn:
         conn.executemany(
             "INSERT INTO events(card_id, type, ts, data, received_at) "
             "VALUES (?, 'impression', ?, ?, 'x')",
@@ -392,7 +392,7 @@ def test_lifespan_runs_learning_worker_and_stops_it(cfg, fixture_repo):
     app = api.create_app(lambda: cfg, learning_worker=True, learning_interval_s=0.01)
     with TestClient(app):
         for _ in range(200):
-            with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
+            with db.session(cfg.settings.data_dir / "gittok.db") as conn:
                 done = conn.execute("SELECT COUNT(*) FROM rewards").fetchone()[0]
             if done == 2:
                 break
@@ -409,7 +409,7 @@ def test_no_learning_worker_by_default(cfg):
 
 
 def answer_events(cfg):
-    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
+    with db.session(cfg.settings.data_dir / "gittok.db") as conn:
         rows = conn.execute("SELECT * FROM events WHERE type = 'answer' ORDER BY id").fetchall()
     return [(r["card_id"], db.loads(r["data"])) for r in rows]
 
@@ -424,7 +424,7 @@ def test_answer_returns_truth_and_records_server_side_event(cfg, client, fixture
         "explanation": "main() lives in src/app.py.",
     }
     assert answer_events(cfg) == [(cid, {"choice": 1, "correct": False, "session": "s1"})]
-    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
+    with db.session(cfg.settings.data_dir / "gittok.db") as conn:
         row = conn.execute("SELECT * FROM srs WHERE card_id = ?", (cid,)).fetchone()
     assert row["interval_days"] == 1 and row["mastered"] == 0
     assert client.post("/api/answer", json={"card_id": cid, "choice": 0}).json()["correct"] is True
@@ -450,7 +450,7 @@ def test_answer_errors(cfg, client, fixture_repo):
 
 def test_answer_on_deleted_card_is_404(cfg, client, fixture_repo):
     (quiz,) = seed(cfg, fixture_repo, [quiz_card(fixture_repo)])
-    with db.open_db(cfg.settings.data_dir / "gittok.db") as c:
+    with db.session(cfg.settings.data_dir / "gittok.db") as c:
         c.execute("DELETE FROM cards WHERE id = ?", (quiz,))  # as gc does
     r = client.post("/api/answer", json={"card_id": quiz, "choice": 0})
     assert r.status_code == 404
@@ -491,7 +491,7 @@ def test_saved_lists_cards_whose_latest_save_is_on(cfg, client, fixture_repo):
 
 
 def saved_rows(cfg):
-    with db.open_db(cfg.settings.data_dir / "gittok.db") as c:
+    with db.session(cfg.settings.data_dir / "gittok.db") as c:
         return {r["card_id"]: r["saved_ts"] for r in c.execute("SELECT * FROM saved_cards")}
 
 
@@ -519,7 +519,7 @@ def test_older_save_event_does_not_override_newer(cfg, client, fixture_repo):
 def test_saved_survives_event_pruning(cfg, client, fixture_repo):
     (a,) = seed(cfg, fixture_repo, [example_card(fixture_repo)])
     save_event(client, a, True, 1000)
-    with db.open_db(cfg.settings.data_dir / "gittok.db") as c:
+    with db.session(cfg.settings.data_dir / "gittok.db") as c:
         c.execute("DELETE FROM events")
     assert [card["id"] for card in client.get("/api/saved").json()["cards"]] == [a]
 
@@ -598,7 +598,7 @@ def test_notifications_endpoints(social_client, social_cfg):
     from gittok import social
     from tests.test_social import NOW
 
-    with db.open_db(social_cfg.settings.data_dir / "gittok.db") as conn:
+    with db.session(social_cfg.settings.data_dir / "gittok.db") as conn:
         social.generate_notifications(conn, social_cfg, NOW)
     body = social_client.get("/api/notifications?unread=1").json()
     assert body["unread"] == 1
@@ -616,7 +616,7 @@ def test_notifications_read_all(social_client, social_cfg):
     from gittok import social
     from tests.test_social import NOW
 
-    with db.open_db(social_cfg.settings.data_dir / "gittok.db") as conn:
+    with db.session(social_cfg.settings.data_dir / "gittok.db") as conn:
         social.generate_notifications(conn, social_cfg, NOW)
     r = social_client.post("/api/notifications/read", json={"all": True})
     assert r.json()["unread"] == 0
@@ -638,7 +638,7 @@ def test_lifespan_runs_notify_worker_and_stops_it(social_cfg):
     db.open_db(social_cfg.settings.data_dir / "gittok.db").close()  # migrate before threads
     with TestClient(app):
         for _ in range(200):
-            with db.open_db(social_cfg.settings.data_dir / "gittok.db") as conn:
+            with db.session(social_cfg.settings.data_dir / "gittok.db") as conn:
                 n = conn.execute(
                     "SELECT COUNT(*) FROM notifications WHERE kind != 'low_runway'"
                 ).fetchone()[0]
@@ -702,7 +702,7 @@ def test_api_requests_are_logged_with_status(cfg, client):
 def test_feed_returns_resume_card_id(cfg, client, fixture_repo):
     ids = seed(cfg, fixture_repo, [example_card(fixture_repo), text_card(fixture_repo)])
     assert client.get("/api/feed").json()["resume_card_id"] is None
-    with db.open_db(cfg.settings.data_dir / "gittok.db") as c:
+    with db.session(cfg.settings.data_dir / "gittok.db") as c:
         c.execute(
             "INSERT INTO events(card_id, type, ts, data, received_at) "
             "VALUES (?, 'impression', 1, '{}', '2026-06-01T00:00:00Z')",
@@ -748,7 +748,7 @@ def test_repo_map_has_knowledge_and_verdicts_per_dir(cfg, client, fixture_repo):
     ]
     ids = seed(cfg, fixture_repo, [card, text_card(fixture_repo, verdict="core")])
     assert len(ids) == 2
-    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
+    with db.session(cfg.settings.data_dir / "gittok.db") as conn:
         conn.execute(
             "INSERT INTO events(card_id, type, ts, data, received_at) "
             "VALUES (?, 'impression', 1000, '{}', 'x')",
@@ -787,7 +787,7 @@ def test_feed_filters_by_repo_and_dir(cfg, client, fixture_repo):
 
 def test_feed_dir_filter_matches_subdirs_but_not_prefix_names(cfg, client, fixture_repo):
     (cid,) = seed(cfg, fixture_repo, [example_card(fixture_repo)])
-    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
+    with db.session(cfg.settings.data_dir / "gittok.db") as conn:
         conn.execute("INSERT INTO card_features VALUES (?, 'dir', 'billing/sub')", (cid,))
         conn.commit()
     assert len(client.get("/api/feed", params={"dir": "billing/sub"}).json()["cards"]) == 1
@@ -797,7 +797,7 @@ def test_feed_dir_filter_matches_subdirs_but_not_prefix_names(cfg, client, fixtu
 
 def test_repo_map_returns_per_file_symbol_coverage(cfg, client, fixture_repo):
     seed(cfg, fixture_repo, [text_card(fixture_repo)])
-    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
+    with db.session(cfg.settings.data_dir / "gittok.db") as conn:
         rid = conn.execute("SELECT id FROM repos WHERE name = 'fixture'").fetchone()[0]
         for i, name in enumerate(("f", "g")):
             conn.execute(
@@ -812,3 +812,107 @@ def test_repo_map_returns_per_file_symbol_coverage(cfg, client, fixture_repo):
         conn.commit()
     files = client.get("/api/repos/fixture/map").json()["files"]
     assert files == [{"path": "src/a.py", "symbols_defined": 2, "symbols_seen": 1}]
+
+
+@pytest.fixture
+def opened(monkeypatch):
+    """Every sqlite connection made while the test runs; each has `.closed`."""
+    import sqlite3
+
+    class Tracked(sqlite3.Connection):
+        closed = False
+
+        def close(self):
+            self.closed = True
+            super().close()
+
+    conns = []
+    real = sqlite3.connect
+
+    def spy(*args, **kwargs):
+        conn = real(*args, factory=Tracked, **kwargs)
+        conns.append(conn)
+        return conn
+
+    monkeypatch.setattr(db.sqlite3, "connect", spy)
+    return conns
+
+
+def test_every_api_request_closes_its_connection(cfg, client, fixture_repo, opened):
+    (cid,) = seed(cfg, fixture_repo, [quiz_card(fixture_repo)])
+    opened.clear()
+    calls = [
+        ("get", "/api/feed", None),
+        ("get", f"/api/cards/{cid}", None),
+        ("get", "/api/cards/nope", None),  # an error path closes too
+        ("post", "/api/answer", {"card_id": cid, "choice": 0}),
+        ("post", "/api/answer", {"card_id": "nope", "choice": 0}),
+        ("get", "/api/saved", None),
+        ("post", "/api/replies", {"card_id": "nope", "comment_index": 0, "text": "x"}),
+        ("get", "/api/stories", None),
+        ("post", "/api/stories/seen", {"repo": "fixture", "shas": ["abcdef1"]}),
+        ("get", "/api/notifications", None),
+        ("post", "/api/notifications/read", {"all": True}),
+        ("get", "/api/repos", None),
+        ("get", "/api/repos/fixture", None),
+        ("get", "/api/repos/fixture/map", None),
+        ("get", "/api/personas/nope", None),
+        ("get", "/api/files/fixture/README.md", None),
+        ("post", "/api/follows", {"repo": "fixture", "path": "src"}),
+        ("post", "/api/events", {"events": [{"card_id": cid, "type": "save", "ts": 1}]}),
+        ("get", "/api/prefs", None),
+    ]
+    for method, path, body in calls:
+        before = len(opened)
+        res = client.request(method, path, json=body)
+        assert res.status_code < 500, (path, res.text)
+        assert len(opened) > before, f"{path} opened no connection"
+        assert all(c.closed for c in opened[before:]), f"{path} left a connection open"
+
+
+def test_api_writes_are_committed_before_the_connection_closes(cfg, client, fixture_repo):
+    (cid,) = seed(cfg, fixture_repo, [text_card(fixture_repo)])
+    client.post("/api/events", json={"events": [{"card_id": cid, "type": "save", "ts": 5}]})
+    client.post("/api/follows", json={"repo": "fixture", "path": "src"})
+    assert [c["id"] for c in client.get("/api/saved").json()["cards"]] == [cid]
+    with db.session(cfg.settings.data_dir / "gittok.db") as conn:
+        assert conn.execute("SELECT count(*) FROM events").fetchone()[0] == 1
+
+
+def test_api_errors_carry_a_stable_code_next_to_detail(cfg, client, fixture_repo):
+    quiz, plain = seed(cfg, fixture_repo, [quiz_card(fixture_repo), text_card(fixture_repo)])
+
+    def err(method, path, **kw):
+        res = client.request(method, path, **kw)
+        body = res.json()
+        assert set(body) == {"detail", "code"} and isinstance(body["detail"], str), body
+        return res.status_code, body["code"]
+
+    assert err("get", "/api/feed", params={"cursor": "!!"}) == (400, "invalid_cursor")
+    assert err("get", "/api/cards/nope") == (404, "unknown_card")
+    assert client.get("/api/cards/nope").json()["detail"] == "unknown card nope"  # text is kept
+    answer = {"card_id": "nope", "choice": 0}
+    assert err("post", "/api/answer", json=answer) == (404, "unknown_card")
+    assert err("post", "/api/answer", json={**answer, "card_id": plain}) == (400, "not_interactive")
+    bad_choice = {"card_id": quiz, "choice": 99}
+    assert err("post", "/api/answer", json=bad_choice) == (400, "bad_choice")
+    reply = {"card_id": "nope", "comment_index": 0, "text": "hi"}
+    assert err("post", "/api/replies", json=reply) == (404, "unknown_card")
+    assert err("post", "/api/replies", json={**reply, "card_id": plain, "comment_index": 99}) == (
+        400,
+        "bad_reply",
+    )
+    assert err("post", "/api/stories/seen", json={"repo": "nope", "shas": []}) == (
+        404,
+        "unknown_repo",
+    )
+    assert err("post", "/api/notifications/read", json={}) == (400, "missing_ids")
+    assert err("get", "/api/repos/nope") == (404, "unknown_repo")
+    assert err("get", "/api/repos/nope/map") == (404, "unknown_repo")
+    assert err("get", "/api/files/nope/a.py") == (404, "unknown_repo")
+    assert err("post", "/api/follows", json={"repo": "nope", "path": "src"}) == (
+        404,
+        "unknown_repo",
+    )
+    assert err("get", "/api/personas/nope") == (404, "unknown_persona")
+    assert err("get", "/assets/nope/1.png") == (404, "unknown_asset")

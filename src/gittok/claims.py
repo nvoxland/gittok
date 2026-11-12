@@ -180,11 +180,6 @@ def _count_tokens(text: str) -> list[tuple[str, int]]:
     return out
 
 
-def count_claims(text: str) -> list[int]:
-    """Integers >= 13 stated next to a count word, outside code spans, dates, and hedges."""
-    return [n for _, n in _count_tokens(text)]
-
-
 def line_refs(text: str) -> list[tuple[str, int]]:
     """('line 40', 40) and ('lines 36-60', 60): the highest line named, outside code spans."""
     masked = _mask(text)

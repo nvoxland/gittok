@@ -415,3 +415,129 @@ def test_real_server_access_log_hides_the_token(cfg, capfd):
         t.join(5)
     logged = "".join(capfd.readouterr())
     assert "/pair" in logged and TOKEN not in logged
+
+
+def test_token_and_log_files_are_private_in_a_private_new_data_dir(cfg):
+    old = os.umask(0o022)
+    try:
+        data = cfg.settings.data_dir
+        assert not data.exists()
+        social.ensure_lan_token(data)
+        assert stat.S_IMODE(data.stat().st_mode) == 0o700
+        assert stat.S_IMODE((data / "lan_token").stat().st_mode) == 0o600
+        app = api.create_app(lambda: cfg, lan_token=TOKEN)
+        assert call(app, "GET", "/api/prefs", "127.0.0.1").status_code == 200
+        bad = {"events": [{"type": "nope", "ts": 1}]}
+        assert call(app, "POST", "/api/events", "127.0.0.1", json=bad).status_code == 422
+        logs = data / "logs"
+        assert stat.S_IMODE(logs.stat().st_mode) == 0o700
+        names = {f.name for f in logs.iterdir()}
+        assert {"api.log", "rejected-events.log"} <= names
+        for f in [*logs.iterdir(), data / "gittok.db"]:
+            assert stat.S_IMODE(f.stat().st_mode) == 0o600, f.name
+    finally:
+        os.umask(old)
+
+
+def test_a_data_dir_the_user_made_keeps_its_mode(cfg):
+    old = os.umask(0o022)
+    try:
+        data = cfg.settings.data_dir
+        data.mkdir(mode=0o750)
+        social.ensure_lan_token(data)
+        assert stat.S_IMODE(data.stat().st_mode) == 0o750
+        assert stat.S_IMODE((data / "lan_token").stat().st_mode) == 0o600
+    finally:
+        os.umask(old)
+
+
+# --- A reverse proxy on this machine (tailscale serve, caddy) ------------------------------------
+
+PROXY_HEADERS = [
+    {"X-Forwarded-For": "100.64.0.7"},
+    {"Forwarded": "for=100.64.0.7;proto=https"},
+    {"X-Forwarded-Host": "feed.example.ts.net"},
+    {"X-Real-IP": "100.64.0.7"},
+    {"x-forwarded-for": "127.0.0.1"},  # the value does not matter, the header does
+]
+
+
+@pytest.mark.parametrize("headers", PROXY_HEADERS)
+def test_a_proxied_request_from_a_loopback_peer_needs_the_pairing_cookie(lan_app, headers):
+    for peer in ("127.0.0.1", "::1"):
+        r = call(lan_app, "GET", "/api/feed", peer, headers=headers)
+        assert r.status_code == 401
+        assert r.json()["detail"] == "pair this device"
+        assert call(lan_app, "GET", "/", peer, headers=headers).status_code == 401
+        ok = call(lan_app, "GET", "/api/feed", peer, headers=headers, cookies={"cs_lan": TOKEN})
+        assert ok.status_code == 200
+
+
+@pytest.mark.parametrize("headers", PROXY_HEADERS)
+@pytest.mark.parametrize("path", ["/mcp", "/mcp/", "/mcp/x"])
+def test_mcp_refuses_a_proxied_request_even_with_the_cookie(cfg, lan_app, headers, path):
+    for app in (lan_app, api.create_app(lambda: cfg)):  # with and without a pairing token
+        cookies = {"cs_lan": TOKEN}
+        r = call(app, "POST", path, "127.0.0.1", headers=headers, json={}, cookies=cookies)
+        assert r.status_code == 403
+        assert r.json()["detail"] == "MCP is loopback-only"
+
+
+def test_a_proxied_device_can_still_pair(lan_app):
+    headers = {"X-Forwarded-For": "100.64.0.7"}
+    r = call(lan_app, "GET", f"/pair?t={TOKEN}", "127.0.0.1", headers=headers)
+    assert r.status_code == 303 and "cs_lan=" in r.headers["set-cookie"]
+
+
+def test_a_direct_loopback_request_is_still_loopback(lan_app):
+    assert call(lan_app, "GET", "/api/feed", "127.0.0.1").status_code == 200
+
+
+# --- Machine-readable error codes --------------------------------------------------------------
+
+
+def test_middleware_errors_carry_a_code_next_to_detail(cfg, lan_app, strict_app):
+    def body(r):
+        return (r.status_code, r.json())
+
+    lan = "192.168.1.9"
+    assert body(call(lan_app, "GET", "/api/feed", lan)) == (
+        401, {"detail": "pair this device", "code": "unpaired"},
+    )  # fmt: skip
+    assert body(call(lan_app, "GET", "/mcp", lan)) == (
+        403, {"detail": "MCP is loopback-only", "code": "mcp_loopback_only"},
+    )  # fmt: skip
+    assert body(call(lan_app, "GET", "/pair?t=wrong", lan)) == (
+        401, {"detail": "bad pairing token", "code": "bad_pairing_token"},
+    )  # fmt: skip
+    evil = {"Origin": "http://evil.example"}
+    assert body(call(lan_app, "POST", "/api/events", "127.0.0.1", headers=evil, json={})) == (
+        403, {"detail": "cross-origin request", "code": "cross_origin"},
+    )  # fmt: skip
+    big = call(lan_app, "POST", "/api/events", "127.0.0.1", content=b"x" * (1024 * 1024 + 1))
+    assert body(big) == (413, {"detail": "request body too large", "code": "body_too_large"})
+    sent = {}
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(msg):
+        if msg["type"] == "http.response.body":
+            sent["body"] = msg["body"]
+
+    for headers, want in [
+        ({"Host": "evil.example"}, b'{"detail":"unknown Host","code":"unknown_host"}'),
+        (
+            {"Host": "localhost", "Content-Length": "many"},
+            b'{"detail":"bad content-length","code":"bad_content_length"}',
+        ),
+    ]:
+        scope = {
+            "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
+            "method": "POST", "path": "/api/events", "raw_path": b"/api/events",
+            "query_string": b"", "scheme": "http", "root_path": "",
+            "server": ("127.0.0.1", 8008), "client": ("127.0.0.1", 5000),
+            "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+        }  # fmt: skip
+        asyncio.run(strict_app(scope, receive, send))
+        assert sent["body"] == want

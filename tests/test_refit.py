@@ -4,9 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from gittok import db, refit, runs, store
+from gittok import db, refit, runs
 from tests.cards import text_card
-from tests.conftest import make_config
+from tests.conftest import make_config, store_card
 
 
 @pytest.fixture
@@ -24,7 +24,7 @@ def put(conn, cfg, card) -> str:
     key = f"k{conn.execute('SELECT COUNT(*) FROM cards').fetchone()[0]}"
     acc = SimpleNamespace(card=card, resolved={"visual": None, "depth": [None]}, story_key=key)
     run_id = runs.open_run(conn, cfg, repo=None, brief="b", requested=1)
-    return store.store_card(conn, cfg, run_id, acc)
+    return store_card(conn, cfg, run_id, acc)
 
 
 def long_card(fixture_repo):

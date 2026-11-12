@@ -190,3 +190,75 @@ def test_leads_map_the_tags():
 
     for tag in ("convention_mismatch", "nil_contract"):
         assert tag in cl.CLEVER_TAGS and tag in cl.PREFER_TAGS
+
+
+EVIL = r"(a|aa)+$"  # catastrophic on a long run of "a" that ends in another letter
+EVIL_TEXT = "a" * 40 + "b"
+
+
+def test_a_catastrophic_profile_regex_is_skipped_with_a_reason_not_a_hang(
+    world, monkeypatch, caplog
+):
+    import logging
+    import time
+
+    conn, r, head, _ = world
+    monkeypatch.setattr(profiles, "REGEX_TIMEOUT_S", 0.1)
+    rid = conn.execute("SELECT id FROM repos").fetchone()[0]
+    for n in range(40):  # 40 names: a rule that is not dropped after its first timeout is slow
+        name = f"{EVIL_TEXT}{n}"
+        conn.execute(
+            'INSERT INTO fact_defines VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,"syntax")',
+            (facts.fact_id("def", "fx", name), rid, "src/svc.clj", f"svc/{name}", name,
+             "function", 1, 1, 1, 1, 1, 0, 1),
+        )  # fmt: skip
+        conn.execute(
+            "INSERT INTO fact_calls VALUES (?,?,?,?,?,?,1,?,'syntax')",
+            (facts.fact_id("call", "fx", name), rid, "svc/show-safe", name, "src/svc.clj", 20,
+             f"svc/{name}"),
+        )  # fmt: skip
+    profile = prof(
+        sinks=[{"pattern": EVIL, "kind": "x"}, {"pattern": r"db/insert!", "kind": "db_write"}],
+        conventions=[
+            {"name_regex": EVIL, "means": "effectful"},
+            {"name_regex": "!$", "means": "effectful"},
+        ],
+    )
+    stats: dict = {}
+    started = time.monotonic()
+    with caplog.at_level(logging.WARNING, logger="gittok.profiles"):
+        found = conventions.mine(conn, "fx", r.path, head, profile, AnalysisSettings(), stats)
+    assert time.monotonic() - started < 3
+    skipped = {s["rule"]: s["reason"] for s in stats["skipped_rules"]}
+    assert set(skipped) == {"sinks[0]", "conventions[0]"}
+    assert all("timed out" in reason for reason in skipped.values())
+    assert any("sinks[0]" in rec.message and "skipped" in rec.message for rec in caplog.records)
+    # The rules that work still give their candidates.
+    whys = [c["why"] for c in by_tag(found, "convention_mismatch")]
+    assert any("charge-card reaches db/insert!" in w for w in whys)
+    assert any("compute-total! is named like an effectful function" in w for w in whys)
+
+
+def test_nil_guard_regexes_run_under_the_time_limit(world, monkeypatch):
+    seen = []
+    real = profiles.SafeRegex.search
+
+    def spy(self, text):
+        seen.append(self.label)
+        return real(self, text)
+
+    monkeypatch.setattr(profiles.SafeRegex, "search", spy)
+    mine(world, prof())
+    assert {"nil_guards[0]", "sinks[0]", "conventions[0]"} <= set(seen)
+
+
+def test_safe_regex_stops_after_its_first_timeout(monkeypatch):
+    monkeypatch.setattr(profiles, "REGEX_TIMEOUT_S", 0.1)
+    skipped: list = []
+    rx = profiles.SafeRegex("rule-1", EVIL, skipped=skipped)
+    assert rx.search("aab") is None and skipped == []  # fast enough: still in use
+    assert rx.search("xaa").group(0) == "aa"
+    assert rx.search(EVIL_TEXT) is None
+    assert [s["rule"] for s in skipped] == ["rule-1"] and "timed out" in skipped[0]["reason"]
+    assert rx.search("xaa") is None  # skipped from now on
+    assert len(skipped) == 1

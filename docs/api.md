@@ -36,31 +36,44 @@ All endpoints are served by `gittok serve` (default `http://127.0.0.1:8008`). Re
 
 The server checks each request in this order. The first check that fails answers the request.
 
-1. **Host.** The `Host` header must be a known local name: `127.0.0.1`, `localhost`, `[::1]`, one of this machine's LAN IPv4 addresses, its host name (also the short name and `<short name>.local`), or a name in `server.allowed_hosts` (`config/settings.yaml` or `local/settings.yaml`). The port is ignored. Any other, missing or repeated `Host` gets **421** `{"detail": "unknown Host"}`. This applies to every path.
-2. **Origin.** A request that is not `GET`, `HEAD` or `OPTIONS` and has an `Origin` header whose host is not in the same list gets **403** `{"detail": "cross-origin request"}`. A request with no `Origin` passes.
-3. **MCP.** `/mcp` answers only peers with a loopback address. Other peers get **403** `{"detail": "MCP is loopback-only"}`.
-4. **Pairing.** When the server has a pairing token, a peer that is not loopback needs the `cs_lan` cookie on every path except `/pair`. The server has a token whenever it binds a non-loopback address (`--lan`, `server.lan: true`, or a non-loopback `--host`). Without the cookie, `/api/*` gets **401** `{"detail": "pair this device"}` and every other path gets a 401 HTML page. Loopback peers never need the cookie. The web app shows "This device is not paired" on a 401 from the feed.
-5. **Body size.** A body over 1 MB gets **413** `{"detail": "request body too large"}`. A `Content-Length` that is not a number gets **400** `{"detail": "bad content-length"}`.
+1. **Host.** The `Host` header must be a known local name: `127.0.0.1`, `localhost`, `[::1]`, one of this machine's LAN IPv4 addresses, its host name (also the short name and `<short name>.local`), or a name in `server.allowed_hosts` (`config/settings.yaml` or `local/settings.yaml`). The port is ignored. Any other, missing or repeated `Host` gets **421** `{"detail": "unknown Host", "code": "unknown_host"}`. This applies to every path.
+2. **Origin.** A request that is not `GET`, `HEAD` or `OPTIONS` and has an `Origin` header whose host is not in the same list gets **403** `{"detail": "cross-origin request", "code": "cross_origin"}`. A request with no `Origin` passes.
+3. **MCP.** `/mcp` answers only loopback requests (see below). Other requests get **403** `{"detail": "MCP is loopback-only", "code": "mcp_loopback_only"}`.
+4. **Pairing.** When the server has a pairing token, a request that is not loopback needs the `cs_lan` cookie on every path except `/pair`. The server has a token whenever it binds a non-loopback address (`--lan`, `server.lan: true`, or a non-loopback `--host`). Without the cookie, `/api/*` gets **401** `{"detail": "pair this device", "code": "unpaired"}` and every other path gets a 401 HTML page. Loopback requests never need the cookie. The web app shows "This device is not paired" on a 401 from the feed.
+5. **Body size.** A body over 1 MB gets **413** `{"detail": "request body too large", "code": "body_too_large"}`. A `Content-Length` that is not a number gets **400** `{"detail": "bad content-length", "code": "bad_content_length"}`.
 
-"Loopback" is decided from the address of the TCP peer. The server does not read `X-Forwarded-For`. A reverse proxy on the same machine is therefore a loopback peer: see `docs/install.md`, "HTTPS on a LAN".
+A request is "loopback" when the TCP peer has a loopback address and the request has none of the headers `X-Forwarded-For`, `Forwarded`, `X-Forwarded-Host`, `X-Forwarded-Proto` and `X-Real-IP`. A reverse proxy on the same machine connects from a loopback address and adds such a header, so its requests are not loopback: they get no `/mcp`, and they need the pairing cookie when the server has a token. The server does not use the value of these headers. A proxy that sends none of them still counts as loopback: see `docs/install.md`, "HTTPS on a LAN".
 
 Every response has `Content-Security-Policy`, `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` (see `docs/social.md`, "LAN access").
 
 ## Errors
 
-There is no machine-readable error code. An error is an HTTP status plus a JSON body with one key, `detail`. A client can only use the status; the `detail` text can change.
+An error is an HTTP status plus a JSON body `{"detail": "<text>", "code": "<code>"}`. `code` is stable: a client can branch on it. `detail` is text for a person and can change.
 
-| Status | Body | When |
-|---|---|---|
-| 400 | `{"detail": "<text>"}` | A bad value: `invalid cursor`, `card has no question to answer`, a bad `choice`, a bad reply, `send ids or all`, `bad content-length` |
-| 401 | `{"detail": "pair this device"}` | `/api/*` from an unpaired LAN device. `/pair` with a wrong token: `{"detail": "bad pairing token"}` |
-| 403 | `{"detail": "<text>"}` | `cross-origin request`, or `MCP is loopback-only` |
-| 404 | `{"detail": "unknown card <id>"}` and the like | An unknown card, repo, persona or asset |
-| 413 | `{"detail": "request body too large"}` | A body over 1 MB |
-| 421 | `{"detail": "unknown Host"}` | A `Host` header that is not a known local name |
-| 422 | `{"detail": [{"type", "loc", "msg", "input", ...}]}` | The body or a query parameter does not match the route's schema (FastAPI validation). Here `detail` is a list, not a string. |
+| Status | `code` | `detail` | When |
+|---|---|---|---|
+| 400 | `invalid_cursor` | `invalid cursor` | `GET /api/feed` with a cursor the server cannot read |
+| 400 | `not_interactive` | `card has no question to answer` | `POST /api/answer` for a card with no question |
+| 400 | `bad_choice` | text that names the bad choice | `POST /api/answer` with a `choice` the question does not have |
+| 400 | `bad_reply` | text that names the problem | `POST /api/replies` with an empty or too long text, or a bad `comment_index` |
+| 400 | `missing_ids` | `send ids or all` | `POST /api/notifications/read` with neither `ids` nor `all` |
+| 400 | `bad_content_length` | `bad content-length` | A `Content-Length` header that is not a number |
+| 401 | `unpaired` | `pair this device` | `/api/*` from a device that is not paired |
+| 401 | `bad_pairing_token` | `bad pairing token` | `/pair` with a wrong token |
+| 403 | `cross_origin` | `cross-origin request` | A state-changing request with an `Origin` that is not a known local name |
+| 403 | `mcp_loopback_only` | `MCP is loopback-only` | `/mcp` from a request that is not loopback |
+| 404 | `unknown_card` | `unknown card <id>` | An unknown card id |
+| 404 | `unknown_repo` | `unknown repo <name>` | An unknown repo name |
+| 404 | `unknown_persona` | `unknown persona <handle>` | An unknown persona |
+| 404 | `unknown_asset` | `unknown asset` | An unknown image under `/assets/` |
+| 413 | `body_too_large` | `request body too large` | A body over 1 MB |
+| 421 | `unknown_host` | `unknown Host` | A `Host` header that is not a known local name |
 
-A 401 on a path outside `/api/` is an HTML page, not JSON.
+Three errors do not have this shape:
+
+- **422** (FastAPI validation): `{"detail": [{"type", "loc", "msg", "input", ...}]}`. The body or a query parameter does not match the route's schema. Here `detail` is a list, and there is no `code`.
+- A 401 on a path outside `/api/` is an HTML page, not JSON.
+- An error that the framework makes itself (404 for an unknown `/api/` path, 405 for a wrong method) has only `detail`.
 
 ## GET /api/feed
 

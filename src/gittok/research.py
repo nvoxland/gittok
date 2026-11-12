@@ -6,9 +6,27 @@ import re
 
 from gittok import gitq, secrets
 
+MAX_LOG = 200  # commits one git_log call returns at most
+
 
 class ResearchError(Exception):
     """Message is shown to the agent: keep it short and actionable."""
+
+
+def has_commits(root) -> bool:
+    """False when the repo at `root` has no commit on any ref. True when git cannot tell."""
+    try:
+        return bool(gitq.run(root, "rev-list", "--max-count=1", "--all").strip())
+    except gitq.GitError:
+        return True
+
+
+def git_cause(repo, error: Exception) -> str:
+    """One line for a git failure in a configured repo. A repo with no commits says so,
+    because git's own message for it ("unknown revision") does not."""
+    if not has_commits(repo.path):
+        return f"repo '{repo.name}' has no commits yet. Make the first commit, then try again."
+    return str(error)
 
 
 def _clean_path(path: str) -> str:
@@ -113,13 +131,13 @@ def git_grep(
     pattern: str,
     pathspec: str | None = None,
     ref=None,
-    max_hits: int = 100,
+    limit: int = 100,
     fixed: bool = False,
 ) -> str:
-    """Search file contents. `pathspec` keeps git glob behavior (e.g. `src/*.py`);
-    every other tool treats paths literally."""
-    if max_hits < 1:
-        raise ResearchError("max_hits must be >= 1")
+    """Search file contents; at most `limit` hits. `pathspec` keeps git glob behavior
+    (e.g. `src/*.py`); every other tool treats paths literally."""
+    if limit < 1:
+        raise ResearchError("limit must be >= 1")
     root, ref = _resolve(cfg, repo, ref)
     args = ["grep", "-n", "-I", "-F" if fixed else "-E", "-e", pattern, ref, "--"]
     if pathspec and (spec := _clean_path(pathspec)):
@@ -142,9 +160,9 @@ def git_grep(
     ]
     if not hits:
         return "no matches"
-    extra = len(hits) - max_hits
+    extra = len(hits) - limit
     if extra > 0:
-        hits = [*hits[:max_hits], f"… {extra} more"]
+        hits = [*hits[:limit], f"… {extra} more"]
     return secrets.guard(cfg, "\n".join(hits))
 
 
@@ -153,14 +171,14 @@ def git_log(
     repo: str,
     path: str | None = None,
     since: str | None = None,
-    max: int = 50,
+    limit: int = 50,
     grep: str | None = None,
     ref=None,
 ) -> str:
-    if max < 1:
-        raise ResearchError("max must be >= 1")
+    if limit < 1:
+        raise ResearchError("limit must be >= 1")
     root, ref = _resolve(cfg, repo, ref)
-    args = ["log", f"--max-count={min(max, 200)}", "--date=short", "--format=%h %ad %an %s"]
+    args = ["log", f"--max-count={min(limit, MAX_LOG)}", "--date=short", "--format=%h %ad %an %s"]
     if since:
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", since):
             raise ResearchError(f"since must be YYYY-MM-DD: {since}")

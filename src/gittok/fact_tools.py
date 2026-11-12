@@ -20,10 +20,11 @@ def _limit(n: int) -> int:
 
 
 def _open(cfg, repo: str):
+    """`with _open(cfg, repo) as conn:`; the connection is closed when the block ends."""
     if repo not in cfg.repos:
         known = ", ".join(sorted(cfg.repos)) or "(none)"
         raise ResearchError(f"unknown repo: {repo}. Known repos: {known}")
-    return db.open_db(cfg.settings.data_dir / "gittok.db")
+    return db.session(cfg.settings.data_dir / "gittok.db")
 
 
 def _out(cfg, rows: list[dict]):

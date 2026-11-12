@@ -165,7 +165,7 @@ def test_git_grep_no_matches(cfg):
 
 
 def test_git_grep_caps_hits(cfg):
-    out = research.git_grep(cfg, "fix", "^row", pathspec="data", max_hits=3)
+    out = research.git_grep(cfg, "fix", "^row", pathspec="data", limit=3)
     lines = out.splitlines()
     assert lines[:3] == [
         "data/big.txt:1:row 0",
@@ -187,7 +187,7 @@ def test_git_grep_fixed_vs_regex(cfg):
 
 
 def test_git_log_line_format(cfg, fixture_repo):
-    out = research.git_log(cfg, "fix", max=2)
+    out = research.git_log(cfg, "fix", limit=2)
     head = fixture_repo.shas["head"][:7]
     assert out.splitlines()[0] == f"{head} 2026-02-20 Bob Builder Tweak helper and join again"
     assert len(out.splitlines()) == 2
@@ -207,7 +207,7 @@ def test_git_log_path_since_grep(cfg):
 
 
 def test_git_log_ref_and_errors(cfg, fixture_repo):
-    out = research.git_log(cfg, "fix", ref="unmerged", max=1)
+    out = research.git_log(cfg, "fix", ref="unmerged", limit=1)
     assert "Experiment, never merged" in out
     with pytest.raises(ResearchError):
         research.git_log(cfg, "fix", path="../x")
@@ -216,8 +216,8 @@ def test_git_log_ref_and_errors(cfg, fixture_repo):
 
 
 def test_git_log_max_is_capped_and_validated(cfg):
-    with pytest.raises(ResearchError, match="max"):
-        research.git_log(cfg, "fix", max=0)
+    with pytest.raises(ResearchError, match="limit"):
+        research.git_log(cfg, "fix", limit=0)
 
 
 def test_git_log_empty_result(cfg):
@@ -351,7 +351,7 @@ def test_dot_pathspec_means_whole_repo(cfg):
         assert "diff --git" in research.git_show(cfg, "fix", "main", path=dot)
 
 
-def test_git_grep_max_hits_must_be_positive(cfg):
+def test_git_grep_limit_must_be_positive(cfg):
     for n in (0, -1):
-        with pytest.raises(ResearchError, match="max_hits"):
-            research.git_grep(cfg, "fix", "def", max_hits=n)
+        with pytest.raises(ResearchError, match="limit"):
+            research.git_grep(cfg, "fix", "def", limit=n)

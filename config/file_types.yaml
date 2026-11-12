@@ -125,3 +125,9 @@ comment_prefixes:
   .css: ["/*", "*"]
   .html: ["<!--"]
   .sql: ["--", "/*", "*"]
+
+# A TODO-like word counts as a code comment when it follows one of these comment starts
+# (brief.py: old TODO leads).
+todo_comment:
+  prefixes: ["#", "//", ";", "--", "/*", "*", "<!--"]
+  words: [TODO, FIXME, HACK, XXX]

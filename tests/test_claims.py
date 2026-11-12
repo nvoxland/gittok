@@ -235,7 +235,11 @@ def test_agent_setting_defaults_on():
 # --- extraction units -------------------------------------------------------
 
 
+def _counts(text: str) -> list[int]:
+    return [n for _, n in claims._count_tokens(text)]
+
+
 def test_count_claims_skips_hedges_ranges_and_line_refs():
-    assert claims.count_claims("It saw 101 commits and 1,200 lines changed.") == [101, 1200]
-    assert claims.count_claims("about 101 commits, over 50 files, lines 36-60") == []
-    assert claims.count_claims("12 commits, 3 files, line 40 changed, 99% of files") == []
+    assert _counts("It saw 101 commits and 1,200 lines changed.") == [101, 1200]
+    assert _counts("about 101 commits, over 50 files, lines 36-60") == []
+    assert _counts("12 commits, 3 files, line 40 changed, 99% of files") == []

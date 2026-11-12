@@ -109,7 +109,7 @@ def needed_grammars(cfg) -> list[str]:
 
 
 def structure_hint(cfg) -> str | None:
-    """One line for the SessionStart hook: the structure group is installed but a grammar that
+    """One line for the SessionStart hook: tree-sitter is installed but a grammar that
     the configured repos need is not downloaded. None otherwise."""
     if not structure.available():
         return None
@@ -118,7 +118,8 @@ def structure_hint(cfg) -> str | None:
         return None
     return (
         f"Structure grammars missing ({', '.join(missing)}): "
-        "run `uv run gittok structure --prefetch`. Until then GitTok uses regex patterns."
+        "run `gittok structure --prefetch` (in a clone: `uv run gittok structure --prefetch`). "
+        "Until then GitTok uses regex patterns."
     )
 
 

@@ -10,13 +10,6 @@ from gittok import characters, db, srs, supply
 SRS_MIN_POSITION = 3
 QUIZ_WINDOW = 8  # each window of this many cards holds an unseen quiz card when one exists
 SERIES_GAP = 3  # parts of one series sit at least this many positions apart
-DEFAULT_KNOBS = {
-    "repeat_days": 7,
-    "learning_boost_share": 0.10,
-    "max_srs_per_batch": 2,
-    "fast_formats": ["meme", "text_meme", "fun_fact", "chart", "hot_take"],
-    "slow_formats": ["thread", "comic", "code_card", "quiz", "iceberg", "day_in_life"],
-}
 
 
 # Read time of every format in docs/formats.md: a glance (fast) or a stop-and-read (slow).
@@ -45,7 +38,8 @@ def format_speed(fmt: str, knobs: dict) -> str | None:
 
 
 def _knobs(rc) -> dict:
-    return {**DEFAULT_KNOBS, **(rc.slotting or {})}
+    """The slotting knobs (config/reward.yaml `slotting`; the shipped file holds the defaults)."""
+    return rc.slotting
 
 
 def _rhythm(order: list[str], format_of: dict[str, str], knobs: dict) -> list[str]:
@@ -274,6 +268,34 @@ def _impressed_stories(conn, since_ms: int) -> set[str]:
     }
 
 
+FEATURE_CHUNK = 500  # card ids per query (sqlite limits the number of parameters)
+
+
+def features_for(conn, cfg, ids: list[str], now: datetime) -> dict[str, set[tuple[str, str]]]:
+    """Card id -> its features, as `learning.card_features` gives them for one card (stored
+    rows plus the derived `group` and `recency`), read with two queries per FEATURE_CHUNK
+    cards and not two per card. An unknown card has no features."""
+    from gittok import learning
+
+    out: dict[str, set[tuple[str, str]]] = {i: set() for i in ids}
+    for at in range(0, len(ids), FEATURE_CHUNK):
+        chunk = ids[at : at + FEATURE_CHUNK]
+        marks = ",".join("?" * len(chunk))
+        rows = conn.execute(f"SELECT id, created_at FROM cards WHERE id IN ({marks})", chunk)
+        created = dict(rows.fetchall())
+        for card_id, feature, value in conn.execute(
+            f"SELECT card_id, feature, value FROM card_features WHERE card_id IN ({marks})", chunk
+        ):
+            if card_id in created:
+                out[card_id].add((feature, value))
+        for card_id, created_at in created.items():
+            feats = out[card_id]
+            repos = [v for f, v in feats if f == "repo" and v in cfg.repos]
+            feats |= {("group", cfg.repos[r].group) for r in repos if cfg.repos[r].group}
+            feats.add(("recency", learning._recency(created_at, now)))
+    return out
+
+
 def build_batch(conn, cfg, limit: int, served: set[str], seed: int, now: datetime) -> list[str]:
     from gittok import learning
 
@@ -287,7 +309,7 @@ def build_batch(conn, cfg, limit: int, served: set[str], seed: int, now: datetim
     since_ms = int((now - timedelta(days=knobs["repeat_days"])).timestamp() * 1000)
     shown = _impressed_stories(conn, since_ms)
     ids = [i for i in ids if story_of[i] not in shown]
-    feats = {i: set(learning.card_features(conn, cfg, i, now=now)) for i in ids + due}
+    feats = features_for(conn, cfg, ids + due, now)
     rules = _active_rules(conn, now)
     for r in rules:
         if r["type"] == "ban":

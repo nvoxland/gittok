@@ -378,3 +378,31 @@ def test_no_quiz_slot_when_no_quiz_exists_or_batch_is_short(conn, cfg, monkeypat
     quiz = add_card_spec(conn, cfg, quiz_card(SimpleNamespace(shas={})))
     fix_scores(monkeypatch, {**{p: 0.9 for p in posts}, quiz: 0.01})
     assert quiz not in batch(conn, cfg, limit=6)  # under 8 cards: no quiz guarantee
+
+
+def test_features_for_matches_card_features_of_each_card(tmp_path, fixture_repo):
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from gittok import db, learning, slotter, store
+    from tests.cards import quiz_card, text_card
+    from tests.conftest import make_config
+
+    cfg = make_config(fixture_repo, tmp_path)
+    cfg = replace(cfg, repos={"fixture": replace(cfg.repos["fixture"], group="core")})
+    conn = db.open_db(":memory:")
+    conn.execute("INSERT INTO runs(id, status, started_at) VALUES ('r1', 'finished', 'x')")
+    fx = SimpleNamespace(shas={"delete_legacy": "abc"})
+    ids = []
+    for n, spec in enumerate([text_card(fx), quiz_card(fx), text_card(fx)]):
+        acc = SimpleNamespace(card=spec, resolved={}, story_key=f"k{n}")
+        created = "2026-05-31T00:00:00Z" if n else "2025-01-01T00:00:00Z"
+        ids.append(store.insert_card(conn, cfg, "r1", acc, now=created))
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    got = slotter.features_for(conn, cfg, [*ids, "missing"], now)
+    assert got["missing"] == set()
+    for i in ids:
+        want = set(learning.card_features(conn, cfg, i, now=now))
+        assert got[i] == want and ("group", "core") in want
+    assert ("recency", "old") in got[ids[0]] and ("recency", "new") in got[ids[1]]
+    conn.close()

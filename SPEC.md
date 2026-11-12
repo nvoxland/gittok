@@ -1,24 +1,26 @@
-# GitTok — Spec
+# GitTok design
 
-A personal, TikTok/Instagram-style feed for understanding the codebases you work in every day. A local server on your Mac generates cards from your repos and their git history, and you scroll them on your phone as an installed web app. The feed learns what you engage with, and you can ask the coding agent what it has learned and tell it how to adjust.
+GitTok is a personal feed for understanding the codebases you work in. A local server on your Mac holds cards about your repos and their git history. A Claude Code session writes the cards. You scroll them in a browser or on your phone. The feed learns what you read, and you can ask the agent what it learned and tell it what to change.
 
+This document describes the design. The exact contracts are in `docs/`: card formats in `docs/formats.md`, learning and ranking in `docs/learning.md`, the HTTP API in `docs/api.md`, stories, notifications and LAN access in `docs/social.md`, config in `docs/config.md`.
 
 ---
 
 ## 1. Goals
 
-- Make understanding your own codebases (structure, behavior, history, people, change) feel like scrolling social media.
-- Feel like a real social feed: varied formats, recurring characters, comments, humor, series — not blocks of text.
-- Run entirely on a Mac plus existing **Claude (Pro/Max) or ChatGPT subscriptions**. No pay-per-use API keys.
-- Learn the user's tastes from behavior, and keep that learning **transparent and steerable** through the agent.
-- Support **multiple repos**, grouped into projects or standalone.
+- Make understanding your own codebases (structure, behavior, history, people, change) feel like scrolling a social feed.
+- Feel like a real feed: varied formats, recurring characters, comments, humor, series. Not blocks of text.
+- Run on one Mac with a Claude Code subscription. GitTok holds no API keys and calls no model API itself.
+- Learn the reader's tastes from behavior, and keep that learning visible and steerable through the agent.
+- Support several repos, grouped or standalone.
+- Keep every card honest: each card cites git, and the server checks the citations.
 
-## 2. Non-goals (v1)
+## 2. Non-goals
 
-- Multi-user or hosted service. This is one person's tool on their own machine.
-- Real-time generation per swipe. Cards are generated in batches.
-- Short video (planned as a later milestone, see §17).
-- Replacing documentation or code review.
+- A multi-user or hosted service. This is one person's tool on their own machine.
+- Generation per swipe. Cards are made in batches.
+- Video.
+- A replacement for documentation or code review.
 
 ---
 
@@ -27,13 +29,13 @@ A personal, TikTok/Instagram-style feed for understanding the codebases you work
 ```
             ┌──────────────────────── Mac ────────────────────────┐
  repos ───► │ Git analysis ─► Brief builder ─► MCP get_brief ──►  │
-            │                     ▲      Claude Code TUI + skill     │
+            │                     ▲      Claude Code session + skill │
             │                     │                 │ card specs  │
             │   weights + rules + coverage          ▼             │
             │                     │           Validator           │
             │                     │                 ▼             │
-            │                     │   Renderers (memegen, mflux,  │
-            │                     │   HTML templates, Shiki)      │
+            │                     │   Render worker (memegen,     │
+            │                     │   mflux)                      │
             │                     │                 ▼             │
             │   Ranker/Slotter ◄── SQLite ◄── cards + assets      │
             │         │              ▲                            │
@@ -41,62 +43,59 @@ A personal, TikTok/Instagram-style feed for understanding the codebases you work
             │         │                                           │
             │   MCP server + CLI ◄── submit_cards / steering tools│
             └─────────┼───────────────────────────────────────────┘
-                      │ LAN (Tailscale later)
-                   Phone (PWA)
+                      │ loopback; LAN is opt-in, with pairing
+                   Browser or phone (web app)
 ```
+
+One Python process serves the feed API, the web app, the MCP endpoint, and the background workers (render, learning, notifications, garbage collection). It runs in one of two ways:
+
+- **A Claude Code session owns it.** In a clone, the project `.mcp.json` starts `gittok mcp --ui`: MCP over stdio, plus a child `gittok serve` for the feed while the session runs.
+- **Standalone.** `gittok serve` runs the same app, with MCP over streamable HTTP at `/mcp`. `gittok install` adds a LaunchAgent that keeps it running.
 
 ## 4. Stack
 
 | Concern | Choice |
 |---|---|
-| Language / tooling | Python 3.13, managed with **uv** |
-| Server | **FastAPI** (serves feed API, static frontend, assets, event ingest) |
-| Database | **SQLite** (single file; easy for the agent to inspect) |
-| Git analysis | Shell out to `git` (log, blame, diff, shortlog, show). Add pygit2 only if needed |
-| Content agent | An interactive **Claude Code** session (or Codex) running the `gittok-generate` skill against the GitTok MCP server. No `claude -p`: headless use is not allowed on a subscription |
-| Memes | Self-hosted **memegen** (jacebrowning/memegen) |
-| Illustrations | **mflux** (MLX, Apple Silicon). Default model Z-Image Turbo; FLUX.2 Klein 4B as faster option |
-| Code rendering | **Shiki** (syntax highlighting), Mermaid only for occasional diagram cards |
-| Frontend | **Svelte / SvelteKit (static adapter)**, CSS scroll-snap, IntersectionObserver |
-| App install | PWA (manifest + service worker) |
-| Phone access | Local network in v1; **Tailscale** (`tailscale serve`) later (M6) |
-| Learning | Hand-rolled numpy Thompson sampling (§12). River/MABWiser as later options |
-| Agent interface | **MCP server** (official Python SDK) + a CLI over the same functions |
-| Scheduling | launchd (nightly) + optional git post-commit hook (queue incremental run) |
+| Language and tooling | Python 3.13, managed with uv |
+| Server | FastAPI (feed API, static web app, assets, events) |
+| Database | SQLite, one file |
+| Git analysis | The `git` program (log, blame, diff, show). `gitq.py` is the only module that starts it |
+| Code structure | tree-sitter (definitions, references, imports), with regex patterns as the fallback; ast-grep for profile rules |
+| Content agent | A Claude Code session that runs the `gittok-generate` skill against the GitTok MCP server |
+| Memes | A local memegen server (optional) |
+| Illustrations | mflux on Apple silicon (optional) |
+| Code and diagrams in the client | Shiki for syntax highlighting, Mermaid for diagram cards |
+| Web app | SvelteKit with the static adapter, CSS scroll-snap |
+| Phone access | The local network, opt-in, with a pairing token. The server speaks plain HTTP |
+| Learning | Thompson sampling, written by hand (section 12) |
+| Agent interface | An MCP server (the official Python SDK) and a CLI over the same functions |
 
 ---
 
 ## 5. Repos and groups
 
-Configured in `local/repos.yaml`:
+Repos are configured in `local/repos.yaml` (see `docs/config.md`):
 
 ```yaml
 groups:
   the-app:
-    repos: [api-server, web-client, mobile]
-  side-projects:
-    standalone: true
+    repos: [api-server, web-client]
 
 repos:
   api-server:
     path: ~/code/api-server
-    mascot: otter          # see §8
+    mascot: otter
   web-client:
     path: ~/code/web-client
-    mascot: raccoon
-  mobile:
-    path: ~/code/mobile
-    mascot: hedgehog
   dotfiles:
     path: ~/code/dotfiles
-    group: side-projects
-    mascot: crow
 ```
 
-- Groups are ranking features (learn "cares about the-app, skims side projects").
-- Within a group, the agent may produce **cross-repo** stories (§6.6).
-- A newly added repo starts at the default mix (§13) and blends toward learned taste.
-- Analysis is read-only. The tool never writes to user repos.
+- A repo is a local directory, or a remote URL that GitTok clones into its own `repos/` directory and fetches before each analysis.
+- Groups are ranking features: the feed can learn "cares about the-app, skims the rest".
+- Within a group, the agent may write cross-repo stories (section 6.4).
+- Analysis is read-only. GitTok never writes to a working tree, an index, or a local branch of your repos. A repo with `fetch: true` gets a fetch that updates remote-tracking refs only.
+- Each repo has a **profile** (`local/profiles/<repo>.yaml`): rules, kept as data, that find the code worth teaching. The `gittok-profile-repo` skill writes it. See `docs/learning.md`, "Candidate score and repo profiles".
 
 ---
 
@@ -104,88 +103,91 @@ repos:
 
 The core idea: **what the story is** is separate from **how it is presented**.
 
-A **card** = Story × Format × Persona × Tone (+ the repo's Mascot when illustrated).
+A **card** = Story × Format × Persona × Tone (plus the repo's mascot when illustrated).
 
-One story ("billing/ has had 4 reverts this month") can become a meme, a thread, an iceberg layer, a news bulletin, or a persona's hot take. This gives variety without needing more facts, and lets the ranker learn format, persona and tone preferences independently of topic.
+One story ("billing/ has had 4 reverts this month") can become a meme, a thread, an iceberg layer, a news bulletin, or a persona's hot take. This gives variety without more facts. It also lets the ranker learn format, persona and tone preferences apart from the topic.
 
-### 6.1 Story types — Git drama & history
+The story types and formats below are the values of `story_type` and `format` in the card schema (`src/gittok/schema/card.schema.json`).
+
+### 6.1 Story types: git drama and history
 
 | Story | Source signals |
 |---|---|
-| **Commit Drama** | Revert chains, "fix"/"fix again" sequences, late-night commits, huge diffs, force-push evidence |
-| **Hot Spot** | Highest churn files/dirs over a window |
-| **Archaeology** | Oldest surviving lines (blame), what changed around them |
-| **RIP** | Deleted files/functions: born, lived, died, cause of death (commit message) |
-| **Ancient TODO** | Oldest open TODO/FIXME/HACK with age |
-| **Secret Couples** | Files with high co-change frequency that aren't obviously related |
-| **Whose Code Is This** | Author share of a file/module over time |
+| `commit_drama` | Revert chains, "fix" then "fix again" sequences, late-night commits, very large diffs |
+| `hot_spot` | Files and dirs with the highest churn in a window |
+| `archaeology` | The oldest surviving lines (blame) and what changed around them |
+| `rip` | Deleted files: when they were added, when they were removed, and the commit message that removed them |
+| `ancient_todo` | The oldest open TODO, FIXME or HACK, with its age |
+| `secret_couples` | Files that change together often |
+| `whose_code` | Author share of a file or module |
 
-### 6.2 Story types — Understanding the code
-
-| Story | Source |
-|---|---|
-| **What It Does** | A module/function's purpose and role |
-| **Journey** | Flow of a request / job / piece of data through the system |
-| **Analogy** | A concept explained through a familiar comparison |
-| **Snippet + Callouts** | 8–15 lines with 2–3 annotated points |
-| **Cursed / Clever Line** | One remarkable line |
-| **Before / After** | A recent diff explained |
-| **New Arrival** | A newly introduced file/module and its purpose |
-
-### 6.3 Story types — Interactive
+### 6.2 Story types: understanding the code
 
 | Story | Source |
 |---|---|
-| **Spot the Bug** | Real bug-fix commits: show pre-fix code, ask what's wrong; reveal the fix. Flagship type |
-| **Quiz** | What does this return / which file handles X / what calls this |
-| **Guess Who / Guess When** | Guess author or year from a snippet |
-| **This or That** | Choose between two approaches; see persona picks and reasoning |
+| `what_it_does` | The purpose and role of a module or function |
+| `journey` | How a request, a job or a piece of data moves through the system |
+| `analogy` | A concept explained through a familiar comparison |
+| `snippet_callouts` | A short piece of code with annotated points |
+| `cursed_clever_line` | One remarkable line |
+| `before_after` | A recent diff explained |
+| `new_arrival` | A newly added file or module and its purpose |
 
-Wrong answers re-enter the feed later (spaced repetition, §12.5).
-
-### 6.4 Story types — Cross-repo & recency
+### 6.3 Story types: interactive
 
 | Story | Source |
 |---|---|
-| **Weekly Recap** | Changes across a group since last recap |
-| **Drift Alert** | Contract mismatch between repos (endpoint, shared type, config key) |
-| **Ripple** | One feature landing across several repos |
-| **Wrapped** | Monthly/yearly recap per repo, per group, or for the user's own commits |
+| `spot_the_bug` | A real bug-fix commit: show the code before the fix, ask what is wrong, reveal the fix |
+| `quiz` | What does this return, which file handles X, what calls this |
+| `guess_who` / `guess_when` | Guess the author or the year from a snippet |
+| `this_or_that` | Choose between two approaches |
+
+A wrong answer brings the card back later (spaced repetition, section 12.5).
+
+### 6.4 Story types: cross-repo and recency
+
+| Story | Source |
+|---|---|
+| `weekly_recap` | Changes across a group in the last week |
+| `drift_alert` | A contract that does not match between repos |
+| `ripple` | One feature that lands in several repos |
 
 ### 6.5 Presentation formats
 
-Each format has a renderer template (§10). The agent picks a format that fits the story, guided by the brief.
+The agent picks a format that fits the story, guided by the brief. `docs/formats.md` gives the visual kinds each format allows and the exact fields.
 
 | Format | Visual |
 |---|---|
-| **Meme** | memegen template + top/bottom text |
-| **Text meme** | POV, "nobody: / me:", starter pack (HTML template) |
-| **Mascot scene** | mflux illustration + overlaid caption |
-| **Comic** | 2–4 illustrated panels, horizontal swipe |
-| **Thread 🧵** | 4–8 swipeable text/visual panels with a strong hook |
-| **Iceberg** | Layered chart: surface facts → deep lore |
-| **Tier list** | Ranked rows of modules/functions/deps with justification |
-| **Red flags / green flags** | Flag list for a function or module |
-| **Hot take** | Persona's opinion + comment pushback |
-| **Day in the life** | Sequence of timestamped steps (request, job, data) |
-| **Glow-up** | Before/after split |
-| **Dating profile** | Module as a profile: bio, likes, dealbreakers |
-| **Group chat** | Two+ files/modules texting each other |
-| **Breaking news** | News-bulletin styling for big merges/reverts |
-| **Horoscope** | Playful forecast for a repo/module based on recent churn |
-| **ELI5** | One simple-explanation card |
-| **Listicle / Top 5** | Numbered list |
-| **Fun fact** | Single surprising fact |
-| **Heatmap / chart** | Data visual (churn, authorship, timeline) |
-| **Code card** | Shiki-highlighted code with callouts |
-| **Quiz / poll** | Interactive choices with reveal |
-| **Diagram** | Mermaid, used sparingly |
+| `meme` | A memegen template with text lines |
+| `text_meme` | POV, "nobody: / me:", starter pack, expectation and reality (drawn by the client) |
+| `mascot_scene` | An mflux illustration with a caption |
+| `comic` | Illustrated panels |
+| `thread` | Swipeable text panels with a strong hook |
+| `iceberg` | Layers: surface facts down to deep lore |
+| `tier_list` | Ranked rows of modules, functions or dependencies |
+| `flags` | Red flags and green flags for a function or module |
+| `hot_take` | A persona's opinion, with pushback in the comments |
+| `day_in_life` | Timestamped steps of a request, a job or a piece of data |
+| `glow_up` | Before and after |
+| `dating_profile` | A module as a profile: bio, likes, dealbreakers |
+| `group_chat` | Files or modules that text each other |
+| `breaking_news` | News-bulletin styling for big merges and reverts |
+| `horoscope` | A playful forecast for a repo or module |
+| `eli5` | One simple explanation |
+| `listicle` | A numbered list |
+| `fun_fact` | One surprising fact |
+| `text_post` | A plain post |
+| `chart` | A data visual (churn, commit hours, author shares, co-change). The data comes from the server, never from the agent |
+| `code_card` | Highlighted code |
+| `quiz` | Choices with a reveal |
+| `diagram` | A Mermaid diagram |
 
 ### 6.6 Depth: swipe sideways
 
-- **Vertical scroll = the feed. Horizontal swipe = depth.**
-- Every card has at least one depth panel: plain-language explanation, and the actual code/commit with links (file path, line range, commit hash).
-- Fun formats must always have a "real explanation" panel so jokes never stand in for accuracy.
+- **Vertical scroll is the feed. Horizontal swipe is depth.**
+- Every card has at least one depth panel: a plain explanation, and the real code or commit.
+- Every card has a `learn` line: the one concrete fact the reader takes away.
+- A fun format always has a real explanation panel, so a joke never stands in for accuracy.
 
 ---
 
@@ -193,68 +195,68 @@ Each format has a renderer template (§10). The agent picks a format that fits t
 
 ### 7.1 Personas (invented creator accounts)
 
-A cast of fictional posters, each with a handle, avatar (generated once, stored), and voice. Persona is a ranking feature.
+A cast of fictional posters. Each has a handle, an avatar, and a voice. Persona is a ranking feature.
 
 | Persona | Handle | Voice |
 |---|---|---|
-| Greybeard | @greybeard | Grumpy senior, has seen it all, dry |
-| Penny | @penny_learns | Enthusiastic junior, asks naive-but-good questions |
-| The Archivist | @archivist | Codebase historian, loves lore and dates |
-| Meme Compiler | @meme_compiler | Pure memes, chaotic |
-| Paranoid Sec | @paranoid_sec | Security and failure-mode worrier |
-| Ship-It Sam | @shipit_sam | Hype, celebrates merges and speed |
+| Greybeard | `greybeard` | Grumpy senior engineer who has seen it all. Dry |
+| Penny | `penny_learns` | Enthusiastic junior. Asks naive but good questions |
+| The Archivist | `archivist` | Codebase historian. Loves lore and dates |
+| Meme Compiler | `meme_compiler` | Pure memes, chaotic |
+| Paranoid Sec | `paranoid_sec` | Worries about security and failure modes |
+| Ship-It Sam | `shipit_sam` | Hype. Celebrates merges and speed |
 
-Personas live in `config/personas.yaml` and can be added/edited by the agent.
+The handles are fixed by the card schema. Names, voices and bios live in `config/personas.yaml`; your changes go to `local/personas.yaml`.
 
 ### 7.2 Code as accounts
 
-Files, modules and repos can post as themselves ("@payments.py: refactored again, nobody asked 🙃"). Each repo has a profile page: mascot, stats, recent posts.
+A file or directory can post as itself (the `account` field, `repo:path`). Each repo, persona and file has a page in the web app.
 
 ### 7.3 Comments
 
-Cards may include 0–5 persona comments: replies, corrections, debates, jokes. Comments are part of the card spec. Debates are encouraged for trade-off topics.
+A card may have up to 5 persona comments: replies, corrections, debates, jokes. Comments are part of the card spec.
 
 ### 7.4 Stories row
 
-Circles at the top of the feed for today's new commits per repo, tapped through like Instagram stories.
+Circles at the top of the feed, one per repo with commits in the last 24 hours. Tap through them one commit at a time.
 
 ### 7.5 Notifications
 
-In-app notification list: "auth.py was in 3 commits today", "a new Spot the Bug from billing/", "Part 2 is up".
+A list in the app: new cards from a run, quiz cards that are due again, a file that was in many commits today, a new Spot the Bug.
 
 ### 7.6 Series
 
-Stories may be serialized ("Part 1/3"). The slotter keeps parts in order and spaced a few cards apart.
+A story may have parts ("Part 1/3"). The slotter keeps parts in order and a few cards apart.
 
 ### 7.7 Real people rule
 
-Git data about teammates (names, commit messages, timestamps, authorship) is fair game. **Personas may comment on real commits, but the system never fabricates quotes or opinions attributed to a real person.** Real people appear only through real data.
+Git data about teammates (names, commit messages, timestamps, authorship) is fair game. **Personas may comment on real commits, but the system never invents quotes or opinions and attributes them to a real person.** Real people appear only through real data. A real person is never an account.
 
 ---
 
 ## 8. Mascots
 
-- **One mascot per repo**, configured in `local/repos.yaml` or proposed by the agent when a repo is added.
-- Each mascot has a fixed **style prompt** (species, look, palette, art style) and seed set in `config/mascots.yaml`, reused in every illustration for consistency.
-- Cross-repo cards can feature multiple mascots together.
-- Later: train a small LoRA per mascot if prompt-only consistency isn't good enough.
+- One mascot per repo, named in `local/repos.yaml`.
+- Each mascot has a fixed **style** text and a **seed** (`config/mascots.yaml`, with `local/mascots.yaml` merged over it). GitTok puts the style before every illustration prompt and reuses the seed, so a mascot looks the same on every card.
+- A cross-repo card can show several mascots.
 
 ```yaml
-otter:
-  repo: api-server
-  style: "a small round otter with a teal scarf, flat vector illustration, soft pastel palette, thick outlines"
-  seed: 4242
+mascots:
+  otter:
+    repo: api-server
+    style: "a small round otter with a teal scarf, flat vector illustration, soft pastel palette, thick outlines"
+    seed: 4242
 ```
 
 ---
 
 ## 9. Tones
 
-Every card has one tone. Tone is a ranking feature, so the feed learns the mix the user enjoys.
+Every card has one tone. Tone is a ranking feature, so the feed learns the mix the reader likes.
 
 `wholesome-nerdy` · `dry-deadpan` · `roast` · `hype` · `chaotic-absurd` · `earnest-teacher`
 
-Default tone mix is in §13. Rules can force or exclude tones.
+The default tone mix is in section 13. Rules can limit or ban a tone.
 
 ---
 
@@ -262,177 +264,130 @@ Default tone mix is in §13. Rules can force or exclude tones.
 
 ### 10.1 Trigger
 
-- Nightly full run (launchd).
-- Optional git post-commit hook that queues an incremental run for that repo.
-- Manual: `gittok generate [--repo X] [--count N]`.
+GitTok does not start a model by itself. A person, or a hook in a Claude Code session, runs the `gittok-generate` skill:
 
-### 10.2 Git analysis (no LLM)
+- On demand: `/gittok-generate`.
+- From a session hint. `gittok health --hint` prints a line when the unseen cards will not last `agent.target_runway_days`. `gittok feed-watch` waits until the feed server says the feed wants cards, then exits, and the session runs the skill. See `docs/scheduling.md`.
 
-Precompute signals per repo into SQLite: churn by file/dir, co-change pairs, reverts, fix-chains, commit times, author shares, oldest blame lines, deleted paths, TODO ages, new files, commits since last run. This gives the agent leads and keeps agent work small.
+### 10.2 Git analysis (no model)
+
+GitTok computes signals per repo and stores them in SQLite, cached by the head commit: churn by file and dir, co-change pairs, reverts, fix chains, commit times, author shares, oldest blame lines, deleted paths, TODO ages, new files. It also mines candidate code windows with the repo profile and the structure layer. This gives the agent leads and keeps the agent's work small. Time windows are relative to the last commit date of the analyzed ref, not to the wall clock.
 
 ### 10.3 Brief builder
 
-Turns state into a brief for the agent:
+`get_brief` turns state into a brief:
 
-- **Count** for this run (budget-limited, default 40).
+- The **count** for this run. It comes from feed health (how long the unseen cards will last), within `agent.max_count`.
 - **Quotas** by story category, format, persona and tone, from learned weights blended with the default mix.
-- **Active rules** (boosts, bans, focus areas).
-- **Coverage gaps**: directories/modules the user has seen little of (learning boost).
-- **Fresh material**: commits since last run, precomputed leads from §10.2.
-- **Recently used** stories/formats to avoid repeats.
+- **Active rules** (section 14).
+- **Coverage gaps**: dirs the reader has seen little of.
+- **Leads**: fresh commits and the precomputed signals and candidates.
+- **Recently used** stories, so a story is not told twice in the same format.
 
-Example brief excerpt:
+### 10.4 Agent run (MCP and skill)
 
-```
-Make 40 cards.
-Categories: git-drama 10, memes 8, explainers 8, code 6, interactive 4, cross-repo 4.
-Rule: boost dir=api-server/sync/ x2 (expires 2026-11-06).
-New: 3 commits in api-server since last run; 1 revert in web-client.
-Unseen: billing/ (0 views) — include 3 intro cards.
-Tones: lean dry-deadpan and roast; at least 4 other tones for exploration.
-```
-
-### 10.4 Agent run (MCP + skill)
-
-`claude -p` is not allowed on a subscription, so generation runs inside an interactive agent session:
-
-- The user (or a `/loop` later) runs the `gittok-generate` skill in Claude Code. The MCP server is part of the same process as the feed. The project's `.mcp.json` starts `gittok mcp --ui`: MCP over stdio, plus the feed API and PWA on loopback for as long as the session runs (on the LAN too with `--lan` or `server.lan: true`). `gittok serve` runs the feed and MCP (streamable HTTP at `/mcp`) without a session.
-- The skill calls `get_brief`, which runs analysis, builds the brief, opens a `runs` row, and returns a short summary and a list of **work packets** (1–5 cards each, 2 by default, with a suggested model). Leads and guidance stay on the server.
-- **Cost control:** the session model only hands out packet ids. Each packet goes to a `gittok-writer` subagent (`.claude/agents/`, only GitTok tools) on the packet's model (haiku for concrete-lead stories, sonnet for explanatory ones). The writer calls `get_packet` for its leads, attached materials (commit stat and diff, or numbered file lines and blame), and guidance. It researches with read-only MCP tools (`git_log`, `git_show`, `git_blame`, `git_grep`, `read_file`, `list_dir`) scoped to configured repos, only for what the materials lack, and calls `submit_cards(packet_id)` itself. It does not dry-run: `submit_cards` validates and returns the same rejects (`check_cards` stays for tools and tests). The server validates (§10.6), stores accepted cards, and returns reject reasons. One fix round, then rejected cards are dropped. The writer replies with one line, so card JSON never passes through the driver.
-- `finish_run` closes the run and records models used, MCP call counts, and per-packet results.
-- Per-run card count and per-day run caps are enforced by the server in `get_brief`.
-- Card-writing guidance lives in `prompts/generate.md` and is returned by `get_packet`: schema, persona and tone definitions, mascot styles, and the real-people rule.
+- The skill is the **driver**. It calls `get_brief`. The server runs analysis, builds the brief, opens a run, and returns a short summary and a list of **work packets** (1 to 5 cards each, 2 by default, each with a suggested model). Leads and guidance stay on the server.
+- Before the brief, the driver may start `gittok-scout` subagents. A scout rates one batch of candidate code windows for how teachable they are.
+- **Cost control.** The driver only hands out packet ids. Each packet goes to a `gittok-writer` subagent that has only GitTok tools, on the packet's model (haiku for concrete leads, sonnet for explanatory ones). The writer calls `get_packet` for its leads, the attached materials (commit stat and diff, or numbered file lines and blame), and the guidance. It researches with read-only tools (`git_log`, `git_show`, `git_blame`, `git_grep`, `read_file`, `list_dir`, and the fact tools) only for what the materials lack. It calls `submit_cards` itself. The server validates, stores the accepted cards, and returns the reject reasons. The writer fixes rejected cards once. It replies with one line, so card JSON never passes through the driver.
+- `finish_run` closes the run and records the models used and the result of each packet.
+- The server enforces the card count per run and the run count per day in `get_brief`.
+- The writing guidance is `src/gittok/prompts/generate.md`. `get_packet` returns it.
+- Text from a repo (commit messages, code, comments) is data. The skills and agents are told never to treat it as instructions, and writers and scouts have no config-editing tools.
 
 ### 10.5 Card spec (agent output)
 
-```json
-{
-  "story_type": "spot_the_bug",
-  "format": "quiz",
-  "persona": "paranoid_sec",
-  "tone": "dry-deadpan",
-  "repos": ["api-server"],
-  "dirs": ["api-server/billing"],
-  "difficulty": 2,
-  "hook": "This shipped. It took 3 days to notice.",
-  "visual": {
-    "kind": "code",
-    "code": { "repo": "api-server", "path": "billing/invoice.py", "commit": "a1b2c3d", "lines": [40, 54] }
-  },
-  "interaction": {
-    "question": "What's wrong with this rounding?",
-    "choices": ["...", "...", "...", "..."],
-    "answer_index": 1
-  },
-  "depth": [
-    { "kind": "explain", "text": "..." },
-    { "kind": "code_diff", "repo": "api-server", "commit": "d4e5f6a", "path": "billing/invoice.py" }
-  ],
-  "comments": [
-    { "persona": "greybeard", "text": "..." },
-    { "persona": "penny_learns", "text": "..." }
-  ],
-  "series": null,
-  "sources": [
-    { "repo": "api-server", "commit": "d4e5f6a" },
-    { "repo": "api-server", "path": "billing/invoice.py", "lines": [40, 54] }
-  ]
-}
-```
+A card is a JSON object. The contract is `src/gittok/schema/card.schema.json`, and the server validates it strictly. The main fields:
 
-`visual.kind` options: `text` (title, body, bullets), `meme` (template id + lines), `illustration` (prompt; mascot style auto-prepended), `comic` (panel prompts + captions), `code`, `diff`, `chart` (type + data), `template` (format-specific fields: iceberg layers, tier rows, chat messages, etc.), `diagram` (mermaid).
+| Field | Meaning |
+|---|---|
+| `story_type`, `format`, `persona`, `tone` | The four parts of section 6 |
+| `repos`, `dirs` | What the card is about |
+| `hook` | The line on the face of the card |
+| `learn` | The one fact the reader takes away |
+| `visual` | One of the kinds `code`, `text`, `meme`, `text_meme`, `illustration`, `comic`, `chart`, `diagram`, `template` |
+| `depth` | 1 to 4 panels: explanation, code, or diff |
+| `sources` | The commits, paths and line ranges the card cites |
+| `facts`, `claims` | Ids of the code facts and the interpretive claims the text relies on |
+| `comments`, `interaction`, `series`, `account`, `difficulty`, `verdict` | Optional parts |
 
-Full JSON Schema lives in `schema/card.schema.json` and is validated strictly.
-
-### 10.6 Validation (no LLM)
+### 10.6 Validation (no model)
 
 - Schema validation.
-- Every cited repo/path/line range/commit must exist (`git cat-file`, file reads).
-- Quiz answer index valid; code excerpts match the cited lines at the cited commit.
-- Real-people rule: comments/quotes only from personas or code accounts.
-- Reject or drop invalid cards; log reasons for prompt tuning.
+- Every cited repo, path, line range and commit must exist.
+- A quiz has a valid answer. Code is read from git at the cited commit, not copied from the agent.
+- Claim checks: numbers, dates, shas and names in the text must agree with git (`docs/formats.md`, "Claim checks").
+- Accounts are personas or code accounts, never real people.
+- Secrets in repo text are masked before the text leaves the server (`config/secrets.yaml`).
+- An invalid card is rejected with a reason. The reasons are stored with the run.
 
 ### 10.7 Rendering
 
-- **Meme** → memegen (local instance) → PNG.
-- **Illustration / comic / mascot scene / persona avatars** → mflux with mascot style prompt + seed → PNG. Captions are overlaid by the frontend, **never baked into images**.
-- **Code / diff** → Shiki HTML at render time.
-- **Charts / template formats** → Svelte components fed by structured data.
-- **Diagram** → Mermaid in the client.
-- Assets stored under `data/assets/`, referenced by card id.
+- **Meme**: the local memegen server draws a PNG.
+- **Illustration and comic, and persona avatars**: mflux, with the mascot style and seed. The client overlays captions; text is never drawn into the image.
+- **Code, diff, chart, template formats, diagram**: the client draws them from structured data.
+- Meme, illustration and comic cards are stored as `pending_render`. They appear in the feed after the render worker draws them. When a renderer is not installed, the brief does not ask for its formats.
 
 ### 10.8 Budget
 
-- Per-run card count and per-day run limit in `config/settings.yaml` to stay within subscription limits.
-- Illustration count per run capped (rendering time ~5–20s/image on a recent Mac).
+- The card count per run and the run count per day are limited in `config/settings.yaml` (`agent.max_count`, `agent.per_day_runs`).
+- The illustration count per run is limited (`render.max_illustrations_per_run`).
 
 ---
 
-## 11. Feed app (PWA)
+## 11. Feed app
 
-- Full-screen vertical snap-scroll; horizontal swipe for depth panels.
-- Stories row, notifications, repo profile pages, saved cards.
-- Actions per card: like, save, "explain more", answer (interactive).
-- Offline cache of the current feed batch.
-- Event capture:
-
-| Event | Captured |
-|---|---|
-| `impression` | card id, timestamp |
-| `dwell` | visible ms (IntersectionObserver, ≥60% visible) |
-| `skip` | left in under ~1s |
-| `scroll_back` | returned to a previous card |
-| `depth_open` | horizontal swipe, panel index |
-| `like` / `save` / `explain_more` | — |
-| `answer` | choice, correct/incorrect |
-| `source_tap` | tapped file/commit link |
-
-Events batch to `POST /events`.
+- Full-screen vertical snap scroll. Horizontal swipe for depth panels.
+- Stories row, notifications, repo pages, persona pages, file pages, saved cards.
+- Actions per card: like, save, comments, answer (interactive cards), reply to a comment.
+- An installable web app with an offline copy of the last batch. This part needs HTTPS or `localhost` (`docs/install.md`, "HTTPS on a LAN").
+- The client records events and sends them in batches to `POST /api/events`: impression, dwell, skip, scroll back, depth open, like, save, answer, source tap, and the play events of cards that play piece by piece. `docs/learning.md` section 1 has the list.
 
 ---
 
 ## 12. Learning and ranking
 
+`docs/learning.md` is the contract. In short:
+
 ### 12.1 Reward
 
-Per impression, compute a reward in [0, 1]:
+Each impression gets a reward in [0, 1]:
 
-- Skip under ~1s → strong negative (0).
-- Dwell normalized by **expected read time** for the card's format/length (a thread should take longer than a meme).
-- Positive boosts: depth_open, explain_more, like, save, source_tap; **scroll_back** is the strongest signal.
-- Interactive: answering counts as engagement regardless of correctness.
+- A skip in under about 1 s gives 0.
+- Dwell is compared with the **expected read time** of the card's format and length. A thread takes longer than a meme.
+- Depth open, like, save, source tap and scroll back add to it.
+- On an interactive card, an answer counts as engagement, right or wrong.
 
-Reward weights live in `config/reward.yaml` and are expected to be tuned.
+The weights are in `config/reward.yaml`.
 
 ### 12.2 Features
 
-Each card is described by feature values: story_type, format, persona, tone, repo, group, dir, author(s), recency bucket, difficulty, mascot, has_comments, is_series.
+Each card has feature values: story type, format, persona, tone, repo, group, dir, visual kind, recency, difficulty, and more (`importance` in `config/reward.yaml` lists them).
 
 ### 12.3 Model
 
 - **Thompson sampling with a Beta(α, β) per feature value**, updated from rewards.
-- Card score = combination of sampled values across its features (start with a weighted mean; keep it simple and explainable).
-- **Time decay** on α/β so interests can shift (half-life configurable, default ~3 weeks).
-- Default mix (§13) seeds the priors.
+- A card's score is the importance-weighted mean of the sampled values of its features. This is simple, and it can be explained.
+- α and β decay with time, so interests can shift (`half_life_days`).
+- The default mix (section 13) seeds the priors.
 
-### 12.4 Slotting (builds the actual feed)
+### 12.4 Slotting (builds the feed)
 
-Applied after scoring, in order:
+After scoring, in order:
 
-1. **Rules** (§14): bans remove, boosts multiply, focus reserves slots.
-2. **Exploration share** (~15–20%): cards picked outside learned taste.
-3. **Learning boost**: unseen or under-seen code areas get reserved slots.
-4. **Rhythm**: no more than 2 of the same format in a row; alternate fast cards (memes) and slow cards (threads, quizzes).
-5. **Series ordering** and spacing.
-6. **Repeat limits**: no repeated story within N days unless spaced repetition.
+1. **Rules** (section 14): bans remove, boosts multiply, focus reserves slots, limits cap a share.
+2. **Exploration**: a share of the slots goes to cards outside the learned taste.
+3. **Learning boost**: code areas the reader has seen little get reserved slots.
+4. **Rhythm**: no more than 2 cards of the same format in a row; fast cards and slow cards alternate.
+5. **One story, one slot**, and **series** parts in order and spaced.
+6. **Repeat limit**: a card comes back within the repeat window only through spaced repetition.
 
 ### 12.5 Spaced repetition
 
-Wrong answers on interactive cards re-enter after increasing intervals (1d → 3d → 7d → mastered).
+A wrong answer on an interactive card brings the card back after growing intervals (1 day, 3 days, 7 days, then mastered).
 
 ### 12.6 Driving generation
 
-Aggregated weights feed the brief's quotas (§10.3): make more of what scores well, a little of everything else. The ranker reorders what exists; the brief decides what gets made.
+The weights also feed the quotas of the brief (section 10.3): make more of what scores well, and a little of everything else. The ranker orders what exists. The brief decides what gets made.
 
 ---
 
@@ -457,100 +412,70 @@ tones:
   chaotic-absurd: 0.15
   earnest-teacher: 0.15
 
-visual_mix:
-  image_min_share: 0.5   # least share of cards in an image format (meme, illustration, comic, chart, diagram)
 personas: uniform
-topics: uniform across repos and dirs, tilted toward recent commits
+topics: uniform
+visual_mix:
+  image_min_share: 0.5   # least share of cards in an image format
 exploration_share: 0.18
-prior_strength: 10   # pseudo-observations; behavior outweighs it within ~1–2 weeks
+prior_strength: 10       # pseudo-observations behind each prior
 ```
 
-"Reset to defaults" restores this file's priors.
+A reset (`reset_defaults`, or `gittok reset-weights`) deletes the learned weights, so the feed starts from this mix again.
 
 ---
 
 ## 14. Rules
 
-Stored in SQLite as plain records; always override learned weights.
+Rules are plain records in SQLite. They always override learned weights.
 
 ```
 boost   dir=api-server/sync   x2.0   until 2026-11-06
 ban     format=horoscope
-focus   repo=billing          slots=5 per batch   until 2026-11-13
-limit   tone=roast            max=0.10
+focus   repo=billing          slots=3   until 2026-11-13
+limit   tone=roast            max_share=0.10
 prefer  persona=greybeard     x1.5
 ```
 
-Types: `boost`, `ban`, `focus`, `limit`, `prefer`. Optional expiry. Each rule records who created it and why (the user's phrasing).
+Types: `boost`, `ban`, `focus`, `limit`, `prefer`. A rule may expire. Each rule records who made it and why (the user's own words). `docs/learning.md` section 10 says which rules change generation and which only change the order.
 
 ---
 
-## 15. Agent interface (MCP + CLI)
+## 15. Agent interface (MCP and CLI)
 
-MCP server `gittok` exposing:
+The MCP server is named `gittok`. Its tools fall into these groups:
 
-| Tool | Purpose |
+| Group | Tools |
 |---|---|
-| `get_profile` | Plain-English summary of learned taste with evidence |
-| `explain_weights` | Per-feature numbers (e.g. "memes: 72% hit rate over 140 views, trending down") |
-| `list_rules` / `add_rule` / `remove_rule` | Manage rules |
-| `reset_defaults` | Reset priors (all, or one feature group) |
-| `list_repos` / `add_repo` / `set_group` | Repo management |
-| `set_mascot` / `edit_persona` | Cast management |
-| `generate` | Trigger a run with optional overrides |
-| `recent_cards` / `card_stats` | What was shown and how it did |
-| `coverage` | What parts of each repo the user has seen |
+| Generation | `get_brief`, `get_packet`, `submit_cards`, `check_cards`, `finish_run`, `get_card_schema` |
+| Scouting | `scout_status`, `get_candidates`, `rate_candidates` |
+| Read-only research | `git_log`, `git_show`, `git_blame`, `git_grep`, `read_file`, `list_dir`, `defined_where`, `who_calls`, `what_calls`, `symbol_history`, `facts_for` |
+| Repo profiles | `survey_repo`, `test_detector`, `save_profile`, `rule_stats`, `submit_facts` |
+| What the feed learned | `get_taste_profile`, `explain_weights`, `feed_health`, `coverage`, `recent_cards`, `card_stats` |
+| Steering | `list_rules`, `add_rule`, `remove_rule`, `reset_defaults`, `set_playback_speed` |
+| Config | `list_repos`, `add_repo`, `set_group`, `set_mascot`, `edit_persona` |
 
-A nightly job writes `data/profile.md`, a plain-English profile summary. The CLI (`gittok …`) exposes the same functions.
+Every repo tool takes a configured repo name, never a path.
 
-Example: user tells Claude Code "less memes, more of the sync engine this week" → agent calls `add_rule` twice and confirms.
+The server writes `<data_dir>/profile.md`, a plain-English summary of the learned taste, once a day. The CLI (`gittok --help`) gives the same functions without an agent.
+
+Example: the user tells Claude Code "less memes, more of the sync engine this week". The `gittok-steer` skill calls `add_rule` twice and confirms.
 
 ---
 
 ## 16. Data model (SQLite)
 
-- `repos`, `groups`, `repo_groups`
-- `git_signals` (precomputed per repo/run)
-- `runs` (brief, agent backend, counts, rejects, duration)
-- `cards` (spec JSON, status, created_at, run_id). Unique on `(story_key, format)`: one story may be told again in another format (docs/learning.md section 13).
-- `card_features` (card_id, feature, value)
-- `assets` (card_id, kind, path)
-- `events`
-- `rewards` (impression-level)
-- `weights` (feature, value, alpha, beta, updated_at)
-- `rules`
-- `personas`, `mascots`
-- `srs` (spaced repetition state per card)
-- `notifications`
-- `stories` (one row per story ever made: `story_key`, repo, type, sources, first and last card time, `cards_made`, `best_reward`, `liked`, `formats`: the JSON list of formats already used). Gc never deletes it, so duplicate checks survive card deletion.
-- `saved_cards` (`card_id`, `saved_at`, `saved_ts`: cards the user saved; updated by `save` events, so it survives event pruning). Gc never deletes a saved card.
-- `leads` (the lead ledger: one row per commit lead, or per path and blob sha, with `story_type`, `strength`, `head_sha`, first and last seen time, `times_covered`, `last_covered_at`, `mean_reward`). `cards.lead_id` points at the lead a card used (no foreign key). Gc deletes only leads that are old and never covered.
+One database file in the data directory. The schema is `src/gittok/migrations/`. The main tables:
 
----
-
-## 17. Milestones
-
-**M1 — Skeleton feed**
-Repo config, git analysis for one repo, brief builder (static default mix), MCP server (brief, read-only research tools, submit_cards) + `gittok-generate` skill, validator, code/text cards only, FastAPI + Svelte snap-scroll feed on the Mac.
-
-**M2 — Renderers and formats**
-memegen, mflux with mascots, template formats (iceberg, tier list, group chat, etc.), depth panels, personas and comments.
-
-**M3 — Learning**
-Event capture, reward scoring, Thompson sampling, slotting, spaced repetition, quotas driven by weights.
-
-**M4 — Agent control**
-Steering tools on the same MCP server + CLI, rules, profile summary.
-
-**M5 — Multi-repo and phone**
-Groups, cross-repo stories (Drift, Ripple, Recap), stories row, notifications, PWA install over the local network, scheduling (`/loop` or routines; launchd for analysis), post-commit hook.
-
-**M6 — Later**
-Tailscale for private HTTPS off the LAN. Narrated short "reels" (local TTS + generated images, assembled with ffmpeg), Wrapped, per-mascot LoRAs.
-
-## 18. Open questions
-
-- Exact reward weights and expected read times per format (tune with real use).
-- How many personas feel right before the cast gets noisy.
-- Whether Codex backend output quality matches Claude for card specs.
-- Prompt-only mascot consistency vs. needing LoRAs.
+- `repos`, `groups`, `repo_groups`, `personas`, `mascots`.
+- `git_signals`: the analysis result per repo and head commit.
+- `runs`: one row per generation run (brief, counts, reject reasons).
+- `cards`: the spec as JSON, status, run id. Unique on `(story_key, format)`: one story may be told again in another format (`docs/learning.md` section 13).
+- `card_features`, `assets`.
+- `events`, `rewards`, `weights`, `rules`, `srs`, `prefs`.
+- `notifications`, `story_views`, `replies`.
+- `stories`: one row per story ever made. Garbage collection never deletes it, so duplicate checks survive card deletion.
+- `saved_cards`: the cards the reader saved. Garbage collection never deletes a saved card.
+- `leads`: the lead ledger, one row per commit lead or per path and blob. Garbage collection deletes only leads that are old and were never covered.
+- `candidates`, `candidate_ratings`, `scout_batches`: mined code windows and their scout ratings.
+- `knowledge`, `knowledge_events`, `knowledge_symbols`: what the reader has seen (`docs/learning.md` section 14).
+- `fact_*`: code facts (definitions, calls, imports) from the structure layer and from analyzers.

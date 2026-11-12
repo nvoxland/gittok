@@ -2,7 +2,7 @@
 
 import pytest
 
-from gittok import brief, slotter, validator
+from gittok import brief, learning, slotter, validator
 from gittok.config import Repo
 from tests import cards as C
 from tests.test_brief import (
@@ -103,8 +103,9 @@ def test_packet_says_how_many_cards_should_use_an_image_format():
 
 
 def test_every_format_has_a_rhythm_speed():
+    knobs = learning.default_reward_config().slotting
     for f in validator.FORMAT_KIND:
-        assert slotter.format_speed(f, slotter.DEFAULT_KNOBS) in ("fast", "slow"), f
+        assert slotter.format_speed(f, knobs) in ("fast", "slow"), f
 
 
 # --- validator ---------------------------------------------------------------------------

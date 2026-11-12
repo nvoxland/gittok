@@ -14,6 +14,7 @@ from gittok.config import (
     Settings,
 )
 from tests.cards import example_card, explain, guess_who_card, text_card
+from tests.conftest import store_card
 
 PERSONAS = ["greybeard", "penny_learns", "archivist", "meme_compiler", "paranoid_sec", "shipit_sam"]
 
@@ -64,7 +65,7 @@ def _accept(cfg, card):
 def test_store_card_writes_features(conn, cfg, fixture_repo):
     _insert_run(conn)
     acc = _accept(cfg, example_card(fixture_repo))
-    card_id = store.store_card(conn, cfg, "r_1", acc, now="2026-02-01T00:00:00Z")
+    card_id = store_card(conn, cfg, "r_1", acc, now="2026-02-01T00:00:00Z")
 
     row = conn.execute("SELECT * FROM cards WHERE id = ?", (card_id,)).fetchone()
     assert row["run_id"] == "r_1"
@@ -99,7 +100,7 @@ def test_interactive_card_gets_interactive_feature_with_story_type(
     monkeypatch.setattr(store, "SHUFFLE", True)  # the real store path shuffles
     _insert_run(conn)
     acc = _accept(cfg, guess_who_card(fixture_repo))
-    card_id = store.store_card(conn, cfg, "r_1", acc)
+    card_id = store_card(conn, cfg, "r_1", acc)
     feats = {
         (r["feature"], r["value"])
         for r in conn.execute("SELECT * FROM card_features WHERE card_id = ?", (card_id,))
@@ -133,7 +134,7 @@ def test_stored_quiz_choices_are_shuffled_so_the_answer_is_not_always_first():
 
 def test_plain_card_has_no_interactive_feature(conn, cfg, fixture_repo):
     _insert_run(conn)
-    card_id = store.store_card(conn, cfg, "r_1", _accept(cfg, example_card(fixture_repo)))
+    card_id = store_card(conn, cfg, "r_1", _accept(cfg, example_card(fixture_repo)))
     assert not conn.execute(
         "SELECT 1 FROM card_features WHERE card_id = ? AND feature = 'interactive'", (card_id,)
     ).fetchone()
@@ -142,7 +143,7 @@ def test_plain_card_has_no_interactive_feature(conn, cfg, fixture_repo):
 def test_insert_card_upserts_story(conn, cfg, fixture_repo):
     _insert_run(conn)
     acc = _accept(cfg, example_card(fixture_repo))
-    store.store_card(conn, cfg, "r_1", acc, now="2026-02-01T00:00:00Z")
+    store_card(conn, cfg, "r_1", acc, now="2026-02-01T00:00:00Z")
 
     row = conn.execute("SELECT * FROM stories WHERE story_key = ?", (acc.story_key,)).fetchone()
     assert row["repo"] == "fixture" and row["story_type"] == acc.card["story_type"]
@@ -151,7 +152,7 @@ def test_insert_card_upserts_story(conn, cfg, fixture_repo):
     assert (row["cards_made"], row["best_reward"], row["liked"]) == (1, None, 0)
 
     conn.execute("DELETE FROM cards")  # the unique index on cards.story_key would block a repeat
-    store.store_card(conn, cfg, "r_1", acc, now="2026-02-05T00:00:00Z")
+    store_card(conn, cfg, "r_1", acc, now="2026-02-05T00:00:00Z")
     row = conn.execute("SELECT * FROM stories WHERE story_key = ?", (acc.story_key,)).fetchone()
     assert row["cards_made"] == 2
     assert (row["first_card_at"], row["last_card_at"]) == (
@@ -187,7 +188,7 @@ def _store_kind(conn, cfg, card):
     )
     assert rejected == []
     _insert_run(conn)
-    cid = store.store_card(conn, cfg, "r_1", accepted[0])
+    cid = store_card(conn, cfg, "r_1", accepted[0])
     status = conn.execute("SELECT status FROM cards WHERE id = ?", (cid,)).fetchone()[0]
     feats = {
         (r["feature"], r["value"])
@@ -280,7 +281,7 @@ def _variant_story(conn, cfg, fixture_repo, **over):
     _insert_run(conn)
     acc = _accept(cfg, text_card(fixture_repo))
     created = (VARIANT_NOW - timedelta(days=20)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    store.store_card(conn, cfg, "r_1", acc, now=created)
+    store_card(conn, cfg, "r_1", acc, now=created)
     row = _story_row(conn, acc.story_key, **{"best_reward": 0.8, **over})
     return acc, row
 
@@ -297,12 +298,12 @@ def test_variant_card_allowed_with_different_format(conn, cfg, fixture_repo):
     # The unique index is (story_key, format): a second format inserts.
     other = _accept(cfg, text_card(fixture_repo, format="fun_fact"))
     assert other.story_key == acc.story_key
-    store.store_card(conn, cfg, "r_1", other, now="2026-03-01T00:00:00Z")
+    store_card(conn, cfg, "r_1", other, now="2026-03-01T00:00:00Z")
     row = conn.execute("SELECT * FROM stories WHERE story_key = ?", (acc.story_key,)).fetchone()
     assert db.loads(row["formats"]) == ["text_post", "fun_fact"]
     assert row["cards_made"] == 2
     with pytest.raises(sqlite3.IntegrityError):  # same story and format twice still fails
-        store.store_card(conn, cfg, "r_1", other, now="2026-03-02T00:00:00Z")
+        store_card(conn, cfg, "r_1", other, now="2026-03-02T00:00:00Z")
 
 
 def test_variant_rejected_same_format(conn, cfg, fixture_repo):
@@ -350,7 +351,7 @@ def test_verdict_becomes_a_feature(conn, cfg, fixture_repo):
     card["comments"] = [
         {"persona": "greybeard", "text": "Legacy float math that callers still depend on, sadly."}
     ]
-    card_id = store.store_card(conn, cfg, "r_1", _accept(cfg, card))
+    card_id = store_card(conn, cfg, "r_1", _accept(cfg, card))
     feats = {
         (r["feature"], r["value"])
         for r in conn.execute("SELECT * FROM card_features WHERE card_id = ?", (card_id,))

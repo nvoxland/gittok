@@ -1,7 +1,7 @@
 """The structure layer: definitions, references, comments and imports from tree-sitter.
 
 `parse(path, text)` returns `FileFacts` for a file, or None when the layer cannot help (the
-optional `structure` dependency group is not installed, the grammar is not in the local
+tree-sitter packages cannot be imported, the grammar is not in the local
 cache, or the file has no query). The caller then falls back to the regex patterns of
 config/languages.yaml, and after that to plain text rules.
 
@@ -30,7 +30,7 @@ from pathlib import Path
 
 import yaml
 
-try:  # the optional `structure` group
+try:  # normal dependencies; a broken install must not stop the regex fallback
     import tree_sitter as _ts
     import tree_sitter_language_pack as _pack
 except ImportError:  # pragma: no cover - exercised by the monkeypatched tests

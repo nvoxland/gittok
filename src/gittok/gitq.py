@@ -15,7 +15,7 @@ log = logging.getLogger(__name__)
 
 HEX_ID_PATTERN = r"[0-9a-f]{7,40}"
 _HEX_RE = re.compile(HEX_ID_PATTERN)
-TIMEOUT_S = 120
+DEFAULT_TIMEOUT_S = 120
 MAX_STDERR_BYTES = 64 * 1024
 TRUNCATED_MARKER = "\n…[truncated]"
 
@@ -51,6 +51,23 @@ _SAFE_FLAGS = {
 
 class GitError(Exception):
     pass
+
+
+# Seconds one read-only git call may run (`analysis.git_timeout_s` in settings.yaml). gitq
+# takes repo paths, not a config, so `load_config` hands the value over with `set_timeout`.
+# Fetch and clone have their own, longer limits below.
+_timeout_s: float = DEFAULT_TIMEOUT_S
+
+
+def timeout_s() -> float:
+    return _timeout_s
+
+
+def set_timeout(seconds: float) -> None:
+    global _timeout_s
+    if isinstance(seconds, bool) or not isinstance(seconds, int | float) or seconds <= 0:
+        raise ValueError(f"the git timeout must be a positive number of seconds: {seconds!r}")
+    _timeout_s = seconds
 
 
 def _command(repo: Path | str | None, *args: str, literal_pathspecs: bool = False) -> list[str]:
@@ -97,7 +114,8 @@ def run_bytes(
         timed_out.set()
         proc.kill()
 
-    timer = threading.Timer(TIMEOUT_S, _expire)
+    limit = timeout_s()
+    timer = threading.Timer(limit, _expire)
     err_buf = bytearray()
 
     def _drain_stderr() -> None:
@@ -132,7 +150,7 @@ def run_bytes(
         proc.stdout.close()
         proc.stderr.close()
     if timed_out.is_set():
-        raise GitError(f"git {' '.join(args)} timed out")
+        raise GitError(f"git {' '.join(args)} timed out after {limit:g} s")
     out = b"".join(chunks)
     if truncated:
         assert max_bytes is not None
@@ -426,7 +444,7 @@ def read_blobs(repo: Path | str, shas: list[str], chunk: int = 400) -> dict[str,
                 input=("\n".join(batch) + "\n").encode(),
                 capture_output=True,
                 env=_env(),
-                timeout=TIMEOUT_S,
+                timeout=timeout_s(),
                 check=True,
             )
         except (OSError, subprocess.SubprocessError) as e:
@@ -465,7 +483,7 @@ def _configured_ssh_command(repo: Path | str | None) -> str:
             stdin=subprocess.DEVNULL,
             capture_output=True,
             env=_env(),
-            timeout=TIMEOUT_S,
+            timeout=timeout_s(),
         )
     except (OSError, subprocess.SubprocessError):
         return ""

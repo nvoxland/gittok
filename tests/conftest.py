@@ -47,6 +47,14 @@ def make_config(fixture_repo, tmp_path, **agent):
     )
 
 
+def store_card(conn, cfg, run_id: str, acc, now: str | None = None) -> str:
+    """Insert one accepted card in its own transaction (the app inserts in runs.submit)."""
+    from gittok import store
+
+    with conn:
+        return store.insert_card(conn, cfg, run_id, acc, now)
+
+
 @pytest.fixture
 def anyio_backend():
     return "asyncio"

@@ -8,11 +8,11 @@ model: sonnet
 
 You change what the feed shows through **rules**, and you explain what the feed has learned. You do not generate cards here (that is the `gittok-generate` skill). Do the work yourself. Do not launch subagents.
 
-Requires the `gittok` MCP server (tools named `mcp__gittok__*`). If those tools are missing, tell the user to restart the Claude Code session in the GitTok repo (its `.mcp.json` starts `gittok mcp --ui`) and check `/mcp` for errors, then stop.
+Requires the `gittok` MCP server (tools named `mcp__gittok__*`). If those tools are missing, tell the user how to start the server, then stop. In a GitTok clone: restart the Claude Code session in the clone (its `.mcp.json` starts `gittok mcp --ui`) and check `/mcp` for errors. With an installed GitTok: run `gittok install --apply` once, check that `gittok serve` runs, and check `/mcp`.
 
 ## Tools
 
-`get_profile`, `feed_health`, `explain_weights(feature)`, `list_rules`, `add_rule`, `remove_rule`, `reset_defaults`, `coverage(repo)`, `recent_cards`, `card_stats`, `list_repos`. Config tools: `add_repo`, `set_group`, `set_mascot`, `edit_persona`, `set_playback_speed`.
+`get_taste_profile`, `feed_health`, `explain_weights(feature)`, `list_rules`, `add_rule`, `remove_rule`, `reset_defaults`, `coverage(repo)`, `recent_cards`, `card_stats`, `list_repos`. Config tools: `add_repo`, `set_group`, `set_mascot`, `edit_persona`, `set_playback_speed`.
 
 ## Steps
 
@@ -20,7 +20,7 @@ Requires the `gittok` MCP server (tools named `mcp__gittok__*`). If those tools 
 
 ### A. The user asks what the feed learned, or why they see X
 
-1. Call `get_profile`. For "why so many X", also call `explain_weights(feature)` for the feature X belongs to (`format`, `story_type`, `tone`, `persona`, `repo`).
+1. Call `get_taste_profile`. For "why so many X", also call `explain_weights(feature)` for the feature X belongs to (`format`, `story_type`, `tone`, `persona`, `repo`).
 2. Answer in plain English. Use short sentences. Give the evidence numbers: how many views, the mean reward, the trend. Say when evidence is thin (few views) and that the feed still explores.
 3. Call `list_rules`. If a rule explains the pattern, say so with its id and reason.
 4. Offer one concrete change (a rule). Do not add it until the user agrees.
@@ -68,7 +68,7 @@ Reply: "Added rule 6: no roast tone in new cards. Undo with rule 6."
 Reply: "Added rule 7: 3 slots per run lead with `sync/`. It ends in 7 days. Undo with rule 7."
 
 **"what have you learned about me?"**
-`get_profile()`, then `list_rules()`.
+`get_taste_profile()`, then `list_rules()`.
 Reply: "You finish quiz cards often (mean reward 0.62 over 31 views, rising). You skip memes fast (0.08 over 40 views). You have one active rule: ..." Then offer one change.
 
 **"why am I seeing so many hot takes?"**

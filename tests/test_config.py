@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from gittok.config import ConfigError, load_config, project_root
+from gittok.config import ConfigError, load_config, resolve_roots
 
 
 def write(root: Path, name: str, text: str) -> None:
@@ -64,12 +64,35 @@ def test_unknown_key_in_repo(tmp_path):
         load_config(tmp_path)
 
 
-def test_unknown_key_in_settings_and_persona(tmp_path):
+def test_unknown_settings_key_is_a_warning_and_the_config_still_loads(tmp_path, caplog):
+    """A running process may read a newer settings file: an unknown key must not stop it."""
     write(tmp_path, "repos.yaml", "repos:\n  a:\n    path: /x\n")
-    write(tmp_path, "settings.yaml", "agent:\n  nope: 1\n")
-    with pytest.raises(ConfigError, match="nope.*settings.yaml"):
+    write(tmp_path, "settings.yaml", "agent:\n  nope: 1\n  max_count: 7\nfuture: {x: 1}\n")
+    with caplog.at_level("WARNING", logger="gittok.config"):
+        cfg = load_config(tmp_path)
+    assert cfg.settings.agent.max_count == 7
+    assert len(cfg.warnings) == 2
+    assert any("'agent.nope'" in w and "config/settings.yaml" in w for w in cfg.warnings)
+    assert any("'future'" in w and "config/settings.yaml" in w for w in cfg.warnings)
+    assert "agent.nope" in caplog.text and "future" in caplog.text
+
+
+def test_unknown_settings_key_is_logged_once_per_process(tmp_path, caplog):
+    write(tmp_path, "settings.yaml", "agent:\n  only_once: 1\n")
+    with caplog.at_level("WARNING", logger="gittok.config"):
         load_config(tmp_path)
-    (tmp_path / "config" / "settings.yaml").unlink()
+        assert load_config(tmp_path).warnings  # every load still reports it
+    assert caplog.text.count("only_once") == 1
+
+
+def test_shipped_settings_have_no_unknown_keys(tmp_path):
+    """Typos in the shipped file must not hide behind the warning."""
+    shipped = Path(__file__).parents[1]
+    assert load_config(tmp_path, shared=shipped).warnings == ()
+
+
+def test_unknown_key_in_persona(tmp_path):
+    write(tmp_path, "repos.yaml", "repos:\n  a:\n    path: /x\n")
     write(tmp_path, "personas.yaml", "personas:\n  p:\n    name: P\n    voice: v\n    x: 1\n")
     with pytest.raises(ConfigError, match="'x'.*personas.yaml"):
         load_config(tmp_path)
@@ -131,7 +154,7 @@ def test_data_dir_tilde(tmp_path, monkeypatch):
 
 def test_project_root_env(tmp_path, monkeypatch):
     monkeypatch.setenv("GITTOK_ROOT", str(tmp_path))
-    assert project_root() == tmp_path.resolve()
+    assert resolve_roots()[1] == tmp_path.resolve()
 
 
 def test_project_root_walks_up(tmp_path, monkeypatch):
@@ -139,13 +162,13 @@ def test_project_root_walks_up(tmp_path, monkeypatch):
     write(tmp_path, "settings.yaml", "{}\n")
     deep = tmp_path / "a" / "b"
     deep.mkdir(parents=True)
-    assert project_root(deep) == tmp_path.resolve()
+    assert resolve_roots(deep)[1] == tmp_path.resolve()
 
 
 def test_project_root_not_found(tmp_path, monkeypatch):
     monkeypatch.delenv("GITTOK_ROOT", raising=False)
     with pytest.raises(ConfigError):
-        project_root(tmp_path)
+        resolve_roots(tmp_path)
 
 
 def test_shipped_config_loads_without_user_files(tmp_path):
@@ -269,11 +292,11 @@ def test_local_settings_merge_over_config_by_key(tmp_path):
 def test_local_settings_unknown_key_names_the_local_file(tmp_path):
     write(tmp_path, "settings.yaml", "{}\n")
     wl(tmp_path, "settings.yaml", "agent:\n  nope: 1\n")
-    with pytest.raises(ConfigError, match=r"nope.*local/settings.yaml"):
-        load_config(tmp_path)
+    (warning,) = load_config(tmp_path).warnings
+    assert "'agent.nope'" in warning and "local/settings.yaml" in warning
     wl(tmp_path, "settings.yaml", "bogus: 1\n")
-    with pytest.raises(ConfigError, match=r"bogus.*local/settings.yaml"):
-        load_config(tmp_path)
+    (warning,) = load_config(tmp_path).warnings
+    assert "'bogus'" in warning and "local/settings.yaml" in warning
 
 
 def test_local_personas_merge_field_by_field(tmp_path):
@@ -329,3 +352,65 @@ def test_server_settings_reject_wrong_types(tmp_path, text):
     write(tmp_path, "settings.yaml", f"server:\n  {text}\n")
     with pytest.raises(ConfigError, match="settings.server"):
         load_config(tmp_path)
+
+
+def test_health_prints_unknown_settings_keys(tmp_path, monkeypatch, capsys):
+    """`gittok health` keeps a typo visible: stderr for the JSON form, a line for the hint."""
+    from gittok import cli
+
+    write(tmp_path, "settings.yaml", "agent:\n  max_cuont: 7\n")
+    monkeypatch.setenv("GITTOK_ROOT", str(tmp_path))
+    assert cli.main(["health"]) == 0
+    io = capsys.readouterr()
+    assert "max_cuont" in io.err and "settings.yaml" in io.err
+    assert "max_cuont" not in io.out
+    assert cli.main(["health", "--hint"]) == 0
+    assert "max_cuont" in capsys.readouterr().out
+
+
+def test_git_timeout_setting_has_a_default_and_reaches_gitq(tmp_path, monkeypatch):
+    from gittok import gitq
+
+    monkeypatch.setattr(gitq, "_timeout_s", gitq.timeout_s())  # restore after the test
+    write(tmp_path, "settings.yaml", "{}\n")
+    assert load_config(tmp_path).settings.analysis.git_timeout_s == 120
+    assert gitq.timeout_s() == 120
+    write(tmp_path, "settings.yaml", "analysis:\n  git_timeout_s: 30\n")
+    assert load_config(tmp_path).settings.analysis.git_timeout_s == 30
+    assert gitq.timeout_s() == 30
+
+
+@pytest.mark.parametrize("bad", ["0", "-5", "true", "'abc'", "[1]"])
+def test_git_timeout_setting_must_be_a_positive_number(tmp_path, bad):
+    write(tmp_path, "settings.yaml", f"analysis:\n  git_timeout_s: {bad}\n")
+    with pytest.raises(ConfigError, match="git_timeout_s"):
+        load_config(tmp_path)
+
+
+def test_shipped_settings_file_names_the_git_timeout():
+    import yaml
+
+    shipped = Path(__file__).parents[1] / "config" / "settings.yaml"
+    assert yaml.safe_load(shipped.read_text())["analysis"]["git_timeout_s"] == 120
+
+
+def test_shipped_settings_file_lists_every_setting():
+    """config/settings.yaml is the reference: each key the code reads is there with its default."""
+    import dataclasses
+
+    import yaml
+
+    from gittok import config
+
+    shipped = yaml.safe_load((Path(__file__).parents[1] / "config" / "settings.yaml").read_text())
+    missing = []
+    for f in dataclasses.fields(config.Settings):
+        if f.name not in shipped:
+            missing.append(f.name)
+            continue
+        section = config._SECTIONS.get(f.name)
+        if section is not None:
+            have = shipped[f.name] or {}
+            names = [s.name for s in dataclasses.fields(section)]
+            missing += [f"{f.name}.{n}" for n in names if n not in have]
+    assert not missing, f"config/settings.yaml does not list: {', '.join(missing)}"

@@ -528,3 +528,37 @@ def test_clone_and_fetch_do_not_prompt(monkeypatch):
     monkeypatch.delenv("GIT_SSH_COMMAND")
     monkeypatch.setattr(gitq, "_configured_ssh_command", lambda repo: "ssh -i ~/.ssh/work")
     assert "GIT_SSH_COMMAND" not in gitq._net_env(None)
+
+
+@pytest.fixture
+def slow_git(tmp_path, monkeypatch):
+    """A `git` on PATH that never answers."""
+    import os
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "git"
+    fake.write_text("#!/bin/sh\nexec sleep 30\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+
+def test_git_timeout_is_a_setting_not_a_constant(tmp_path, slow_git, monkeypatch):
+    import time
+
+    assert gitq.timeout_s() == 120  # the default
+    monkeypatch.setattr(gitq, "_timeout_s", gitq.timeout_s())  # restore after the test
+    gitq.set_timeout(0.2)
+    t0 = time.monotonic()
+    with pytest.raises(gitq.GitError, match="timed out after 0.2 s"):
+        gitq.run(tmp_path, "status")
+    with pytest.raises(gitq.GitError, match="cat-file --batch failed"):
+        gitq.read_blobs(tmp_path, ["a" * 40])
+    assert time.monotonic() - t0 < 10
+
+
+@pytest.mark.parametrize("bad", [0, -1, True, "120", None])
+def test_set_timeout_refuses_a_value_that_is_not_a_positive_number(bad):
+    with pytest.raises(ValueError):
+        gitq.set_timeout(bad)
+    assert gitq.timeout_s() == 120

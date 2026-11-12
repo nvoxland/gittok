@@ -8,13 +8,14 @@ import math
 import threading
 from collections.abc import Callable
 from contextlib import closing
-from dataclasses import dataclass, field
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from functools import cache
 from typing import Any
 
 import yaml
 
-from gittok import db, knowledge, requests
+from gittok import config, db, knowledge, requests
 
 log = logging.getLogger(__name__)
 
@@ -23,91 +24,81 @@ CAP_MS = 30 * 60 * 1000
 
 @dataclass(frozen=True)
 class RewardConfig:
-    skip_ms: int = 1000
-    weights: dict = field(
-        default_factory=lambda: {
-            "dwell": 0.45,
-            "depth_open": 0.15,
-            "lightbox_open": 0.15,
-            "explain_more": 0.15,
-            "like": 0.25,
-            "save": 0.30,
-            "source_tap": 0.10,
-            "scroll_back": 0.35,
-            "answer": 0.20,
-            "complete": 0.15,
-            "replay": 0.30,
-        }
-    )
-    ms_per_word: int = 250
-    expected_ms_max: int = 45000
-    format_base_ms: dict = field(
-        default_factory=lambda: {
-            "default": 2500,
-            "meme": 1500,
-            "text_meme": 1500,
-            "fun_fact": 2000,
-            "chart": 3000,
-            "code_card": 4000,
-            "quiz": 4000,
-            "thread": 6000,
-            "comic": 6000,
-            "iceberg": 5000,
-            "day_in_life": 5000,
-        }
-    )
-    importance: dict = field(
-        default_factory=lambda: {
-            "story_type": 1.0,
-            "format": 1.0,
-            "tone": 0.7,
-            "persona": 0.5,
-            "repo": 0.8,
-            "group": 0.4,
-            "dir": 0.6,
-            "visual_kind": 0.5,
-            "template": 0.5,
-            "meme_template": 0.4,
-            "recency": 0.6,
-            "difficulty": 0.3,
-            "has_comments": 0.2,
-            "verdict": 0.6,
-        }
-    )
-    half_life_days: float = 21
-    slotting: dict = field(default_factory=dict)
+    """Reward and ranking knobs. The values live in config/reward.yaml and nowhere else."""
+
+    skip_ms: int
+    weights: dict
+    ms_per_word: int
+    expected_ms_max: int
+    format_base_ms: dict
+    importance: dict
+    half_life_days: float
+    slotting: dict
 
 
 class RewardConfigError(ValueError):
     pass
 
 
-def load_reward_config(cfg) -> RewardConfig:
-    """Read config/reward.yaml; missing file means built-in defaults, unknown keys are errors."""
-    base = RewardConfig()
-    path = (getattr(cfg, "shared", None) or cfg.root) / "config" / "reward.yaml"
-    if not path.is_file():
-        return base
+_REWARD_FIELDS = tuple(RewardConfig.__dataclass_fields__)
+_CLOSED_MAPS = ("weights", "importance")  # a key the shipped file does not have is a typo
+
+
+def _read_reward(path) -> dict:
     data = yaml.safe_load(path.read_text()) or {}
     if not isinstance(data, dict):
         raise RewardConfigError(f"{path} must be a mapping")
-    allowed = set(RewardConfig.__dataclass_fields__)
     for key in data:
-        if key not in allowed:
+        if key not in _REWARD_FIELDS:
             raise RewardConfigError(f"unknown key '{key}' in {path}")
+    return data
+
+
+@cache
+def default_reward_config() -> RewardConfig:
+    """The shipped config/reward.yaml. It must set every field."""
+    path = config.shipped_root() / "config" / "reward.yaml"
+    data = _read_reward(path)
+    missing = [k for k in _REWARD_FIELDS if k not in data]
+    if missing:
+        raise RewardConfigError(f"{path} is missing: {', '.join(missing)}")
+    return RewardConfig(**data)
+
+
+# reward.yaml path -> ((mtime_ns, size), parsed config): a feed request does not parse it again.
+_reward_cache: dict[str, tuple[tuple[int, int], RewardConfig]] = {}
+
+
+def load_reward_config(cfg) -> RewardConfig:
+    """The project's config/reward.yaml merged over the shipped one, key by key.
+
+    A missing file means the shipped values; an unknown key is an error. The parsed file is
+    cached until its mtime or size changes."""
+    base = default_reward_config()
+    path = (getattr(cfg, "shared", None) or cfg.root) / "config" / "reward.yaml"
+    try:
+        st = path.stat()
+    except OSError:
+        return base
+    stamp = (st.st_mtime_ns, st.st_size)
+    hit = _reward_cache.get(str(path))
+    if hit is not None and hit[0] == stamp:
+        return hit[1]
     merged: dict[str, Any] = {}
-    for key, value in data.items():
+    for key, value in _read_reward(path).items():
         current = getattr(base, key)
-        if isinstance(current, dict) and key != "slotting":
+        if isinstance(current, dict):
             if not isinstance(value, dict):
                 raise RewardConfigError(f"'{key}' must be a mapping in {path}")
             for sub in value:
-                if key in ("weights", "importance") and sub not in current:
+                if key in _CLOSED_MAPS and sub not in current:
                     raise RewardConfigError(f"unknown key '{key}.{sub}' in {path}")
             merged[key] = {**current, **value}
         else:
             merged[key] = value
-    return RewardConfig(**{**base.__dict__, **merged})
+    rc = replace(base, **merged)
+    _reward_cache[str(path)] = (stamp, rc)
+    return rc
 
 
 _SKIP_TEXT_KEYS = {"kind", "repo", "path", "commit", "template", "chart", "style", "dir", "mermaid"}

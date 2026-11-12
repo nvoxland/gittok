@@ -40,12 +40,6 @@ STRING = re.compile(r"\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'")
 NUMBER = re.compile(r"(?<![\w.#$/-])(?:\d{3,}|\d+\.\d+)(?![\w.])")
 YEAR = re.compile(r"(?:19|20)\d\d")
 OK_NUMBERS = {"100", "1000", "1024", "0.0", "1.0", "0.5", "100.0"}
-CONST_LINE = re.compile(r"^\s*(?:export\s+)?(?:const\s+)?[A-Z][A-Z0-9_]*\s*[:=]")
-BIG_LITERAL_INDENT = re.compile(
-    r"^\s*(?:[\w.]+\s*(?::[^=]+)?=|(?:export\s+)?(?:const|let|var)\s+\w+[^=]*=|return)"
-    r"\s*[\{\[]\s*$"
-)
-BIG_LITERAL_PARENS = re.compile(r"^\s*\((?:def|defonce)\s")
 CLOSERS = ("}", ")", "]")
 
 
@@ -67,10 +61,23 @@ class Lang:
     bit_ops: re.Pattern | None
     meta: list[re.Pattern]
     commented_code: re.Pattern | None
+    # Line shapes below come from the language, else from `shared` in config/languages.yaml.
+    magic_exempt: list[re.Pattern] = field(default_factory=list)
+    big_literal_start: re.Pattern | None = None
 
     @property
     def comment(self) -> str:
-        return self.raw.get("comment", "#")
+        return self.raw.get("comment") or ""
+
+    @property
+    def comment_starts(self) -> tuple[str, ...]:
+        """What a comment-only line starts with: the comment prefix and `comment_also`."""
+        return tuple(p for p in (self.comment, *(self.raw.get("comment_also") or ())) if p)
+
+    def self_call(self, name: str) -> re.Pattern | None:
+        """The pattern of a call to `name` inside its own body (data: `self_call`)."""
+        template = self.raw.get("self_call")
+        return re.compile(template.replace("{name}", re.escape(name))) if template else None
 
     @property
     def parens(self) -> bool:
@@ -111,7 +118,12 @@ def _res(pats) -> list[re.Pattern]:
     return [re.compile(p) for p in pats or ()]
 
 
-def _compile(name: str, raw: dict, base: dict) -> Lang:
+def _compile(name: str, raw: dict, base: dict, shared: dict | None = None) -> Lang:
+    """`raw` is the language's entry; a key it does not set comes from `shared` (the `shared`
+    block of config/languages.yaml: line shapes that hold for most languages)."""
+    if shared is None:
+        shared = _default_languages().get("shared") or {}
+    raw = {**shared, **{k: v for k, v in raw.items() if v is not None}}
     th = {**base, **(raw.get("thresholds") or {})}
     return Lang(
         name=name,
@@ -130,6 +142,8 @@ def _compile(name: str, raw: dict, base: dict) -> Lang:
         bit_ops=_re(raw.get("bit_ops")),
         meta=_res(raw.get("meta")),
         commented_code=_re(raw.get("commented_code")),
+        magic_exempt=_res(raw.get("magic_exempt")),
+        big_literal_start=_re(raw.get("big_literal_start")),
     )
 
 
@@ -150,7 +164,8 @@ def compiled_languages() -> dict[str, Lang]:
 def _compiled_languages() -> dict[str, Lang]:
     spec = _default_languages()
     base = spec.get("thresholds") or {}
-    return {n: _compile(n, raw, base) for n, raw in (spec.get("languages") or {}).items()}
+    shared = spec.get("shared")
+    return {n: _compile(n, raw, base, shared) for n, raw in (spec.get("languages") or {}).items()}
 
 
 def text_lang(base: dict | None = None) -> Lang:
@@ -193,14 +208,12 @@ def _is_comment(sf: SourceFile, line: str, i: int | None = None) -> bool:
     structure layer read the file; otherwise the language's comment prefix does."""
     if sf.facts is not None and i is not None:
         return i + 1 in sf.comment_lines
-    s = line.strip()
-    if s.startswith(sf.lang.comment):
-        return True
-    return sf.lang.comment == "//" and s.startswith(("*", "/*"))
+    starts = sf.lang.comment_starts
+    return bool(starts) and line.strip().startswith(starts)
 
 
 def _in_comment(sf: SourceFile, line: str, idx: int) -> bool:
-    pos = line.find(sf.lang.comment)
+    pos = line.find(sf.lang.comment) if sf.lang.comment else -1
     return (0 <= pos < idx) or _is_comment(sf, line)
 
 
@@ -220,9 +233,11 @@ def _structure_lang(name: str, base: dict, grammar: str | None = None) -> Lang:
         name,
         {
             "extensions": structure.extensions(name),
-            "comment": raw.get("comment") or generic.get("comment", "#"),
+            "comment": raw.get("comment") or generic.get("comment"),
             "import_style": "module",
             "import_unit": raw.get("import_unit", "file"),
+            "import_split": raw.get("import_split") or generic.get("import_split"),
+            "import_skip_heads": raw.get("drop_segments") or (),
         },
         base,
     )
@@ -426,8 +441,10 @@ def _resolve_module(sf: SourceFile, spec: str, idx: _Index) -> set[str]:
         key = posixpath.normpath(posixpath.join(posixpath.dirname(sf.path), spec))
         hit = idx.lookup(lang, key, True)
         return {hit} if hit else set()
-    segs = [s for s in re.split(r"[/.]|::", spec) if s]
-    while segs and segs[0] in ("crate", "self", "super"):
+    split = sf.lang.raw.get("import_split")
+    segs = [s for s in (re.split(split, spec) if split else [spec]) if s]
+    skip_heads = sf.lang.raw.get("import_skip_heads") or ()
+    while segs and segs[0] in skip_heads:
         segs.pop(0)
     by_dir = sf.lang.raw.get("import_unit") == "dir"
     for cut in range(len(segs)):
@@ -543,8 +560,9 @@ def _structure(files, fan_in, fan_out) -> list[dict]:
 # ---------- shape: functions ----------
 
 
-def _scan_parens(lines: list[str], i: int, limit: int = 3000):
-    """From line i, walk until brackets balance. Returns (end index, max depth, line of max)."""
+def _scan_parens(lines: list[str], i: int, limit: int = 3000, comment: str = ""):
+    """From line i, walk until brackets balance. Returns (end index, max depth, line of max).
+    `comment` is the language's one-character comment prefix: the rest of the line is skipped."""
     depth = best = 0
     best_at = i
     in_str = False
@@ -562,7 +580,7 @@ def _scan_parens(lines: list[str], i: int, limit: int = 3000):
                 k += 1
             elif c == '"':
                 in_str = True
-            elif c == ";":
+            elif c == comment:
                 break
             elif c in "([{":
                 depth += 1
@@ -603,7 +621,7 @@ def _indent_end(lines: list[str], start: int, hdr: int) -> int:
 def _count_params(sf: SourceFile, text: str, name: str) -> int:
     text = STRING.sub('""', text)
     at = text.find(name)
-    open_c = "[" if sf.lang.parens else "("
+    open_c = sf.lang.raw.get("param_open") or "("
     s = text.find(open_c, at if at >= 0 else 0)
     if s < 0:
         return 0
@@ -623,17 +641,20 @@ def _count_params(sf: SourceFile, text: str, name: str) -> int:
         else:
             cur += c
     parts.append(cur)
-    skip = {"", "self", "cls", "*", "/", "**", "&"}
+    skip = {"", *(sf.lang.raw.get("param_skip") or ())}
     return sum(1 for p in parts if p.strip().split(":")[0].split("=")[0].strip() not in skip)
 
 
-def _nesting(lines: list[str], i: int, hdr: int, end: int) -> tuple[int, int]:
+def _nesting(lines: list[str], i: int, hdr: int, end: int, skip=()) -> tuple[int, int]:
+    """(deepest indentation level, its line) of a body. Lines that start with a prefix in
+    `skip` (comment-like starts, data: `nesting_skip`) open no level."""
+    skip = (*CLOSERS, *skip)
     stack = [_indent(lines[i])]
     best, best_at = 0, i
     for j in range(hdr + 1, end + 1):
         ln = lines[j]
         s = ln.strip()
-        if not s or s.startswith(CLOSERS) or s.startswith(("#", "//", "*", "/*")):
+        if not s or s.startswith(skip):
             continue
         ind = _indent(ln)
         while ind <= stack[-1] and len(stack) > 1:
@@ -671,12 +692,13 @@ def _functions(sf: SourceFile) -> list[dict]:
         if not name or _is_comment(sf, line, i):
             continue
         if sf.lang.parens:
-            end, depth, depth_at = _scan_parens(sf.lines, i)
+            end, depth, depth_at = _scan_parens(sf.lines, i, comment=sf.lang.comment)
             hdr = i
         else:
             hdr = _header_end(sf.lines, i)
             end = _indent_end(sf.lines, i, hdr)
-            depth, depth_at = _nesting(sf.lines, i, hdr, end)
+            skip = tuple(sf.lang.raw.get("nesting_skip") or ())
+            depth, depth_at = _nesting(sf.lines, i, hdr, end, skip)
         out.append(
             {"name": name, "start": i, "hdr": hdr, "end": end, "depth": depth, "depth_at": depth_at}
         )
@@ -711,14 +733,9 @@ def _shape(sf: SourceFile) -> list[dict]:
             if nb >= th["many_branches"]:
                 why = f"{name}() has {nb} branches (line {a + 1})"
                 out.append(_cand(sf.path, _span(a + 1, b + 1), "many_branches", why, nb))
-        if len(name) >= 3:
-            q = re.escape(name)
-            if sf.lang.parens:
-                rx = re.compile(rf"\(\s*{q}[\s)]")
-                body_from = a + 1
-            else:
-                rx = re.compile(rf"(?<![\w.$]){q}\s*\(|\b(?:self|this|cls)\.{q}\s*\(")
-                body_from = f["hdr"] + 1
+        rx = sf.lang.self_call(name) if len(name) >= 3 else None
+        if rx is not None:
+            body_from = a + 1 if sf.lang.parens else f["hdr"] + 1
             for j in range(body_from, b + 1):
                 if not _is_comment(sf, lines[j], j) and rx.search(lines[j]):
                     why = f"recursion: {name}() calls itself at line {j + 1}"
@@ -758,12 +775,17 @@ def _lines_without_secrets(lines: list[str]) -> int:
 def _big_literals(sf: SourceFile) -> list[dict]:
     out = []
     lines, th = sf.lines, sf.th
-    rx = BIG_LITERAL_PARENS if sf.lang.parens else BIG_LITERAL_INDENT
+    rx = sf.lang.big_literal_start
+    if rx is None:
+        return out
     skip_to = -1
     for i, ln in enumerate(lines):
         if i <= skip_to or not rx.match(ln):
             continue
-        end = _scan_parens(lines, i)[0] if sf.lang.parens else _indent_end(lines, i, i)
+        if sf.lang.parens:
+            end = _scan_parens(lines, i, comment=sf.lang.comment)[0]
+        else:
+            end = _indent_end(lines, i, i)
         skip_to = end
         n = end - i + 1
         if (
@@ -810,7 +832,8 @@ def _markers(sf: SourceFile) -> list[dict]:
             m = m if m and _in_comment(sf, ln, m.start()) else None
         if m:
             kw = m.group(0).upper()
-            why = f"{kw} comment at line {n}: '{_clip(s.lstrip('#/;* '))}'"
+            text = _clip(s.lstrip(lang.raw.get("comment_strip") or " "))
+            why = f"{kw} comment at line {n}: '{text}'"
             score = 2 if kw in ("HACK", "XXX") else 1
             out.append(_cand(sf.path, _around(n, total), "smell", why, score))
         if sf.is_test:
@@ -840,7 +863,7 @@ def _markers(sf: SourceFile) -> list[dict]:
         if any(rx.search(ln) for rx in lang.meta):
             why = f"metaprogramming at line {n}: '{_clip(s, 50)}'"
             out.append(_cand(sf.path, _around(n, total), "clever", why, 2))
-        if not CONST_LINE.match(ln) and not s.startswith(("import ", "from ", "(ns ")):
+        if not any(rx.match(ln) for rx in lang.magic_exempt):
             for num in NUMBER.findall(bare):
                 if num not in OK_NUMBERS and not YEAR.fullmatch(num):
                     magic.append((n, num))
@@ -858,6 +881,7 @@ def _commented_out(sf: SourceFile) -> list[dict]:
     if sf.is_test or lang.commented_code is None:
         return []
     out, run = [], []
+    directives = tuple(lang.raw.get("directive_prefixes") or ())
 
     def flush():
         if len(run) >= lang.th["commented_out"]:
@@ -870,9 +894,12 @@ def _commented_out(sf: SourceFile) -> list[dict]:
 
     for i, ln in enumerate(sf.lines):
         s = ln.strip()
-        is_c = i + 1 in sf.comment_lines if sf.facts is not None else s.startswith(lang.comment)
-        if is_c and not s.startswith(("#!", "#:", "#[")):
-            run.append((i + 1, s.lstrip(lang.comment[0] + " ").rstrip()))
+        if sf.facts is not None:
+            is_c = i + 1 in sf.comment_lines
+        else:
+            is_c = bool(lang.comment) and s.startswith(lang.comment)
+        if is_c and not s.startswith(directives):
+            run.append((i + 1, s.lstrip(lang.comment[:1] + " ").rstrip()))
         else:
             flush()
     flush()
@@ -891,6 +918,7 @@ def _text_candidates(sf: SourceFile) -> list[dict]:
     if sf.kind == "docs" or posixpath.splitext(sf.path)[1].lower() in skip:
         return []
     prefixes = tuple(rules.get("comment_prefixes") or ())
+    strip = rules.get("comment_strip") or " "
     th, lines, total = sf.lang.th, sf.lines, len(sf.lines)
     out = []
     for i, ln in enumerate(lines):
@@ -902,7 +930,7 @@ def _text_candidates(sf: SourceFile) -> list[dict]:
             and (s.startswith(prefixes) or _trailing_comment(ln, m.start(), prefixes))
         ):
             kw = m.group(0).upper()
-            why = f"{kw} comment at line {i + 1}: '{_clip(s.lstrip('#/;*-% '))}'"
+            why = f"{kw} comment at line {i + 1}: '{_clip(s.lstrip(strip))}'"
             score = 2 if kw in ("HACK", "XXX") else 1
             out.append(_cand(sf.path, _around(i + 1, total), "smell", why, score))
     if sf.is_test:
@@ -1065,7 +1093,10 @@ def mine(
     files of the `text` language, which the built-in miners skip."""
     spec = languages or _default_languages()
     base = spec.get("thresholds") or {}
-    langs = {n: _compile(n, raw, base) for n, raw in (spec.get("languages") or {}).items()}
+    shared = spec.get("shared")
+    langs = {
+        n: _compile(n, raw, base, shared) for n, raw in (spec.get("languages") or {}).items()
+    }
     queries = profile.queries if profile is not None else None
     all_files = _read_files(path, ref, settings, langs, fileset_for(profile), queries)
     files = [sf for sf in all_files if sf.lang.name != "text"]

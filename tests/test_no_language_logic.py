@@ -43,3 +43,49 @@ def test_no_language_or_stack_names_in_shipped_python():
             if WORDS.search(code) or MARKERS.search(code):
                 hits.append(f"{file.name}:{n}: {line.strip()}")
     assert not hits, "language logic in Python:\n" + "\n".join(hits)
+
+
+# Syntax of a language, as it shows in a string constant: comment markers, definition and
+# import keywords, receiver names. `LITERALS` are whole strings (also as items of a tuple or a
+# set); `SHAPES` are looked for inside every string, which finds them in regex sources.
+LITERALS = {
+    "//", "/*", "*/", "#!", "#:", "#[", "<!--", ";", ";;", "self", "cls", "this", "crate",
+    "super", "import ", "from ", "(ns ", "defn", "let", "fn", "func",
+}  # fmt: skip
+SHAPES = re.compile(
+    r"\bdefn\b|\bdefonce\b|\(ns\b|\bexport\b\\s|\bconst\b[|\\)]|\bcrate\b"
+    r"|\bself\|this\b|\bthis\|self\b|\bself\|cls\b"
+    r"|#\|//|//\|#|<!--|/\\\*"
+)
+# str.strip / lstrip of a set of comment characters, such as lstrip("#/; ").
+STRIP = re.compile(r"strip\(\s*f?(['\"])(?=[^'\"]*#)(?=[^'\"]*[/;*])[^'\"]*\1\s*\)")
+# Strings that are not about source code.
+ALLOWED = {"'self'"}  # the Content-Security-Policy keyword
+ALLOWED_IN = {("api.py", ";"), ("db.py", ";")}  # an HTTP header and SQL statements
+
+
+def _strings(tree: ast.AST):
+    """(line, text) of each string constant that is not a docstring."""
+    doc = _docstring_lines(tree)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if node.lineno not in doc:
+                yield node.lineno, node.value
+
+
+def test_no_language_syntax_in_shipped_python():
+    """Comment markers, definition keywords and import prefixes are data
+    (config/languages.yaml, config/queries/languages.yaml, config/file_types.yaml)."""
+    hits = []
+    for file in sorted(SRC.glob("*.py")):
+        text = file.read_text()
+        lines = text.splitlines()
+        for n, value in _strings(ast.parse(text)):
+            if value in ALLOWED or (file.name, value) in ALLOWED_IN:
+                continue
+            if value in LITERALS or SHAPES.search(value):
+                hits.append(f"{file.name}:{n}: {lines[n - 1].strip()}")
+        for n, line in enumerate(lines, 1):
+            if STRIP.search(line):
+                hits.append(f"{file.name}:{n}: {line.strip()}")
+    assert not hits, "language syntax in Python:\n" + "\n".join(sorted(set(hits)))

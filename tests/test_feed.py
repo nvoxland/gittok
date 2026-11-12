@@ -180,3 +180,41 @@ def test_cursor_page_has_no_resume(conn, cfg):
     _, cursor, _ = feed.page(conn, cfg, 2, None, 7, NOW)
     _, _, resume = feed.page(conn, cfg, 2, cursor, 7, NOW)
     assert resume is None
+
+
+def _feed_queries(cfg, n_cards: int) -> list[str]:
+    """The SQL statements one feed request runs with `n_cards` unseen cards."""
+    conn = db.open_db(":memory:")
+    conn.execute(
+        "INSERT INTO runs(id, status, started_at) VALUES ('r1', 'finished', '2026-05-30T00:00:00Z')"
+    )
+    for _ in range(n_cards):
+        add(conn, cfg, text_card(FX))
+    seen: list[str] = []
+    conn.set_trace_callback(seen.append)
+    cards, _, _ = feed.page(conn, cfg, 50, None, 7, NOW)
+    conn.set_trace_callback(None)
+    conn.close()
+    assert len(cards) == n_cards
+    return seen
+
+
+def test_slotter_reads_card_features_in_one_query_not_one_per_card(cfg, monkeypatch):
+    from gittok import learning, slotter
+
+    # Scoring is measured apart (the next test): here only the slotter's own reads count.
+    monkeypatch.setattr(learning, "score_cards", lambda *a, **k: {})
+    few, many = _feed_queries(cfg, 4), _feed_queries(cfg, 24)
+    assert len(many) == len(few), (len(few), len(many))
+    assert sum("card_features" in q for q in many) <= 2
+    assert slotter.features_for  # the batch read
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="learning.score_cards still reads the features of each card with two queries; "
+    "it must take the features the slotter already loaded",
+)
+def test_feed_request_query_count_does_not_grow_with_the_number_of_cards(cfg):
+    few, many = _feed_queries(cfg, 4), _feed_queries(cfg, 24)
+    assert len(many) == len(few), (len(few), len(many))

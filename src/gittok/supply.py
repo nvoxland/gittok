@@ -3,12 +3,13 @@
 
 from __future__ import annotations
 
+import json
 import math
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from gittok import gc, social
+from gittok import db, gc, private, social
 
 IMAGE_KINDS = ("meme", "illustration", "comic", "chart", "diagram")
 MB = 1024 * 1024
@@ -113,8 +114,33 @@ def notify_low_runway(conn, cfg, now: datetime) -> int:
     return made
 
 
+def wants_line(now: datetime, want: int) -> str:
+    """One line of WANTS_FILE: a JSON object `{"at": <ISO time with zone>, "want": <count>}`."""
+    return db.dumps({"at": now.isoformat(), "want": int(want)}) + "\n"
+
+
+def parse_wants(text: str) -> list[dict]:
+    """The signals in WANTS_FILE text, oldest first: `{"at": datetime, "want": int}`.
+
+    Only whole lines count (the text after the last newline may still be in the middle of a
+    write), and a line that is not such an object is left out."""
+    out = []
+    for line in text.split("\n")[:-1]:
+        try:
+            data = json.loads(line)
+            at = datetime.fromisoformat(data["at"])
+            want = data["want"]
+        except (ValueError, TypeError, KeyError):
+            continue
+        if at.tzinfo is None or isinstance(want, bool) or not isinstance(want, int) or want < 1:
+            continue
+        out.append({"at": at, "want": want})
+    return out
+
+
 def signal_wants_cards(conn, cfg, now: datetime) -> int:
-    """Append one fixed line to WANTS_FILE when the feed wants cards. Returns 1 if written.
+    """Append one line (`wants_line`) to WANTS_FILE when the feed wants cards. Returns 1 if
+    written.
 
     No line when there are no repos, while a run started in the cooldown is still open, or
     within the cooldown of the last line. The line holds only a time and a count, never repo text.
@@ -134,8 +160,8 @@ def signal_wants_cards(conn, cfg, now: datetime) -> int:
     want = feed_health(conn, cfg, now)["want"]
     if want <= 0:
         return 0
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a") as f:
-        f.write(f"{now.isoformat()} want {want} cards\n")
+    private.make_dir(path.parent)
+    with open(path, "a", opener=private.opener) as f:
+        f.write(wants_line(now, want))  # one write call: a reader never sees two halves mixed
     os.utime(path, (now.timestamp(), now.timestamp()))
     return 1

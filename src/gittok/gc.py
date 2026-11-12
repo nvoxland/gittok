@@ -15,23 +15,11 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from gittok import db
+from gittok import db, private
 
 log = logging.getLogger(__name__)
 
 LAST_FILE = "gc_last.json"
-COUNT_KEYS = (
-    "seen",
-    "liked",
-    "unseen",
-    "failed",
-    "events",
-    "run_files",
-    "story_views",
-    "notifications",
-    "leads",
-    "asset_files",
-)
 
 
 def _iso(dt: datetime) -> str:
@@ -115,13 +103,6 @@ def _run_dirs(conn, cfg, now: datetime) -> list[Path]:
     return [root / r["id"] for r in rows if (root / r["id"]).is_dir()]
 
 
-def _remove_dir(path: Path) -> int:
-    """Remove a folder; return how many files it held."""
-    n = sum(1 for p in path.rglob("*") if p.is_file())
-    shutil.rmtree(path, ignore_errors=True)
-    return n
-
-
 def _big_logs(data_dir, max_kb: int) -> list:
     logs = data_dir / "logs"
     if not logs.is_dir():
@@ -192,7 +173,7 @@ def collect(
     conn.execute("PRAGMA optimize")
     if vacuum:
         conn.execute("VACUUM")
-    data_dir.mkdir(parents=True, exist_ok=True)
+    private.make_dir(data_dir)
     (data_dir / LAST_FILE).write_text(json.dumps({"at": _iso(now), "counts": counts}))
     return counts
 

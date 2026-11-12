@@ -74,7 +74,7 @@ def conn(cfg):
 
 @pytest.fixture(autouse=True)
 def clear_cache():
-    social.clear_cache()
+    social._CACHE.clear()
 
 
 def test_recent_commits_helper_lists_last_24h_with_files(recent):
@@ -261,7 +261,7 @@ def test_more_commits_to_a_hot_file_the_same_day_do_not_notify_again(tmp_path):
     cfg = _busy_cfg(tmp_path, extra=[(1, "Ann", "six", ["brief.py", "cli.py"])])
     with closing(db.open_db(cfg.settings.data_dir / "gittok.db")) as conn:
         social.generate_notifications(conn, cfg, NOW - timedelta(minutes=90))
-        social.clear_cache()
+        social._CACHE.clear()
         assert social.generate_notifications(conn, cfg, NOW)["hot_file"] == 0
         assert social.generate_notifications(conn, cfg, NOW + timedelta(days=1))["hot_file"] == 0
         assert len(texts(conn, "hot_file")) == 1

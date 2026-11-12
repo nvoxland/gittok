@@ -18,6 +18,24 @@ thresholds:
   tested_jaccard: 0.6
   regex_min_len: 8
 
+# Line shapes that hold for most languages. A language below may set any of these keys itself;
+# a language known only to the structure layer (config/queries) uses these as they are.
+shared:
+  comment: "#"
+  # lines whose numbers are not magic numbers: a named constant, an import
+  magic_exempt:
+    - '^\s*(?:export\s+)?(?:const\s+)?[A-Z][A-Z0-9_]*\s*[:=]'
+    - '^\s*(?:import |from |\(ns )'
+  # the line that opens a multi-line literal
+  big_literal_start: '^\s*(?:[\w.]+\s*(?::[^=]+)?=|(?:export\s+)?(?:const|let|var)\s+\w+[^=]*=|return)\s*[\{\[]\s*$'
+  # a call of a function to itself; {name} is the function name
+  self_call: '(?<![\w.$]){name}\s*\(|\b(?:self|this|cls)\.{name}\s*\('
+  param_open: "("                              # opens the parameter list
+  param_skip: [self, cls, "*", "/", "**", "&"]   # not counted as parameters
+  nesting_skip: ["#", "//", "*", "/*"]         # a line that starts so opens no nesting level
+  directive_prefixes: ["#!", "#:", "#["]       # a comment line that starts so is not commented-out code
+  comment_strip: "#/;* "                       # characters removed from the start of a comment for display
+
 languages:
   python:
     extensions: [.py]
@@ -61,6 +79,9 @@ languages:
     extensions: [.clj, .cljs, .cljc, .bb]
     comment: ";"
     block: parens
+    big_literal_start: '^\s*\((?:def|defonce)\s'
+    self_call: '\(\s*{name}[\s)]'
+    param_open: "["
     func_start: '^\s*\((?:defn|defn-|defmacro|defmulti|defmethod)\s+(?:\^\S+\s+)*([^\s\[\]()]+)'
     entry_points:
       - '^\s*\(defroutes\b'
@@ -98,6 +119,7 @@ languages:
   typescript:
     extensions: [.ts, .tsx, .js, .jsx, .mjs, .cjs, .svelte]
     comment: "//"
+    comment_also: ["*", "/*"]   # lines inside a block comment
     block: indent
     func_start: '^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\s*\*?\s*(\w+)|(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?(?:function\b|\())'
     entry_points:

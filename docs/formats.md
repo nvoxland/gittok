@@ -1,6 +1,6 @@
-# Card formats and visuals (M2 contract)
+# Card formats and visuals
 
-This is the contract between the agent (card specs), the server (validation, rendering, `resolved`), and the web client. M1 kinds `code` and `text` are unchanged.
+This is the contract between the agent (card specs), the server (validation, rendering, `resolved`), and the web client. The kinds `code` and `text` are the base kinds; the other kinds are specified below.
 
 ## Formats and the visual kinds they allow
 
@@ -151,7 +151,7 @@ Each card from the feed, `/api/cards/{id}`, `/api/saved`, and the repo profile h
 
 | kind | `resolved.visual` |
 |---|---|
-| `code` | `{"code", "language", "start_line"}` (M1) |
+| `code` | `{"code", "language", "start_line"}` |
 | `text`, `text_meme`, `template`, `diagram` | `null` (the client uses `visual` itself) |
 | `meme`, `illustration` | `{"images": ["/assets/<card_id>/0.png"], "width", "height"}` |
 | `comic` | `{"images": ["/assets/<card_id>/0.png", ...one per panel], "width", "height"}` |

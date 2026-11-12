@@ -12,6 +12,7 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 from functools import cache
+from typing import Any
 
 from gittok import config, knowledge, quizfacts, validator
 from gittok.profiles import FileSet, fileset_for
@@ -188,7 +189,15 @@ def test_or_doc(path: str, files: FileSet | None = None) -> bool:
     return fs.is_test(path) or fs.matches(path, "docs")
 
 
-_COMMENT_TODO = re.compile(r"(#|//|;|--|/\*|\*|<!--)\s*(TODO|FIXME|HACK|XXX)\b")
+@cache
+def _comment_todo() -> re.Pattern:
+    """A TODO-like word right after a comment start (data: `todo_comment` in file_types.yaml)."""
+    spec = config.file_types().get("todo_comment") or {}
+    starts = "|".join(re.escape(p) for p in spec.get("prefixes") or ())
+    words = "|".join(re.escape(w) for w in spec.get("words") or ())
+    return re.compile(rf"({starts})\s*({words})\b")
+
+
 ANCIENT_DAYS = 90
 
 
@@ -391,7 +400,7 @@ def lead_refs_for(
                 t["line"],
             )
             for t in sig.get("todo_ages", [])
-            if _old(t["ts"], t0) and _COMMENT_TODO.search(t["text"]) and useful(t["path"])
+            if _old(t["ts"], t0) and _comment_todo().search(t["text"]) and useful(t["path"])
         ]
     elif story_type == "secret_couples":
         pairs = sorted(
@@ -1088,19 +1097,119 @@ def build_brief(
     category quotas are used, when some repo has a lead for it. The quota of the interactive
     category grows to hold them.
     """
-    if not repo_signals:
-        raise ValueError("no repos to build a brief from")
-    rules = list(rules or [])
-    # Recent cards break ties, so successive runs rotate through formats and story types.
-    recent_fmt = Counter(r.get("format") for r in recent if r.get("format"))
-    recent_story = Counter(r.get("story_type") for r in recent if r.get("story_type"))
-    template_use = Counter(r.get("template") for r in recent if r.get("template"))
-    template_ids = list(meme_templates or {})
-    t_weight = template_weights or {}
+    return _BriefBuilder(
+        repo_signals=repo_signals,
+        defaults=defaults,
+        personas=personas,
+        count=count,
+        packet_size=packet_size,
+        recent=recent,
+        max_illustrations=max_illustrations,
+        category_shares=category_shares,
+        evidence=evidence,
+        rules=rules,
+        unavailable_formats=unavailable_formats,
+        groups=groups,
+        format_weights=format_weights,
+        ledger=ledger,
+        lead_ok=lead_ok,
+        variants=variants,
+        variant_max_share=variant_max_share,
+        meme_templates=meme_templates,
+        template_weights=template_weights,
+        novelty=novelty,
+        intro_share=intro_share,
+        intro_prefer=intro_prefer,
+        filesets=filesets,
+        min_spot_the_bug=min_spot_the_bug,
+        facts_conn=facts_conn,
+    ).build()
 
-    def template_menu(fmt, story_type):
+
+@dataclass(kw_only=True)
+class _BriefBuilder:
+    """One build_brief call. The fields are build_brief's arguments; `build` runs the steps
+    in order, and each step leaves its result on the builder for the next ones."""
+
+    repo_signals: dict
+    defaults: dict
+    personas: Any
+    count: int
+    packet_size: int
+    recent: Any
+    max_illustrations: int
+    category_shares: dict[str, float] | None
+    evidence: int | None
+    rules: Any
+    unavailable_formats: Any
+    groups: dict[str, list[str]] | None
+    format_weights: dict[str, float] | None
+    ledger: dict[tuple[str, str], list[Lead]] | None
+    lead_ok: Callable[[Lead], bool] | None
+    variants: list[dict] | None
+    variant_max_share: float
+    meme_templates: dict | None
+    template_weights: dict[str, float] | None
+    novelty: dict[str, dict[str, float]] | None
+    intro_share: float
+    intro_prefer: dict[str, set[str]] | None
+    filesets: dict[str, FileSet] | None
+    min_spot_the_bug: float
+    facts_conn: Any
+
+    def build(self) -> Brief:
+        if not self.repo_signals:
+            raise ValueError("no repos to build a brief from")
+        self.rules = list(self.rules or [])
+        self._read_recent()
+        self._apply_rules()
+        self._category_quotas()
+        self._reserve_spot_the_bug()
+        self._tones_and_personas()
+        self._allocate_slots()
+        self._place_variants()
+        # Intro slots: reserve a share of the cards for leads from the least-known dirs.
+        self.intro_at = _assign_intro(
+            self.slots,
+            self.variant_at,
+            self.ref_by,
+            self.novelty,
+            self.intro_share,
+            self.count,
+            self.intro_prefer or {},
+            self.filesets,
+        )
+        self._plan_packets()
+        packets = self._packets()
+        return Brief(
+            count=self.count,
+            quotas=self.quotas,
+            tone_quotas=self.tone_quotas,
+            packets=packets,
+            recent=list(self.recent),
+            mix_evidence=(self.evidence or 0) if self.learned else None,
+            rules=self.rules,
+            focus=self.focus,
+            unavailable=[f for f in CATEGORY_FORMATS_FLAT if f in set(self.unavailable_formats)],
+            intro=_intro_summary(self.intro_at, self.slots),
+        )
+
+    # ---- step: history of recent cards
+
+    def _read_recent(self) -> None:
+        """Recent cards break ties, so successive runs rotate through formats and story types."""
+        recent = self.recent
+        self.recent_fmt = Counter(r.get("format") for r in recent if r.get("format"))
+        self.recent_story = Counter(r.get("story_type") for r in recent if r.get("story_type"))
+        self.template_use = Counter(r.get("template") for r in recent if r.get("template"))
+        self.template_ids = list(self.meme_templates or {})
+        self.t_weight = self.template_weights or {}
+
+    def template_menu(self, fmt, story_type):
+        template_ids = self.template_ids
         if fmt != "meme" or not template_ids:
             return None
+        meme_templates = self.meme_templates
         fit = [
             t
             for t in template_ids
@@ -1110,59 +1219,87 @@ def build_brief(
         menu: list[str] = []
         for pool in (fit, rest):
             ranked = sorted(
-                pool, key=lambda t: (template_use[t], -t_weight.get(t, 0.0), template_ids.index(t))
+                pool,
+                key=lambda t: (
+                    self.template_use[t],
+                    -self.t_weight.get(t, 0.0),
+                    template_ids.index(t),
+                ),
             )
             menu += ranked[: MENU_SIZE - len(menu)]
-        template_use[menu[0]] += 1
+        self.template_use[menu[0]] += 1
         return menu
 
-    # Cross-repo groups: >= 2 repos of one group in this brief. `groups` (name -> repos)
-    # overrides the group each analysis carries.
-    if groups is None:
-        groups = {}
-        for r in sorted(repo_signals):
-            g = repo_signals[r].get("group")
-            if g:
-                groups.setdefault(g, []).append(r)
-    group_of = {r: g for g, rs in groups.items() for r in rs}
-    zero = {
-        f: {v for v, c in _caps(rules, f, count).items() if c == 0}
-        for f in ("repo", "format", "story_type", "tone")
-    }
-    gone_repos = _banned(rules, "repo") | zero["repo"]
-    gone_groups = _banned(rules, "group")
-    repo_signals = {
-        r: v
-        for r, v in repo_signals.items()
-        if r not in gone_repos and group_of.get(r) not in gone_groups
-    }
-    if not repo_signals:
-        raise ValueError("active rules ban every repo")
-    groups = {g: [r for r in rs if r in repo_signals] for g, rs in groups.items()}
-    gone_formats = (
-        set(unavailable_formats)
-        | _banned(rules, "format")
-        | _banned_formats(rules)
-        | zero["format"]
-    )
-    gone_stories = _banned_stories(rules) | zero["story_type"]
-    stories_in = {
-        c: tuple(t for t in ts if t not in gone_stories) for c, ts in CATEGORY_STORIES.items()
-    }
-    formats_in = {
-        c: tuple(f for f in fs if f not in gone_formats) for c, fs in CATEGORY_FORMATS.items()
-    }
-    live = {c for c in CATEGORY_STORIES if stories_in[c] and formats_in[c]}
-    fmt_boost = _factors(rules, "format")
-    story_boost = _factors(rules, "story_type")
-    repo_boost = _factors(rules, "repo")
-    group_boost = _factors(rules, "group")
-    fmt_caps = _caps(rules, "format", count)
-    story_caps = _caps(rules, "story_type", count)
-    repo_caps = _caps(rules, "repo", count)
-    weights = format_weights or {}
+    # ---- step: what the steering rules ban, cap and boost
 
-    def allowed_for(story, category, used, spent, fallback=()):
+    def _apply_rules(self) -> None:
+        rules, count = self.rules, self.count
+        # Cross-repo groups: >= 2 repos of one group in this brief. `groups` (name -> repos)
+        # overrides the group each analysis carries.
+        groups = self.groups
+        if groups is None:
+            groups = {}
+            for r in sorted(self.repo_signals):
+                g = self.repo_signals[r].get("group")
+                if g:
+                    groups.setdefault(g, []).append(r)
+        self.group_of = {r: g for g, rs in groups.items() for r in rs}
+        zero = {
+            f: {v for v, c in _caps(rules, f, count).items() if c == 0}
+            for f in ("repo", "format", "story_type", "tone")
+        }
+        self.zero = zero
+        gone_repos = _banned(rules, "repo") | zero["repo"]
+        gone_groups = _banned(rules, "group")
+        self.repo_signals = {
+            r: v
+            for r, v in self.repo_signals.items()
+            if r not in gone_repos and self.group_of.get(r) not in gone_groups
+        }
+        if not self.repo_signals:
+            raise ValueError("active rules ban every repo")
+        self.groups = {g: [r for r in rs if r in self.repo_signals] for g, rs in groups.items()}
+        self.gone_formats = (
+            set(self.unavailable_formats)
+            | _banned(rules, "format")
+            | _banned_formats(rules)
+            | zero["format"]
+        )
+        self.gone_stories = _banned_stories(rules) | zero["story_type"]
+        self.stories_in = {
+            c: tuple(t for t in ts if t not in self.gone_stories)
+            for c, ts in CATEGORY_STORIES.items()
+        }
+        self.formats_in = {
+            c: tuple(f for f in fs if f not in self.gone_formats)
+            for c, fs in CATEGORY_FORMATS.items()
+        }
+        self.live = {c for c in CATEGORY_STORIES if self.stories_in[c] and self.formats_in[c]}
+        self.fmt_boost = _factors(rules, "format")
+        self.story_boost = _factors(rules, "story_type")
+        self.repo_boost = _factors(rules, "repo")
+        self.group_boost = _factors(rules, "group")
+        self.fmt_caps = _caps(rules, "format", count)
+        self.story_caps = _caps(rules, "story_type", count)
+        self.repo_caps = _caps(rules, "repo", count)
+        self.weights = self.format_weights or {}
+        focus = []
+        for r in rules:
+            if r["type"] == "focus" and r["feature"] in ("repo", "dir"):
+                n = r.get("slots") or 3
+                focus.append(
+                    (r["value"], None, n) if r["feature"] == "repo" else (None, r["value"], n)
+                )
+        self.focus = focus
+        self.prefer_dirs = [
+            r["value"]
+            for r in rules
+            if r["feature"] == "dir" and (r["type"] in ("focus", "boost", "prefer"))
+        ]
+        self.ban_dirs = [r["value"] for r in rules if r["type"] == "ban" and r["feature"] == "dir"]
+        self.all_repos = list(self.repo_signals)
+
+    def allowed_for(self, story, category, used, spent, fallback=()):
         """Formats a card of this story type may use, best first; never empty.
 
         Banned and unavailable formats are dropped; formats at their cap or past the
@@ -1171,7 +1308,9 @@ def build_brief(
         used in recent cards, then list order. With nothing left, the best format of
         `fallback` (the category's) stands in.
         """
-        pool = [f for f in STORY_FORMATS.get(story, ()) if f not in gone_formats]
+        fmt_boost, fmt_caps, weights = self.fmt_boost, self.fmt_caps, self.weights
+        max_illustrations, recent_fmt = self.max_illustrations, self.recent_fmt
+        pool = [f for f in STORY_FORMATS.get(story, ()) if f not in self.gone_formats]
         if not pool:
             return [_pick_format(fallback, used, spent, max_illustrations, fmt_boost, fmt_caps,
                                  recent_fmt, weights)]  # fmt: skip
@@ -1192,184 +1331,211 @@ def build_brief(
             ),
         )
 
-    focus = []
-    for r in rules:
-        if r["type"] == "focus" and r["feature"] in ("repo", "dir"):
-            n = r.get("slots") or 3
-            focus.append((r["value"], None, n) if r["feature"] == "repo" else (None, r["value"], n))
-    prefer_dirs = [
-        r["value"]
-        for r in rules
-        if r["feature"] == "dir" and (r["type"] in ("focus", "boost", "prefer"))
-    ]
-    ban_dirs = [r["value"] for r in rules if r["type"] == "ban" and r["feature"] == "dir"]
-    all_repos = list(repo_signals)
-
-    def focused_first(lines: list[str]) -> list[str]:
-        if ban_dirs:
-            bad = [d for v in ban_dirs for d in _dir_candidates(v, all_repos)]
+    def focused_first(self, lines: list[str]) -> list[str]:
+        if self.ban_dirs:
+            bad = [d for v in self.ban_dirs for d in _dir_candidates(v, self.all_repos)]
             lines = [x for x in lines if not _line_in_dirs(x, bad)]
-        want = [d for v in prefer_dirs for d in _dir_candidates(v, all_repos)]
+        want = [d for v in self.prefer_dirs for d in _dir_candidates(v, self.all_repos)]
         return sorted(lines, key=lambda x: not _line_in_dirs(x, want))
 
-    def fill_leads(repo, t):
-        if (repo, t) in leads_by:
+    def fill_leads(self, repo, t) -> None:
+        """Compute the leads of (repo, story type) once: `leads_by` (texts) and `ref_by`."""
+        if (repo, t) in self.leads_by:
             return
-        sig = repo_signals[repo]["signals"]
+        sig = self.repo_signals[repo]["signals"]
         # A ledger entry (even an empty one) replaces computing leads.
-        wide = (ledger or {}).get((repo, t))
+        wide = (self.ledger or {}).get((repo, t))
         if wide is None:
             wide = lead_refs_for(
                 t,
                 sig,
-                repo_signals[repo].get("t0"),
-                limit=1000 if prefer_dirs or ban_dirs else MAX_LEADS_PER_TYPE,
+                self.repo_signals[repo].get("t0"),
+                limit=1000 if self.prefer_dirs or self.ban_dirs else MAX_LEADS_PER_TYPE,
                 repo=repo,
-                files=(filesets or {}).get(repo),
+                files=(self.filesets or {}).get(repo),
             )
-            if lead_ok:  # no ledger rows: still honor cooldown and story blocks
-                wide = [x for x in wide if lead_ok(x)]
-        ref_by[(repo, t)] = {x.text: x for x in wide}
-        leads_by[(repo, t)] = focused_first([x.text for x in wide])[:MAX_LEADS_PER_TYPE]
+            if self.lead_ok:  # no ledger rows: still honor cooldown and story blocks
+                wide = [x for x in wide if self.lead_ok(x)]
+        self.ref_by[(repo, t)] = {x.text: x for x in wide}
+        self.leads_by[(repo, t)] = self.focused_first([x.text for x in wide])[:MAX_LEADS_PER_TYPE]
 
-    learned = bool(category_shares) and evidence != 0  # no rewards: keep the default mix
-    source = category_shares if learned else defaults.get("categories", {})
-    cats = {k: w for k, w in source.items() if k in live}
-    # A category whose story types all need rated candidates is skipped when no repo has one:
-    # its cards go to the other categories.
-    leads_by: dict[tuple[str, str], list[str]] = {}
-    ref_by: dict[tuple[str, str], dict[str, Lead]] = {}  # lead text -> its coordinates
+    # ---- step: how many cards each category gets
 
-    def starved(category) -> bool:
-        stories = stories_in[category]
+    def _starved(self, category) -> bool:
+        stories = self.stories_in[category]
         if not all(t in CANDIDATE_STORIES for t in stories):
             return False
-        for r in repo_signals:
+        for r in self.repo_signals:
             for t in stories:
-                fill_leads(r, t)
-        return not any(leads_by[(r, t)] for r in repo_signals for t in stories)
+                self.fill_leads(r, t)
+        return not any(self.leads_by[(r, t)] for r in self.repo_signals for t in stories)
 
-    cats = {k: w for k, w in cats.items() if not starved(k)} or cats
-    if not cats:
-        raise ValueError("active rules leave no category with a story type and format")
-    quotas = largest_remainder(cats, count)
-    if learned and count >= len(cats):
-        for k in [k for k, v in quotas.items() if v < 1]:
-            donor = max(quotas, key=lambda c: (quotas[c], c))
-            quotas[donor] -= 1
-            quotas[k] = 1
-    spot_min = 0
-    if min_spot_the_bug > 0 and SPOT in stories_in.get("interactive", ()) and "interactive" in cats:
-        for r in repo_signals:
-            fill_leads(r, SPOT)
-        if any(leads_by[(r, SPOT)] for r in repo_signals):
-            spot_min = min(math.ceil(count * min_spot_the_bug - 1e-9), story_caps.get(SPOT, count))
-            for _ in range(max(0, spot_min - quotas["interactive"])):
-                donors = [c for c in quotas if c != "interactive" and quotas[c] > 0]
-                if not donors:
-                    break
-                quotas[max(donors, key=lambda c: (quotas[c], c))] -= 1
-                quotas["interactive"] += 1
-    banned_tones = _banned(rules, "tone") | zero["tone"]
-    tone_boost = _factors(rules, "tone")
-    tones_in = {
-        k: w * tone_boost.get(k, 1.0)
-        for k, w in defaults.get("tones", {}).items()
-        if k not in banned_tones
-    }
-    tone_quotas = largest_remainder(tones_in or defaults.get("tones", {}), count)
-    tone_quotas = _clip(tone_quotas, _caps(rules, "tone", count)) if tones_in else tone_quotas
-    tone_pool = _interleave(tone_quotas)
-    repo_names = sorted(repo_signals)
-    persona_cycle = list(personas) or list(DEFAULT_PERSONAS)
-    persona_cycle = [
-        p for p in persona_cycle if p not in _banned(rules, "persona")
-    ] or persona_cycle
-    story_used: dict[str, int] = {}
+    def _category_quotas(self) -> None:
+        count = self.count
+        # no rewards: keep the default mix
+        self.learned = bool(self.category_shares) and self.evidence != 0
+        source = self.category_shares if self.learned else self.defaults.get("categories", {})
+        cats = {k: w for k, w in source.items() if k in self.live}
+        # A category whose story types all need rated candidates is skipped when no repo has
+        # one: its cards go to the other categories.
+        self.leads_by: dict[tuple[str, str], list[str]] = {}
+        self.ref_by: dict[tuple[str, str], dict[str, Lead]] = {}  # lead text -> its coordinates
+        cats = {k: w for k, w in cats.items() if not self._starved(k)} or cats
+        if not cats:
+            raise ValueError("active rules leave no category with a story type and format")
+        quotas = largest_remainder(cats, count)
+        if self.learned and count >= len(cats):
+            for k in [k for k, v in quotas.items() if v < 1]:
+                donor = max(quotas, key=lambda c: (quotas[c], c))
+                quotas[donor] -= 1
+                quotas[k] = 1
+        self.cats, self.quotas = cats, quotas
 
-    cross_groups = {
-        g: [r for r in rs if r in repo_signals]
-        for g, rs in sorted(groups.items())
-        if len([r for r in rs if r in repo_signals]) >= 2
-    }
-    cross_by_group: dict[str, dict[str, list[str]]] = {}
+    def _reserve_spot_the_bug(self) -> None:
+        """Grow the interactive quota to hold the reserved spot_the_bug slots."""
+        quotas, count = self.quotas, self.count
+        self.spot_min = 0
+        if (
+            self.min_spot_the_bug > 0
+            and SPOT in self.stories_in.get("interactive", ())
+            and "interactive" in self.cats
+        ):
+            for r in self.repo_signals:
+                self.fill_leads(r, SPOT)
+            if any(self.leads_by[(r, SPOT)] for r in self.repo_signals):
+                self.spot_min = min(
+                    math.ceil(count * self.min_spot_the_bug - 1e-9),
+                    self.story_caps.get(SPOT, count),
+                )
+                for _ in range(max(0, self.spot_min - quotas["interactive"])):
+                    donors = [c for c in quotas if c != "interactive" and quotas[c] > 0]
+                    if not donors:
+                        break
+                    quotas[max(donors, key=lambda c: (quotas[c], c))] -= 1
+                    quotas["interactive"] += 1
 
-    # 1. Allocate every card slot to (repo, category, story_type, format, group).
-    # `group` is None except for cross-repo slots, whose repo is the group's first repo.
-    slots: list[tuple[str, str, str, str, str | None]] = []
-    slot_allowed: list[list[str]] = []  # per slot: the formats its writer may pick from
-    used: dict[str, int] = {}
-    spent = 0
-    repo_total: dict[str, int] = {}
-    for ci, (category, n) in enumerate(sorted(quotas.items(), key=lambda kv: (-kv[1], kv[0]))):
-        if not n:
-            continue
-        cross_n = 0
-        if category == CROSS_CATEGORY:
-            cross_fmts = [f for f in CROSS_FORMATS if f not in gone_formats]
-            combos = []
-            for g, rs in cross_groups.items():
-                if g not in cross_by_group:
-                    cross_by_group[g] = {
-                        t: [x for x in focused_first(ls)]
-                        for t, ls in cross_leads({r: repo_signals[r] for r in rs}).items()
-                    }
-                    cross_by_group[g] = {t: ls for t, ls in cross_by_group[g].items() if ls}
-                combos += [
-                    (g, t)
-                    for t in CROSS_STORIES
-                    if t not in gone_stories and cross_by_group[g].get(t)
-                ]
-            if combos and cross_fmts:
-                cross_n = min(-(-n // 2), len(combos))
-                for _ in range(cross_n):
-                    open_gt = [
-                        gt
-                        for gt in combos
-                        if story_used.get(gt[1], 0) < story_caps.get(gt[1], 1 << 30)
-                    ] or combos
-                    g, t = min(
-                        open_gt,
-                        key=lambda gt: (
-                            (story_used.get(gt[1], 0) + 1) / story_boost.get(gt[1], 1.0),
-                            CROSS_STORIES.index(gt[1]),
-                            gt[0],
-                        ),
-                    )
-                    combos.remove((g, t))
-                    allowed = allowed_for(t, category, used, spent, cross_fmts)
-                    fmt = allowed[0]
-                    slot_allowed.append(allowed)
-                    used[fmt] = used.get(fmt, 0) + 1
-                    spent += ILLUSTRATION_COST.get(fmt, 0)
-                    story_used[t] = story_used.get(t, 0) + 1
-                    lead_repo = cross_groups[g][0]
-                    repo_total[lead_repo] = repo_total.get(lead_repo, 0) + 1
-                    slots.append((lead_repo, category, t, fmt, g))
-        n -= cross_n
-        # Split the category across repos; rotate the start so small quotas spread out.
+    # ---- step: tones, personas and cross-repo groups
+
+    def _tones_and_personas(self) -> None:
+        rules, defaults, count = self.rules, self.defaults, self.count
+        banned_tones = _banned(rules, "tone") | self.zero["tone"]
+        tone_boost = _factors(rules, "tone")
+        tones_in = {
+            k: w * tone_boost.get(k, 1.0)
+            for k, w in defaults.get("tones", {}).items()
+            if k not in banned_tones
+        }
+        tone_quotas = largest_remainder(tones_in or defaults.get("tones", {}), count)
+        tone_quotas = _clip(tone_quotas, _caps(rules, "tone", count)) if tones_in else tone_quotas
+        self.tone_quotas = tone_quotas
+        self.tone_pool = _interleave(tone_quotas)
+        self.repo_names = sorted(self.repo_signals)
+        persona_cycle = list(self.personas) or list(DEFAULT_PERSONAS)
+        self.persona_cycle = [
+            p for p in persona_cycle if p not in _banned(rules, "persona")
+        ] or persona_cycle
+        self.cross_groups = {
+            g: [r for r in rs if r in self.repo_signals]
+            for g, rs in sorted(self.groups.items())
+            if len([r for r in rs if r in self.repo_signals]) >= 2
+        }
+        self.cross_by_group: dict[str, dict[str, list[str]]] = {}
+
+    # ---- step: allocate every card slot
+
+    def _allocate_slots(self) -> None:
+        """Allocate every card slot to (repo, category, story_type, format, group).
+        `group` is None except for cross-repo slots, whose repo is the group's first repo."""
+        self.slots: list[tuple[str, str, str, str, str | None]] = []
+        self.slot_allowed: list[list[str]] = []  # per slot: the formats its writer may pick from
+        self.used: dict[str, int] = {}
+        self.spent = 0
+        self.repo_total: dict[str, int] = {}
+        self.story_used: dict[str, int] = {}
+        by_size = sorted(self.quotas.items(), key=lambda kv: (-kv[1], kv[0]))
+        for ci, (category, n) in enumerate(by_size):
+            if not n:
+                continue
+            cross_n = 0
+            if category == CROSS_CATEGORY:
+                cross_n = self._allocate_cross_slots(category, n)
+            self._allocate_repo_slots(ci, category, n - cross_n)
+
+    def _allocate_cross_slots(self, category, n) -> int:
+        """Slots for cross-repo stories: at most half of the category. Returns how many."""
+        story_used, story_caps, story_boost = self.story_used, self.story_caps, self.story_boost
+        cross_groups, cross_by_group = self.cross_groups, self.cross_by_group
+        used = self.used
+        cross_fmts = [f for f in CROSS_FORMATS if f not in self.gone_formats]
+        combos = []
+        for g, rs in cross_groups.items():
+            if g not in cross_by_group:
+                cross_by_group[g] = {
+                    t: [x for x in self.focused_first(ls)]
+                    for t, ls in cross_leads({r: self.repo_signals[r] for r in rs}).items()
+                }
+                cross_by_group[g] = {t: ls for t, ls in cross_by_group[g].items() if ls}
+            combos += [
+                (g, t)
+                for t in CROSS_STORIES
+                if t not in self.gone_stories and cross_by_group[g].get(t)
+            ]
+        if not (combos and cross_fmts):
+            return 0
+        cross_n = min(-(-n // 2), len(combos))
+        for _ in range(cross_n):
+            open_gt = [
+                gt for gt in combos if story_used.get(gt[1], 0) < story_caps.get(gt[1], 1 << 30)
+            ] or combos
+            g, t = min(
+                open_gt,
+                key=lambda gt: (
+                    (story_used.get(gt[1], 0) + 1) / story_boost.get(gt[1], 1.0),
+                    CROSS_STORIES.index(gt[1]),
+                    gt[0],
+                ),
+            )
+            combos.remove((g, t))
+            allowed = self.allowed_for(t, category, used, self.spent, cross_fmts)
+            fmt = allowed[0]
+            self.slot_allowed.append(allowed)
+            used[fmt] = used.get(fmt, 0) + 1
+            self.spent += ILLUSTRATION_COST.get(fmt, 0)
+            story_used[t] = story_used.get(t, 0) + 1
+            lead_repo = cross_groups[g][0]
+            self.repo_total[lead_repo] = self.repo_total.get(lead_repo, 0) + 1
+            self.slots.append((lead_repo, category, t, fmt, g))
+        return cross_n
+
+    def _allocate_repo_slots(self, ci, category, n) -> None:
+        """Split `n` cards of a category across repos, then pick a story type and the allowed
+        formats for each slot."""
+        repo_names, leads_by, stories_in = self.repo_names, self.leads_by, self.stories_in
+        story_used, story_caps, story_boost = self.story_used, self.story_caps, self.story_boost
+        repo_total, used = self.repo_total, self.used
+        # Rotate the start so small quotas spread out.
         order = repo_names[ci % len(repo_names) :] + repo_names[: ci % len(repo_names)]
         only_candidates = all(t in CANDIDATE_STORIES for t in stories_in[category])
         for r in order:
             for t in stories_in[category]:
-                fill_leads(r, t)
+                self.fill_leads(r, t)
         per_repo = largest_remainder(
             {
                 r: 0.0  # no rated candidate in this repo: its share goes to the other repos
                 if only_candidates and not any(leads_by[(r, t)] for t in stories_in[category])
-                else repo_boost.get(r, 1.0) * group_boost.get(group_of.get(r), 1.0)
+                else self.repo_boost.get(r, 1.0) * self.group_boost.get(self.group_of.get(r), 1.0)
                 for r in order
             },
             n,
         )
         per_repo = _clip(
-            per_repo, {r: max(0, c - repo_total.get(r, 0)) for r, c in repo_caps.items()}
+            per_repo, {r: max(0, c - repo_total.get(r, 0)) for r, c in self.repo_caps.items()}
         )
         for r, k in per_repo.items():
             repo_total[r] = repo_total.get(r, 0) + k
         for repo in order:
             for t in stories_in[category]:
-                fill_leads(repo, t)
+                self.fill_leads(repo, t)
             has_leads = [t for t in stories_in[category] if leads_by[(repo, t)]]
             # With no lead for any type, prefer types that do not need a candidate.
             usable = (
@@ -1384,131 +1550,149 @@ def build_brief(
                 story = min(
                     open_t,
                     key=lambda t: (
-                        not (t == SPOT and story_used.get(t, 0) < spot_min),
+                        not (t == SPOT and story_used.get(t, 0) < self.spot_min),
                         (story_used.get(t, 0) + 1) / story_boost.get(t, 1.0),
-                        recent_story.get(t, 0),
+                        self.recent_story.get(t, 0),
                         usable.index(t),
                     ),
                 )
                 story_used[story] = story_used.get(story, 0) + 1
-                allowed = allowed_for(story, category, used, spent, formats_in[category])
+                allowed = self.allowed_for(
+                    story, category, used, self.spent, self.formats_in[category]
+                )
                 fmt = allowed[0]
                 used[fmt] = used.get(fmt, 0) + 1
-                spent += ILLUSTRATION_COST.get(fmt, 0)
-                slot_allowed.append(allowed)
-                slots.append((repo, category, story, fmt, None))
+                self.spent += ILLUSTRATION_COST.get(fmt, 0)
+                self.slot_allowed.append(allowed)
+                self.slots.append((repo, category, story, fmt, None))
 
-    # 1a. Variants: a slot with no fresh lead may retell a good old story in a new format.
-    variant_at: dict[int, dict] = {}  # slot index -> variant
-    cap = int(variant_max_share * count)
-    seen_n: Counter = Counter()
-    needy = []  # slots past the fresh leads of their (repo, story type)
-    for i, (repo, _, story, _, grp) in enumerate(slots):
-        if grp is None:
-            seen_n[(repo, story)] += 1
-            if seen_n[(repo, story)] > len(leads_by[(repo, story)]):
-                needy.append(i)
-    for v in variants or []:
-        if len(variant_at) >= cap:
-            break
-        for i in needy:
-            repo, category, story, fmt, _ = slots[i]
-            if repo != v["repo"] or v["story_type"] not in stories_in[category]:
-                continue
-            room = spent - ILLUSTRATION_COST.get(fmt, 0)
-            # Formats that suit the variant's story first, then any of the category's.
-            options = [
-                f
-                for f in allowed_for(v["story_type"], category, used, room, formats_in[category])
-                if f not in v["formats_used"]
-            ] or [f for f in formats_in[category] if f not in v["formats_used"]]
-            if not options:
-                continue
-            new = _pick_format(
-                options,
-                used,
-                room,
-                max_illustrations,
-                fmt_boost,
-                fmt_caps,
-                recent_fmt,
-                format_weights,
-            )
-            used[fmt] -= 1
-            used[new] = used.get(new, 0) + 1
-            spent = room + ILLUSTRATION_COST.get(new, 0)
-            story_used[story] -= 1
-            story_used[v["story_type"]] = story_used.get(v["story_type"], 0) + 1
-            slots[i] = (repo, category, v["story_type"], new, None)
-            slot_allowed[i] = [new]
-            variant_at[i] = v
-            needy.remove(i)
-            break
+    # ---- step: variants
 
-    # 1c. Intro slots: reserve a share of the cards for leads from the least-known dirs.
-    intro_at = _assign_intro(
-        slots, variant_at, ref_by, novelty, intro_share, count, intro_prefer or {}, filesets
-    )
+    def _place_variants(self) -> None:
+        """A slot with no fresh lead may retell a good old story in a new format."""
+        slots, used, story_used = self.slots, self.used, self.story_used
+        formats_in = self.formats_in
+        variant_at: dict[int, dict] = {}  # slot index -> variant
+        cap = int(self.variant_max_share * self.count)
+        seen_n: Counter = Counter()
+        needy = []  # slots past the fresh leads of their (repo, story type)
+        for i, (repo, _, story, _, grp) in enumerate(slots):
+            if grp is None:
+                seen_n[(repo, story)] += 1
+                if seen_n[(repo, story)] > len(self.leads_by[(repo, story)]):
+                    needy.append(i)
+        for v in self.variants or []:
+            if len(variant_at) >= cap:
+                break
+            for i in needy:
+                repo, category, story, fmt, _ = slots[i]
+                if repo != v["repo"] or v["story_type"] not in self.stories_in[category]:
+                    continue
+                room = self.spent - ILLUSTRATION_COST.get(fmt, 0)
+                # Formats that suit the variant's story first, then any of the category's.
+                options = [
+                    f
+                    for f in self.allowed_for(
+                        v["story_type"], category, used, room, formats_in[category]
+                    )
+                    if f not in v["formats_used"]
+                ] or [f for f in formats_in[category] if f not in v["formats_used"]]
+                if not options:
+                    continue
+                new = _pick_format(
+                    options,
+                    used,
+                    room,
+                    self.max_illustrations,
+                    self.fmt_boost,
+                    self.fmt_caps,
+                    self.recent_fmt,
+                    self.format_weights,
+                )
+                used[fmt] -= 1
+                used[new] = used.get(new, 0) + 1
+                self.spent = room + ILLUSTRATION_COST.get(new, 0)
+                story_used[story] -= 1
+                story_used[v["story_type"]] = story_used.get(v["story_type"], 0) + 1
+                slots[i] = (repo, category, v["story_type"], new, None)
+                self.slot_allowed[i] = [new]
+                variant_at[i] = v
+                needy.remove(i)
+                break
+        self.variant_at = variant_at
 
-    # The image share is a soft target the packet states; no format is forced.
-    image_share = float((defaults.get("visual_mix") or {}).get("image_min_share") or 0)
+    # ---- step: pack slots into packets
 
-    # 2. Pack slots into as few packets as possible per (repo or group, model tier).
-    packets: list[Packet] = []
-    slot_no = 0
-    units = [(r, None, [r]) for r in repo_names] + [
-        (rs[0], g, rs) for g, rs in cross_groups.items()
-    ]
-    plan = []  # (repo, group, cheap, slot indexes) per packet, in packet order
-    for repo, grp, unit_repos in units:
-        for cheap in (True, False):
-            group = [
-                i
-                for i, s in enumerate(slots)
-                if s[0] == repo
-                and s[4] == grp
-                # The writer may pick any allowed format, so a haiku needs all of them to be easy.
-                and (s[2] in CONCRETE_TYPES and all(f in HAIKU_FORMATS for f in slot_allowed[i]))
-                == cheap
-            ]
-            for start in range(0, len(group), packet_size):
-                plan.append((repo, grp, unit_repos, cheap, group[start : start + packet_size]))
-    # Packets of one repo get disjoint leads: the leads of a (repo, story type) are dealt out
-    # round robin over the packets that hold the type, intro leads belong to their own packet
-    # only, and a commit or path is offered to one packet of the repo.
-    holders: dict[tuple[str, str], list[int]] = {}
-    for pi, (repo, grp, _, _, chunk_ix) in enumerate(plan):
-        if not grp:
-            for t in dict.fromkeys(slots[i][2] for i in chunk_ix):
-                holders.setdefault((repo, t), []).append(pi)
-    intro_texts = {(slots[i][0], slots[i][2], ld.text) for i, (_, ld) in intro_at.items()}
-    claimed: dict[tuple[str, str], int] = {}
-    for pi, (repo, _grp, _, _, chunk_ix) in enumerate(plan):
-        for i in chunk_ix:
-            if i in intro_at and (subject := _subject(intro_at[i][1])):
-                claimed.setdefault((repo, subject), pi)
-    for pi, (repo, grp, unit_repos, cheap, chunk_ix) in enumerate(plan):
-        chunk = [slots[i] for i in chunk_ix]
-        types = list(dict.fromkeys(t for _, _, t, _, _ in chunk))
+    def _plan_packets(self) -> None:
+        """Pack slots into as few packets as possible per (repo or group, model tier), and
+        decide which packet holds which lead.
+
+        Packets of one repo get disjoint leads: the leads of a (repo, story type) are dealt
+        out round robin over the packets that hold the type, intro leads belong to their own
+        packet only, and a commit or path is offered to one packet of the repo."""
+        slots, slot_allowed, intro_at = self.slots, self.slot_allowed, self.intro_at
+        units = [(r, None, [r]) for r in self.repo_names] + [
+            (rs[0], g, rs) for g, rs in self.cross_groups.items()
+        ]
+        plan = []  # (repo, group, unit repos, cheap, slot indexes) per packet, in packet order
+        for repo, grp, unit_repos in units:
+            for cheap in (True, False):
+                group = [
+                    i
+                    for i, s in enumerate(slots)
+                    if s[0] == repo
+                    and s[4] == grp
+                    # The writer may pick any allowed format, so a haiku needs all of them to
+                    # be easy.
+                    and (
+                        s[2] in CONCRETE_TYPES and all(f in HAIKU_FORMATS for f in slot_allowed[i])
+                    )
+                    == cheap
+                ]
+                for start in range(0, len(group), self.packet_size):
+                    chunk_ix = group[start : start + self.packet_size]
+                    plan.append((repo, grp, unit_repos, cheap, chunk_ix))
+        holders: dict[tuple[str, str], list[int]] = {}
+        for pi, (repo, grp, _, _, chunk_ix) in enumerate(plan):
+            if not grp:
+                for t in dict.fromkeys(slots[i][2] for i in chunk_ix):
+                    holders.setdefault((repo, t), []).append(pi)
+        claimed: dict[tuple[str, str], int] = {}
+        for pi, (repo, _grp, _, _, chunk_ix) in enumerate(plan):
+            for i in chunk_ix:
+                if i in intro_at and (subject := _subject(intro_at[i][1])):
+                    claimed.setdefault((repo, subject), pi)
+        self.plan, self.holders, self.claimed = plan, holders, claimed
+        self.intro_texts = {
+            (slots[i][0], slots[i][2], ld.text) for i, (_, ld) in intro_at.items()
+        }
+
+    def _packet_leads(self, pi: int, repo, grp, types, chunk_ix) -> list[tuple[str, Any]]:
+        """(line, lead ref) for each lead of packet `pi`: intro leads first, then its share
+        of the fresh leads, then its variants."""
+        slots, intro_at, variant_at = self.slots, self.intro_at, self.variant_at
+        holders, claimed = self.holders, self.claimed
         if grp:
             pairs = [
                 (f"[{t}] {line}", Lead(t, repo, "none", text=line))
                 for t in types
-                for line in cross_by_group[grp][t]
+                for line in self.cross_by_group[grp][t]
             ]
         else:
             pairs = []
             for t in types:
-                mine = leads_by[(repo, t)][holders[(repo, t)].index(pi) :: len(holders[(repo, t)])]
+                share = holders[(repo, t)]
+                mine = self.leads_by[(repo, t)][share.index(pi) :: len(share)]
                 for line in mine:
-                    ld = ref_by[(repo, t)][line]
-                    if (repo, t, line) in intro_texts:
+                    ld = self.ref_by[(repo, t)][line]
+                    if (repo, t, line) in self.intro_texts:
                         continue  # an intro slot holds it
                     if (subject := _subject(ld)) and claimed.setdefault((repo, subject), pi) != pi:
                         continue
                     pairs.append((f"[{t}] {line}", ld))
-        if facts_conn is not None and not grp:
-            pairs = quizfacts.annotate(facts_conn, repo, pairs)  # fact-based question seeds
+        if self.facts_conn is not None and not grp:
+            # fact-based question seeds
+            pairs = quizfacts.annotate(self.facts_conn, repo, pairs)
         intro_pairs = []
         for i in chunk_ix:
             if i in intro_at:
@@ -1530,45 +1714,48 @@ def build_brief(
         for i in chunk_ix:
             if i in variant_at:
                 pairs.append(_variant_pair(variant_at[i], slots[i][3]))
-        packets.append(
-            Packet(
-                id=f"p{len(packets) + 1}",
-                categories=list(dict.fromkeys(c for _, c, _, _, _ in chunk)),
-                repo=repo,
-                count=len(chunk),
-                story_types=types,
-                suggested_model="haiku" if cheap else "sonnet",
-                tones=tone_pool[slot_no : slot_no + len(chunk)],
-                personas=[
-                    persona_cycle[(slot_no + i) % len(persona_cycle)] for i in range(len(chunk))
-                ],
-                leads=[line for line, _ in pairs],
-                lead_refs=[r if isinstance(r, dict) else asdict(r) for _, r in pairs],
-                formats=[f for _, _, _, f, _ in chunk],
-                card_stories=[t for _, _, t, _, _ in chunk],
-                allowed=[slot_allowed[i] for i in chunk_ix],
-                images=min(
-                    math.ceil(image_share * len(chunk) - 1e-9),
-                    sum(bool(IMAGE_FORMATS & set(slot_allowed[i])) for i in chunk_ix),
-                ),
-                templates=[template_menu(f, t) for _, _, t, f, _ in chunk],
-                repos=list(unit_repos),
-                intro=sum(i in intro_at for i in chunk_ix),
+        return pairs
+
+    def _packets(self) -> list[Packet]:
+        slots, slot_allowed = self.slots, self.slot_allowed
+        persona_cycle = self.persona_cycle
+        # The image share is a soft target the packet states; no format is forced.
+        image_share = float((self.defaults.get("visual_mix") or {}).get("image_min_share") or 0)
+        packets: list[Packet] = []
+        slot_no = 0
+        for pi, (repo, grp, unit_repos, cheap, chunk_ix) in enumerate(self.plan):
+            chunk = [slots[i] for i in chunk_ix]
+            types = list(dict.fromkeys(t for _, _, t, _, _ in chunk))
+            pairs = self._packet_leads(pi, repo, grp, types, chunk_ix)
+            packets.append(
+                Packet(
+                    id=f"p{len(packets) + 1}",
+                    categories=list(dict.fromkeys(c for _, c, _, _, _ in chunk)),
+                    repo=repo,
+                    count=len(chunk),
+                    story_types=types,
+                    suggested_model="haiku" if cheap else "sonnet",
+                    tones=self.tone_pool[slot_no : slot_no + len(chunk)],
+                    personas=[
+                        persona_cycle[(slot_no + i) % len(persona_cycle)]
+                        for i in range(len(chunk))
+                    ],
+                    leads=[line for line, _ in pairs],
+                    lead_refs=[r if isinstance(r, dict) else asdict(r) for _, r in pairs],
+                    formats=[f for _, _, _, f, _ in chunk],
+                    card_stories=[t for _, _, t, _, _ in chunk],
+                    allowed=[slot_allowed[i] for i in chunk_ix],
+                    images=min(
+                        math.ceil(image_share * len(chunk) - 1e-9),
+                        sum(bool(IMAGE_FORMATS & set(slot_allowed[i])) for i in chunk_ix),
+                    ),
+                    templates=[self.template_menu(f, t) for _, _, t, f, _ in chunk],
+                    repos=list(unit_repos),
+                    intro=sum(i in self.intro_at for i in chunk_ix),
+                )
             )
-        )
-        slot_no += len(chunk)
-    return Brief(
-        count=count,
-        quotas=quotas,
-        tone_quotas=tone_quotas,
-        packets=packets,
-        recent=list(recent),
-        mix_evidence=(evidence or 0) if learned else None,
-        rules=rules,
-        focus=focus,
-        unavailable=[f for f in CATEGORY_FORMATS_FLAT if f in set(unavailable_formats)],
-        intro=_intro_summary(intro_at, slots),
-    )
+            slot_no += len(chunk)
+        return packets
 
 
 def _subject(ld: Lead) -> str | None:

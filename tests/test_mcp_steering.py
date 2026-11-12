@@ -12,7 +12,7 @@ from tests.test_steering import make_ycfg
 pytestmark = pytest.mark.anyio
 
 STEERING_TOOLS = {
-    "get_profile",
+    "get_taste_profile",
     "explain_weights",
     "list_rules",
     "add_rule",
@@ -86,7 +86,7 @@ async def test_read_tools_work_on_an_empty_db(server):
     async with Client(server) as client:
         assert data(await client.call_tool("explain_weights", {})) is not None
         assert data(await client.call_tool("explain_weights", {"feature": "format"})) is not None
-        assert data(await client.call_tool("get_profile", {})) is not None
+        assert data(await client.call_tool("get_taste_profile", {})) is not None
         cov = data(await client.call_tool("coverage", {"repo": "fixture"}))
         assert cov
         assert data(await client.call_tool("recent_cards", {"limit": 5})) == []

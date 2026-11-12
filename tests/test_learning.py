@@ -88,7 +88,7 @@ def test_explicit_like_or_save_beats_skip(conn, cfg, positive):
     ev(conn, a, positive, T0 + 400, {"on": True})
     ev(conn, b, "impression", T0 + 1000)
     learning.process_events(conn, cfg, now=at(5))
-    assert rewards(conn)[a] == pytest.approx(learning.RewardConfig().weights[positive])
+    assert rewards(conn)[a] == pytest.approx(learning.default_reward_config().weights[positive])
 
 
 def test_process_events_updates_story_best_reward_and_liked(conn, cfg):
@@ -115,7 +115,8 @@ def test_process_events_updates_story_best_reward_and_liked(conn, cfg):
     ev(conn, a, "skip", T0 + 10 * MIN + 100, {"ms": 100})
     ev(conn, b, "impression", T0 + 20 * MIN)
     learning.process_events(conn, cfg, now=at(60))
-    assert story(a)["best_reward"] == pytest.approx(learning.RewardConfig().weights["like"])
+    like = learning.default_reward_config().weights["like"]
+    assert story(a)["best_reward"] == pytest.approx(like)
 
 
 def test_short_dwell_without_engagement_counts_as_skip(conn, cfg):
@@ -259,7 +260,7 @@ def test_process_events_is_idempotent(conn, cfg):
 
 
 def test_expected_ms_uses_default_for_unknown_format_and_caps():
-    rc = learning.RewardConfig()
+    rc = learning.default_reward_config()
     spec = {"format": "mystery", "hook": "one two", "visual": {"kind": "text", "body": "a b c"}}
     assert learning.expected_ms(rc, spec) == 2500 + 250 * 5
     spec["hook"] = "w " * 1000
@@ -486,7 +487,7 @@ BEAT_SPEC = {"format": "group_chat", "hook": "h", "visual": {}, "depth": []}
 
 
 def beat_reward(*events):
-    return learning._reward(learning.RewardConfig(), BEAT_SPEC, list(events))
+    return learning._reward(learning.default_reward_config(), BEAT_SPEC, list(events))
 
 
 def test_beat_card_reward_is_watch_fraction_by_time_played_not_dwell():
@@ -581,3 +582,45 @@ def test_lead_mean_reward_updates(conn, cfg):
     # processing again changes nothing
     learning.process_events(conn, cfg, now=at(6))
     assert conn.execute("SELECT rewards_n FROM leads WHERE id = 1").fetchone()[0] == 2
+
+
+def test_reward_defaults_live_only_in_the_shipped_yaml():
+    """config/reward.yaml is the one source of the defaults: the dataclass holds none."""
+    from pathlib import Path
+
+    import yaml
+
+    with pytest.raises(TypeError):
+        learning.RewardConfig()
+    shipped = yaml.safe_load((Path(__file__).parents[1] / "config" / "reward.yaml").read_text())
+    rc = learning.default_reward_config()
+    assert set(shipped) == set(learning.RewardConfig.__dataclass_fields__)
+    for key, value in shipped.items():
+        assert getattr(rc, key) == value, key
+
+
+def test_reward_config_is_parsed_once_until_the_file_changes(cfg, tmp_path, monkeypatch):
+    import os
+
+    file = tmp_path / "config" / "reward.yaml"
+    file.parent.mkdir()
+    file.write_text("half_life_days: 7\n")
+    reads = []
+    real = learning.yaml.safe_load
+    monkeypatch.setattr(learning.yaml, "safe_load", lambda t: reads.append(1) or real(t))
+    assert learning.load_reward_config(cfg).half_life_days == 7
+    assert learning.load_reward_config(cfg).half_life_days == 7
+    assert len(reads) == 1
+    file.write_text("half_life_days: 9\n")
+    os.utime(file, ns=(1, 1))  # a new mtime, whatever the clock resolution
+    assert learning.load_reward_config(cfg).half_life_days == 9
+    assert len(reads) == 2
+    file.unlink()
+    assert learning.load_reward_config(cfg).half_life_days == 21  # the shipped default
+
+
+def test_reward_slotting_knobs_merge_over_the_shipped_ones(cfg, tmp_path):
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "reward.yaml").write_text("slotting:\n  repeat_days: 3\n")
+    knobs = learning.load_reward_config(cfg).slotting
+    assert knobs["repeat_days"] == 3 and knobs["max_srs_per_batch"] == 2

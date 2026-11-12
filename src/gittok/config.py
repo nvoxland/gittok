@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field, fields
 from functools import cache
@@ -9,6 +10,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+log = logging.getLogger(__name__)
 
 
 class ConfigError(Exception):
@@ -84,6 +87,7 @@ class AnalysisSettings:
     candidate_max_file_bytes: int = 200000
     candidate_max_files: int = 4000
     fetch_min_interval_s: int = 900  # at most one fetch per repo in this time
+    git_timeout_s: float = 120  # one read-only git call is stopped after this long
     facts_max_files: int = 4000  # syntax facts (facts.py): files read at head
     facts_max_commits: int = 300  # commits whose diffs map to definitions (newest first)
     facts_max_defs: int = 100000  # rows kept per repo, per table
@@ -198,6 +202,8 @@ class Config:
     profiles: dict = field(default_factory=dict)  # repo -> profiles.Profile (local/profiles/)
     scan_defaults: dict = field(default_factory=dict)  # config/scan_defaults.yaml
     shared: Path | None = None  # where config/, web/ and claude/ live; None means `root`
+    # Problems that did not stop the load, such as an unknown settings key (`gittok health`).
+    warnings: tuple[str, ...] = ()
 
     def shared_path(self, *parts: str) -> Path:
         """A path under the shared root (the clone, or the bundle in an installed app)."""
@@ -207,7 +213,8 @@ class Config:
         try:
             return self.repos[name]
         except KeyError:
-            raise ConfigError(f"unknown repo: {name}") from None
+            known = ", ".join(sorted(self.repos)) or "(none)"
+            raise ConfigError(f"unknown repo: {name}. Known repos: {known}") from None
 
     def profile(self, repo: str):
         """The repo's profile; an empty one (built-in detectors only) when it has none."""
@@ -270,11 +277,6 @@ def resolve_roots(start: Path | None = None) -> tuple[Path, Path]:
     raise ConfigError("project root not found: no config/settings.yaml in any parent directory")
 
 
-def project_root(start: Path | None = None) -> Path:
-    """The home: the folder with `local/` and a relative `data_dir`."""
-    return resolve_roots(start)[1]
-
-
 def shared_root(start: Path | None = None) -> Path:
     return resolve_roots(start)[0]
 
@@ -326,6 +328,10 @@ def _section(cls: type, data: Any, what: str, file: Path) -> Any:
         kwargs["git_identities"] = tuple(ids)
     if "churn_windows_days" in kwargs:
         kwargs["churn_windows_days"] = tuple(kwargs["churn_windows_days"])
+    if "git_timeout_s" in kwargs:
+        t = kwargs["git_timeout_s"]
+        if isinstance(t, bool) or not isinstance(t, int | float) or t <= 0:
+            raise ConfigError(f"{what}.git_timeout_s must be a number of seconds above 0 ({file})")
     if cls is ServerSettings:
         if not isinstance(kwargs.get("lan", False), bool):
             raise ConfigError(f"{what}.lan must be true or false ({file})")
@@ -355,16 +361,61 @@ _SETTINGS_KEYS = {
 }  # fmt: skip
 
 
-def _load_settings(root: Path, shared: Path | None = None) -> Settings:
-    """config/settings.yaml, with the optional local/settings.yaml merged over it.
+_SECTIONS: dict[str, type] = {
+    "server": ServerSettings,
+    "agent": AgentSettings,
+    "analysis": AnalysisSettings,
+    "research": ResearchSettings,
+    "render": RenderSettings,
+    "repos": ReposSettings,
+    "gc": GcSettings,
+    "user": UserSettings,
+    "profiles": ProfilesSettings,
+}
+_warned: set[str] = set()  # unknown-key warnings already logged by this process
+
+
+def _drop_unknown(data: dict, file: Path) -> tuple[dict, list[str]]:
+    """`data` without the settings keys this code does not know, and one warning for each.
+
+    An unknown key is not an error: a process that started before an upgrade (the MCP
+    server does not reload code) must still load a newer settings file. `gittok health`
+    prints the warnings, so a typo stays visible.
+    """
+    where = "/".join(file.parts[-2:])
+    out: dict = {}
+    unknown: list[str] = []
+    for key, val in data.items():
+        if key not in _SETTINGS_KEYS:
+            unknown.append(str(key))
+            continue
+        cls = _SECTIONS.get(key)
+        if cls is not None and isinstance(val, dict):
+            names = {f.name for f in fields(cls)}
+            unknown += [f"{key}.{k}" for k in val if k not in names]
+            val = {k: v for k, v in val.items() if k in names}
+        out[key] = val
+    warnings = [f"unknown settings key '{k}' in {where} (ignored)" for k in unknown]
+    for w in warnings:
+        if f"{file}:{w}" not in _warned:
+            _warned.add(f"{file}:{w}")
+            log.warning("%s", w)
+    return out, warnings
+
+
+def _load_settings(root: Path, shared: Path | None = None) -> tuple[Settings, tuple[str, ...]]:
+    """config/settings.yaml, with the optional local/settings.yaml merged over it, and the
+    warnings for keys that were ignored.
 
     Top-level keys replace; mapping sections merge key by key. Each file is checked on its
-    own first, so an unknown key names the file that holds it.
+    own first, so a bad value names the file that holds it.
     """
     base_file = (shared or root) / "config" / "settings.yaml"
     local_file = root / "local" / "settings.yaml"
-    base = _mapping(_read(base_file), "settings", base_file)
-    local = _mapping(_read(local_file), "settings", local_file)
+    base, base_warn = _drop_unknown(_mapping(_read(base_file), "settings", base_file), base_file)
+    local, local_warn = _drop_unknown(
+        _mapping(_read(local_file), "settings", local_file), local_file
+    )
     _build_settings(base, root, base_file)
     if local:
         _build_settings(local, root, local_file)
@@ -374,7 +425,8 @@ def _load_settings(root: Path, shared: Path | None = None) -> Settings:
             merged[key] = {**merged[key], **val}
         elif val is not None or key == "data_dir":
             merged[key] = val
-    return _build_settings(merged, root, local_file if local else base_file)
+    settings = _build_settings(merged, root, local_file if local else base_file)
+    return settings, (*base_warn, *local_warn)
 
 
 def _build_settings(data: dict, root: Path, file: Path) -> Settings:
@@ -526,34 +578,47 @@ _LANG_KEYS = {
     "extensions", "comment", "block", "func_start", "entry_points", "entry_paths",
     "import_style", "imports", "public", "branch", "skipped_test", "catch_all", "sleep",
     "regex_literal", "bit_ops", "meta", "commented_code", "thresholds", "def_patterns",
+    "magic_exempt", "big_literal_start", "self_call", "comment_also", "param_open",
+    "param_skip", "nesting_skip", "directive_prefixes", "comment_strip",
+}  # fmt: skip
+# Keys whose values are plain text or lists of text, not regexes.
+_LANG_TEXT_KEYS = {
+    "extensions", "comment", "block", "import_style", "thresholds", "comment_also",
+    "param_open", "param_skip", "nesting_skip", "directive_prefixes", "comment_strip",
 }  # fmt: skip
 
 
 def load_languages(root: Path | None = None) -> dict:
-    """config/languages.yaml as {"thresholds": {...}, "languages": {name: {...}}}."""
+    """config/languages.yaml as {"thresholds": {...}, "shared": {...}, "languages": {...}}.
+
+    `shared` holds line shapes for every language; a language may set the same keys."""
     import re
 
     root = shared_root() if root is None else Path(root)
     file = root / "config" / "languages.yaml"
     data = _mapping(_read(file), "languages.yaml", file)
-    _check_keys(data, {"languages", "thresholds"}, "languages.yaml", file)
+    _check_keys(data, {"languages", "thresholds", "shared"}, "languages.yaml", file)
     langs = _text_keys(_mapping(data.get("languages"), "languages", file), "language", file)
-    for name, raw in langs.items():
-        raw = _mapping(raw, f"language '{name}'", file)
-        _check_keys(raw, _LANG_KEYS, f"language '{name}'", file)
-        if not raw.get("extensions"):
+    shared = _mapping(data.get("shared"), "shared", file)
+    for name, raw in (("shared", shared), *langs.items()):
+        what = "shared" if raw is shared else f"language '{name}'"
+        raw = _mapping(raw, what, file)
+        _check_keys(raw, _LANG_KEYS, what, file)
+        if raw is not shared and not raw.get("extensions"):
             raise ConfigError(f"language '{name}' is missing 'extensions' ({file})")
         for key, val in raw.items():
-            if key in ("extensions", "comment", "block", "import_style", "thresholds"):
+            if key in _LANG_TEXT_KEYS:
                 continue
             for pat in [val] if isinstance(val, str) else val:
                 try:
                     re.compile(pat)
                 except (re.error, TypeError) as e:
-                    raise ConfigError(
-                        f"bad pattern in language '{name}' {key}: {e} ({file})"
-                    ) from e
-    return {"thresholds": _mapping(data.get("thresholds"), "thresholds", file), "languages": langs}
+                    raise ConfigError(f"bad pattern in {what} {key}: {e} ({file})") from e
+    return {
+        "thresholds": _mapping(data.get("thresholds"), "thresholds", file),
+        "shared": shared,
+        "languages": langs,
+    }
 
 
 _SCAN_KEYS = {"scan", "ignore", "kinds", "generated_markers", "noise"}
@@ -572,7 +637,7 @@ def load_scan_defaults(root: Path | None = None) -> dict:
 
 _FILE_TYPE_KEYS = {
     "highlight", "file_words", "source_extensions", "noise_basenames", "manifests",
-    "ast_grep_probe", "why_words", "doc_extensions", "comment_prefixes",
+    "ast_grep_probe", "why_words", "doc_extensions", "comment_prefixes", "todo_comment",
 }  # fmt: skip
 
 
@@ -637,9 +702,12 @@ def load_config(root: Path | None = None, shared: Path | None = None) -> Config:
     else:
         root = Path(root).resolve()
         shared = Path(shared).resolve() if shared else root
+    from . import gitq
     from .profiles import load_profiles
 
     repos, groups = _load_repos(root)
+    settings, warnings = _load_settings(root, shared)
+    gitq.set_timeout(settings.analysis.git_timeout_s)  # gitq takes paths, not a config
     defaults_file = shared / "config" / "defaults.yaml"
     defaults = _mapping(_read(defaults_file), "defaults.yaml", defaults_file)
     return Config(
@@ -647,7 +715,8 @@ def load_config(root: Path | None = None, shared: Path | None = None) -> Config:
         shared=shared,
         repos=repos,
         groups=groups,
-        settings=_load_settings(root, shared),
+        settings=settings,
+        warnings=warnings,
         defaults=defaults,
         personas=_load_personas(root, shared),
         mascots=_load_mascots(root, shared),
