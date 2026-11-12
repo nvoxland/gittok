@@ -172,7 +172,7 @@ This is a streamable-HTTP MCP server. Use the host and port from your settings. 
 Notes:
 
 - The `gittok-generate` skill pins models (Sonnet for the driver, Haiku or Sonnet for packets). This is Claude-specific. Codex users should run each work packet by hand on a small model.
-- Comparing Codex card quality with Claude card quality is tracked in beads. It spends ChatGPT quota, so the user runs it.
+- Comparing Codex card quality with Claude card quality is still open. It spends ChatGPT quota, so the user runs it.
 
 ## Keeping "today" fresh (optional fetch)
 

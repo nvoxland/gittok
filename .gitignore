@@ -1,9 +1,3 @@
-
-# Beads / Dolt files (added by bd init)
-.dolt/
-*.db
-.beads-credential-key
-
 # GitTok
 data/
 web/build/
@@ -16,6 +10,4 @@ __pycache__/
 .claude/worktrees/
 local/
 dist/
-
-# Beads issue tracker (local only)
-.beads/
+*.db

@@ -28,4 +28,4 @@ A LaunchAgent for `serve` also fixes the main friction of the MCP design: the `.
 2. Generate on demand, plus optionally a dedicated tab running `/loop 6h /gittok-generate`. The daily run cap protects the subscription.
 3. Revisit cloud routines when Tailscale lands (M6).
 
-The final choice is the user's (beads decision issue for scheduling).
+The final choice is the user's.
