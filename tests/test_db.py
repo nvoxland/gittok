@@ -25,31 +25,7 @@ def test_migrate_creates_all_spec_tables(tmp_path):
 def test_migrate_twice_applies_nothing_second_time(tmp_path):
     conn = db.connect(tmp_path / "x.db")
     first = db.migrate(conn)
-    assert first == [
-        "0001_init.sql",
-        "0002_story_key_unique.sql",
-        "0003_learning_indexes.sql",
-        "0004_social.sql",
-        "0005_prefs.sql",
-        "0006_drop_saves.sql",
-        "0007_stories.sql",
-        "0008_leads.sql",
-        "0009_story_variants.sql",
-        "0010_saved_cards.sql",
-        "0011_candidates.sql",
-        "0012_knowledge.sql",
-        "0013_lead_keys.sql",
-        "0014_candidate_ratings.sql",
-        "0015_requests.sql",
-        "0016_lead_rejects.sql",
-        "0017_digests.sql",
-        "0018_replies.sql",
-        "0019_candidate_rule_id.sql",
-        "0020_syntax_facts.sql",
-        "0022_analyzer_facts.sql",
-        "0023_knowledge_symbols.sql",
-        "0025_candidate_fact_ids.sql",
-    ]
+    assert first == ["0001_schema.sql"]
     assert db.migrate(conn) == []
     assert conn.execute("SELECT name FROM schema_migrations").fetchall()[0]["name"] == first[0]
 
@@ -98,69 +74,6 @@ def test_connect_creates_parent_dirs(tmp_path):
     p = tmp_path / "a" / "b" / "x.db"
     db.connect(p).close()
     assert p.exists()
-
-
-def test_stories_migration_backfills_from_cards(tmp_path):
-    conn = db.open_db(tmp_path / "x.db")
-    conn.execute("INSERT INTO repos(name, path) VALUES ('r', '/r')")
-    conn.execute("INSERT INTO runs(id, status, started_at) VALUES ('r','open','now')")
-    spec = '{"sources": [{"repo": "r", "commit": "abc"}]}'
-    for cid, key in (("c1", "k1"), ("c2", "k2")):
-        conn.execute(
-            "INSERT INTO cards(id, run_id, repo_id, story_type, format, persona, tone, spec,"
-            " story_key, created_at) VALUES (?,'r',1,'s','f','p','t',?,?,'2026-01-01T00:00:00Z')",
-            (cid, spec, key),
-        )
-    conn.execute("INSERT INTO rewards(card_id, reward, computed_at) VALUES ('c1', 0.7, 'now')")
-    conn.execute("INSERT INTO rewards(card_id, reward, computed_at) VALUES ('c1', 0.2, 'now')")
-    conn.execute(
-        "INSERT INTO events(card_id, type, ts, data, received_at) "
-        "VALUES ('c1','like',1,'{\"on\":true}','now')"
-    )
-    conn.execute("DROP TABLE stories")
-    conn.executescript(
-        next(f for f in db._migration_files() if f.name == "0007_stories.sql").read_text(
-            encoding="utf-8"
-        )
-    )
-
-    rows = {r["story_key"]: r for r in conn.execute("SELECT * FROM stories")}
-    assert set(rows) == {"k1", "k2"}
-    assert rows["k1"]["repo"] == "r" and rows["k1"]["story_type"] == "s"
-    assert db.loads(rows["k1"]["sources"]) == [{"repo": "r", "commit": "abc"}]
-    assert rows["k1"]["cards_made"] == 1
-    assert rows["k1"]["best_reward"] == 0.7 and rows["k1"]["liked"] == 1
-    assert rows["k2"]["best_reward"] is None and rows["k2"]["liked"] == 0
-
-
-def test_story_variants_migration_backfills_formats_and_allows_second_format(tmp_path):
-    conn = db.open_db(tmp_path / "x.db")
-    conn.execute("INSERT INTO repos(name, path) VALUES ('r', '/r')")
-    conn.execute("INSERT INTO runs(id, status, started_at) VALUES ('r','open','now')")
-    for cid, key, fmt in (("c1", "k1", "meme"), ("c2", "k1", "thread"), ("c3", "k2", "quiz")):
-        conn.execute(
-            "INSERT INTO cards(id, run_id, repo_id, story_type, format, persona, tone, spec,"
-            " story_key, created_at) VALUES (?,'r',1,'s',?,'p','t','{}',?,'2026-01-01T00:00:00Z')",
-            (cid, fmt, key),
-        )
-    conn.execute("DELETE FROM stories")
-    conn.execute("INSERT INTO stories(story_key, story_type, first_card_at, last_card_at) "
-                 "VALUES ('k1','s','a','a'), ('k2','s','a','a'), ('k3','s','a','a')")  # fmt: skip
-    conn.execute("DROP INDEX IF EXISTS idx_cards_story_key_format_unique")
-    conn.execute("ALTER TABLE stories DROP COLUMN formats")
-    conn.executescript(
-        next(f for f in db._migration_files() if f.name == "0009_story_variants.sql").read_text(
-            encoding="utf-8"
-        )
-    )
-
-    rows = {r["story_key"]: db.loads(r["formats"]) for r in conn.execute("SELECT * FROM stories")}
-    assert rows == {"k1": ["meme", "thread"], "k2": ["quiz"], "k3": []}
-    with pytest.raises(sqlite3.IntegrityError):
-        conn.execute(
-            "INSERT INTO cards(id, run_id, repo_id, story_type, format, persona, tone, spec,"
-            " story_key, created_at) VALUES ('c4','r',1,'s','meme','p','t','{}','k1','now')"
-        )
 
 
 def test_card_cascade_and_events_survive(tmp_path):
@@ -226,54 +139,3 @@ def test_concurrent_open_db_migrates_once_without_errors(tmp_path):
     conn = db.connect(path)
     names = [r[0] for r in conn.execute("SELECT name FROM schema_migrations")]
     assert len(names) == len(set(names)) == len(db._migration_files())
-
-
-def test_drop_saves_migration_deletes_save_events_only(tmp_path):
-    conn = db.connect(tmp_path / "x.db")
-    db.migrate(conn)
-    conn.execute("DELETE FROM schema_migrations WHERE name = '0006_drop_saves.sql'")
-    for t in ("save", "like"):
-        conn.execute(
-            "INSERT INTO events(card_id, type, ts, data, received_at) "
-            "VALUES ('c', ?, 1, '{}', 'x')",
-            (t,),
-        )
-    conn.commit()
-    assert db.migrate(conn) == ["0006_drop_saves.sql"]
-    assert [r[0] for r in conn.execute("SELECT type FROM events")] == ["like"]
-
-
-def test_saved_cards_migration_backfills_latest_on_saves(tmp_path):
-    conn = db.open_db(tmp_path / "x.db")
-    conn.execute("INSERT INTO repos(name, path) VALUES ('r', '/r')")
-    conn.execute("INSERT INTO runs(id, status, started_at) VALUES ('r','open','now')")
-    for cid, key in (("c1", "k1"), ("c2", "k2"), ("c3", "k3")):
-        conn.execute(
-            "INSERT INTO cards(id, run_id, repo_id, story_type, format, persona, tone, spec,"
-            " story_key, created_at) VALUES (?,'r',1,'s','text','p','t','{}',?,'2026-01-01')",
-            (cid, key),
-        )
-    for cid, ts, on in (
-        ("c1", 1000, True),
-        ("c2", 1000, True),
-        ("c2", 2000, False),  # latest is off
-        ("c3", 3000, True),
-        ("c_gone", 4000, True),  # no card
-    ):
-        conn.execute(
-            "INSERT INTO events(card_id, type, ts, data, received_at) "
-            "VALUES (?, 'save', ?, ?, 'x')",
-            (cid, ts, db.dumps({"on": on})),
-        )
-    conn.execute("DROP TABLE saved_cards")
-    conn.executescript(
-        next(f for f in db._migration_files() if f.name == "0010_saved_cards.sql").read_text(
-            encoding="utf-8"
-        )
-    )
-
-    rows = {r["card_id"]: r["saved_ts"] for r in conn.execute("SELECT * FROM saved_cards")}
-    assert rows == {"c1": 1000, "c3": 3000}
-    assert conn.execute("SELECT saved_at FROM saved_cards WHERE card_id='c1'").fetchone()[0] == (
-        "1970-01-01T00:00:01Z"
-    )

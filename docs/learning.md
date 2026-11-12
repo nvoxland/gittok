@@ -147,7 +147,7 @@ A format without evidence has no factor (1). `mix_inputs` passes the factors to 
 
 `GET /api/saved` → `{"cards": [Card]}`, most recently saved first. Web route `/saved`.
 
-Saved state lives in the `saved_cards` table (`card_id`, `saved_at`, `saved_ts`). Gc prunes old events, so events alone cannot hold it. `POST /api/events` updates the table in the same transaction as a `save` event. The newest `save` event by `ts` wins: an older event that arrives late changes nothing. A save for an unknown card is ignored. Migration `0010_saved_cards.sql` fills the table from the latest `save` event per card. Gc never deletes a saved card (see section 11).
+Saved state lives in the `saved_cards` table (`card_id`, `saved_at`, `saved_ts`). Gc prunes old events, so events alone cannot hold it. `POST /api/events` updates the table in the same transaction as a `save` event. The newest `save` event by `ts` wins: an older event that arrives late changes nothing. A save for an unknown card is ignored. Gc never deletes a saved card (see section 11).
 
 ## 9. Reset
 
