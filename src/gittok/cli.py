@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import atexit
-import ipaddress
 import json
 import os
 import shutil
@@ -134,16 +133,8 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-_ALL_INTERFACES = ("0.0.0.0", "::")
-
-
-def _is_loopback_host(host: str) -> bool:
-    if host == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
+_ALL_INTERFACES = social.ALL_INTERFACES
+_is_loopback_host = social.is_loopback_host
 
 
 def _banner(port: int, host: str, out) -> str | None:
@@ -160,9 +151,15 @@ def _banner(port: int, host: str, out) -> str | None:
         for url in social.lan_urls(port, addresses):
             print(f"lan:  {url}", file=out)
     lan_token = social.ensure_lan_token(load_config().settings.data_dir)
-    for a in addresses:
-        print(f"pair: http://{a}:{port}/pair?t={lan_token}", file=out)
+    for link in social.pair_links(port, lan_token, addresses):
+        print(f"pair: {link['url']}", file=out)
     print("The feed is token-protected: open a pairing URL once on each device.", file=out)
+    print(f"QR codes: http://127.0.0.1:{port}{social.PAIRING_PAGE} (this computer only).", file=out)
+    print(
+        "The feed is served to your local network over plain HTTP. Use it on a network you "
+        "trust. To serve this computer only: --no-lan, or `server.lan: false`.",
+        file=out,
+    )
     print("MCP (/mcp) is loopback-only and is never reachable from the LAN.", file=out)
     print("PWA install and offline mode need HTTPS: service workers do not register", file=out)
     print("on plain-HTTP LAN origins. The feed still works in the browser over HTTP.", file=out)
@@ -183,10 +180,13 @@ def _feed_app(lan_token: str | None):
 
 
 def _bind(args) -> tuple[str, int, bool]:
-    """(host, port, lan). `--lan` or `settings.server.lan` binds all interfaces."""
+    """(host, port, lan). LAN serving binds all interfaces. It is on with `--lan`, and with
+    `settings.server.lan` (the default) unless `--no-lan` or an explicit `--host` is given."""
     server = load_config().settings.server
-    lan = bool(args.lan or server.lan)
+    lan = not args.no_lan and bool(args.lan or (server.lan and not args.host))
     host = "0.0.0.0" if lan else (args.host or server.host)
+    if args.no_lan and not args.host and host in _ALL_INTERFACES:
+        host = "127.0.0.1"
     return host, args.port or server.port, lan
 
 
@@ -267,7 +267,7 @@ def _health(args) -> int:
         print(f"GitTok config warning: {w}", file=sys.stdout if args.hint else sys.stderr)
     if args.hint and not cfg.repos:
         # Nothing can be generated or profiled yet: one line, and no other hint.
-        print(f"GitTok has no repos yet. {steering.NO_REPOS.partition('. ')[2]}")
+        print(f"GitTok: {steering.NO_REPOS_AGENT}")
         return 0
     with closing(db.open_db(_db_path(cfg))) as conn:
         h = supply.feed_health(conn, cfg, _now())
@@ -544,7 +544,7 @@ def _repos_add(args) -> int:
     remote = steering.parse_remote(path)
     if remote:
         print(f"cloning {path} (a large repo takes some minutes)", flush=True)
-    # The user typed this path at a terminal, so the allowed roots do not apply (any_root).
+    # The user typed this path at a terminal, so `repos.allowed_roots` does not apply.
     out = steering.add_repo(
         load_config(),
         name,
@@ -558,7 +558,10 @@ def _repos_add(args) -> int:
     if remote:
         print(f"cloned {out['remote']} into {out['path']}")
     print(f"added repo {out['name']} ({out['path']})")
-    print(out["next"])
+    print(
+        f"Next: in Claude Code, ask Claude to profile {out['name']} "
+        f"(or run /gittok-profile-repo {out['name']})."
+    )
     return 0
 
 
@@ -642,6 +645,7 @@ def _install_env(cfg, args) -> install.Env:
         installed=installed,
         exe=_own_executable() if installed else None,
         work_dir=cfg.root,
+        lan=server.lan,
     )
 
 
@@ -820,15 +824,18 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--lan",
         action="store_true",
-        help="bind 0.0.0.0 and print LAN pairing URLs (or set server.lan in settings)",
+        help="serve the local network: bind 0.0.0.0 and print pairing URLs (the default, "
+        "from server.lan in the settings)",
     )
+    p.add_argument("--no-lan", action="store_true", help="serve this computer only (127.0.0.1)")
     p.add_argument("--reload", action="store_true", help="restart when src/gittok changes")
     p.set_defaults(fn=_serve)
     p = sub.add_parser("mcp", help="stdio MCP server; --ui also serves the feed")
     p.add_argument("--ui", action="store_true", help="serve the feed while the session runs")
     p.add_argument("--host")
     p.add_argument("--port", type=int)
-    p.add_argument("--lan", action="store_true", help="with --ui: bind 0.0.0.0, print LAN URLs")
+    p.add_argument("--lan", action="store_true", help="with --ui: serve the local network")
+    p.add_argument("--no-lan", action="store_true", help="with --ui: serve this computer only")
     p.set_defaults(fn=_mcp)
     p = sub.add_parser("refit", help="rewrite stored cards that do not fit the card front")
     g = p.add_mutually_exclusive_group(required=True)

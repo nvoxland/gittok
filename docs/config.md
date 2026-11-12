@@ -17,8 +17,8 @@ So in a clone your files are `<clone>/local/...`, and with an installed tool the
 
 | File | What it holds | Who writes it |
 |---|---|---|
-| `local/repos.yaml` | The repos and groups | You, `gittok repos ...`, the `add_repo`, `set_group` and `set_mascot` tools |
-| `local/settings.yaml` | Your changes to the settings | You |
+| `local/repos.yaml` | The repos and groups | You, `gittok repos ...`, the `add_repo`, `remove_repo`, `set_group` and `set_mascot` tools |
+| `local/settings.yaml` | Your changes to the settings | You. The `set_lan` tool writes `server.lan` only |
 | `local/personas.yaml` | Your changes to persona names, voices and bios | You, `gittok persona edit`, the `edit_persona` tool |
 | `local/mascots.yaml` | Your mascots | You, `gittok mascot set`, the `set_mascot` tool |
 | `local/profiles/<repo>.yaml` | The profile of one repo | The `gittok-profile-repo` skill, through `save_profile` |
@@ -56,7 +56,7 @@ Fields of one repo:
 | `mascot` | none | The name of a mascot (see "Mascots") |
 | `fetch` | `false` | `true`: fetch the branch of `ref` before analysis. `ref` must be a remote-tracking ref. The fetch updates remote-tracking refs only (`docs/install.md`, "Keeping today fresh") |
 | `url` | none | The web URL of the repo on GitHub, for the links on cards. When it is absent, GitTok derives it from the `origin` remote. Only github.com URLs give links |
-| `remote` | none | Set by `gittok repos add <url>`: the URL that GitTok cloned into `repos/<name>`. `gittok repos remove` deletes the clone only for such an entry |
+| `remote` | none | Set when you add a repo by URL (`add_repo`, or `gittok repos add <url>`): the URL that GitTok cloned into `repos/<name>`. Removing the repo (`remove_repo`, or `gittok repos remove`) deletes the clone only for such an entry |
 
 Fields of one group: `repos` (a list of repo names) and `standalone` (true or false; GitTok reads it but does not use it today). A repo can be in one group only.
 
@@ -69,12 +69,27 @@ A name that YAML reads as something other than text (`on`, `null`, `123`) needs 
 ```yaml
 # local/settings.yaml
 server:
-  lan: true
+  port: 8010
 agent:
   per_day_runs: 4
 ```
 
 A key that GitTok does not know is ignored with a warning; `gittok health` prints the warning. The same holds for an unknown key in `config/reward.yaml`. Restart the server after a change (`gittok serve`, or the Claude Code session that owns it).
+
+You can change most things by asking Claude in a Claude Code session, without editing a file:
+
+| You say | What Claude calls | What it writes |
+|---|---|---|
+| "Add the repo at ~/src/myapp" / "Remove myapp" | `add_repo`, `remove_repo` | `local/repos.yaml` |
+| "Put myapp in the work group" | `set_group` | `local/repos.yaml` |
+| "Give myapp an owl mascot" | `set_mascot` | `local/mascots.yaml`, `local/repos.yaml` |
+| "Make greybeard sound more tired" | `edit_persona` | `local/personas.yaml` |
+| "Turn off phone access" / "Turn it back on" | `set_lan` | `server.lan` in `local/settings.yaml` |
+| "Less memes", "focus on billing this week" | `add_rule`, `remove_rule` | The database (rules) |
+| "Cards play too fast" | `set_playback_speed` | The database (preferences) |
+| "Profile myapp" | The `gittok-profile-repo` skill | `local/profiles/myapp.yaml` |
+
+For any other setting, edit `local/settings.yaml` yourself, or ask Claude to edit the file. Each tool edit of a config file adds one line to `<data_dir>/config_audit.log`.
 
 The values below are the shipped ones.
 
@@ -90,7 +105,7 @@ The values below are the shipped ones.
 |---|---|---|
 | `host` | `127.0.0.1` | The address the server binds |
 | `port` | `8008` | The port of the feed and of `/mcp` |
-| `lan` | `false` | `true`: serve the feed to the local network (the same as `--lan`). Other devices must pair (`docs/social.md`, "LAN access") |
+| `lan` | `true` | Serve the feed to the local network, for a phone. The feed goes over plain HTTP, and each device must pair once. `false`: the server answers this computer only (the same as `--no-lan`). Read `docs/install.md`, "Phone access", for what this means on a network you do not trust. To change it, ask Claude ("turn off phone access"), or write the key; then restart the server |
 | `allowed_hosts` | `[]` | Extra `Host` names the server answers to, such as a VPN name. Its own names and addresses are always allowed |
 
 ### agent
@@ -164,7 +179,7 @@ The values below are the shipped ones.
 
 | Key | Value | Meaning |
 |---|---|---|
-| `allowed_roots` | `[]` | The directories in which the `add_repo` MCP tool may add a local repo. Empty means: the parent directories of the local repos you already added. `gittok repos add` in a terminal accepts any git repo, and a repo added by URL is not limited by this list |
+| `allowed_roots` | `[]` | An optional limit for the `add_repo` MCP tool. Empty means no limit: the tool accepts any git repo root on this computer, and the permission prompt of Claude Code is your consent. With a list, the tool only accepts a repo root inside one of these directories (`/` and your home directory itself do not count). `gittok repos add` in a terminal is not limited, and a repo added by URL is not limited |
 
 ### gc
 

@@ -21,7 +21,7 @@ from pathlib import Path
 
 import yaml
 
-from gittok import brief, gitq, knowledge, learning, private, rule_stats, signals
+from gittok import brief, gitq, knowledge, learning, private, rule_stats, signals, social
 from gittok.config import load_config, unknown_repo
 
 
@@ -843,33 +843,40 @@ def set_group(cfg, repo: str, group: str | None, created_by: str = "agent") -> d
     return {"repo": repo, "group": group}
 
 
-NO_REPOS = "No repos yet. Add one with: gittok repos add <name> <path>"
+# For a person at a terminal (CLI output and errors).
+NO_REPOS = (
+    'No repos yet. Ask Claude to add one ("add the repo at ~/src/myapp"), '
+    "or run: gittok repos add <name> <path-or-url>"
+)
+# For the agent (the SessionStart hint and tool results).
+NO_REPOS_AGENT = (
+    "No repos are configured. Ask the user which repo to add (a local path or a git URL), "
+    "then call add_repo."
+)
 
 
-def _allowed_roots(cfg) -> list[Path]:
-    home = Path.home().resolve()
-    configured = list(cfg.settings.repos.allowed_roots)
-    # a clone GitTok made (repo added by URL) sits in its own directory: it opens no root
-    roots = configured or [r.path.parent for r in cfg.repos.values() if not is_managed(cfg, r)]
-    return [r for r in (p.resolve() for p in roots) if r != Path("/") and r != home]
-
-
-def _check_allowed_path(cfg, name: str, full: Path) -> None:
-    """Refuse a path outside the allowed roots. Makes no git call."""
-    roots = _allowed_roots(cfg)
-    by_hand = (
-        f"the user must run `gittok repos add {name} {full}` in a terminal, or add its parent "
-        "directory to `repos.allowed_roots` in local/settings.yaml"
+def next_step(name: str) -> str:
+    """What the agent does after add_repo."""
+    return (
+        f"Next: offer to profile the repo. If the user agrees, run the gittok-profile-repo "
+        f"skill for {name} (/gittok-profile-repo {name})."
     )
-    if not roots:
-        raise SteeringError(
-            "No directory is allowed yet: there are no local repos and `repos.allowed_roots` "
-            f"is empty. To add this repo, {by_hand}."
-        )
+
+
+def _check_allowed_path(cfg, full: Path) -> None:
+    """Refuse a path outside `repos.allowed_roots`, when the user set that list. Makes no
+    git call. An empty list is no limit."""
+    configured = cfg.settings.repos.allowed_roots
+    if not configured:
+        return
+    home = Path.home().resolve()
+    roots = [r for r in (p.resolve() for p in configured) if r != Path("/") and r != home]
     if not any(full.is_relative_to(r) for r in roots):
-        shown = ", ".join(str(r) for r in roots)
+        shown = ", ".join(str(r) for r in roots) or "none that can be used"
         raise SteeringError(
-            f"'{full}' is outside the allowed roots ({shown}). To allow it, {by_hand}."
+            f"'{full}' is outside `repos.allowed_roots` ({shown}). The user set this limit in "
+            "local/settings.yaml: do not work around it. Tell the user. To allow the repo, "
+            "the user adds its parent directory to that list."
         )
 
 
@@ -930,9 +937,9 @@ def add_repo(
     """Add a repo to local/repos.yaml. `path` is a local directory or a remote URL.
 
     A local path must be the root of a git checkout that has a commit and is not inside a
-    configured repo. It must also sit inside one of the allowed roots (settings
-    `repos.allowed_roots`), unless `any_root` is true. Only the CLI sets `any_root`: there
-    the user typed the path.
+    configured repo. When the user set `repos.allowed_roots`, it must also sit inside one
+    of them, unless `any_root` is true. Only the CLI sets `any_root`: there the user typed
+    the path.
 
     A remote URL (see `parse_remote`) is cloned from the network into <home>/repos/<name>.
     The entry gets `fetch: true`, the remote's default branch as `ref`, and `remote: <url>`.
@@ -954,7 +961,7 @@ def add_repo(
     else:
         full = Path(path).expanduser().resolve()
         if not any_root:
-            _check_allowed_path(cfg, name, full)
+            _check_allowed_path(cfg, full)
         _check_repo_root(cfg, full)
         if ref is not None:
             try:
@@ -982,10 +989,7 @@ def add_repo(
     if remote is not None:
         out["remote"] = remote
     _audit(cfg, "add_repo", out, created_by)
-    return {
-        **out,
-        "next": f"Next: run /gittok-profile-repo {name} to teach GitTok this codebase.",
-    }
+    return {**out, "next": next_step(name)}
 
 
 REMOTE_SCHEMES = ("https", "ssh", "git")
@@ -1106,6 +1110,40 @@ def remove_repo(cfg, name: str, created_by: str = "user") -> dict:
     out = {"name": name, "path": str(repo.path), "deleted_clone": managed}
     _audit(cfg, "remove_repo", out, created_by)
     return out
+
+
+def _set_key(lines: list[str], section: str, key: str, value) -> None:
+    """Set `key: value` directly under top-level `section` (the shape of settings.yaml).
+    Other lines and comments stay."""
+    sec = _find(lines, section, 0, len(lines), 0)
+    if sec is None:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.append(f"{section}:")
+        sec = (len(lines) - 1, len(lines))
+    _no_inline(lines[sec[0]], section)
+    found = _find(lines, key, sec[0] + 1, sec[1], None)
+    if found is None:
+        ind = _child_indent(lines, sec[0] + 1, sec[1], 2)
+        lines.insert(sec[1], f"{' ' * ind}{key}: {_scalar(value)}")
+        return
+    m = re.match(r"^(\s*[^:]+:)\s*(.*?)(\s+#.*)?$", lines[found[0]])
+    lines[found[0] : found[1]] = [f"{m[1]} {_scalar(value)}{m[3] or ''}"]
+
+
+def set_lan(cfg, enabled: bool, created_by: str = "agent") -> dict:
+    """Turn phone access (LAN serving) off or on: writes only `server.lan` in
+    local/settings.yaml. The running server does not change until it starts again."""
+    if not isinstance(enabled, bool):
+        raise SteeringError("enabled must be true or false.")
+    _edit_files(cfg, {"settings.yaml": lambda lines: _set_key(lines, "server", "lan", enabled)})
+    _audit(cfg, "set_lan", {"enabled": enabled}, created_by)
+    after = (
+        "After the restart, call pairing_link to give the user the pairing QR code."
+        if enabled
+        else "After the restart, the feed answers this computer only."
+    )
+    return {"lan": enabled, "restart": f"{social.LAN_RESTART} {after}"}
 
 
 def set_mascot(

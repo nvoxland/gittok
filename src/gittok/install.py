@@ -50,11 +50,21 @@ class Env:
     installed: bool = False  # installed app (no clone): LaunchAgent runs `exe serve`
     exe: str | None = None  # the `gittok` executable of an installed app
     work_dir: Path | None = None  # LaunchAgent working directory in installed mode
+    lan: bool = True  # settings.server.lan: the server that the LaunchAgent runs serves the LAN
 
     @property
     def url(self) -> str:
         return f"http://{self.host}:{self.port}/mcp"
 
+
+LAN_ON_LINES = (
+    "Phone access is on: the server serves the feed to your local network over plain HTTP. "
+    "A device gets nothing until it opens the pairing link or QR code once. Use it on a "
+    "network you trust.",
+    "To turn it off, ask Claude to turn off phone access, or set `server.lan: false` in "
+    "local/settings.yaml. See SECURITY.md.",
+)
+LAN_OFF_LINES = ("Phone access is off (`server.lan: false`): the feed answers this computer only.",)
 
 # ---- 1. MCP ----
 
@@ -281,5 +291,7 @@ def run_install(env: Env, parts: tuple[str, ...] = PARTS, uninstall: bool = Fals
             summary += [x for x in part_lines if x.startswith(f"{part}:")]
     lines += ["", "Checklist (what changed):" if env.apply else "Checklist (what would change):"]
     lines += [f"  - {x}" for x in summary]
+    if "launchd" in parts:
+        lines += ["", *(LAN_ON_LINES if env.lan else LAN_OFF_LINES)]
     lines += ["", "To undo:", *_undo_lines(env, parts)]
     return lines

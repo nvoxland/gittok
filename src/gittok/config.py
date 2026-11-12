@@ -150,14 +150,14 @@ class MemeTemplate:
 class ServerSettings:
     host: str = "127.0.0.1"
     port: int = 8008
-    lan: bool = False  # true: `serve` and `mcp --ui` act as if `--lan` was passed
+    lan: bool = True  # serve the feed to the LAN (paired devices only); false: loopback only
     # Extra Host names the server answers to (its own names and addresses are always allowed).
     allowed_hosts: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
 class ReposSettings:
-    # Empty means: the parent directories of the repos already configured.
+    # An optional limit for the add_repo MCP tool. Empty means no limit.
     allowed_roots: tuple[Path, ...] = ()
 
 
@@ -338,7 +338,7 @@ def _section(cls: type, data: Any, what: str, file: Path) -> Any:
         if isinstance(t, bool) or not isinstance(t, int | float) or t <= 0:
             raise ConfigError(f"{what}.git_timeout_s must be a number of seconds above 0 ({file})")
     if cls is ServerSettings:
-        if not isinstance(kwargs.get("lan", False), bool):
+        if not isinstance(kwargs.get("lan", True), bool):
             raise ConfigError(f"{what}.lan must be true or false ({file})")
         hosts = kwargs.get("allowed_hosts") or []
         if not isinstance(hosts, list) or not all(isinstance(h, str) for h in hosts):

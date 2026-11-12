@@ -6,6 +6,7 @@ import asyncio
 import base64
 import hashlib
 import hmac
+import html
 import ipaddress
 import logging
 import random
@@ -19,6 +20,7 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
+import segno
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exception_handlers import request_validation_exception_handler
@@ -79,8 +81,56 @@ _SHA = re.compile(r"[0-9a-fA-F]{7,40}")
 PAIR_HTML = (
     "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'>"
     "<title>GitTok</title><h1>Pair this device</h1>"
-    "<p>Open the pairing URL printed by <code>gittok serve --lan</code>.</p>"
+    "<p>On the computer that runs GitTok, ask Claude for the pairing QR code, and scan it "
+    "with this device.</p>"
+    "<p>A server that was started by hand with <code>gittok serve</code> prints the pairing "
+    "link.</p>"
 )
+
+_PAIRING_HEAD = (
+    "<!doctype html><html lang=en><meta charset=utf-8>"
+    "<meta name=viewport content='width=device-width,initial-scale=1'>"
+    "<title>GitTok: pair a phone</title>"
+    "<style>body{font:16px/1.5 system-ui,sans-serif;max-width:34rem;margin:2rem auto;"
+    "padding:0 1rem;color:#111;background:#fff}svg{background:#fff;max-width:100%;height:auto}"
+    "code{word-break:break-all}section{margin:1.5rem 0}.note{color:#444;font-size:.9rem}"
+    "</style><h1>Pair a phone with GitTok</h1>"
+)
+
+
+def pairing_html(lan_token: str | None, port: int, addresses: list[str]) -> str:
+    """The page behind /pairing: one QR code per LAN address, drawn here as inline SVG (no
+    script). Only a loopback request gets it, because it shows the pairing token."""
+    if not lan_token:
+        body = (
+            "<p>Phone access is off: this server answers this computer only.</p>"
+            "<p>Ask Claude to turn on phone access. That sets <code>server.lan: true</code> in "
+            "<code>local/settings.yaml</code>; then the server must start again.</p>"
+        )
+    elif not addresses:
+        body = (
+            "<p>This computer has no LAN address now. Connect it to a network, then load this "
+            "page again.</p>"
+        )
+    else:
+        body = "<p>Scan with your phone's camera. Both devices must be on the same network.</p>"
+        if len(addresses) > 1:
+            body += (
+                "<p>This computer has more than one network address. The first code is for "
+                "the main one. Use the code of the network that the phone is on.</p>"
+            )
+        for link in social.pair_links(port, lan_token, addresses):
+            qr = segno.make(link["url"], error="m").svg_inline(scale=6, border=4)
+            body += (
+                f"<section><h2>{html.escape(link['address'])}</h2>{qr}"
+                f"<p><code>{html.escape(link['url'])}</code></p></section>"
+            )
+        body += (
+            f"<p class=note>{html.escape(social.LAN_NOTE)}</p>"
+            "<p class=note>Each device opens its link once. Do not share this page or the "
+            "link: the link holds the pairing token.</p>"
+        )
+    return f"{_PAIRING_HEAD}{body}</html>"
 
 
 class FollowBody(BaseModel):
@@ -120,10 +170,11 @@ PROXY_HEADERS = frozenset(
 
 
 NO_PAIRING_DETAIL = (
-    "This request came through a reverse proxy, and this server has no pairing token. "
-    "Set `server.lan: true` in local/settings.yaml (or start with --lan) and restart, "
-    "then open the pairing URL through the proxy."
+    "This request came through a reverse proxy, and LAN serving is turned off, so this server "
+    "has no pairing token. Set `server.lan: true` in local/settings.yaml (and do not start "
+    "with --no-lan), restart, then open the pairing link through the proxy."
 )
+NO_STORE = {"Cache-Control": "no-store"}
 
 
 def _is_forwarded(scope) -> bool:
@@ -398,6 +449,15 @@ class SecurityMiddleware:
         if path == "/mcp" or path.startswith("/mcp/"):
             if not loopback:
                 return await reply(_error_json(403, "mcp_loopback_only", "MCP is loopback-only"))
+        elif path == social.PAIRING_PAGE:
+            # The page shows the pairing token: only this computer gets it, never a paired
+            # device and never a proxied request.
+            if not loopback:
+                refused = _error_json(
+                    403, "pairing_loopback_only", "the pairing page is loopback-only"
+                )
+                refused.headers.update(NO_STORE)
+                return await reply(refused)
         elif not self.token and _is_forwarded(scope):
             # A proxied request is never local, and without a token nothing can pair it.
             return await reply(_error_json(403, "proxy_needs_pairing", NO_PAIRING_DETAIL))
@@ -712,6 +772,12 @@ def create_app(
             LAN_COOKIE, lan_token, max_age=LAN_COOKIE_MAX_AGE, httponly=True, samesite="lax"
         )
         return resp
+
+    @app.get(social.PAIRING_PAGE)
+    def pairing(request: Request):
+        port = request.url.port or get_config().settings.server.port
+        addresses = social.lan_addresses() if lan_token else []
+        return HTMLResponse(pairing_html(lan_token, port, addresses), headers=NO_STORE)
 
     def conn():
         """`with conn() as c:` commits (or rolls back on an error), then closes the connection."""

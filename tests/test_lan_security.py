@@ -71,7 +71,7 @@ def test_api_requires_cookie_for_lan_peers(lan_app):
 def test_html_gets_pairing_page_for_lan_peers(lan_app):
     r = call(lan_app, "GET", "/", "192.168.1.9", headers={"Accept": "text/html"})
     assert r.status_code == 401
-    assert "gittok serve --lan" in r.text
+    assert "ask Claude for the pairing QR code" in r.text
     assert TOKEN not in r.text
 
 
@@ -562,3 +562,87 @@ def test_middleware_errors_carry_a_code_next_to_detail(cfg, lan_app, strict_app)
         }  # fmt: skip
         asyncio.run(strict_app(scope, receive, send))
         assert sent["body"] == want
+
+
+# --- The pairing page (QR code) ----------------------------------------------------------------
+
+
+def test_pairing_page_shows_a_qr_code_and_the_link_per_address(lan_app, monkeypatch):
+    monkeypatch.setattr(social, "lan_addresses", lambda: ["192.168.1.5", "10.0.0.7"])
+    r = call(lan_app, "GET", "/pairing", "127.0.0.1")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/html")
+    assert r.headers["cache-control"] == "no-store"
+    assert r.text.count("<svg") == 2 and "<script" not in r.text.lower()
+    assert f"http://192.168.1.5:8008/pair?t={TOKEN}" in r.text
+    assert f"http://10.0.0.7:8008/pair?t={TOKEN}" in r.text
+    assert r.text.index("192.168.1.5") < r.text.index("10.0.0.7")  # the primary address first
+    assert "Scan with your phone's camera" in r.text and "same network" in r.text
+    note = r.text[r.text.rindex("</svg>") :]
+    assert "plain HTTP" in note and "network you trust" in note and "turn off phone access" in note
+    assert "script-src 'self'" in r.headers["content-security-policy"]
+
+
+def test_pairing_page_uses_the_port_of_the_request(lan_app, monkeypatch):
+    monkeypatch.setattr(social, "lan_addresses", lambda: ["192.168.1.5"])
+    r = call(lan_app, "GET", "/pairing", "127.0.0.1", headers={"Host": "127.0.0.1:9123"})
+    assert f"http://192.168.1.5:9123/pair?t={TOKEN}" in r.text
+
+
+def test_pairing_page_says_when_phone_access_is_off(cfg):
+    app = api.create_app(lambda: cfg)
+    r = call(app, "GET", "/pairing", "127.0.0.1")
+    assert r.status_code == 200 and r.headers["cache-control"] == "no-store"
+    assert "Phone access is off" in r.text and "Ask Claude" in r.text
+    assert "<svg" not in r.text and "pair?t=" not in r.text
+
+
+def test_pairing_page_without_a_lan_address(lan_app, monkeypatch):
+    monkeypatch.setattr(social, "lan_addresses", lambda: [])
+    r = call(lan_app, "GET", "/pairing", "127.0.0.1")
+    assert r.status_code == 200 and "no LAN address" in r.text
+    assert "<svg" not in r.text and TOKEN not in r.text
+
+
+@pytest.mark.parametrize("peer", ["192.168.1.9", "10.0.0.2", "fe80::1", "garbage"])
+def test_pairing_page_is_refused_for_lan_peers_even_when_paired(cfg, lan_app, peer):
+    for app in (lan_app, api.create_app(lambda: cfg)):
+        for cookies in (None, {"cs_lan": TOKEN}):
+            r = call(app, "GET", "/pairing", peer, cookies=cookies)
+            assert r.status_code == 403 and r.json()["code"] == "pairing_loopback_only"
+            assert TOKEN not in r.text and r.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize("headers", PROXY_HEADERS)
+def test_pairing_page_is_refused_for_a_proxied_request(cfg, lan_app, headers):
+    for app in (lan_app, api.create_app(lambda: cfg)):
+        for peer in ("127.0.0.1", "::1"):
+            r = call(app, "GET", "/pairing", peer, headers=headers, cookies={"cs_lan": TOKEN})
+            assert r.status_code == 403 and r.json()["code"] == "pairing_loopback_only"
+            assert TOKEN not in r.text
+
+
+def test_pairing_page_needs_a_known_host(strict_app):
+    r = raw(strict_app, "GET", "/pairing", {"Host": "evil.example"})
+    assert r["status"] == 421
+    assert raw(strict_app, "GET", "/pairing", {"Host": "127.0.0.1:8008"})["status"] == 200
+
+
+def test_real_server_access_log_has_no_token_for_the_pairing_page(cfg, capfd, monkeypatch):
+    monkeypatch.setattr(social, "lan_addresses", lambda: ["192.168.1.5"])
+    port = _free_port()
+    app = api.create_app(lambda: cfg, lan_token=TOKEN)
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="info"))
+    t = threading.Thread(target=server.run, daemon=True)
+    t.start()
+    try:
+        for _ in range(100):
+            if server.started:
+                break
+            time.sleep(0.05)
+        r = httpx.get(f"http://127.0.0.1:{port}/pairing")
+        assert r.status_code == 200 and TOKEN in r.text
+    finally:
+        server.should_exit = True
+        t.join(5)
+    logged = "".join(capfd.readouterr())
+    assert "/pairing" in logged and TOKEN not in logged

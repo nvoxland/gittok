@@ -28,6 +28,7 @@ All endpoints are served by `gittok serve` (default `http://127.0.0.1:8008`). Re
 | GET | `/api/avatars/{handle}` | A persona avatar image |
 | GET | `/assets/{folder}/{file}` | A card image or mascot image |
 | GET | `/pair?t=<token>` | Pair a LAN device (no cookie needed) |
+| GET | `/pairing` | The pairing page with the QR codes (loopback requests only) |
 | GET | `/healthz` | Liveness |
 | any | `/mcp` | The MCP endpoint (loopback peers only) |
 | GET | any other path | The web app (`index.html` for unknown paths) |
@@ -38,8 +39,8 @@ The server checks each request in this order. The first check that fails answers
 
 1. **Host.** The `Host` header must be a known local name: `127.0.0.1`, `localhost`, `[::1]`, one of this machine's LAN IPv4 addresses, its host name (also the short name and `<short name>.local`), or a name in `server.allowed_hosts` (`config/settings.yaml` or `local/settings.yaml`). The port is ignored. Any other, missing or repeated `Host` gets **421** `{"detail": "unknown Host", "code": "unknown_host"}`. This applies to every path.
 2. **Origin.** A request that is not `GET`, `HEAD` or `OPTIONS` and has an `Origin` header whose host is not in the same list gets **403** `{"detail": "cross-origin request", "code": "cross_origin"}`. A request with no `Origin` passes.
-3. **MCP.** `/mcp` answers only loopback requests (see below). Other requests get **403** `{"detail": "MCP is loopback-only", "code": "mcp_loopback_only"}`.
-4. **Pairing.** When the server has a pairing token, a request that is not loopback needs the `cs_lan` cookie on every path except `/pair`. The server has a token whenever it binds a non-loopback address (`--lan`, `server.lan: true`, or a non-loopback `--host`). Without the cookie, `/api/*` gets **401** `{"detail": "pair this device", "code": "unpaired"}` and every other path gets a 401 HTML page. Loopback requests never need the cookie. The web app shows "This device is not paired" on a 401 from the feed. When the server has no pairing token, a request with a proxy header (see below) cannot pair, so it gets **403** `{"detail": "<text>", "code": "proxy_needs_pairing"}` on every path; `/mcp` keeps its own 403 from check 3.
+3. **MCP and the pairing page.** `/mcp` answers only loopback requests (see below). Other requests get **403** `{"detail": "MCP is loopback-only", "code": "mcp_loopback_only"}`. `/pairing` has the same rule, with or without the pairing cookie: **403** `{"detail": "the pairing page is loopback-only", "code": "pairing_loopback_only"}`.
+4. **Pairing.** When the server has a pairing token, a request that is not loopback needs the `cs_lan` cookie on every path except `/pair`. The server has a token whenever it binds a non-loopback address: with `server.lan: true` (the default), `--lan`, or a non-loopback `--host`. It has none when LAN serving is off (`server.lan: false` or `--no-lan`). Without the cookie, `/api/*` gets **401** `{"detail": "pair this device", "code": "unpaired"}` and every other path gets a 401 HTML page. Loopback requests never need the cookie. The web app shows "This device is not paired" on a 401 from the feed. When the server has no pairing token, a request with a proxy header (see below) cannot pair, so it gets **403** `{"detail": "<text>", "code": "proxy_needs_pairing"}` on every path; `/mcp` keeps its own 403 from check 3.
 5. **Body size.** A body over 1 MB gets **413** `{"detail": "request body too large", "code": "body_too_large"}`. A `Content-Length` that is not a number gets **400** `{"detail": "bad content-length", "code": "bad_content_length"}`.
 
 A request is "loopback" when the TCP peer has a loopback address and the request has none of the headers `X-Forwarded-For`, `Forwarded`, `X-Forwarded-Host`, `X-Forwarded-Proto` and `X-Real-IP`. A reverse proxy on the same machine connects from a loopback address and adds such a header, so its requests are not loopback: they get no `/mcp`, they need the pairing cookie when the server has a token, and they are refused when it has none. The server does not use the value of these headers. A proxy that sends none of them still counts as loopback: see `docs/install.md`, "HTTPS on a LAN".
@@ -62,7 +63,8 @@ An error is an HTTP status plus a JSON body `{"detail": "<text>", "code": "<code
 | 401 | `bad_pairing_token` | `bad pairing token` | `/pair` with a wrong token |
 | 403 | `cross_origin` | `cross-origin request` | A state-changing request with an `Origin` that is not a known local name |
 | 403 | `mcp_loopback_only` | `MCP is loopback-only` | `/mcp` from a request that is not loopback |
-| 403 | `proxy_needs_pairing` | text that says to set `server.lan: true` | A request with a proxy header when the server has no pairing token |
+| 403 | `pairing_loopback_only` | `the pairing page is loopback-only` | `/pairing` from a request that is not loopback |
+| 403 | `proxy_needs_pairing` | text that says to set `server.lan: true` | A request with a proxy header when the server has no pairing token (LAN serving was turned off) |
 | 404 | `unknown_card` | `unknown card <id>` | An unknown card id |
 | 404 | `unknown_repo` | `unknown repo <name>` | An unknown repo name |
 | 404 | `unknown_persona` | `unknown persona <handle>` | An unknown persona |
@@ -256,9 +258,18 @@ For a LAN device. With the right token, the server sets the `cs_lan` cookie (Htt
 
 `{ "ok": true }`. It follows the access rules like every other path.
 
+## GET /pairing
+
+An HTML page for the person at this computer. Loopback requests only (403 `pairing_loopback_only` otherwise). `Cache-Control: no-store`. The address holds no token.
+
+- With LAN serving on: one section for each LAN IPv4 address of the machine, the main address first. Each has a QR code of the pairing link `http://<address>:<port>/pair?t=<token>` (an inline SVG that the server draws; the page has no script), the link as text, and a short note about plain HTTP. The port is the port of the request.
+- With LAN serving off: a line that says so, and that you can ask Claude to turn on phone access.
+
+The `pairing_link` MCP tool opens this page in the default browser.
+
 ## /mcp
 
-The MCP server over streamable HTTP (stateless, JSON responses). Loopback peers only. Its tools are not part of this contract, except the ones described below.
+The MCP server over streamable HTTP (stateless, JSON responses). Loopback peers only. Its tools are not part of this contract, except the ones described below. SPEC.md, section 15, lists the tools.
 
 ## The web app
 

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import logging
 import os
 import secrets
 import socket
 import threading
+import webbrowser
+from collections.abc import Callable
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -479,3 +482,124 @@ def ensure_lan_token(data_dir) -> str:
         f.write(token + "\n")
     os.chmod(path, 0o600)
     return token
+
+
+# What the user must know about phone access. The agent relays it; the docs repeat it.
+LAN_NOTICE = (
+    "GitTok serves the feed to your local network over plain HTTP, not HTTPS. Any device on "
+    "the network can reach the port, but it gets nothing until it opens the pairing link or "
+    "QR code once. The MCP endpoint is never served to the network. Someone who can watch "
+    "traffic on that network could read the pairing token and the cards, and cards hold "
+    "excerpts of your code. Use it on a network you trust, such as your home network, and "
+    "take care on shared or public Wi-Fi. To turn it off, ask Claude to turn off phone access "
+    "(`server.lan: false` in local/settings.yaml). docs/install.md has an optional HTTPS "
+    "recipe."
+)
+# The short form: under the QR code and in the server's start-up lines.
+LAN_NOTE = (
+    "This link works over plain HTTP on your local network. Use it on a network you trust. "
+    "Someone who can watch the traffic on that network could read the link and your cards, "
+    "and cards hold excerpts of your code. To stop serving the network, ask Claude to turn "
+    "off phone access."
+)
+LAN_RESTART = (
+    "The server reads this setting when it starts, so it must start again. A server that a "
+    "Claude Code session owns (a clone with .mcp.json): ask the user to run /mcp, pick "
+    "gittok, and Reconnect. A server that the LaunchAgent runs: run "
+    "`launchctl kickstart -k gui/$(id -u)/dev.gittok.serve` with Bash. A server started by "
+    "hand: the user stops it and starts `gittok serve` again."
+)
+ALL_INTERFACES = ("0.0.0.0", "::")
+PAIRING_PAGE = "/pairing"  # loopback-only page with the QR codes; its URL holds no token
+
+
+def is_loopback_host(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def pair_links(port: int, token: str, addresses: list[str]) -> list[dict]:
+    """One pairing link per address, in the order given (the primary address is first)."""
+    return [{"address": a, "url": f"http://{a}:{port}/pair?t={token}"} for a in addresses]
+
+
+def _accepts(host: str, port: int) -> bool:
+    """True when something accepts a TCP connection on host:port."""
+    try:
+        with socket.create_connection((host, port), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+def _open(open_url: Callable[[str], Any], url: str) -> bool:
+    try:
+        return open_url(url) is not False
+    except Exception:
+        log.warning("could not open %s in a browser", url, exc_info=True)
+        return False
+
+
+def pairing_link(
+    cfg: Config, open_browser: bool = True, open_url: Callable[[str], Any] = webbrowser.open
+) -> dict:
+    """The pairing links of the running feed server, for the agent to show to the user.
+
+    The answer comes from what the server serves now (a TCP connect to each address), not
+    only from the settings: a server started with `--lan` or `--no-lan` is seen as it is.
+    With `open_browser`, the QR page is opened in the default browser of this computer."""
+    server = cfg.settings.server
+    port = server.port
+    wide = server.lan or server.host in ALL_INTERFACES or is_loopback_host(server.host)
+    local = "127.0.0.1" if wide else server.host
+    out: dict = {"lan": False, "links": [], "qr_page": None, "opened": False}
+    if not _accepts(local, port):
+        out["message"] = (
+            f"The feed server does not answer on {local}:{port}, so there is nothing to pair "
+            "with. Start it, then call pairing_link again. In a clone: the user runs /mcp, "
+            "picks gittok, and Reconnect. Installed: run `gittok install --launchd --apply` "
+            "with Bash, or the user starts `gittok serve`."
+        )
+        return out
+    if wide:
+        out["qr_page"] = f"http://127.0.0.1:{port}{PAIRING_PAGE}"
+    addresses = lan_addresses() if wide else [server.host]
+    serving = [a for a in addresses if _accepts(a, port)]
+    if not serving:
+        if not addresses:
+            out["message"] = (
+                "This computer has no LAN address now. Connect it to a network, then call "
+                "pairing_link again."
+            )
+        elif server.lan:
+            out["message"] = (
+                "Phone access is on in the settings, but the running server answers this "
+                f"computer only. {LAN_RESTART}"
+            )
+        else:
+            out["message"] = (
+                "Phone access is off (`server.lan: false`, or the server was started with "
+                "--no-lan). Ask the user. If they want it on, call set_lan(enabled=true)."
+            )
+        return out
+    out["lan"] = True
+    out["links"] = pair_links(port, ensure_lan_token(cfg.settings.data_dir), serving)
+    if open_browser and out["qr_page"]:
+        out["opened"] = _open(open_url, out["qr_page"])
+    where = (
+        "The QR page is open in the browser of this computer. "
+        if out["opened"]
+        else "Give the user the qr_page address to open on this computer, or a link. "
+    )
+    out["message"] = (
+        f"{where}The user scans a QR code with the phone camera, or opens a link on the "
+        "phone, once per device. Both devices must be on the same network. A link holds a "
+        "secret token: show it only to the user, and never put it in a card, a file or a "
+        "commit."
+    )
+    out["notice"] = LAN_NOTICE
+    return out

@@ -339,8 +339,12 @@ describe('feed page', () => {
 			render(Page);
 			const empty = await screen.findByRole('region', { name: 'No repos configured' });
 			expect(empty).toHaveTextContent(/no repos are configured/i);
-			expect(empty).toHaveTextContent('gittok repos add <name> <path>');
-			expect(empty).toHaveTextContent('/gittok-generate');
+			expect(empty).toHaveTextContent(/ask Claude to add one/i);
+			expect(empty).toHaveTextContent('add the repo at ~/src/myapp');
+			expect(empty).toHaveTextContent('gittok repos add <name> <path-or-url>');
+			const text = empty.textContent ?? '';
+			expect(text.indexOf('add the repo at')).toBeLessThan(text.indexOf('gittok repos add'));
+			expect(empty).toHaveTextContent(/ask Claude to make cards/i);
 			expect(screen.queryByText(/caught up/i)).toBeNull();
 			expect(screen.queryByRole('note')).toBeNull(); // no swipe hints with nothing to swipe
 		});
@@ -379,8 +383,10 @@ describe('feed page', () => {
 			render(Page);
 			const alert = await screen.findByRole('alert');
 			expect(alert).toHaveTextContent(/this device is not paired/i);
-			expect(alert).toHaveTextContent(/pairing link/i);
+			expect(alert).toHaveTextContent(/ask Claude for the pairing QR code/i);
+			expect(alert).toHaveTextContent(/scan it with this device/i);
 			expect(alert).toHaveTextContent(/on the computer that runs GitTok/i);
+			expect(alert).not.toHaveTextContent('pair:');
 			expect(alert).not.toHaveTextContent(/failed to load feed/i);
 			paired = true;
 			await fireEvent.click(screen.getByRole('button', { name: 'Try again' }));

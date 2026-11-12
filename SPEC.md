@@ -43,7 +43,7 @@ This document describes the design. The exact contracts are in `docs/`: card for
             │         │                                           │
             │   MCP server + CLI ◄── submit_cards / steering tools│
             └─────────┼───────────────────────────────────────────┘
-                      │ loopback; LAN is opt-in, with pairing
+                      │ loopback, and the LAN with pairing
                    Browser or phone (web app)
 ```
 
@@ -66,7 +66,7 @@ One Python process serves the feed API, the web app, the MCP endpoint, and the b
 | Illustrations | mflux on Apple silicon (optional) |
 | Code and diagrams in the client | Shiki for syntax highlighting, Mermaid for diagram cards |
 | Web app | SvelteKit with the static adapter, CSS scroll-snap |
-| Phone access | The local network, opt-in, with a pairing token. The server speaks plain HTTP |
+| Phone access | The local network, on by default, with a pairing token for each device. The server speaks plain HTTP |
 | Learning | Thompson sampling, written by hand (section 12) |
 | Agent interface | An MCP server (the official Python SDK) and a CLI over the same functions |
 
@@ -452,9 +452,16 @@ The MCP server is named `gittok`. Its tools fall into these groups:
 | Repo profiles | `survey_repo`, `test_detector`, `save_profile`, `rule_stats`, `submit_facts` |
 | What the feed learned | `get_taste_profile`, `explain_weights`, `feed_health`, `coverage`, `recent_cards`, `card_stats` |
 | Steering | `list_rules`, `add_rule`, `remove_rule`, `reset_defaults`, `set_playback_speed` |
-| Config | `list_repos`, `add_repo`, `set_group`, `set_mascot`, `edit_persona` |
+| Config | `list_repos`, `add_repo`, `remove_repo`, `set_group`, `set_mascot`, `edit_persona` |
+| Phone access | `pairing_link`, `set_lan` |
 
-Every repo tool takes a configured repo name, never a path.
+Every repo tool takes a configured repo name, never a path. The one exception is `add_repo`, which takes the path or URL of the repo to add.
+
+The user manages GitTok by asking the agent in plain words: the server's MCP instructions and the `gittok-steer` skill map such requests to the Config, Phone access and Steering tools. These tools change the user's setup, so they are only for a request the user made in the conversation. The writer and scout subagents do not have them, and the generation and profiling skills forbid them.
+
+- `add_repo` accepts the root of any git repo on the machine (own `.git`, top of the checkout, has a commit, not inside a configured repo). The permission prompt of Claude Code is the consent. `repos.allowed_roots`, when the user set it, limits the tool to those directories.
+- `remove_repo` removes the entry. It deletes the directory only for a clone that GitTok made (`remote` set, path exactly `<home>/repos/<name>`, not a symlink).
+- `pairing_link` returns the pairing links, opens the loopback-only QR page (`/pairing`) in the browser, and carries a `notice` about LAN serving that the agent relays to the user. `set_lan` writes only `server.lan` in `local/settings.yaml`; the change needs a server restart.
 
 The server writes `<data_dir>/profile.md`, a plain-English summary of the learned taste, once a day. The CLI (`gittok --help`) gives the same functions without an agent.
 

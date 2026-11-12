@@ -318,23 +318,7 @@ async def test_get_brief_with_no_repos_returns_a_message_and_opens_no_run(fixtur
             out = data(await client.call_tool("get_brief", args))
             assert out["run_id"] is None and out["nothing_to_do"] is True
             assert out["no_repos"] is True
-            assert "gittok repos add <name> <path>" in out["message"]
+            assert "Ask the user which repo to add" in out["message"]
+            assert "add_repo" in out["message"] and "terminal" not in out["message"]
     with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         assert conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 0
-
-
-async def test_add_repo_tool_stays_inside_the_allowed_roots(fixture_repo, tmp_path):
-    """The agent cannot add a repo on a fresh install; the error says what the user must do."""
-    from dataclasses import replace
-
-    from tests.test_steering import _commit_in
-
-    cfg = replace(make_config(fixture_repo, tmp_path), repos={})
-    repo = tmp_path / "code" / "first"
-    _commit_in(repo)
-    server = mcp_server.build_server(lambda: cfg)
-    async with Client(server) as client:
-        res = await client.call_tool("add_repo", {"name": "first", "path": str(repo)})
-        assert res.is_error
-        text = res.content[0].text
-        assert "gittok repos add first" in text and "allowed_roots" in text

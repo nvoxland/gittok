@@ -30,6 +30,7 @@ dependencies = [
   "tree-sitter>=0.25",  # structure layer
   "tree-sitter-language-pack>=1.22,<1.23",  # its grammars
   "ast-grep-py>=0.51",  # ast_grep rules in repo profiles
+  "segno>=1.6",  # QR code of the pairing link (pure Python, no dependencies)
 ]
 
 [project.scripts]
@@ -65,7 +66,7 @@ packages = ["src/gittok"]
 
 # `uv build` makes the wheel from the sdist, so the sdist carries the same files.
 [tool.hatch.build.targets.sdist]
-include = ["/src", "/config", "/.claude/skills", "/.claude/agents", "/hatch_build.py", "/docs", "/README*", "/LICENSE", "/AGENTS.md", "/SPEC.md"]
+include = ["/src", "/config", "/.claude/skills", "/.claude/agents", "/hatch_build.py", "/docs", "/README*", "/LICENSE", "/AGENTS.md", "/DEV.md", "/SPEC.md"]
 artifacts = ["/web/build"]
 
 [tool.pytest.ini_options]

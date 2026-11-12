@@ -255,8 +255,8 @@
 		<div class="status" role="alert">
 			<h2>This device is not paired</h2>
 			<p>
-				On the computer that runs GitTok, find the pairing link that the server prints when it
-				starts (a line that begins with <code>pair:</code>). Open that link on this device, once.
+				On the computer that runs GitTok, ask Claude for the pairing QR code ("pair my phone"), and
+				scan it with this device. You do this once for each device.
 			</p>
 			<button type="button" onclick={load}>Try again</button>
 		</div>
@@ -270,10 +270,12 @@
 			<h2>No repos yet</h2>
 			<p>No repos are configured, so there is nothing to make cards from.</p>
 			<p>
-				On the computer that runs GitTok, add one:
-				<code>gittok repos add &lt;name&gt; &lt;path&gt;</code>
+				On the computer that runs GitTok, ask Claude to add one, for example: "add the repo at
+				~/src/myapp". Then ask Claude to make cards.
 			</p>
-			<p>Then open Claude Code and run <code>/gittok-generate</code>.</p>
+			<p class="muted">
+				Or in a terminal: <code>gittok repos add &lt;name&gt; &lt;path-or-url&gt;</code>
+			</p>
 			<button type="button" onclick={load}>Check again</button>
 		</section>
 	{:else}

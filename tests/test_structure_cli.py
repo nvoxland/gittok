@@ -70,6 +70,7 @@ def test_health_hint_has_one_line_when_grammars_are_missing(cfg, capsys, monkeyp
     assert cli.main(["health", "--hint"]) == 0
     lines = capsys.readouterr().out.strip().splitlines()
     assert len(lines) == 1 and "structure --prefetch" in lines[0] and "python" in lines[0]
+    assert "Offer to download" in lines[0] and "with Bash" in lines[0]
 
 
 def test_health_hint_is_silent_without_the_group(cfg, capsys, monkeypatch):

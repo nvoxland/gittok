@@ -50,10 +50,10 @@ describe('Card header', () => {
 		expect(container.querySelector('header [data-icon="dir"]')).not.toBeNull();
 	});
 	it('links the repo name to its profile', () => {
-		render(Card, { card: fakeCard({ repo: 'harbor master' }) });
-		expect(screen.getByRole('link', { name: 'harbor master' })).toHaveAttribute(
+		render(Card, { card: fakeCard({ repo: 'storefront master' }) });
+		expect(screen.getByRole('link', { name: 'storefront master' })).toHaveAttribute(
 			'href',
-			'/repo/harbor%20master'
+			'/repo/storefront%20master'
 		);
 	});
 	it('falls back to initials when the header avatar fails', async () => {

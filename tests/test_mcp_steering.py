@@ -19,6 +19,9 @@ STEERING_TOOLS = {
     "remove_rule",
     "reset_defaults",
     "add_repo",
+    "remove_repo",
+    "set_lan",
+    "pairing_link",
     "set_group",
     "set_mascot",
     "edit_persona",
@@ -108,7 +111,7 @@ async def test_add_repo_is_seen_by_the_next_list_repos(fixture_repo, tmp_path):
             )
         )
         assert added["name"] == "delta"
-        assert "/gittok-profile-repo delta" in added["next"]
+        assert "/gittok-profile-repo delta" in added["next"] and "offer" in added["next"]
         repos = {r["name"]: r for r in data(await client.call_tool("list_repos", {}))}
         assert repos["delta"]["group"] == "newbies"
         data(await client.call_tool("set_group", {"repo": "delta", "group": "oldies"}))
@@ -240,4 +243,6 @@ async def test_add_repo_by_url_clones_and_the_research_tools_read_it(
         )
         assert bad.is_error and "tok3n" not in bad.content[0].text
         assert "credential helper" in bad.content[0].text
-        assert "remove_repo" not in tools  # removing a repo is a user act (CLI only)
+        gone = data(await client.call_tool("remove_repo", {"name": "proj"}))
+        assert gone["deleted_clone"] is True  # GitTok made this clone, so it deletes it
+        assert not (ycfg.root / "repos" / "proj").exists()

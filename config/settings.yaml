@@ -2,7 +2,7 @@ data_dir: data                 # relative to the project root, or absolute / ~
 server:
   host: 127.0.0.1
   port: 8008
-  lan: false                   # true: serve the feed to the LAN (same as --lan); needs pairing
+  lan: true                    # serve the feed to the local network, for a phone (plain HTTP; each device pairs once). false: this computer only
   allowed_hosts: []            # extra Host names the server answers to, such as a VPN name
 agent:
   default_count: 10            # cards per get_brief
@@ -60,12 +60,12 @@ render:
   memegen_url: http://127.0.0.1:5001  # the memegen server that draws meme cards
   worker_interval_s: 5.0       # how often the render worker looks for pending cards
 repos:
-  # The add_repo MCP tool (an agent calls it) only accepts a git repo root inside one of these
-  # directories. Empty = the parent directories of the repos in local/repos.yaml; with no
-  # repos yet, the tool accepts nothing. `gittok repos add <name> <path>` in a terminal is
-  # your own act and accepts any git repo root. To let the tool add repos in a new place,
-  # set this in local/settings.yaml, for example: allowed_roots: [~/src, ~/work]
-  # A repo added by URL is cloned into GitTok's home directory (repos/<name>); this list
+  # An optional limit for the add_repo MCP tool (an agent calls it). Empty = no limit: the
+  # tool accepts any git repo root, and the permission prompt of Claude Code is your consent.
+  # With a list, the tool only accepts a repo root inside one of these directories. Set it
+  # in local/settings.yaml, for example: allowed_roots: [~/src, ~/work]
+  # `gittok repos add <name> <path>` in a terminal is your own act: the list does not apply.
+  # A repo added by URL is cloned into GitTok's home directory (repos/<name>); the list
   # does not apply to it.
   allowed_roots: []
 gc:

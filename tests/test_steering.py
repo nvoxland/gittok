@@ -515,7 +515,7 @@ def test_add_repo_appends_entry_checks_git_and_keeps_comments(ycfg, fixture_repo
         "ref": "main",
         "group": "ops",
         "mascot": "crow",
-        "next": "Next: run /gittok-profile-repo gamma to teach GitTok this codebase.",
+        "next": steering.next_step("gamma"),
     }
     new = config_mod.load_config(ycfg.root)
     g = new.repos["gamma"]
@@ -687,10 +687,17 @@ def _git_calls(monkeypatch):
 def test_add_repo_checks_the_roots_before_it_runs_git(ycfg, tmp_path, monkeypatch):
     elsewhere = tmp_path / "elsewhere" / "secrets"
     _commit_in(elsewhere)
+    (tmp_path / "allowed").mkdir()
     calls = _git_calls(monkeypatch)
     with pytest.raises(steering.SteeringError, match="allowed_roots"):
-        steering.add_repo(ycfg, "secrets", str(elsewhere))
+        steering.add_repo(_with_roots(ycfg, tmp_path / "allowed"), "secrets", str(elsewhere))
     assert calls == []
+
+
+def test_add_repo_next_step_is_guidance_for_the_agent():
+    text = steering.next_step("gamma")
+    assert "gittok-profile-repo" in text and "gamma" in text
+    assert "terminal" not in text
 
 
 def test_add_repo_refuses_an_embedded_git_dir_without_a_git_call(ycfg, tmp_path, monkeypatch):
@@ -776,50 +783,63 @@ def fresh_cfg(tmp_path):
     return config_mod.load_config(tmp_path / "fresh")
 
 
-def test_add_repo_on_a_fresh_install_tells_the_agent_what_the_user_must_do(fresh_cfg, tmp_path):
-    assert fresh_cfg.repos == {}
+def test_add_repo_accepts_any_repo_root_when_no_roots_are_set(fresh_cfg, tmp_path):
+    """The permission prompt of the tool call is the consent: no roots, no limit."""
+    assert fresh_cfg.repos == {} and fresh_cfg.settings.repos.allowed_roots == ()
     repo = tmp_path / "code" / "first"
     _commit_in(repo)
-    with pytest.raises(steering.SteeringError) as e:
-        steering.add_repo(fresh_cfg, "first", str(repo))
-    msg = str(e.value)
-    assert "gittok repos add first" in msg and "allowed_roots" in msg
-    assert "local/settings.yaml" in msg and "terminal" in msg
-    assert config_mod.load_config(fresh_cfg.root).repos == {}
-
-
-def test_add_repo_any_root_is_the_users_own_act_and_skips_the_roots(fresh_cfg, tmp_path):
-    repo = tmp_path / "code" / "first"
-    _commit_in(repo)
-    out = steering.add_repo(fresh_cfg, "first", str(repo), any_root=True)
+    out = steering.add_repo(fresh_cfg, "first", str(repo))
     assert out["path"] == str(repo.resolve())
-    assert list(config_mod.load_config(fresh_cfg.root).repos) == ["first"]
+    cfg = config_mod.load_config(fresh_cfg.root)
+    assert list(cfg.repos) == ["first"]
+    # a configured repo opens and closes nothing: any other repo root is accepted too
+    far = tmp_path / "elsewhere" / "second"
+    _commit_in(far)
+    steering.add_repo(cfg, "second", str(far))
+    assert list(config_mod.load_config(fresh_cfg.root).repos) == ["first", "second"]
     # the other checks still apply
-    other = tmp_path / "code" / "second"
+    other = tmp_path / "code" / "third"
     _commit_in(other)
     (other / "sub").mkdir()
     with pytest.raises(steering.SteeringError, match="repo root"):
-        steering.add_repo(fresh_cfg, "sub", str(other / "sub"), any_root=True)
+        steering.add_repo(fresh_cfg, "sub", str(other / "sub"))
     with pytest.raises(steering.SteeringError, match="not a git repo"):
-        steering.add_repo(fresh_cfg, "none", str(repo.parent), any_root=True)
+        steering.add_repo(fresh_cfg, "none", str(repo.parent))
 
 
-def test_add_repo_requires_an_allowed_root(ycfg, fixture_repo, tmp_path):
+def test_add_repo_outside_the_roots_the_user_set_is_refused_with_guidance(fresh_cfg, tmp_path):
+    repo = tmp_path / "code" / "first"
+    _commit_in(repo)
+    (tmp_path / "work").mkdir()
+    cfg = _with_roots(fresh_cfg, tmp_path / "work")
+    with pytest.raises(steering.SteeringError) as e:
+        steering.add_repo(cfg, "first", str(repo))
+    msg = str(e.value)
+    assert "allowed_roots" in msg and "local/settings.yaml" in msg
+    assert "the user set" in msg.lower() and str(tmp_path / "work") in msg
+    assert config_mod.load_config(fresh_cfg.root).repos == {}
+    # the CLI is the user's own act: it skips the limit
+    out = steering.add_repo(cfg, "first", str(repo), any_root=True)
+    assert out["path"] == str(repo.resolve())
+
+
+def test_add_repo_inside_the_roots_resolves_symlinks(ycfg, fixture_repo, tmp_path):
+    cfg = _with_roots(ycfg, fixture_repo.path.parent)
     elsewhere = tmp_path / "elsewhere" / "secrets"
     elsewhere.mkdir(parents=True)
     _commit_in(elsewhere)
     with pytest.raises(steering.SteeringError, match="allowed_roots"):
-        steering.add_repo(ycfg, "secrets", str(elsewhere))
+        steering.add_repo(cfg, "secrets", str(elsewhere))
     # a subdirectory of a configured repo is not a repo of its own
     sub = fixture_repo.path / "src"
     with pytest.raises(steering.SteeringError, match="inside the repo 'alpha'"):
-        steering.add_repo(ycfg, "sub", str(sub))
+        steering.add_repo(cfg, "sub", str(sub))
     # a symlink out of the roots resolves to where it points
     link = fixture_repo.path.parent / "link-out"
     link.symlink_to(elsewhere)
     try:
         with pytest.raises(steering.SteeringError, match="allowed_roots"):
-            steering.add_repo(ycfg, "linked", str(link))
+            steering.add_repo(cfg, "linked", str(link))
     finally:
         link.unlink()
     assert not {"secrets", "sub", "linked"} & set(config_mod.load_config(ycfg.root).repos)
@@ -1115,10 +1135,55 @@ def test_remove_repo_never_deletes_a_directory_it_does_not_manage(ycfg, fixture_
     assert (mine / "f.txt").exists()
 
 
-def test_a_managed_clone_does_not_open_an_allowed_root(fresh_cfg, remote, tmp_path):
-    steering.add_repo(fresh_cfg, "proj", URL)
-    cfg = config_mod.load_config(fresh_cfg.root)
-    local = tmp_path / "code" / "mine"
-    _commit_in(local)
-    with pytest.raises(steering.SteeringError, match="No directory is allowed yet"):
-        steering.add_repo(cfg, "mine", str(local))
+# --- phone access (server.lan) -----------------------------------------------------------------
+
+
+def test_set_lan_writes_only_server_lan_and_is_audited(ycfg):
+    assert ycfg.settings.server.lan is True  # the default
+    out = steering.set_lan(ycfg, False)
+    assert out["lan"] is False and "restart" in out
+    assert text(ycfg, "settings.yaml") == "server:\n  lan: false\n"
+    assert config_mod.load_config(ycfg.root).settings.server.lan is False
+    log = (ycfg.settings.data_dir / "config_audit.log").read_text().splitlines()
+    entry = json.loads(log[-1])
+    assert entry["tool"] == "set_lan" and entry["args"] == {"enabled": False}
+    assert entry["created_by"] == "agent"
+    steering.set_lan(ycfg, True)
+    assert text(ycfg, "settings.yaml") == "server:\n  lan: true\n"
+    assert config_mod.load_config(ycfg.root).settings.server.lan is True
+
+
+def test_set_lan_keeps_the_other_settings_and_comments(ycfg):
+    file = ycfg.root / "local" / "settings.yaml"
+    file.write_text(
+        "# mine\nserver:\n  port: 8010  # other port\n  lan: false  # phone\n"
+        "agent:\n  default_count: 7\n"
+    )
+    steering.set_lan(ycfg, True)
+    assert file.read_text() == (
+        "# mine\nserver:\n  port: 8010  # other port\n  lan: true  # phone\n"
+        "agent:\n  default_count: 7\n"
+    )
+    file.write_text("agent:\n  default_count: 7\n")
+    steering.set_lan(ycfg, True)
+    assert file.read_text() == "agent:\n  default_count: 7\n\nserver:\n  lan: true\n"
+    file.write_text("server:\n  port: 8010\nagent:\n  default_count: 7\n")
+    steering.set_lan(ycfg, True)
+    assert file.read_text() == ("server:\n  port: 8010\n  lan: true\nagent:\n  default_count: 7\n")
+    new = config_mod.load_config(ycfg.root).settings
+    assert new.server.port == 8010 and new.agent.default_count == 7
+
+
+@pytest.mark.parametrize("value", ["yes", 1, None, "true"])
+def test_set_lan_takes_only_true_or_false(ycfg, value):
+    with pytest.raises(steering.SteeringError, match="true or false"):
+        steering.set_lan(ycfg, value)
+    assert not (ycfg.root / "local" / "settings.yaml").exists()
+
+
+def test_set_lan_refuses_an_inline_section_and_restores_the_file(ycfg):
+    file = ycfg.root / "local" / "settings.yaml"
+    file.write_text("server: {port: 8010}\n")
+    with pytest.raises(steering.SteeringError, match="by hand"):
+        steering.set_lan(ycfg, True)
+    assert file.read_text() == "server: {port: 8010}\n"

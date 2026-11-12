@@ -1,21 +1,21 @@
 # Installing GitTok for daily use
 
-## Install without a clone
+## Install
 
-You do not need a clone to run GitTok. You need macOS, `uv`, `git`, and Claude Code. There is no published package yet, so you install from a wheel file:
+You need macOS, `uv`, `git`, and Claude Code. You do not need a clone.
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh        # if you do not have uv yet
-uv tool install ./gittok-<version>-py3-none-any.whl
+uv tool install gittok
 gittok --version
 ```
 
-To build the wheel in a clone: `npm --prefix web install && npm --prefix web run build`, then `uv build --wheel` (the file goes to `dist/`). A git URL install (`uv tool install git+<url>`) does not work, because the web build is not committed.
+The wheel is also attached to each GitHub release of the repository: `uv tool install ./gittok-<version>-py3-none-any.whl` installs such a file. A git URL install (`uv tool install git+<url>`) does not work, because the web build is not committed. `DEV.md` says how to build the wheel in a clone.
 
 The tree-sitter structure layer and ast-grep rules come with every install. One extra is optional, because it is large (torch and mlx, about 1 GB, plus the models it downloads later):
 
 ```bash
-uv tool install 'gittok[images] @ ./gittok-<version>-py3-none-any.whl'   # mflux art (Apple silicon only)
+uv tool install 'gittok[images]'   # mflux art (Apple silicon only)
 ```
 
 The package carries its own shared files: `config/`, the web app, and the skills and agents. You edit none of them. Your own files live in one home folder:
@@ -33,16 +33,39 @@ gittok install            # dry run: shows what it would do
 gittok install --apply    # MCP at http://127.0.0.1:8008/mcp, skills and agents, LaunchAgent
 ```
 
-The LaunchAgent runs `gittok serve` from your home folder. To run it by hand, use `gittok serve`. The feed is at `http://127.0.0.1:8008`.
+The LaunchAgent runs `gittok serve` from your home folder. To run it by hand, use `gittok serve`. The feed is at `http://127.0.0.1:8008` on this computer. The server also serves the feed to your local network, for a phone: read "Phone access" below.
 
-Add a repo in one of these ways:
+After the install, start a new Claude Code session. You manage GitTok by asking Claude. The sections below say what to ask, and give the command for each step for people who prefer a terminal.
 
-- Run `gittok repos add <name> <path-or-url>` in a terminal.
-  - A local path must be the root of a git repo that has a commit. GitTok reads it and never changes it.
-  - A remote URL (`https://`, `ssh://`, `git://` or `git@host:org/repo.git`) is cloned into the GitTok home folder, at `repos/<name>` (installed: `~/.gittok/repos/<name>`). For a URL the name is optional: `gittok repos add https://example.com/acme/harbor.git` uses `harbor`. GitTok fetches this clone before each analysis.
-  - A URL must not hold a password or token. For a private repo, use an ssh URL or a git credential helper. The clone does not ask for a password; it fails.
-- Ask Claude to call the `add_repo` MCP tool. For a local path, the tool only accepts a repo inside `repos.allowed_roots` (`local/settings.yaml`), or next to a local repo you already added. It accepts a remote URL in all cases.
-- Write `~/.gittok/local/repos.yaml` yourself:
+## Add and remove repos
+
+Ask Claude:
+
+- "Add the repo at ~/src/myapp to GitTok."
+- "Add https://example.com/acme/storefront.git to GitTok."
+- "Which repos does GitTok have?"
+- "Remove storefront from GitTok."
+
+Claude calls the `add_repo`, `list_repos` and `remove_repo` MCP tools. Claude Code asks for your permission before each call.
+
+- A local path must be the root of a git repo that has a commit, and not a directory inside a repo that is already added. It may be anywhere on this computer. GitTok reads it and never changes it.
+- A remote URL (`https://`, `ssh://`, `git://` or `git@host:org/repo.git`) is cloned into the GitTok home folder, at `repos/<name>` (installed: `~/.gittok/repos/<name>`). GitTok fetches this clone before each analysis.
+- A URL must not hold a password or token. For a private repo, use an ssh URL or a git credential helper. The clone does not ask for a password; it fails.
+- To limit where the `add_repo` tool may add a local repo, set `repos.allowed_roots` in `local/settings.yaml` (`docs/config.md`). The list is empty by default, which means no limit.
+- Removing a repo takes it out of `local/repos.yaml`. GitTok deletes the directory only when it is a clone that GitTok made itself (a repo added by URL, at `repos/<name>`). It never touches a directory that you gave. Cards already made from the repo stay.
+
+After a repo is added, Claude offers to profile it (`/gittok-profile-repo <name>`). Then ask for cards ("make GitTok cards", or `/gittok-generate`).
+
+The same steps as commands:
+
+```bash
+gittok repos add myapp ~/src/myapp
+gittok repos add https://example.com/acme/storefront.git    # the name comes from the URL: storefront
+gittok repos                                            # list
+gittok repos remove storefront
+```
+
+`gittok repos add` in a terminal is your own act: `repos.allowed_roots` does not apply to it. You can also write `~/.gittok/local/repos.yaml` yourself:
 
 ```yaml
 repos:
@@ -50,11 +73,36 @@ repos:
     path: ~/src/myapp
 ```
 
-`gittok repos` lists the repos. `gittok repos remove <name>` removes one. It deletes the clone only when GitTok made it (a repo added by URL); it never touches a directory you gave. Cards already made from the repo stay.
+## Phone access
 
-To upgrade, install the new wheel over the old one (`uv tool install --force ./gittok-<new version>-py3-none-any.whl`), then run `gittok install --apply --force` to refresh the skills and agents. To remove GitTok, see "Undo".
+GitTok is made for a phone, so LAN serving is on by default (`server.lan: true`). The server binds all interfaces, and a device that is not this computer must pair once.
 
-The project `.mcp.json` flow (a Claude session owns the server) works only in a clone. A clone keeps working as before: it uses its own `config/`, `local/` and `data/`. `GITTOK_ROOT` points to a clone from any directory.
+To pair a phone, ask Claude: "Pair my phone." Claude calls the `pairing_link` tool. It opens `http://127.0.0.1:8008/pairing` in the browser of this computer. That page shows one QR code for each LAN address of the computer, with the link as text. Scan the code with the phone camera. Both devices must be on the same network. The page answers this computer only. A server that you start by hand with `gittok serve` also prints the pairing links (lines that begin with `pair:`).
+
+What this means for your network:
+
+- The feed goes over plain HTTP, not HTTPS.
+- Any device on the same network can reach the port. It gets nothing until it opens the pairing link or QR code once. The MCP endpoint (`/mcp`) is never served to the network.
+- Someone who can watch traffic on that network could read the pairing token and the cards. Cards hold excerpts of your code.
+- So use it on a network you trust, such as your home network. Take care on shared or public Wi-Fi.
+- "HTTPS on a LAN" below has an optional recipe.
+
+To turn it off, ask Claude: "Turn off phone access." Claude calls `set_lan(enabled=false)`, which writes `server.lan: false` to `local/settings.yaml`. You can also write that yourself, or start the server with `--no-lan`. The server then answers this computer only. The setting is read when the server starts, so restart it: `launchctl kickstart -k gui/$(id -u)/dev.gittok.serve` for the LaunchAgent (Claude can run this), or `/mcp`, gittok, Reconnect for a server that a Claude Code session owns. "Turn on phone access" does the reverse.
+
+The pairing link holds a secret token. Do not put it in a file, a commit or a chat with other people. To make a new token, delete `<data_dir>/lan_token` and restart the server; every device must then pair again.
+
+## Upgrade
+
+```bash
+uv tool upgrade gittok
+gittok install --apply --force
+```
+
+The second command refreshes the skills and agents, and loads the LaunchAgent again so the new server starts. To remove GitTok, see "Undo".
+
+## Clone or installed tool
+
+The project `.mcp.json` flow (a Claude session owns the server) works only in a clone (`DEV.md`). A clone uses its own `config/`, `local/` and `data/`. `GITTOK_ROOT` points to a clone from any directory.
 
 How GitTok picks its folders:
 
@@ -72,7 +120,7 @@ How GitTok picks its folders:
 | Skills | `--skills` | Copies the skills `gittok-generate`, `gittok-steer` and `gittok-profile-repo` to `~/.claude/skills/`, and the agents `gittok-writer.md` and `gittok-scout.md` to `~/.claude/agents/`. The source is `.claude/` in a clone, or the package when installed. |
 | LaunchAgent | `--launchd` | Writes `~/Library/LaunchAgents/dev.gittok.serve.plist` and loads it with `launchctl bootstrap`. `gittok serve` then starts at login and restarts if it stops. Logs go to `<data_dir>/logs/serve.log`. |
 
-With no part flag, all three run. Host and port come from the settings (`server.host`, `server.port`).
+With no part flag, all three run. The MCP address comes from the settings (`server.host`, `server.port`). The output ends with a note about phone access, because the server that the LaunchAgent starts serves the feed to your local network ("Phone access").
 
 The other flags:
 
@@ -163,6 +211,8 @@ The clone's own file uses `uv run --quiet gittok ...` in both hook commands.
 
 GitTok reads code structure (definitions, imports, comments) with tree-sitter. It is a normal dependency. A language whose grammar is not downloaded yet works on the regex patterns in `config/languages.yaml` and, for other file types, on plain text rules.
 
+To get the grammars, ask Claude: "Download the GitTok grammars." Claude runs the second command below. With the session hooks on, Claude offers this itself when a grammar is missing.
+
 ```bash
 gittok structure               # status: installed, grammars needed, grammars missing (JSON)
 gittok structure --prefetch    # download the grammars for the repos in local/repos.yaml
@@ -189,7 +239,7 @@ Illustration and comic cards, and the persona avatars, are drawn by [mflux](http
 
 ```bash
 uv sync --group images                                                   # in a clone
-uv tool install --force 'gittok[images] @ ./gittok-<version>-py3-none-any.whl'   # installed tool
+uv tool install --force 'gittok[images]'                                 # installed tool
 ```
 
 The commands below are for a clone. For an installed tool, write `gittok` in place of `uv run gittok`. `mflux-save` is then in the tool's environment and not on your PATH: run `"$(uv tool dir)/gittok/bin/mflux-save"` in place of `uv run mflux-save`.
@@ -208,7 +258,7 @@ render:
   mflux_model: z-image-turbo                    # the family it is based on
 ```
 
-With `mflux_path` set, a render loads about 7 GB (q4) or 14 GB (q8) and takes 10 to 20 s per image at 8 steps. Use `--quantize 6` or `8` if the flat-vector mascots look rough at 4. Restart `gittok serve` (or `/mcp` → gittok → Reconnect) after installing, then check with:
+With `mflux_path` set, a render loads about 7 GB (q4) or 14 GB (q8) and takes 10 to 20 s per image at 8 steps. Use `--quantize 6` or `8` if the flat-vector mascots look rough at 4. Restart `gittok serve` (or `/mcp` → gittok → Reconnect) after installing. Then ask Claude to draw the persona avatars, or run:
 
 ```bash
 uv run gittok avatars      # draws the persona avatars; the first image also warms the Metal cache
@@ -236,7 +286,7 @@ Fetch updates remote-tracking refs only. It never changes the working tree, the 
 
 ## LAN notes
 
-LAN serving is off by default: the project `.mcp.json` runs `gittok mcp --ui`, which serves loopback only. To turn it on, pass `--lan` to `gittok serve` or `gittok mcp --ui`, or set `server.lan: true` in `local/settings.yaml` (the LaunchAgent's `gittok serve` and the `.mcp.json` session then serve the LAN without a flag). With LAN serving on, the server binds all interfaces. A bind to any other non-loopback `--host` is token-protected in the same way. The feed and `/api/*` need a pairing cookie from non-loopback peers: open the `pair:` URL printed at start-up once on each device. The token lives in `<data_dir>/lan_token` (mode 0600). `/mcp` is loopback-only and refuses LAN peers. PWA install and offline mode need HTTPS, because service workers do not register on plain-HTTP LAN origins. See `docs/social.md`.
+LAN serving is on by default (`server.lan: true`): `gittok serve` and `gittok mcp --ui` bind all interfaces. "Phone access" above says what that means and how to pair a device. To turn it off, set `server.lan: false` in `local/settings.yaml`, or pass `--no-lan`; the server then binds `127.0.0.1`. An explicit `--host` is used as given, and `--lan` forces LAN serving. A bind to any non-loopback address is token-protected in the same way. The feed and `/api/*` need a pairing cookie from non-loopback peers: scan the QR code from the pairing page, or open a `pair:` link, once on each device. The token lives in `<data_dir>/lan_token` (mode 0600). `/mcp` and the pairing page (`/pairing`) are loopback-only and refuse LAN peers. PWA install and offline mode need HTTPS, because service workers do not register on plain-HTTP LAN origins. See `docs/social.md`.
 
 ## HTTPS on a LAN (optional, for PWA install)
 
@@ -244,11 +294,11 @@ You do not need this to use the feed. Plain HTTP on the LAN works in a browser t
 
 **The project does not test these recipes.** GitTok itself serves plain HTTP only. The recipes use a second program on the same computer that holds the certificate and forwards to `http://127.0.0.1:8008`. Read the two warnings first.
 
-**Warning 1: a proxy needs LAN serving on, and each device must pair.** A proxy on the same computer connects from `127.0.0.1`. GitTok does not treat such a request as local when it has one of the headers `X-Forwarded-For`, `Forwarded`, `X-Forwarded-Host`, `X-Forwarded-Proto` or `X-Real-IP`. A request with one of these headers never gets `/mcp` (HTTP 403), and it needs the pairing cookie, the same as a LAN device. Know these limits:
+**Warning 1: a proxy needs LAN serving on (the default), and each device must pair.** A proxy on the same computer connects from `127.0.0.1`. GitTok does not treat such a request as local when it has one of the headers `X-Forwarded-For`, `Forwarded`, `X-Forwarded-Host`, `X-Forwarded-Proto` or `X-Real-IP`. A request with one of these headers never gets `/mcp` (HTTP 403), and it needs the pairing cookie, the same as a LAN device. Know these limits:
 
-- The server has a pairing token only when LAN serving is on (`--lan`, or `server.lan: true`) or when `--host` is not a loopback address. With LAN serving off there is no token, so nothing can pair: GitTok refuses every request that has one of these headers with HTTP 403 (`proxy_needs_pairing`). Set `server.lan: true` and restart before you use a proxy.
+- The server has a pairing token when LAN serving is on (the default) or when `--host` is not a loopback address. If you turned LAN serving off (`server.lan: false`, or `--no-lan`) there is no token, so nothing can pair: GitTok refuses every request that has one of these headers with HTTP 403 (`proxy_needs_pairing`). Set `server.lan: true` again and restart before you use a proxy.
 - A proxy that sends none of these headers still looks local, so it skips pairing and opens `/mcp` (which can read your configured repos). Tailscale Serve and Caddy send the headers by default. nginx sends them only when its config has `proxy_set_header X-Forwarded-For ...`. Do not remove these headers in the proxy config.
-- Pair each device on the address that it uses. Open `https://<the proxy's name>/pair?t=<token>` on the device: the token is the last part of the `pair:` URL printed at start-up. A cookie from the plain `http://<LAN address>:8008` address does not count for the proxy's name.
+- Pair each device on the address that it uses. Open `https://<the proxy's name>/pair?t=<token>` on the device: the token is the last part of the pairing link (ask Claude for the pairing link, or read it on the pairing page). A cookie from the plain `http://<LAN address>:8008` address does not count for the proxy's name.
 
 Also limit who can reach the proxy.
 
@@ -268,7 +318,7 @@ tailscale serve --bg 8008        # serves https://<machine>.<tailnet>.ts.net to 
 tailscale serve status           # shows the URL
 ```
 
-Put `<machine>.<tailnet>.ts.net` in `server.allowed_hosts`. Tailscale connects to `127.0.0.1` and adds `X-Forwarded-For`, so GitTok refuses `/mcp` for these requests (warning 1). With `server.lan` off, GitTok refuses every request from the tailnet (HTTP 403, `proxy_needs_pairing`). Turn `server.lan` on (the server then also answers paired devices on your LAN) and open `https://<machine>.<tailnet>.ts.net/pair?t=<token>` once on each device. Do not use `tailscale funnel`: it opens the server to the internet.
+Put `<machine>.<tailnet>.ts.net` in `server.allowed_hosts`. Tailscale connects to `127.0.0.1` and adds `X-Forwarded-For`, so GitTok refuses `/mcp` for these requests (warning 1). If you turned `server.lan` off, GitTok refuses every request from the tailnet (HTTP 403, `proxy_needs_pairing`). Keep `server.lan` on (the server also answers paired devices on your LAN) and open `https://<machine>.<tailnet>.ts.net/pair?t=<token>` once on each device. Do not use `tailscale funnel`: it opens the server to the internet.
 
 ### Recipe B: mkcert and a local reverse proxy
 
@@ -298,7 +348,7 @@ Open `https://mymac.local:8443` on the phone. If the name is this computer's own
 ### If it does not work
 
 - HTTP 421 `unknown Host`: the name in the address bar is not in `server.allowed_hosts`.
-- HTTP 403 `proxy_needs_pairing`: LAN serving is off, so there is no pairing token. Set `server.lan: true`, restart, and pair the device.
+- HTTP 403 `proxy_needs_pairing`: LAN serving was turned off, so there is no pairing token. Set `server.lan: true`, restart, and pair the device.
 - HTTP 401 `pair this device`: open `https://<the proxy's name>/pair?t=<token>` on the device.
 - HTTP 403 `cross-origin request` on taps (like, save, answer): the same cause; the check uses the same list.
 - The page loads but there is no install prompt or offline mode: the certificate is not trusted on that device. A page with a certificate warning does not register a service worker.

@@ -370,3 +370,17 @@ def test_installed_plist_runs_the_executable(tmp_path):
 def test_installed_plist_needs_no_uv(tmp_path):
     env = make_bundle_env(tmp_path, which=lambda n: None)
     assert install.build_plist(env)["ProgramArguments"][0] == "/tool/bin/gittok"
+
+
+def test_run_install_warns_that_the_feed_is_served_to_the_local_network(tmp_path):
+    for apply in (False, True):
+        text = "\n".join(install.run_install(make_env(tmp_path / str(apply), apply=apply)))
+        assert "plain HTTP" in text and "pairing link or QR code" in text
+        assert "network you trust" in text and "server.lan: false" in text
+        assert "turn off phone access" in text
+    env = make_env(tmp_path / "off")
+    env.lan = False
+    off = "\n".join(install.run_install(env))
+    assert "plain HTTP" not in off and "this computer only" in off
+    skills_only = "\n".join(install.run_install(make_env(tmp_path / "s"), ("skills",)))
+    assert "plain HTTP" not in skills_only

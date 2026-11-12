@@ -323,25 +323,25 @@ def test_local_mascots_merge_over_config(tmp_path):
     assert got["m"].style == "s" and got["m"].seed == 5 and got["n"].style == "t"
 
 
-def test_server_lan_and_allowed_hosts_default_off_and_load_from_the_overlay(tmp_path):
+def test_server_lan_defaults_on_and_loads_from_the_overlay(tmp_path):
     write(tmp_path, "settings.yaml", "server:\n  port: 9000\n")
     s = load_config(tmp_path).settings.server
-    assert s.lan is False and s.allowed_hosts == ()
+    assert s.lan is True and s.allowed_hosts == ()
     (tmp_path / "local").mkdir()
     (tmp_path / "local" / "settings.yaml").write_text(
-        "server:\n  lan: true\n  allowed_hosts: [feed.example.net]\n"
+        "server:\n  lan: false\n  allowed_hosts: [feed.example.net]\n"
     )
     s = load_config(tmp_path).settings.server
-    assert s.lan is True and s.allowed_hosts == ("feed.example.net",)
+    assert s.lan is False and s.allowed_hosts == ("feed.example.net",)
     assert s.port == 9000
 
 
-def test_shipped_settings_keep_lan_off():
+def test_shipped_settings_serve_the_lan():
     import yaml
 
     shipped = Path(__file__).parents[1] / "config" / "settings.yaml"
     server = yaml.safe_load(shipped.read_text())["server"]
-    assert server["lan"] is False and server["allowed_hosts"] == []
+    assert server["lan"] is True and server["allowed_hosts"] == []
     assert server["host"] == "127.0.0.1"
 
 

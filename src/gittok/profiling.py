@@ -116,9 +116,10 @@ def structure_hint(cfg) -> str | None:
     if not missing:
         return None
     return (
-        f"Structure grammars missing ({', '.join(missing)}): "
-        "run `gittok structure --prefetch` (in a clone: `uv run gittok structure --prefetch`). "
-        "Until then GitTok uses regex patterns."
+        f"GitTok: structure grammars are missing ({', '.join(missing)}). Offer to download "
+        "them (about 26 MB, needs network); if the user agrees, run "
+        "`gittok structure --prefetch` with Bash (in a clone: "
+        "`uv run gittok structure --prefetch`). Until then GitTok uses regex patterns."
     )
 
 
@@ -550,7 +551,8 @@ def _query_gate(parsed: Profile, files) -> tuple[dict[str, dict], dict[str, list
         if not read:
             errors[f"queries.{grammar}"] = [
                 f"query for '{grammar}' read no file; no file in the file set uses it "
-                "(or the grammar is not downloaded: gittok structure --prefetch)"
+                "(or the grammar is not downloaded: run `gittok structure --prefetch` with "
+                "Bash; in a clone, `uv run gittok structure --prefetch`)"
             ]
         elif not (defs or any(f.refs or f.imports or f.comments for f in read)):
             errors[f"queries.{grammar}"] = [

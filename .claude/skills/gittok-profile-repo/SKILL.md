@@ -8,11 +8,11 @@ model: sonnet
 
 A profile is data in `local/profiles/<repo>.yaml`. It tells GitTok which code in this repo a new reader should see. GitTok runs the rules and scores the hits. You write the data. You never write code. Do the work yourself. Do not launch subagents.
 
-Requires the `gittok` MCP server (tools named `mcp__gittok__*`). If those tools are missing, tell the user how to start the server, then stop. In a GitTok clone: restart the Claude Code session in the clone (its `.mcp.json` starts `gittok mcp --ui`) and check `/mcp` for errors. With an installed GitTok: run `gittok install --apply` once, check that `gittok serve` runs, and check `/mcp`.
+Requires the `gittok` MCP server (tools named `mcp__gittok__*`). If those tools are missing, say so and help the user start the server, then stop. In a GitTok clone: the user restarts the Claude Code session in the clone (its `.mcp.json` starts `gittok mcp --ui`) and checks `/mcp` for errors. With an installed GitTok: offer to run `gittok install --apply` (it registers the MCP server and starts `gittok serve`); the user then starts a new session and checks `/mcp`.
 
 ## Tools
 
-`list_repos`, `survey_repo(repo)`, `list_dir(repo, path)`, `read_file(repo, path)`, `git_grep(repo, pattern)`, `test_detector(repo, rule, scan?, ignore?)`, `save_profile(repo, profile)`, `rule_stats(repo)`, `submit_facts(repo, head_sha, tool, facts)`. Do not call any other config tool (`add_repo`, `add_rule`, `set_group`, and so on). Never edit `local/repos.yaml`.
+`list_repos`, `survey_repo(repo)`, `list_dir(repo, path)`, `read_file(repo, path)`, `git_grep(repo, pattern)`, `test_detector(repo, rule, scan?, ignore?)`, `save_profile(repo, profile)`, `rule_stats(repo)`, `submit_facts(repo, head_sha, tool, facts)`. Do not call any other config tool (`add_repo`, `remove_repo`, `set_lan`, `pairing_link`, `add_rule`, `set_group`, `set_mascot`, `edit_persona`, `reset_defaults`). Never edit `local/repos.yaml`.
 
 ## What the profile holds
 

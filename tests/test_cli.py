@@ -88,7 +88,7 @@ def test_brief_prints_learned_mix_line_when_rewards_exist(cfg, capsys):
 def test_serve_runs_uvicorn_and_prints_urls(cfg, monkeypatch, capsys):
     calls = []
     monkeypatch.setattr(cli.uvicorn, "run", lambda app, **kw: calls.append((app, kw)))
-    assert cli.main(["serve", "--port", "9123"]) == 0
+    assert cli.main(["serve", "--no-lan", "--port", "9123"]) == 0
     ((app, kw),) = calls
     assert kw == {"host": "127.0.0.1", "port": 9123}
     assert hasattr(app, "router")
@@ -181,7 +181,7 @@ def test_serve_starts_the_render_learning_and_profile_workers(cfg, monkeypatch):
     seen = {}
     monkeypatch.setattr(cli, "create_app", lambda get, **kw: seen.update(kw) or "app")
     monkeypatch.setattr(uvicorn, "run", lambda app, **kw: seen.update(app=app))
-    assert cli.main(["serve"]) == 0
+    assert cli.main(["serve", "--no-lan"]) == 0
     assert seen == {
         "render_worker": True,
         "learning_worker": True,
@@ -373,10 +373,43 @@ def test_serve_lan_binds_all_interfaces_and_warns(cfg, monkeypatch, capsys):
     assert f"http://192.168.1.5:9123/pair?t={tok}" in out
 
 
-def test_serve_without_lan_prints_no_warning(cfg, monkeypatch, capsys):
-    monkeypatch.setattr(cli.uvicorn, "run", lambda app, **kw: None)
-    cli.main(["serve"])
-    assert "authentication" not in capsys.readouterr().out
+def test_serve_serves_the_lan_by_default(cfg, monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(cli.uvicorn, "run", lambda app, **kw: calls.append(kw))
+    monkeypatch.setattr(cli.social, "lan_addresses", lambda: ["192.168.1.5"])
+    assert cli.main(["serve"]) == 0
+    assert calls == [{"host": "0.0.0.0", "port": 8008}]
+    out = capsys.readouterr().out
+    tok = (cfg.settings.data_dir / "lan_token").read_text().strip()
+    assert f"pair: http://192.168.1.5:8008/pair?t={tok}" in out
+    assert "plain HTTP" in out and "network you trust" in out
+
+
+def test_serve_no_lan_binds_loopback_and_makes_no_token(cfg, monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(cli.uvicorn, "run", lambda app, **kw: calls.append(kw))
+    assert cli.main(["serve", "--no-lan"]) == 0
+    assert calls == [{"host": "127.0.0.1", "port": 8008}]
+    assert "pair:" not in capsys.readouterr().out
+    assert not (cfg.settings.data_dir / "lan_token").exists()
+
+
+def test_server_lan_false_setting_turns_lan_serving_off(cfg, monkeypatch, capsys):
+    _lan_setting(cfg, monkeypatch, lan=False)
+    calls = []
+    monkeypatch.setattr(cli.uvicorn, "run", lambda app, **kw: calls.append(kw))
+    assert cli.main(["serve"]) == 0
+    assert calls == [{"host": "127.0.0.1", "port": 8008}]
+    assert "pair:" not in capsys.readouterr().out
+    seen = _mcp_ui(cfg, monkeypatch)
+    assert cli.main(["mcp", "--ui"]) == 0
+    assert seen["order"][0][1][-4:] == ["--host", "127.0.0.1", "--port", "8008"]
+
+
+def test_mcp_ui_no_lan_starts_a_loopback_child(cfg, monkeypatch):
+    seen = _mcp_ui(cfg, monkeypatch)
+    assert cli.main(["mcp", "--ui", "--no-lan"]) == 0
+    assert seen["order"][0][1][-4:] == ["--host", "127.0.0.1", "--port", "8008"]
 
 
 def test_notify_runs_one_pass_and_prints_counts(cfg, monkeypatch, capsys):
@@ -468,7 +501,7 @@ def test_mcp_ui_runs_a_reloading_feed_child_before_stdio(cfg, monkeypatch, capsy
     ((tag, cmd, env), mcp) = seen["order"]
     assert (tag, mcp) == ("ui", "mcp")
     assert cmd[1:] == [
-        "-m", "gittok", "serve", "--reload", "--host", "127.0.0.1", "--port", "8008",
+        "-m", "gittok", "serve", "--reload", "--host", "0.0.0.0", "--port", "8008", "--lan",
     ]  # fmt: skip
     assert env["GITTOK_PARENT_PID"] == str(os.getpid())
     assert seen["stopped"] == "proc"
@@ -648,10 +681,12 @@ def test_health_hint_flags_changed_manifests(cfg, capsys, monkeypatch):
 
 
 def test_repos_add_prints_the_profile_next_step(cfg, fixture_repo, capsys, monkeypatch):
-    out = {"name": "zed", "path": "/x", "next": "Next: run /gittok-profile-repo zed"}
+    out = {"name": "zed", "path": "/x", "next": "for the agent"}
     monkeypatch.setattr(cli.steering, "add_repo", lambda *a, **k: out)
     assert cli.main(["repos", "add", "zed", str(fixture_repo.path)]) == 0
-    assert "/gittok-profile-repo zed" in capsys.readouterr().out
+    printed = capsys.readouterr().out
+    assert "ask Claude to profile zed" in printed and "/gittok-profile-repo zed" in printed
+    assert "for the agent" not in printed
 
 
 def test_health_hint_says_analyzer_facts_are_stale(cfg, capsys, monkeypatch):
@@ -902,7 +937,7 @@ def test_server_lan_setting_makes_mcp_ui_start_a_lan_child(cfg, monkeypatch):
     assert cmd[-1] == "--lan" and "0.0.0.0" in cmd
 
 
-def test_shipped_mcp_json_does_not_serve_the_lan():
+def test_shipped_mcp_json_leaves_lan_serving_to_the_setting():
     import json
 
     root = Path(cli.__file__).parents[2]
@@ -930,7 +965,9 @@ def _one_line(text):
 
 def test_repos_with_no_repos_says_how_to_add_one(no_repos, capsys):
     assert cli.main(["repos"]) == 0
-    assert "gittok repos add <name> <path>" in _one_line(capsys.readouterr().out)
+    line = _one_line(capsys.readouterr().out)
+    assert "Ask Claude to add one" in line and "gittok repos add <name> <path-or-url>" in line
+    assert line.index("Ask Claude") < line.index("gittok repos add")
 
 
 def test_brief_with_no_repos_is_one_clean_error_line(no_repos, capsys):
@@ -938,29 +975,33 @@ def test_brief_with_no_repos_is_one_clean_error_line(no_repos, capsys):
     got = capsys.readouterr()
     assert got.out == ""
     line = _one_line(got.err)
-    assert "no repos" in line.lower() and "gittok repos add <name> <path>" in line
+    assert "no repos" in line.lower() and "gittok repos add <name> <path-or-url>" in line
 
 
 def test_analyze_with_no_repos_is_one_clean_error_line(no_repos, capsys):
     assert cli.main(["analyze"]) == 1
-    assert "gittok repos add <name> <path>" in _one_line(capsys.readouterr().err)
+    assert "gittok repos add <name> <path-or-url>" in _one_line(capsys.readouterr().err)
 
 
 def test_health_hint_with_no_repos_says_add_a_repo_not_generate(no_repos, capsys):
     assert cli.main(["health", "--hint"]) == 0
     line = _one_line(capsys.readouterr().out)
-    assert "gittok repos add <name> <path>" in line
+    assert line.startswith("GitTok:") and "Ask the user which repo to add" in line
+    assert "add_repo" in line and "terminal" not in line
     assert "/gittok-generate" not in line
 
 
 def test_repos_add_on_a_fresh_install_adds_any_repo_and_prints_it(tmp_path, monkeypatch, capsys):
-    """The user typed the path at a terminal, so the allowed roots do not apply."""
+    """The user typed the path at a terminal, so `repos.allowed_roots` does not apply."""
     from gittok import config as config_mod
     from tests.test_steering import _commit_in
 
     home = tmp_path / "fresh"
     (home / "config").mkdir(parents=True)
-    (home / "config" / "settings.yaml").write_text("{}\n")
+    (tmp_path / "work").mkdir()
+    (home / "config" / "settings.yaml").write_text(
+        f"repos:\n  allowed_roots: [{tmp_path / 'work'}]\n"
+    )
     monkeypatch.setattr(cli, "load_config", lambda: config_mod.load_config(home))
     repo = tmp_path / "code" / "first"
     _commit_in(repo)
