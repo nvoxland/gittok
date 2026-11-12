@@ -13,7 +13,7 @@ pytestmark = pytest.mark.anyio
 GO_QUERY = "(function_declaration name: (identifier) @name) @definition.function"
 needs_grammars = pytest.mark.skipif(
     not (structure.available() and structure.ready("go") and structure.ready("rust")),
-    reason="needs `uv sync --group structure` and its grammars",
+    reason="needs tree-sitter grammars (structure --prefetch)",
 )
 
 

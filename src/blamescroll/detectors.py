@@ -149,7 +149,7 @@ def run(profile: Profile, files, stats: dict | None = None) -> list[dict]:
     skipped = [d for d in rules if d.ast_grep and not ast_ok]
     if skipped:
         log.info(
-            "ast-grep-py is not installed (uv sync --group profiles); "
+            "ast-grep-py is not installed (reinstall blamescroll); "
             "skipping %d ast_grep rule(s): %s",
             len(skipped),
             ", ".join(d.id for d in skipped),

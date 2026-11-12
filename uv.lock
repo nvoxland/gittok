@@ -76,24 +76,20 @@ name = "blamescroll"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "ast-grep-py" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "jsonschema" },
     { name = "mcp" },
     { name = "pyyaml" },
     { name = "regex" },
+    { name = "tree-sitter-language-pack" },
     { name = "uvicorn" },
 ]
 
 [package.optional-dependencies]
 images = [
     { name = "mflux", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
-]
-profiles = [
-    { name = "ast-grep-py" },
-]
-structure = [
-    { name = "tree-sitter-language-pack" },
 ]
 
 [package.dev-dependencies]
@@ -106,16 +102,10 @@ dev = [
 images = [
     { name = "mflux" },
 ]
-profiles = [
-    { name = "ast-grep-py" },
-]
-structure = [
-    { name = "tree-sitter-language-pack" },
-]
 
 [package.metadata]
 requires-dist = [
-    { name = "ast-grep-py", marker = "extra == 'profiles'" },
+    { name = "ast-grep-py" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "jsonschema", specifier = ">=4.23" },
@@ -123,10 +113,10 @@ requires-dist = [
     { name = "mflux", marker = "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'images'" },
     { name = "pyyaml", specifier = ">=6" },
     { name = "regex", specifier = ">=2024.11" },
-    { name = "tree-sitter-language-pack", marker = "extra == 'structure'", specifier = ">=1.22,<1.23" },
+    { name = "tree-sitter-language-pack", specifier = ">=1.22,<1.23" },
     { name = "uvicorn", specifier = ">=0.32" },
 ]
-provides-extras = ["images", "profiles", "structure"]
+provides-extras = ["images"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -136,8 +126,6 @@ dev = [
     { name = "ruff", specifier = ">=0.8" },
 ]
 images = [{ name = "mflux" }]
-profiles = [{ name = "ast-grep-py" }]
-structure = [{ name = "tree-sitter-language-pack", specifier = ">=1.22,<1.23" }]
 
 [[package]]
 name = "certifi"

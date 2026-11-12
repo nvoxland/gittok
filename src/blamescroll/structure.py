@@ -39,7 +39,7 @@ except ImportError:  # pragma: no cover - exercised by the monkeypatched tests
 KNOWN_CAPTURES = {
     "name", "private", "reference", "comment", "import", "import.path", "import.relative",
 }  # fmt: skip
-INSTALL_HINT = "the tree-sitter structure layer is not installed (uv sync --group structure)"
+INSTALL_HINT = "the tree-sitter structure layer is not installed (reinstall blamescroll)"
 _KIND_ORDER = {"function": 0, "method": 0, "class": 1, "interface": 1, "type": 1, "var": 2}
 _NESTED_OWNERS = frozenset({"function", "method", "class"})
 

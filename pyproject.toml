@@ -11,21 +11,19 @@ dependencies = [
   "mcp>=2.3",
   "httpx>=0.27",
   "regex>=2024.11",
+  "tree-sitter-language-pack>=1.22,<1.23",  # structure layer
+  "ast-grep-py",  # ast_grep rules in repo profiles
 ]
 
 [project.scripts]
 blamescroll = "blamescroll.cli:main"
 
 [project.optional-dependencies]
-# For `uv tool install 'blamescroll[structure,profiles]'`. The groups below are for developers.
+# For `uv tool install 'blamescroll[images]'`. The group below is for developers.
 images = ["mflux; sys_platform == 'darwin' and platform_machine == 'arm64'"]
-profiles = ["ast-grep-py"]
-structure = ["tree-sitter-language-pack>=1.22,<1.23"]
 
 [dependency-groups]
 images = ["mflux"]
-profiles = ["ast-grep-py"]  # optional: ast_grep rules in config/profiles/*.yaml
-structure = ["tree-sitter-language-pack>=1.22,<1.23"]  # optional: tree-sitter structure layer
 dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.8", "anyio>=4"]
 
 [build-system]

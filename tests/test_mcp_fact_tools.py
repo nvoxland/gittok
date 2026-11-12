@@ -14,7 +14,7 @@ from tests.test_facts import APP, D1, D2, GO, UTIL1, UTIL2, A, B
 
 needs_grammars = pytest.mark.skipif(
     not (structure.available() and structure.ready("python")),
-    reason="needs `uv sync --group structure` and its grammars",
+    reason="needs tree-sitter grammars (structure --prefetch)",
 )
 
 

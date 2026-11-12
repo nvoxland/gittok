@@ -13,11 +13,12 @@ blamescroll install                                       # dry run: shows what 
 blamescroll install --apply                               # MCP server for Claude Code, skills, agents, LaunchAgent (macOS)
 ```
 
-Optional extras:
+Then download the tree-sitter grammars once with `blamescroll structure --prefetch`.
+
+One extra is optional, because it is large (torch and mlx, about 1 GB, plus models later):
 
 ```bash
-uv tool install 'blamescroll[structure,profiles] @ ./blamescroll-0.1.0-py3-none-any.whl'  # tree-sitter layer, ast-grep rules
-uv tool install 'blamescroll[images] @ ./blamescroll-0.1.0-py3-none-any.whl'              # mflux art (Apple silicon only)
+uv tool install 'blamescroll[images] @ ./blamescroll-0.1.0-py3-none-any.whl'   # mflux art for illustrations, comics, avatars (Apple silicon only)
 ```
 
 Your files live in `~/.blamescroll/` (set `BLAMESCROLL_HOME` to change it): `local/` for repos and profiles, `data/` for the database and images. Upgrade with `uv tool upgrade blamescroll`. Remove with `uv tool uninstall blamescroll`.

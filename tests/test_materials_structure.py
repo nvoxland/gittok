@@ -9,7 +9,7 @@ from tests.test_materials import _ref
 
 needs = pytest.mark.skipif(
     not (structure.available() and structure.ready("python") and structure.ready("go")),
-    reason="needs `uv sync --group structure` and its grammars",
+    reason="needs tree-sitter grammars (structure --prefetch)",
 )
 
 FILES = {

@@ -11,7 +11,7 @@ from tests.fixture_repo import build_history_repo
 
 needs_grammars = pytest.mark.skipif(
     not (structure.available() and structure.ready("python") and structure.ready("typescript")),
-    reason="needs `uv sync --group structure` and its grammars",
+    reason="needs tree-sitter grammars (structure --prefetch)",
 )
 
 UTIL1 = "def parse(s, sep, strict):\n    return s.split(sep)\n\n\ndef helper():\n    return 1\n"

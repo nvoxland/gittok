@@ -239,7 +239,7 @@ def _ast_grep_info() -> dict:
         "languages": list(detectors.ast_grep_languages()),
         "note": "ast-grep does not support some languages; `languages` lists the ones it accepts. "
         "For any other language use regex rules. "
-        "Without ast-grep-py (uv sync --group profiles) ast_grep rules cannot run.",
+        "Without ast-grep-py (reinstall blamescroll) ast_grep rules cannot run.",
     }
 
 
@@ -383,7 +383,7 @@ def _parse_rule(rule, repo_name: str):
 def _engine_error(d) -> str | None:
     if d.ast_grep:
         if not detectors.ast_grep_available():
-            return "ast-grep-py is not installed (uv sync --group profiles); use a regex rule"
+            return "ast-grep-py is not installed (reinstall blamescroll); use a regex rule"
         if d.language not in detectors.ast_grep_languages():
             return f"ast-grep does not support language '{d.language}'; use a regex rule"
     return None

@@ -8,7 +8,7 @@ from blamescroll import structure
 
 def need(*grammars):
     ok = structure.available() and all(structure.ready(g) for g in grammars)
-    return pytest.mark.skipif(not ok, reason="needs `uv sync --group structure` and its grammars")
+    return pytest.mark.skipif(not ok, reason="needs tree-sitter grammars (structure --prefetch)")
 
 
 def facts(path, text, **kw):

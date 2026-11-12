@@ -43,7 +43,8 @@ def test_prefetch_downloads_only_missing_grammars(cfg, capsys, monkeypatch):
 def test_prefetch_without_the_group_says_how_to_install(cfg, capsys, monkeypatch):
     monkeypatch.setattr(structure, "available", lambda: False)
     assert cli.main(["structure", "--prefetch"]) == 1
-    assert "uv sync --group structure" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "reinstall blamescroll" in out and "--group" not in out
 
 
 def test_prefetch_reports_a_failed_download(cfg, capsys, monkeypatch):

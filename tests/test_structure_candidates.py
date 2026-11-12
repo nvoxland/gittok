@@ -11,7 +11,7 @@ DATE = "2026-01-01T10:00:00+00:00"
 
 def needs(*grammars):
     ok = structure.available() and all(structure.ready(g) for g in grammars)
-    return pytest.mark.skipif(not ok, reason="needs `uv sync --group structure` and its grammars")
+    return pytest.mark.skipif(not ok, reason="needs tree-sitter grammars (structure --prefetch)")
 
 
 def mine(tmp_path, files, profile=None, settings=None):

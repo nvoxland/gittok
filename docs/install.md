@@ -12,12 +12,10 @@ uv tool install blamescroll                            # or from PyPI, when it i
 
 To build the wheel in a clone: `npm --prefix web run build`, then `uv build --wheel` (the file goes to `dist/`). A git URL install does not work yet, because the web build is not committed.
 
-Optional extras:
+The tree-sitter structure layer and ast-grep rules come with every install. One extra is optional, because it is large (torch and mlx, about 1 GB, plus the models it downloads later):
 
 ```bash
-uv tool install 'blamescroll[structure,profiles]'      # from PyPI: tree-sitter layer, ast-grep rules
-uv tool install 'blamescroll[structure,profiles] @ ./blamescroll-0.1.0-py3-none-any.whl'   # from a wheel
-uv tool install 'blamescroll[images]'                  # mflux art (Apple silicon only)
+uv tool install 'blamescroll[images] @ ./blamescroll-0.1.0-py3-none-any.whl'   # mflux art (Apple silicon only)
 ```
 
 The package carries its own shared files: `config/`, the web app, and the skills and agents. You edit none of them. Your own files live in one home folder:
@@ -106,12 +104,11 @@ Rules for safe changes:
 | Skills | `rm -r ~/.claude/skills/blamescroll-generate ~/.claude/skills/blamescroll-steer` |
 | LaunchAgent | `uv run blamescroll install --uninstall --launchd --apply` (runs `launchctl bootout gui/<uid> <plist>` and removes the plist) |
 
-## Structure layer (optional, tree-sitter)
+## Structure layer (tree-sitter)
 
-Blamescroll reads code structure (definitions, imports, comments) with tree-sitter when the optional group is installed. Without it everything works on the regex patterns in `config/languages.yaml` and, for other file types, on plain text rules.
+Blamescroll reads code structure (definitions, imports, comments) with tree-sitter. It is a normal dependency. A language whose grammar is not downloaded yet works on the regex patterns in `config/languages.yaml` and, for other file types, on plain text rules.
 
 ```bash
-uv sync --group structure          # tree-sitter-language-pack 1.22.x, about 2 MB
 uv run blamescroll structure        # status: installed, grammars needed, grammars missing (JSON)
 uv run blamescroll structure --prefetch   # download the grammars for the repos in local/repos.yaml
 ```
