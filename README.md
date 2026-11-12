@@ -26,8 +26,8 @@ It is a fast way to learn a codebase you just joined, and a surprisingly fun way
 
 ```bash
 uv tool install 'gittok[images]'
-gittok init ~/gittok      # any path; the directory must be new or empty
-cd ~/gittok
+cd ~/gittok               # a new or empty directory of your choice (make it first)
+gittok init .
 claude
 ```
 

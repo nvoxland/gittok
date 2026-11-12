@@ -8,8 +8,8 @@ You need macOS, `uv`, `git`, and a coding agent. GitTok is made for and tested w
 curl -LsSf https://astral.sh/uv/install.sh | sh        # if you do not have uv yet
 uv tool install 'gittok[images]'
 gittok --version
-gittok init ~/gittok          # any path; the directory must be new or empty
-cd ~/gittok
+cd ~/gittok                   # a new or empty directory of your choice (make it first)
+gittok init .
 claude                        # approve the MCP server `gittok` when Claude Code asks
 ```
 
