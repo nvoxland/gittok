@@ -111,9 +111,10 @@ async def test_add_repo_is_seen_by_the_next_list_repos(fixture_repo, tmp_path):
             )
         )
         assert added["name"] == "delta"
-        assert "/gittok-profile-repo delta" in added["next"] and "offer" in added["next"]
+        assert "/gittok-profile-repo delta" in added["next"] and "Do not ask" in added["next"]
         repos = {r["name"]: r for r in data(await client.call_tool("list_repos", {}))}
         assert repos["delta"]["group"] == "newbies"
+        assert repos["delta"]["profiled"] is False  # the generate skill profiles it first
         data(await client.call_tool("set_group", {"repo": "delta", "group": "oldies"}))
         repos = {r["name"]: r for r in data(await client.call_tool("list_repos", {}))}
         assert repos["delta"]["group"] == "oldies"

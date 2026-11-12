@@ -156,3 +156,61 @@ def test_parse_wants_keeps_only_complete_valid_lines():
     assert supply.parse_wants(text) == [{"at": NOW, "want": 7}]
     assert supply.parse_wants("") == []
     assert supply.parse_wants(good[:-1]) == []  # no newline yet: not a whole line
+
+
+def _finish_runs(conn):
+    conn.execute("UPDATE runs SET status = 'finished'")
+    conn.commit()
+
+
+def test_an_empty_feed_signals_inside_the_cooldown_once_a_run_answered_the_last_line(conn, cfg):
+    """The reader reached the end of the feed: do not wait for the cooldown."""
+    from gittok import runs
+
+    log = cfg.settings.data_dir / supply.WANTS_FILE
+    assert supply.signal_wants_cards(conn, cfg, NOW) == 1
+    # No run answered that line: a second line would say nothing new.
+    assert supply.signal_wants_cards(conn, cfg, NOW + timedelta(minutes=30)) == 0
+    runs.open_run(conn, cfg, repo=None, brief="b", requested=5, now=NOW + timedelta(minutes=5))
+    assert supply.signal_wants_cards(conn, cfg, NOW + timedelta(minutes=30)) == 0  # run open
+    _finish_runs(conn)
+    assert supply.signal_wants_cards(conn, cfg, NOW + timedelta(minutes=30)) == 1
+    assert supply.signal_wants_cards(conn, cfg, NOW + timedelta(minutes=31)) == 0
+    assert len(log.read_text().splitlines()) == 2
+
+
+def test_a_low_feed_that_is_not_empty_still_waits_for_the_cooldown(conn, cfg):
+    from gittok import runs
+
+    assert supply.signal_wants_cards(conn, cfg, NOW) == 1
+    runs.open_run(conn, cfg, repo=None, brief="b", requested=5, now=NOW + timedelta(minutes=5))
+    _finish_runs(conn)
+    fill(conn, cfg, 1)
+    later = NOW + timedelta(minutes=30)
+    assert supply.feed_health(conn, cfg, later)["want"] > 0
+    assert supply.signal_wants_cards(conn, cfg, later) == 0
+
+
+def test_wants_cards_signal_is_silent_at_the_daily_run_cap(conn, cfg):
+    from gittok import runs
+
+    for i in range(cfg.settings.agent.per_day_runs):
+        at = NOW - timedelta(hours=i + 5)
+        runs.open_run(conn, cfg, repo=None, brief="b", requested=5, now=at)
+    _finish_runs(conn)
+    assert runs.cap_reached(conn, cfg, NOW)
+    assert supply.signal_wants_cards(conn, cfg, NOW) == 0
+    assert not (cfg.settings.data_dir / supply.WANTS_FILE).exists()
+    assert not runs.cap_reached(conn, cfg, NOW + timedelta(hours=24))
+
+
+def test_run_open_is_true_only_for_a_fresh_open_run(conn, cfg):
+    from gittok import runs
+
+    assert not supply.run_open(conn, cfg, NOW)
+    runs.open_run(conn, cfg, repo=None, brief="b", requested=5, now=NOW)
+    assert supply.run_open(conn, cfg, NOW + timedelta(minutes=1))
+    stale = NOW + timedelta(hours=cfg.settings.agent.wake_cooldown_hours, minutes=1)
+    assert not supply.run_open(conn, cfg, stale)  # an abandoned run does not count
+    _finish_runs(conn)
+    assert not supply.run_open(conn, cfg, NOW + timedelta(minutes=1))

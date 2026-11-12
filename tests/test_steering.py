@@ -696,8 +696,13 @@ def test_add_repo_checks_the_roots_before_it_runs_git(ycfg, tmp_path, monkeypatc
 
 def test_add_repo_next_step_is_guidance_for_the_agent():
     text = steering.next_step("gamma")
-    assert "gittok-profile-repo" in text and "gamma" in text
+    assert "/gittok-profile-repo gamma" in text
     assert "terminal" not in text
+    # Profile at once and then make the first cards: one line to the user, no question.
+    assert "Do not ask" in text and "offer" not in text.lower()
+    assert "one line" in text and "quota" in text
+    assert text.index("gittok-profile-repo") < text.index("gittok-generate")
+    assert "nothing_to_do" in text
 
 
 def test_add_repo_refuses_an_embedded_git_dir_without_a_git_call(ycfg, tmp_path, monkeypatch):

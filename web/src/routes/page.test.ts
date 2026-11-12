@@ -118,6 +118,58 @@ describe('feed page', () => {
 		);
 	});
 
+	it('the end card says that more cards come by themselves, and how to ask for more now', async () => {
+		route({ '/api/feed': { cards: [fakeCard({ hook: 'Only card' })], next_cursor: null, generating: false } });
+		render(Page);
+		const end = await screen.findByRole('region', { name: 'End of feed' });
+		expect(end).toHaveTextContent(
+			'GitTok makes more cards by itself while a session of your coding agent is open in your GitTok directory.'
+		);
+		expect(end).toHaveTextContent('To get more right away, ask the agent there: "make more cards"');
+		expect(end).toHaveTextContent('/gittok-generate');
+		expect(end).not.toHaveTextContent(/being made now/i);
+		expect(screen.getByRole('button', { name: /check for new cards/i })).toBeInTheDocument();
+	});
+
+	it('the end card says so when new cards are being made now', async () => {
+		route({ '/api/feed': { cards: [fakeCard({ hook: 'Only card' })], next_cursor: null, generating: true } });
+		render(Page);
+		const end = await screen.findByRole('region', { name: 'End of feed' });
+		expect(end).toHaveTextContent(/caught up/i);
+		expect(end).toHaveTextContent('New cards are being made now. They will appear here.');
+		expect(end).not.toHaveTextContent('/gittok-generate');
+		expect(screen.getByRole('button', { name: /check for new cards/i })).toBeInTheDocument();
+	});
+
+	it('the check button updates whether cards are being made', async () => {
+		localStorage.clear(); // no remembered card: this mock serves only the feed
+		let n = 0;
+		const only = fakeCard({ id: 'c_only', hook: 'Only card' });
+		fetchMock.mockImplementation(async (url: string) => ({
+			ok: true,
+			headers: { get: () => null },
+			json: async () =>
+				url.startsWith('/api/feed')
+					? { cards: [structuredClone(only)], next_cursor: null, generating: n++ > 0 }
+					: { notifications: [], unread: 0, stories: [] }
+		}));
+		render(Page);
+		const end = await screen.findByRole('region', { name: 'End of feed' });
+		expect(end).not.toHaveTextContent(/being made now/i);
+		await fireEvent.click(screen.getByRole('button', { name: /check for new cards/i }));
+		await screen.findByText(/being made now/i);
+	});
+
+	it('a cached feed does not claim that cards are being made', async () => {
+		route(
+			{ '/api/feed': { cards: [fakeCard({ hook: 'Only card' })], next_cursor: null, generating: true } },
+			{ 'X-From-Cache': '1' }
+		);
+		render(Page);
+		const end = await screen.findByRole('region', { name: 'End of feed' });
+		expect(end).not.toHaveTextContent(/being made now/i);
+	});
+
 	it('shows no end card while more pages remain', async () => {
 		route({ '/api/feed': { cards: [fakeCard({ hook: 'A hook' })], next_cursor: 'more' } });
 		render(Page);
@@ -344,7 +396,7 @@ describe('feed page', () => {
 			expect(empty).toHaveTextContent('gittok repos add <name> <path-or-url>');
 			const text = empty.textContent ?? '';
 			expect(text.indexOf('add the repo at')).toBeLessThan(text.indexOf('gittok repos add'));
-			expect(empty).toHaveTextContent(/ask Claude to make cards/i);
+			expect(empty).toHaveTextContent(/Claude then makes the first cards/i);
 			expect(screen.queryByText(/caught up/i)).toBeNull();
 			expect(screen.queryByRole('note')).toBeNull(); // no swipe hints with nothing to swipe
 		});

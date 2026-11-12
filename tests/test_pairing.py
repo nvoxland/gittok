@@ -285,3 +285,66 @@ def test_steer_skill_handles_repo_and_phone_requests():
         assert f"`{name}" in text, name
     assert "plain HTTP" in text and "`notice`" in text
     assert "first sets GitTok up" in text
+
+
+# --- profiling and first cards happen without a question ----------------------------------------
+
+
+def _skill(name: str) -> str:
+    return (ROOT / ".claude" / "skills" / name / "SKILL.md").read_text()
+
+
+def test_generate_skill_profiles_a_repo_with_no_profile_before_the_scout():
+    text = _skill("gittok-generate")
+    step = next(ln for ln in text.splitlines() if ln.startswith("0. **Profile first.**"))
+    for word in ("`list_repos`", "`profiled: false`", "`gittok-profile-repo`", "Do not ask"):
+        assert word in step, word
+    assert "one line" in step and "quota" in step and "default rules" in step
+    assert text.index("0. **Profile first.**") < text.index("`scout_status`")
+    # save_profile is a config tool: the driver gets it for this step only.
+    rule = next(ln for ln in text.splitlines() if "never call config-editing" in ln)
+    assert "`save_profile` is allowed in step 0 only" in rule
+    assert "`profiled: false`" in rule and "gittok-profile-repo" in rule
+    assert "The one exception is step 0" in text
+
+
+def test_writer_guidance_forbids_save_profile_too():
+    text = (ROOT / "src/gittok/prompts/generate.md").read_text()
+    rule = next(ln for ln in text.splitlines() if "never call config-editing" in ln)
+    assert "`save_profile`" in rule
+
+
+def test_steer_skill_profiles_and_makes_first_cards_after_add_without_asking():
+    text = _skill("gittok-steer")
+    assert "Shall I" not in text and "offer to profile" not in text
+    step = text[text.index("3. After a repo is added") : text.index("4. **Remove.**")]
+    assert "Do not ask first" in step and "one line" in step and "quota" in step
+    assert step.index("gittok-profile-repo") < step.index("gittok-generate")
+    assert "`nothing_to_do`" in step
+    example = text[text.index('**"add the repo at ~/src/storefront"**') :]
+    assert "I am profiling it now" in example and "first cards" in example
+
+
+def test_profile_skill_starts_at_once_for_a_new_repo_and_revises_only_on_request():
+    text = _skill("gittok-profile-repo")
+    head = text.split("---")[1]
+    assert "do not ask" in head and "no profile" in head and "revise" in head
+    assert "Never revise a profile by yourself" in text
+    # It offers the grammar download itself, so the user need not know to ask for it.
+    assert "`structure.missing_grammars`" in text and "gittok structure --prefetch" in text
+    assert "go back to it" in text
+
+
+def test_directory_agents_md_says_profile_then_first_cards(tmp_path):
+    home.init(tmp_path / "g", "1.2.3")
+    text = (tmp_path / "g" / "AGENTS.md").read_text()
+    neutral, claude = text.split("## Claude Code\n")
+    assert "Offer to profile" not in text
+    assert "default rules" in neutral and "first cards" in neutral
+    assert "`profiled`" in claude and "without asking" in claude
+
+
+def test_server_instructions_say_profile_and_first_cards_come_without_asking():
+    text = " ".join(mcp_server.INSTRUCTIONS.split())
+    assert "profile the new repo and then make its first cards, without asking" in text
+    assert "profiled false" in text and "only an offer" in text

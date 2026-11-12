@@ -858,8 +858,14 @@ NO_REPOS_AGENT = (
 def next_step(name: str) -> str:
     """What the agent does after add_repo."""
     return (
-        f"Next: offer to profile the repo. If the user agrees, run the gittok-profile-repo "
-        f"skill for {name} (/gittok-profile-repo {name})."
+        f"Next: profile the repo now. Do not ask first. Tell the "
+        f"user in one line that you profile {name} so that GitTok learns which code is worth "
+        "teaching, that it takes a few minutes and some model quota, and that it may ask "
+        "permission to run a code analyzer. Then run the gittok-profile-repo skill "
+        f"(/gittok-profile-repo {name}). After it, say in one line that you make the first "
+        "cards, and run the gittok-generate skill (/gittok-generate); it stops by itself when "
+        "get_brief answers nothing_to_do. If you have no skills, skip the profile (GitTok "
+        "then uses its default rules) and make the cards with get_brief."
     )
 
 

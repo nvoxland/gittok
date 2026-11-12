@@ -16,7 +16,7 @@ import re
 import time
 from collections import Counter
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import yaml
@@ -85,11 +85,14 @@ def _manifests_changed(path, old_head: str | None, now: dict[str, str]) -> bool 
         return None
 
 
-def needed_grammars(cfg) -> list[str]:
+def needed_grammars(cfg, only: str | None = None) -> list[str]:
     """Grammars the structure layer needs for the files of the configured repos (and the
-    grammars of their profile queries), and the grammars that embedded code needs."""
+    grammars of their profile queries), and the grammars that embedded code needs. `only`
+    limits it to one repo."""
     wanted: set[str] = set()
     for name, repo in cfg.repos.items():
+        if only is not None and name != only:
+            continue
         prof = cfg.profile(name)
         fs = cfg.fileset(name)
         try:
@@ -140,21 +143,66 @@ def profile_hint(cfg) -> str | None:
             continue
         if changed:
             stale.append(name)
-    parts = []
+    lines = []
     if missing:
-        parts.append(
-            f"{', '.join(missing)} has no profile"
-            if len(missing) == 1
-            else f"{', '.join(missing)} have no profile"
+        runs = ", ".join(f"/gittok-profile-repo {n}" for n in missing)
+        lines.append(
+            f"{', '.join(missing)} {'has' if len(missing) == 1 else 'have'} no profile. "
+            "Profile it now. Do not ask first: tell the user in one line that you do it so "
+            "that GitTok learns which code is worth teaching, that it uses some model quota, "
+            f"and that it may ask permission to run a code analyzer. Then run {runs}."
         )
     if stale:
-        parts.append(f"manifests changed since the profile of {', '.join(stale)}")
-    if not parts:
+        runs = ", ".join(f"/gittok-profile-repo {n}" for n in stale)
+        lines.append(
+            f"manifests changed since the profile of {', '.join(stale)}. "
+            f"Offer to revise it ({runs}); do not start it unasked."
+        )
+    return "GitTok: " + " Also: ".join(lines) if lines else None
+
+
+WEAK_RULES_MIN = 3  # this many weak rules in one profile: offer a revision
+REPROFILE_OFFER_DAYS = 7  # at most one such offer per repo in this time
+_OFFER_KEY = "reprofile_offer:"  # prefs key prefix; the value is the time of the last offer
+
+
+def reprofile_hint(conn, cfg, now: datetime) -> str | None:
+    """One line for the SessionStart hook: repos whose profile has WEAK_RULES_MIN or more
+    rules with poor outcomes (`rule_stats.weak_rules`). None otherwise. A repo is named at
+    most once per REPROFILE_OFFER_DAYS; the time of the offer is kept in the prefs table."""
+    from . import rule_stats
+
+    found: dict[str, int] = {}
+    for name, prof in cfg.profiles.items():
+        if name not in cfg.repos:
+            continue
+        weak = rule_stats.weak_rules(conn, name, {d.id for d in prof.detectors})
+        if len(weak) < WEAK_RULES_MIN:
+            continue
+        row = conn.execute("SELECT value FROM prefs WHERE key = ?", (_OFFER_KEY + name,)).fetchone()
+        try:
+            last = datetime.fromisoformat(json.loads(row["value"])) if row else None
+        except (ValueError, TypeError):
+            last = None
+        if last is not None and now - last < timedelta(days=REPROFILE_OFFER_DAYS):
+            continue
+        found[name] = len(weak)
+    if not found:
         return None
-    todo = ", ".join(missing + stale)
+    stamp = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    with conn:
+        for name in found:
+            conn.execute(
+                "INSERT INTO prefs(key, value, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value, "
+                "updated_at = excluded.updated_at",
+                (_OFFER_KEY + name, json.dumps(now.isoformat()), stamp),
+            )
+    what = ", ".join(f"{n} ({k} rules)" for n, k in found.items())
+    runs = ", ".join(f"/gittok-profile-repo {n}" for n in found)
     return (
-        f"GitTok: {'; '.join(parts)}. "
-        f"Offer to run /gittok-profile-repo <repo> (for {todo})."
+        f"GitTok: rules of the profile of {what} find code that rates poorly. "
+        f"Offer to revise the profile ({runs}); do not start it unasked."
     )
 
 
@@ -289,7 +337,8 @@ def survey(cfg, conn, repo_name: str) -> dict:
         "top_dirs": _top_dirs([p for p, _, _ in files]),
         "builtin_candidates": {r["tag"]: r["n"] for r in rows},
         "ast_grep": _ast_grep_info(),
-        "structure": _structure_info(files, by_ext),
+        "structure": _structure_info(files, by_ext)
+        | {"missing_grammars": _missing_grammars(cfg, repo_name)},
         "profile": None,
     }
     file = profile_path(cfg, repo_name)
@@ -303,6 +352,14 @@ def survey(cfg, conn, repo_name: str) -> dict:
             "yaml": text if len(text) <= PROFILE_YAML_CAP else text[:PROFILE_YAML_CAP] + "\n# …cut",
         }
     return _cap(_redact_survey(cfg, out))
+
+
+def _missing_grammars(cfg, repo_name: str) -> list[str]:
+    """Grammars this repo needs that are not downloaded (`gittok structure --prefetch` gets
+    them). Empty when tree-sitter is not installed: then there is nothing to download into."""
+    if not structure.available():
+        return []
+    return structure.missing(needed_grammars(cfg, repo_name))
 
 
 def _structure_info(files, by_ext: dict) -> dict:

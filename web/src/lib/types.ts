@@ -212,6 +212,8 @@ export type FeedResponse = {
 	next_cursor: string | null;
 	// The card last seen, served first on a fresh load (null when there is none).
 	resume_card_id?: string | null;
+	// A generation run is open on the server now: new cards are on their way.
+	generating?: boolean;
 	fromCache?: boolean;
 };
 

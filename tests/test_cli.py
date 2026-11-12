@@ -704,8 +704,11 @@ def test_health_hint_names_repos_without_a_profile_on_one_line(cfg, capsys):
     assert cli.main(["health", "--hint"]) == 0
     lines = [ln for ln in capsys.readouterr().out.splitlines() if "profile" in ln]
     assert len(lines) == 1
-    assert "fixture" in lines[0] and "/gittok-profile-repo" in lines[0]
+    assert "fixture" in lines[0] and "/gittok-profile-repo fixture" in lines[0]
     assert "no profile" in lines[0]
+    # The agent profiles it at once and says so in one line; it does not ask first.
+    assert "Profile it now" in lines[0] and "Do not ask" in lines[0]
+    assert "offer" not in lines[0].lower()
 
 
 def _no_grammar_hint(monkeypatch):
@@ -752,6 +755,8 @@ def test_health_hint_flags_changed_manifests(cfg, capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "manifests changed" in out and "fixture" in out
     assert len(out.splitlines()) == 1
+    # A new profile for a repo that has one stays an offer.
+    assert "Offer" in out and "do not start it unasked" in out and "Profile it now" not in out
 
 
 def test_repos_add_prints_the_profile_next_step(cfg, fixture_repo, capsys, monkeypatch):
@@ -759,8 +764,73 @@ def test_repos_add_prints_the_profile_next_step(cfg, fixture_repo, capsys, monke
     monkeypatch.setattr(cli.steering, "add_repo", lambda *a, **k: out)
     assert cli.main(["repos", "add", "zed", str(fixture_repo.path)]) == 0
     printed = capsys.readouterr().out
-    assert "ask Claude to profile zed" in printed and "/gittok-profile-repo zed" in printed
     assert "for the agent" not in printed
+    # For a person at a terminal: nothing is required; the agent profiles the repo by itself.
+    assert "Next: nothing is needed" in printed
+    assert "the next time you ask for cards" in printed
+    assert "profile zed" in printed and "/gittok-profile-repo zed" in printed
+
+
+def _weak_profile(cfg, conn, repo="fixture"):
+    """A profile with three rules, each with three windows that the scout rated 1."""
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from tests.test_candidate_leads import cand
+
+    ids = ("r1", "r2", "r3")
+    for rule in ids:
+        for i in range(3):
+            cand(conn, f"{rule}.py", 1 + 20 * i, "t", rating=(1, "bad"), repo=repo)
+        conn.execute("UPDATE candidates SET rule_id = ? WHERE path = ?", (rule, f"{rule}.py"))
+    conn.commit()
+    prof = SimpleNamespace(detectors=[SimpleNamespace(id=i) for i in ids])
+    return replace(cfg, profiles={repo: prof})
+
+
+def test_reprofile_hint_offers_once_a_week_when_several_rules_do_badly(cfg):
+    from datetime import UTC, datetime, timedelta
+
+    from gittok import profiling
+
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    conn = db.open_db(":memory:")
+    assert profiling.reprofile_hint(conn, cfg, now) is None  # no profile: not this hint
+    weak = _weak_profile(cfg, conn)
+    line = profiling.reprofile_hint(conn, weak, now)
+    assert line and "\n" not in line
+    assert "fixture" in line and "/gittok-profile-repo fixture" in line
+    assert "Offer" in line and "do not start it unasked" in line
+    assert profiling.reprofile_hint(conn, weak, now + timedelta(days=6)) is None  # no nagging
+    assert profiling.reprofile_hint(conn, weak, now + timedelta(days=8)) is not None
+    conn.close()
+
+
+def test_reprofile_hint_needs_several_weak_rules_of_the_profile(cfg):
+    from datetime import UTC, datetime
+
+    from gittok import profiling, rule_stats
+
+    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+    conn = db.open_db(":memory:")
+    weak = _weak_profile(cfg, conn)
+    assert rule_stats.weak_rules(conn, "fixture", {"r1", "r2", "r3"}) == ["r1", "r2", "r3"]
+    # A rule that is no longer in the profile, and a built-in miner, do not count.
+    assert rule_stats.weak_rules(conn, "fixture", {"r1", "r2"}) == ["r1", "r2"]
+    weak.profiles["fixture"].detectors.pop()
+    assert profiling.reprofile_hint(conn, weak, now) is None
+    conn.close()
+
+
+def test_health_hint_prints_the_reprofile_offer(cfg, capsys, monkeypatch):
+    _no_grammar_hint(monkeypatch)
+    _quiet_feed(monkeypatch)
+    from gittok import profiling
+
+    monkeypatch.setattr(profiling, "profile_hint", lambda cfg: None)
+    monkeypatch.setattr(profiling, "reprofile_hint", lambda conn, cfg, now: "GitTok: revise x")
+    assert cli.main(["health", "--hint"]) == 0
+    assert capsys.readouterr().out == "GitTok: revise x\n"
 
 
 def test_health_hint_says_analyzer_facts_are_stale(cfg, capsys, monkeypatch):

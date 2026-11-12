@@ -42,14 +42,7 @@ def open_run(
         raise RunError(f"requested must be between 1 and {max_count}; got {requested}")
     expire_stale(conn, now=now)
     limit = cfg.settings.agent.per_day_runs
-    recent = [
-        r[0]
-        for r in conn.execute(
-            "SELECT started_at FROM runs WHERE status != 'expired' AND started_at > ? "
-            "ORDER BY started_at",
-            (_iso(now - timedelta(hours=24)),),
-        )
-    ]
+    recent = _runs_last_day(conn, now)
     if len(recent) >= limit:
         free_at = datetime.strptime(recent[-limit], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
         retry = _iso(free_at + timedelta(hours=24))
@@ -70,6 +63,23 @@ def open_run(
             ),
         )
     return run_id
+
+
+def _runs_last_day(conn, now: datetime) -> list[str]:
+    """Start times of the runs of the last 24 hours that count for the daily cap, oldest first."""
+    return [
+        r[0]
+        for r in conn.execute(
+            "SELECT started_at FROM runs WHERE status != 'expired' AND started_at > ? "
+            "ORDER BY started_at",
+            (_iso(now - timedelta(hours=24)),),
+        )
+    ]
+
+
+def cap_reached(conn, cfg, now: datetime) -> bool:
+    """True when `open_run` would refuse a new run now (`agent.per_day_runs`)."""
+    return len(_runs_last_day(conn, now)) >= cfg.settings.agent.per_day_runs
 
 
 def get_run(conn, run_id) -> dict | None:

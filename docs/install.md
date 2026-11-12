@@ -101,7 +101,7 @@ Claude calls the `add_repo`, `list_repos` and `remove_repo` MCP tools. Claude Co
 - To limit where the `add_repo` tool may add a local repo, set `repos.allowed_roots` in `local/settings.yaml` (`docs/config.md`). The list is empty by default, which means no limit.
 - Removing a repo takes it out of `local/repos.yaml`. GitTok deletes the directory only when it is a clone that GitTok made itself (a repo added by URL, at `repos/<name>`). It never touches a directory that you gave. Cards already made from the repo stay.
 
-After a repo is added, Claude offers to profile it (`/gittok-profile-repo <name>`). Then ask for cards ("make GitTok cards", or `/gittok-generate`).
+After a repo is added, Claude profiles it (`/gittok-profile-repo <name>`) and then makes the first cards (`/gittok-generate`). It does not ask first; it says in one line what it does. The profile holds the rules that find the code worth teaching. It takes a few minutes and some model quota, and Claude may ask permission to run a code analyzer or to download grammars. A repo added with the command below gets its profile the next time cards are made. Later, Claude only offers a new profile: when the manifests of the repo changed, or when several rules of the profile do badly.
 
 The same steps as commands:
 
@@ -214,7 +214,7 @@ Two SessionStart hooks tell a Claude Code session when the feed wants cards (`do
 }
 ```
 
-- `gittok health --hint` prints nothing when nothing is needed. It prints one line when the feed is low, when a repo has no profile or its manifests changed, when a grammar is missing, when analyzer facts are stale, when the directory has the files of another GitTok version, or when another GitTok directory has the port.
+- `gittok health --hint` prints nothing when nothing is needed. It prints one line when the feed is low, when a repo has no profile (Claude then profiles it), when its manifests changed or several of its rules do badly (Claude then offers a new profile), when a grammar is missing, when analyzer facts are stale, when the directory has the files of another GitTok version, or when another GitTok directory has the port.
 - `gittok feed-watch --hint` always prints one line. It tells the session to start `gittok feed-watch` in the background. The permission line lets that exact command run without a prompt.
 - If you do not want sessions to start card generation by themselves, remove the second hook and the permission. Put such a change in `.claude/settings.local.json`, or expect `gittok update` to write the shipped file again (it keeps your copy as `settings.json.bak`).
 

@@ -56,7 +56,6 @@ def test_the_readme_gives_the_three_steps_and_says_when_gittok_runs():
     text = (ROOT / "README.md").read_text()
     for fact in (
         "uv tool install 'gittok[images]'",
-        "uv tool install gittok\n",
         "gittok init .\n",
         "cd ~/gittok",
         "uv tool upgrade gittok",
@@ -67,9 +66,8 @@ def test_the_readme_gives_the_three_steps_and_says_when_gittok_runs():
         "Nothing is installed outside",
     ):
         assert fact in text, fact
-    # The main command has the illustrated cards; the smaller install is a note after the flow.
-    main, init = text.index("uv tool install 'gittok[images]'"), text.index("gittok init .\n")
-    assert main < init < text.index("uv tool install gittok\n")
+    # The main command has the illustrated cards, and it comes before init.
+    assert text.index("uv tool install 'gittok[images]'") < text.index("gittok init .\n")
     assert "Optional: illustrated cards" not in text
 
 

@@ -99,7 +99,7 @@ repos:
 - Groups are ranking features: the feed can learn "cares about the-app, skims the rest".
 - Within a group, the agent may write cross-repo stories (section 6.4).
 - Analysis is read-only. GitTok never writes to a working tree, an index, or a local branch of your repos. A repo with `fetch: true` gets a fetch that updates remote-tracking refs only.
-- Each repo has a **profile** (`local/profiles/<repo>.yaml`): rules, kept as data, that find the code worth teaching. The `gittok-profile-repo` skill writes it. See `docs/learning.md`, "Candidate score and repo profiles".
+- Each repo has a **profile** (`local/profiles/<repo>.yaml`): rules, kept as data, that find the code worth teaching. The `gittok-profile-repo` skill writes it. The agent runs that skill by itself for a repo with no profile: right after the repo is added, and before it makes cards. For a repo that has a profile, the agent only offers a revision. See `docs/learning.md`, "Candidate score and repo profiles".
 
 ---
 
@@ -272,6 +272,7 @@ GitTok does not start a model by itself. A person, or a hook in a Claude Code se
 
 - On demand: `/gittok-generate`.
 - From a session hint. `gittok health --hint` prints a line when the unseen cards will not last `agent.target_runway_days`. `gittok feed-watch` waits until the feed server says the feed wants cards, then exits, and the session runs the skill. See `docs/scheduling.md`.
+- After a repo is added: the agent profiles it and then runs the skill for the first cards, without a question.
 
 ### 10.2 Git analysis (no model)
 

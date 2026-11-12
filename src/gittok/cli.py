@@ -280,6 +280,7 @@ def _health(args) -> int:
     with closing(db.open_db(_db_path(cfg))) as conn:
         h = supply.feed_health(conn, cfg, _now())
         stale = [] if not args.hint else _stale_analyzer_repos(conn, cfg)
+        reprofile = profiling.reprofile_hint(conn, cfg, _now()) if args.hint else None
     if not args.hint:
         print(json.dumps(h, indent=2))
     else:
@@ -292,6 +293,8 @@ def _health(args) -> int:
         line = profiling.profile_hint(cfg)
         if line:
             print(line)
+        if reprofile:
+            print(reprofile)
         line = profiling.structure_hint(cfg)
         if line:
             print(line)
@@ -570,8 +573,10 @@ def _repos_add(args) -> int:
         print(f"cloned {out['remote']} into {out['path']}")
     print(f"added repo {out['name']} ({out['path']})")
     print(
-        f"Next: in Claude Code, ask Claude to profile {out['name']} "
-        f"(or run /gittok-profile-repo {out['name']})."
+        f"Next: nothing is needed. Your coding agent profiles {out['name']} the next time you "
+        "ask for cards in the GitTok directory (it writes the rules that find the code worth "
+        f'teaching). To do it now, ask the agent: "profile {out["name"]}" '
+        f"(in Claude Code, /gittok-profile-repo {out['name']} also works)."
     )
     return 0
 

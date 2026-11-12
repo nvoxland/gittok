@@ -117,7 +117,7 @@ The values below are the shipped ones.
 | `per_day_runs` | `10` | `get_brief` refuses to open more runs than this in one day |
 | `packet_size` | `2` | Cards per work packet (1 to 5) |
 | `target_runway_days` | `3` | `get_brief` makes cards until the unseen cards last this many days |
-| `wake_cooldown_hours` | `4` | The least time between two feed-watch signals |
+| `wake_cooldown_hours` | `4` | The least time between two feed-watch signals. An empty feed does not wait for it (`docs/scheduling.md`) |
 | `min_burn_per_day` | `10` | The least number of cards per day that GitTok assumes you read |
 | `min_run_count` | `8` | A run that is needed makes at least this many cards |
 | `lead_cooldown_days` | `30` | A lead that a card covered is not offered again for this long |

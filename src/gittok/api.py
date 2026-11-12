@@ -46,6 +46,7 @@ from gittok import (
     social,
     srs,
     steering,
+    supply,
 )
 from gittok import feed as feedmod
 from gittok.config import Config, load_config
@@ -783,12 +784,19 @@ def create_app(
         cfg = get_config()
         try:
             with conn() as c:
+                now = datetime.now(UTC)
                 cards, next_cursor, resume = feedmod.page(
-                    c, cfg, limit, cursor, random.randrange(2**31), datetime.now(UTC), repo, dir
+                    c, cfg, limit, cursor, random.randrange(2**31), now, repo, dir
                 )
+                generating = supply.run_open(c, cfg, now)  # for the end-of-feed message
         except InvalidCursor:
             raise ApiError(400, "invalid_cursor", "invalid cursor") from None
-        return {"cards": cards, "next_cursor": next_cursor, "resume_card_id": resume}
+        return {
+            "cards": cards,
+            "next_cursor": next_cursor,
+            "resume_card_id": resume,
+            "generating": generating,
+        }
 
     @app.get("/api/cards/{card_id}")
     def card(card_id: str):

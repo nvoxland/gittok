@@ -136,6 +136,18 @@ def rollup(conn, repo: str) -> list[dict]:
     return out
 
 
+WEAK_FACTOR = 0.8  # under this, the scout or the reader says the rule finds poor windows
+
+
+def weak_rules(conn, repo: str, rule_ids) -> list[str]:
+    """The rules of `rule_ids` (the detector ids of the repo's profile) whose factor is under
+    WEAK_FACTOR. A factor that low needs data: with the neutral prior, at least 3 windows that
+    the scout rated 1, or more evidence that is less bad."""
+    keep = set(rule_ids)
+    rows = rollup(conn, repo)
+    return sorted(r["rule"] for r in rows if r["rule"] in keep and r["factor"] < WEAK_FACTOR)
+
+
 def factors(conn, repo: str) -> dict[str, float]:
     """Rule key -> outcome factor (0.5 to 1.5), for every rule that has a current candidate."""
     return {r["rule"]: r["factor"] for r in rollup(conn, repo)}

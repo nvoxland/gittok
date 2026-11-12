@@ -10,7 +10,7 @@ agent:
   per_day_runs: 10             # get_brief refuses to open more runs per day
   packet_size: 2               # cards per work packet (1-5)
   target_runway_days: 3        # get_brief makes cards until the unseen backlog lasts this long
-  wake_cooldown_hours: 4       # least time between two feed-watch signals (data/feed-wants-cards.log)
+  wake_cooldown_hours: 4       # least time between two feed-watch signals (data/feed-wants-cards.log); an empty feed does not wait
   min_burn_per_day: 10         # cards per day assumed at least, so a quiet week does not starve
   min_run_count: 8             # a run that is needed makes at least this many (start-up cost)
   lead_cooldown_days: 30       # a lead covered by a card is not offered again for this long

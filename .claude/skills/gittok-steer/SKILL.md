@@ -6,7 +6,7 @@ model: sonnet
 
 # Manage and steer GitTok
 
-The user manages GitTok by asking you. You add and remove repos, you give the phone pairing QR code, you change what the feed shows through **rules**, and you explain what the feed has learned. You do not generate cards here (that is the `gittok-generate` skill) and you do not write repo profiles (that is the `gittok-profile-repo` skill). Do the work yourself. Do not launch subagents.
+The user manages GitTok by asking you. You add and remove repos, you give the phone pairing QR code, you change what the feed shows through **rules**, and you explain what the feed has learned. You do not generate cards here (that is the `gittok-generate` skill) and you do not write repo profiles (that is the `gittok-profile-repo` skill). After you add a repo, you go on to those two skills (step R3). Do the work yourself. Do not launch subagents.
 
 Requires the `gittok` MCP server (tools named `mcp__gittok__*`). If those tools are missing, say so and help the user start the server, then stop. The server starts with the Claude Code session, from the `.mcp.json` of a GitTok directory (or of a GitTok clone). So the session must be open in that directory: the user starts `claude` there, approves the `gittok` MCP server, and checks `/mcp` for errors. If the user has no GitTok directory, `gittok init <dir>` makes one.
 
@@ -22,7 +22,10 @@ Requires the `gittok` MCP server (tools named `mcp__gittok__*`). If those tools 
 
 1. **Add.** The user gives a local path or a git URL. If they gave neither, ask which repo. Pick a short name (letters, digits, `-`, `_`): the user's name for it, or else the last part of the path or URL. Call `add_repo(name, path)`. A local path may be anywhere on this computer; it must be the root of a git repo. A URL is cloned into GitTok's own folder, which can take minutes: say so before you call. Only clone a URL the user gave you.
 2. If `add_repo` fails, read the error and tell the user in one or two sentences. If it says the path is outside `repos.allowed_roots`, the user set that limit: say so, and do not work around it (do not run `gittok repos add` in the shell).
-3. After a repo is added, do what the result's `next` says: offer to profile the repo (`/gittok-profile-repo <name>`), then to make cards (`/gittok-generate`). If the SessionStart hint said that structure grammars are missing, offer to download them and run the command it names.
+3. After a repo is added, do what the result's `next` says. Do not ask first.
+   - Tell the user in one line that you now profile the repo so that GitTok learns which code is worth teaching, that it takes a few minutes and some model quota, and that it may ask permission to run a code analyzer. Then run the `gittok-profile-repo` skill for it (`/gittok-profile-repo <name>`). That skill offers the grammar download when grammars are missing.
+   - After the profile, tell the user in one line that you make the first cards. Then run the `gittok-generate` skill (`/gittok-generate`). It stops by itself when the feed has enough cards (`get_brief` answers `nothing_to_do`); then say that in one line.
+   - If the user said not to profile the repo or not to make cards, do not.
 4. **Remove.** Call `list_repos` if the name is unclear, then `remove_repo(name)`. Tell the user what the result says: the entry is gone; a clone that GitTok made is deleted (`deleted_clone` true); a directory of their own is not touched; cards already made from the repo stay.
 5. "Which repos do you have": `list_repos`. "Put X in group Y": `set_group`.
 
@@ -98,7 +101,8 @@ Reply: "Cleared 124 learned weights. Your 3 rules are still active. The feed sta
 
 **"add the repo at ~/src/storefront"**
 `add_repo(name="storefront", path="~/src/storefront")`
-Reply: "Added storefront. Shall I profile it now, so GitTok knows which code is worth teaching?"
+Reply: "Added storefront. I am profiling it now, so that GitTok learns which code is worth teaching. This takes a few minutes and some model quota, and it may ask permission to run a code analyzer."
+Then the `gittok-profile-repo` skill for `storefront`. After it: "The profile is saved. I am making the first cards now." Then the `gittok-generate` skill.
 
 **"pair my phone"**
 `pairing_link()`

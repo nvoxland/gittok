@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import math
 import os
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from gittok import db, gc, private, social
@@ -138,25 +138,47 @@ def parse_wants(text: str) -> list[dict]:
     return out
 
 
+def _iso(t: datetime) -> str:
+    return t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def run_open(conn, cfg, now: datetime) -> bool:
+    """True when a generation run is open now. A run that started more than
+    `agent.wake_cooldown_hours` ago and never finished is abandoned: it does not count."""
+    since = _iso(now - timedelta(hours=cfg.settings.agent.wake_cooldown_hours))
+    row = conn.execute(
+        "SELECT 1 FROM runs WHERE status = 'open' AND started_at > ?", (since,)
+    ).fetchone()
+    return row is not None
+
+
 def signal_wants_cards(conn, cfg, now: datetime) -> int:
     """Append one line (`wants_line`) to WANTS_FILE when the feed wants cards. Returns 1 if
     written.
 
-    No line when there are no repos, while a run started in the cooldown is still open, or
-    within the cooldown of the last line. The line holds only a time and a count, never repo text.
+    No line when there are no repos, while a run is open (`run_open`), when the daily run cap
+    is reached (a run could not start), or within the cooldown of the last line. One exception
+    to the cooldown: the feed is empty (the reader reached its end) and a run started after the
+    last line, so that line was answered. The line holds only a time and a count, never repo
+    text.
     """
+    from gittok import learning, runs  # runs imports modules that import this one
+
     if not cfg.repos:
         return 0  # nothing to generate from: do not wake a session
     agent = cfg.settings.agent
-    cooldown = timedelta(hours=agent.wake_cooldown_hours)
     path = cfg.settings.data_dir / WANTS_FILE
-    if path.exists() and now.timestamp() - path.stat().st_mtime < cooldown.total_seconds():
+    if run_open(conn, cfg, now) or runs.cap_reached(conn, cfg, now):
         return 0
-    since = (now - cooldown).strftime("%Y-%m-%dT%H:%M:%SZ")
-    if conn.execute(
-        "SELECT 1 FROM runs WHERE status = 'open' AND started_at > ?", (since,)
-    ).fetchone():
-        return 0
+    last = path.stat().st_mtime if path.exists() else None
+    if last is not None and now.timestamp() - last < agent.wake_cooldown_hours * 3600:
+        if unseen_ready(conn, learning.load_reward_config(cfg), now):
+            return 0
+        answered = conn.execute(
+            "SELECT 1 FROM runs WHERE started_at > ?", (_iso(datetime.fromtimestamp(last, UTC)),)
+        ).fetchone()
+        if not answered:
+            return 0  # no run answered the last line: a second line says nothing new
     want = feed_health(conn, cfg, now)["want"]
     if want <= 0:
         return 0

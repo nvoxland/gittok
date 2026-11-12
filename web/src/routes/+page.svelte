@@ -54,6 +54,8 @@
 	let nextCursor: string | null = null;
 	// No more pages: the feed ends with the caught-up card.
 	let atEnd = $state(false);
+	// A generation run is open on the server now (from the newest feed answer, never from cache).
+	let generating = $state(false);
 	let checking = $state(false);
 	let checkedEmpty = $state(false);
 	let loadingMore = false;
@@ -157,6 +159,7 @@
 			const [feed, prefs] = await Promise.all([fetchFeed(undefined, 20, filter), fetchPrefs().catch(() => null)]);
 			if (prefs) setPlaybackSpeed(prefs.playback_speed);
 			fromCache = !!feed.fromCache;
+			generating = !!feed.generating && !feed.fromCache;
 			const fresh = await resumeOn(feed.cards, feed.resume_card_id);
 			// Cards the server serves again are new or due for review: let them be answered again.
 			// The resumed card is the one on screen before the reload: keep its answer.
@@ -188,6 +191,7 @@
 			cards = [...cards, ...fresh];
 			nextCursor = feed.next_cursor;
 			atEnd = nextCursor === null;
+			generating = !!feed.generating && !feed.fromCache;
 			moreError = null;
 		} catch (e) {
 			// Keep the cursor: the Try again button and the next card near the end both try again.
@@ -210,6 +214,7 @@
 			cards = [...cards, ...fresh];
 			nextCursor = feed.next_cursor;
 			atEnd = nextCursor === null;
+			generating = !!feed.generating && !feed.fromCache;
 			checkedEmpty = fresh.length === 0;
 		} catch (e) {
 			// Not "no new cards": the check itself failed.
@@ -271,7 +276,7 @@
 			<p>No repos are configured, so there is nothing to make cards from.</p>
 			<p>
 				On the computer that runs GitTok, ask Claude to add one, for example: "add the repo at
-				~/src/myapp". Then ask Claude to make cards.
+				~/src/myapp". Claude then makes the first cards.
 			</p>
 			<p class="muted">
 				Or in a terminal: <code>gittok repos add &lt;name&gt; &lt;path-or-url&gt;</code>
@@ -293,10 +298,18 @@
 			<section class="end" aria-label="End of feed">
 				<h2>You're all caught up</h2>
 				<p>You have seen every card for now.</p>
-				<p>
-					To make more, open Claude Code in your GitTok directory and run
-					<code>/gittok-generate</code>.
-				</p>
+				{#if generating}
+					<p>New cards are being made now. They will appear here.</p>
+				{:else}
+					<p>
+						GitTok makes more cards by itself while a session of your coding agent is open in your
+						GitTok directory.
+					</p>
+					<p>
+						To get more right away, ask the agent there: "make more cards". In Claude Code,
+						<code>/gittok-generate</code> does the same.
+					</p>
+				{/if}
 				<button type="button" onclick={checkAgain} disabled={checking}>
 					{checking ? 'Checking…' : checkError ? 'Try again' : 'Check for new cards'}
 				</button>

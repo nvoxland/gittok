@@ -46,6 +46,7 @@ def test_feed_pages_with_cursor_without_repeats(cfg, client, fixture_repo):
     assert len(second["cards"]) == 1
     assert {first["cards"][0]["id"], second["cards"][0]["id"]} == set(ids)
     third = client.get("/api/feed", params={"limit": 1, "cursor": second["next_cursor"]}).json()
+    third.pop("generating")
     assert third == {"cards": [], "next_cursor": None, "resume_card_id": None}
 
 
@@ -899,3 +900,13 @@ def test_api_errors_carry_a_stable_code_next_to_detail(cfg, client, fixture_repo
     )
     assert err("get", "/api/personas/nope") == (404, "unknown_persona")
     assert err("get", "/assets/nope/1.png") == (404, "unknown_asset")
+
+
+def test_feed_says_whether_a_generation_run_is_open(cfg, client, fixture_repo):
+    assert client.get("/api/feed").json()["generating"] is False
+    with db.session(cfg.settings.data_dir / "gittok.db") as conn:
+        run_id = runs.open_run(conn, cfg, repo=None, brief="b", requested=5)
+    assert client.get("/api/feed").json()["generating"] is True
+    with db.session(cfg.settings.data_dir / "gittok.db") as conn:
+        runs.finish_run(conn, run_id, None)
+    assert client.get("/api/feed").json()["generating"] is False

@@ -84,9 +84,12 @@ Query parameters: `limit` (1 to 50, default 20), `cursor` (the `next_cursor` of 
 {
   "cards": [Card, ...],
   "next_cursor": "string or null",
-  "resume_card_id": "string or null"
+  "resume_card_id": "string or null",
+  "generating": false
 }
 ```
+
+`generating` is `true` while a generation run is open (it started in the last `agent.wake_cooldown_hours` and has not finished). The end-of-feed card uses it to say that new cards are being made now. The client ignores it in an answer that comes from its offline cache.
 
 `resume_card_id` is set only when there is no `cursor`. It is the card of the newest `impression` event, if that card still exists and is `ready`. The server puts that card first, so a reload opens on the card you saw last. The page still has `limit` cards. The card is also in the served list of `next_cursor`, so it is not repeated. With a `cursor`, or with no impressions, the value is `null`.
 

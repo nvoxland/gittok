@@ -328,3 +328,27 @@ async def test_test_detector_lists_a_generated_marker_skipped_for_a_timeout(slow
     out = data(await call(slow_cfg, "test_detector", {"repo": "fixture", "rule": RULE}))
     assert [s["rule"] for s in out["skipped_rules"]] == ["generated_markers[0]"]
     assert "timed out" in out["skipped_rules"][0]["reason"]
+
+
+async def test_survey_names_the_grammars_this_repo_needs_and_lacks(cfg, monkeypatch):
+    """The profile skill offers the download at that moment; the user need not know to ask."""
+    from gittok import structure
+
+    monkeypatch.setattr(structure, "available", lambda: True)
+    monkeypatch.setattr(structure, "missing", lambda gs: sorted(set(gs) & {"python", "nope"}))
+    out = data(await call(cfg, "survey_repo", {"repo": "fixture"}))
+    assert out["structure"]["missing_grammars"] == ["python"]
+    monkeypatch.setattr(structure, "missing", lambda gs: [])
+    out = data(await call(cfg, "survey_repo", {"repo": "fixture"}))
+    assert out["structure"]["missing_grammars"] == []
+
+
+async def test_list_repos_says_which_repos_have_a_profile(cfg):
+    async with Client(mcp_server.build_server(lambda: cfg)) as c:
+        assert [r["profiled"] for r in data(await c.call_tool("list_repos", {}))] == [False]
+        doc = {t.name: t for t in (await c.list_tools()).tools}["list_repos"].description
+        assert "profiled" in doc
+        args = {"repo": "fixture", "profile": {"detectors": [RULE]}}
+        saved = await c.call_tool("save_profile", args)
+        assert data(saved)["ok"]
+        assert [r["profiled"] for r in data(await c.call_tool("list_repos", {}))] == [True]
