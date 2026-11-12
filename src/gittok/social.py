@@ -9,6 +9,7 @@ import os
 import secrets
 import socket
 import threading
+import time
 import webbrowser
 from collections.abc import Callable
 from contextlib import closing
@@ -441,6 +442,51 @@ class NotifyWorker:
 # --- LAN -----------------------------------------------------------------------------------
 
 
+HOST_LOOKUP_WAIT = 1.0  # seconds a caller waits for the host name to resolve
+HOST_LOOKUP_TTL = 60.0  # seconds a resolved answer is reused
+_host_lock = threading.Lock()
+_host_state: dict[str, Any] = {"addrs": [], "at": None, "thread": None}
+
+
+def _host_addresses_reset() -> None:
+    with _host_lock:
+        _host_state.update(addrs=[], at=None, thread=None)
+
+
+def _host_addresses() -> list[str]:
+    """IPv4 addresses that this machine's host name resolves to. On some networks the name
+    takes many seconds to resolve, or never does. So the lookup runs in its own thread: a
+    caller waits a short time at most, the answer is reused for a minute, and a lookup that
+    is still running is not started again."""
+    with _host_lock:
+        at, thread = _host_state["at"], _host_state["thread"]
+        if at is not None and time.monotonic() - at < HOST_LOOKUP_TTL:
+            return list(_host_state["addrs"])
+        if thread is None or not thread.is_alive():
+            state = _host_state
+
+            def look() -> None:
+                try:
+                    infos = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)
+                    addrs = [info[4][0] for info in infos]
+                except OSError:
+                    addrs = []
+                with _host_lock:
+                    if state["thread"] is threading.current_thread():
+                        state.update(addrs=addrs, at=time.monotonic())
+
+            thread = threading.Thread(target=look, name="gittok-host-lookup", daemon=True)
+            _host_state["thread"] = thread
+            thread.start()
+            wait = True
+        else:
+            wait = False
+    if wait:
+        thread.join(HOST_LOOKUP_WAIT)
+    with _host_lock:
+        return list(_host_state["addrs"])
+
+
 def lan_addresses() -> list[str]:
     """Non-loopback IPv4 addresses of this machine (stdlib only), primary address first."""
     found: list[str] = []
@@ -450,11 +496,7 @@ def lan_addresses() -> list[str]:
             found.append(s.getsockname()[0])
     except OSError:
         pass
-    try:
-        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-            found.append(info[4][0])
-    except OSError:
-        pass
+    found.extend(_host_addresses())
     out: list[str] = []
     for a in found:
         if not a.startswith(("127.", "0.")) and a not in out:
