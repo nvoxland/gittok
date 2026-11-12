@@ -23,8 +23,16 @@ jobs:
       - name: Lint
         run: uv run ruff check
 
+      - name: Download the code grammars
+        run: |
+          uv run python -c "from gittok import structure; structure.download(sorted(structure.spec()['languages']))" \
+            || echo "::warning::grammar download failed; the tests that need a grammar will skip"
+
+      # -v names each test, and faulthandler prints every stack if one test runs
+      # longer than two minutes, so a hang shows where it is.
       - name: Python tests
-        run: uv run pytest
+        timeout-minutes: 15
+        run: uv run pytest -n auto -v -o faulthandler_timeout=120
 
       - name: Set up Node
         uses: actions/setup-node@v6

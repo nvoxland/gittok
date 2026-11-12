@@ -685,6 +685,7 @@ def test_gc_prints_counts_as_json(cfg, capsys):
 
 def test_health_hint_is_one_line_when_cards_are_wanted_else_silent(cfg, capsys, monkeypatch):
     """For the SessionStart hook: a reminder only when the feed needs cards."""
+    _no_grammar_hint(monkeypatch)
     from gittok import profiling, supply
 
     monkeypatch.setattr(profiling, "profile_hint", lambda cfg: None)
@@ -707,6 +708,13 @@ def test_health_hint_names_repos_without_a_profile_on_one_line(cfg, capsys):
     assert "no profile" in lines[0]
 
 
+def _no_grammar_hint(monkeypatch):
+    """These tests are about other hint lines; a machine without the grammars adds one."""
+    from gittok import profiling
+
+    monkeypatch.setattr(profiling, "structure_hint", lambda cfg: None)
+
+
 def _quiet_feed(monkeypatch):
     from gittok import supply
 
@@ -716,6 +724,7 @@ def _quiet_feed(monkeypatch):
 
 
 def test_health_hint_is_silent_when_profiles_are_current(cfg, capsys, monkeypatch):
+    _no_grammar_hint(monkeypatch)
     from contextlib import closing
 
     from gittok import profiling
@@ -729,6 +738,7 @@ def test_health_hint_is_silent_when_profiles_are_current(cfg, capsys, monkeypatc
 
 
 def test_health_hint_flags_changed_manifests(cfg, capsys, monkeypatch):
+    _no_grammar_hint(monkeypatch)
     from contextlib import closing
 
     from gittok import profiling

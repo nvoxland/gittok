@@ -11,6 +11,7 @@ from gittok import db, detectors, mcp_server, profiling
 from gittok.config import ProfilesSettings
 from tests.conftest import make_config
 from tests.fixture_repo import build_history_repo
+from tests.test_structure import need
 
 pytestmark = pytest.mark.anyio
 
@@ -298,6 +299,7 @@ def slow_cfg(tmp_path, monkeypatch):
     return make_config(repo, tmp_path / "cs")
 
 
+@need("python")  # the sinks are checked against the call graph
 async def test_save_profile_lists_the_rules_skipped_for_a_regex_timeout(slow_cfg):
     profile = {
         "detectors": [RULE],
