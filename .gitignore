@@ -16,3 +16,6 @@ __pycache__/
 .claude/worktrees/
 local/
 dist/
+
+# Beads issue tracker (local only)
+.beads/

@@ -148,24 +148,18 @@ def test_project_root_not_found(tmp_path, monkeypatch):
         project_root(tmp_path)
 
 
-def test_real_repo_config():
-    cfg = load_config(Path(__file__).parents[1])
-    assert {"gittok", "storefront"} <= set(cfg.repos)
-    assert cfg.repo("storefront").ref == "origin/master"
-    assert cfg.repo("gittok").group == "dev"
+def test_shipped_config_loads_without_user_files(tmp_path):
+    """The shipped config alone (an empty home, no local/) is a complete config."""
+    cfg = load_config(tmp_path, shared=Path(__file__).parents[1])
+    assert cfg.repos == {}
     assert len(cfg.personas) == 6
     assert cfg.personas["greybeard"].name == "Greybeard"
 
 
-def test_real_config_has_mascots_meme_templates_and_render_settings():
-    from pathlib import Path
-
-    from gittok.config import load_config
-
-    cfg = load_config(Path(__file__).parents[1])
-    assert cfg.mascots["otter"].repo == "storefront"
-    assert cfg.mascots["otter"].seed == 4242
-    assert "a small round otter" in cfg.mascots["otter"].style
+def test_shipped_config_has_mascots_meme_templates_and_render_settings(tmp_path):
+    cfg = load_config(tmp_path, shared=Path(__file__).parents[1])
+    assert cfg.mascots["crow"].seed == 1717
+    assert "a small round black crow" in cfg.mascots["crow"].style
     assert cfg.meme_templates["drake"].lines == 2
     assert cfg.settings.render.max_illustrations_per_run == 6
     assert cfg.settings.render.memegen_url.startswith("http://127.0.0.1")
