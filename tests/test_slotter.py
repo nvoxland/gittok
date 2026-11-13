@@ -229,7 +229,7 @@ def test_series_part_waits_for_an_unseen_earlier_part(conn, cfg):
     p1 = add_card(conn, cfg, series=series("saga", 1), hook="part one")
     p2 = add_card(conn, cfg, series=series("saga", 2), hook="part two")
     other = add_card(conn, cfg, hook="other")
-    retold = add_card(conn, cfg, hook="part one, told before")
+    retold = add_card(conn, cfg, created_at="2026-06-01T00:00:00Z", hook="part one, told before")
     _same_story(conn, p1, retold)
     impress(conn, retold, NOW - timedelta(days=3))  # its story was shown: part 1 must wait
     out = batch(conn, cfg, 5)
