@@ -46,19 +46,19 @@ def _is_liked(like_data: str | None, story_liked: int | None) -> bool:
 # Tables with a `card_id` column. `delete_cards` handles each one.
 CARD_TABLES = frozenset({
     "card_features", "assets", "events", "rewards", "srs", "notifications", "saved_cards",
-    "knowledge_events", "replies", "requests", "digests",
+    "knowledge_events", "replies", "digests",
 })  # fmt: skip
 # Tables with a `repo` (name) or `repo_id` column. `_delete_repo_rows` handles each one.
 _BY_NAME = (
     "story_views", "candidates", "candidate_ratings", "scout_batches", "leads", "knowledge",
-    "knowledge_symbols", "digests", "requests",
+    "knowledge_symbols", "digests",
 )  # fmt: skip
 _BY_REPO_ID = (
     "git_signals", "repo_groups", "mascots", "fact_builds", "fact_defines", "fact_calls",
     "fact_imports", "fact_touched", "fact_analyzers", "fact_schema",
 )  # fmt: skip
 REPO_TABLES = frozenset({*_BY_NAME, *_BY_REPO_ID, "stories", "runs", "cards"})
-_FORGET = ("events", "rewards", "knowledge_events", "saved_cards", "replies", "requests")
+_FORGET = ("events", "rewards", "knowledge_events", "saved_cards", "replies")
 KEPT_KEY = "kept_repos"  # prefs: repos removed with keep_data, which gc must leave
 _CHUNK = 500
 
@@ -69,7 +69,7 @@ def delete_cards(conn, ids: list[str], forget: bool = False) -> None:
 
     Always: the card, its features, its asset rows and its review schedule (`srs`). Without
     `forget` (a card that got old) what the reader did stays: events, rewards, replies,
-    requests, and a notification loses only its link. With `forget` (the repo is gone) all of
+    and a notification loses only its link. With `forget` (the repo is gone) all of
     that goes too, and so does a saved mark."""
     for i in range(0, len(ids), _CHUNK):
         chunk = ids[i : i + _CHUNK]

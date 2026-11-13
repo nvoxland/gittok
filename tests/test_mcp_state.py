@@ -10,7 +10,7 @@ import pytest
 from mcp import Client
 
 from gittok import config as config_mod
-from gittok import db, home, mcp_server, runs, steering, store, supply
+from gittok import db, home, mcp_server, runs, social, steering, store, supply
 from tests.cards import text_card
 from tests.test_mcp_e2e import data
 from tests.test_steering import make_ycfg
@@ -166,7 +166,9 @@ async def test_status_says_version_directory_and_server(ycfg):
         "running": True,
         "serves_this_directory": True,
         "owned_by_this_session": True,
+        "urls": social.feed_urls(ycfg),
     }
+    assert s["server"]["urls"][0] == f"http://127.0.0.1:{port}"
     assert s["run_open"] is False and s["repos"] == 2
     # Can a mascot be drawn, can a meme: the agent makes no mascot that nobody can draw.
     assert set(s["renderers"]) == {"illustration", "meme"}

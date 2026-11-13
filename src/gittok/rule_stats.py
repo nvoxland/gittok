@@ -30,14 +30,16 @@ def rule_key(c: dict) -> str:
 
 
 def _card_rows(conn, repo: str) -> list[dict]:
-    """One row per card made from a candidate lead: its key parts, reward and knew/teach counts."""
+    """One row per card made from a candidate lead: its key parts, its rewards (sum of
+    reward x weight, and of weight: a 👎 counts its weight) and its like and 👎 counts."""
     rows = conn.execute(
         "SELECT c.id AS card_id, l.lead_key, "
-        "(SELECT AVG(reward) FROM rewards w WHERE w.card_id = c.id) AS reward, "
-        "(SELECT COUNT(*) FROM knowledge_events k WHERE k.card_id = c.id AND k.kind = 'knew_it') "
-        "AS knew_it, "
-        "(SELECT COUNT(*) FROM knowledge_events k WHERE k.card_id = c.id "
-        "AND k.kind = 'teach_more') AS teach_more "
+        "(SELECT SUM(reward * weight) FROM rewards w WHERE w.card_id = c.id) AS reward_sum, "
+        "(SELECT SUM(weight) FROM rewards w WHERE w.card_id = c.id) AS weight_sum, "
+        "(SELECT COUNT(*) FROM rewards w WHERE w.card_id = c.id AND w.signal = 'like') "
+        "AS likes, "
+        "(SELECT COUNT(*) FROM rewards w WHERE w.card_id = c.id AND w.signal = 'dislike') "
+        "AS dislikes "
         "FROM cards c JOIN leads l ON l.id = c.lead_id "
         "WHERE l.repo = ? AND l.lead_key LIKE 'cand:%'",
         (repo,),
@@ -47,7 +49,8 @@ def _card_rows(conn, repo: str) -> list[dict]:
 
 def _repo_mean_reward(conn, repo: str) -> float | None:
     row = conn.execute(
-        "SELECT AVG(w.reward) FROM rewards w JOIN cards c ON c.id = w.card_id "
+        "SELECT SUM(w.reward * w.weight) / SUM(w.weight) FROM rewards w "
+        "JOIN cards c ON c.id = w.card_id "
         "JOIN repos r ON r.id = c.repo_id WHERE r.name = ?",
         (repo,),
     ).fetchone()
@@ -86,9 +89,10 @@ def rollup(conn, repo: str) -> list[dict]:
                 "_teach": 0,
                 "cards": 0,
                 "_reward": 0.0,
+                "_weight": 0.0,
                 "_rewarded": 0,
-                "knew_it": 0,
-                "teach_more": 0,
+                "likes": 0,
+                "dislikes": 0,
             },
         )
 
@@ -108,16 +112,17 @@ def rollup(conn, repo: str) -> list[dict]:
             continue
         s = row(rule)
         s["cards"] += 1
-        s["knew_it"] += cr["knew_it"]
-        s["teach_more"] += cr["teach_more"]
-        if cr["reward"] is not None:
-            s["_reward"] += cr["reward"]
+        s["likes"] += cr["likes"]
+        s["dislikes"] += cr["dislikes"]
+        if cr["weight_sum"]:
+            s["_reward"] += cr["reward_sum"]
+            s["_weight"] += cr["weight_sum"]
             s["_rewarded"] += 1
     mean_all = _repo_mean_reward(conn, repo)
     out = []
     for s in stats.values():
         mean_t = s["_teach"] / s["rated"] if s["rated"] else None
-        mean_r = s["_reward"] / s["_rewarded"] if s["_rewarded"] else None
+        mean_r = s["_reward"] / s["_weight"] if s["_weight"] else None
         rel = mean_r / mean_all if mean_r is not None and mean_all else None
         out.append(
             {
@@ -127,8 +132,8 @@ def rollup(conn, repo: str) -> list[dict]:
                 "mean_teachable": None if mean_t is None else round(mean_t, 2),
                 "cards": s["cards"],
                 "mean_reward": None if mean_r is None else round(mean_r, 4),
-                "knew_it": s["knew_it"],
-                "teach_more": s["teach_more"],
+                "likes": s["likes"],
+                "dislikes": s["dislikes"],
                 "factor": round(factor_for(s["rated"], mean_t, s["_rewarded"], rel), 4),
             }
         )

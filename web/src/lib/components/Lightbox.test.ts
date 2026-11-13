@@ -24,15 +24,19 @@ const codeCard = (over: Partial<CardT> = {}) =>
 
 describe('Card lightbox', () => {
 	let observers: Array<() => void> = [];
+	let observed: Element[] = [];
 	beforeEach(() => {
 		observers = [];
+		observed = [];
 		vi.stubGlobal(
 			'ResizeObserver',
 			class {
 				constructor(cb: () => void) {
 					observers.push(cb);
 				}
-				observe() {}
+				observe(el: Element) {
+					observed.push(el);
+				}
 				disconnect() {}
 			}
 		);
@@ -95,19 +99,19 @@ describe('Card lightbox', () => {
 		expect(document.body.style.overflow).not.toBe('hidden');
 	});
 
-	it('every visual has a corner Expand button that opens it', async () => {
-		render(Card, { card: codeCard() });
-		await fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
+	it('a tap on a visual that does not play in steps opens it', async () => {
+		const { container } = render(Card, { card: codeCard() });
+		await fireEvent.click(container.querySelector('.visual')!);
 		expect(screen.getByRole('dialog')).toBeInTheDocument();
 	});
 
-	it('a clipped visual shows the fade and Tap to expand; a fitting one only the corner icon', async () => {
+	it('a clipped visual shows the fade and Tap to expand; a fitting one shows neither', async () => {
 		const { container } = render(Card, { card: codeCard() });
 		const visual = container.querySelector('.visual')!;
 		size(visual, 300, 300);
 		await Promise.resolve();
 		expect(screen.queryByText('Tap to expand')).toBeNull();
-		expect(screen.getByRole('button', { name: 'Expand' })).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Expand' })).toBeNull(); // a tap opens it
 		size(visual, 600, 300);
 		await vi.waitFor(() => expect(screen.getByText('Tap to expand')).toBeInTheDocument());
 	});
@@ -126,6 +130,25 @@ describe('Card lightbox', () => {
 		const dialog = screen.getByRole('dialog');
 		expect(dialog.querySelectorAll('.post')).toHaveLength(3);
 		expect(onAction).toHaveBeenCalledWith('lightbox_open', { kind: 'template' });
+	});
+
+	it('measures again when an animation in the visual ends: a bubble that popped in no longer counts', async () => {
+		// A chat bubble pops in with translateY(6px): while it moves, the content sticks out of
+		// the box. The box keeps its size when the animation ends, so no resize says so.
+		const { container } = render(Card, { card: codeCard() });
+		const visual = container.querySelector('.visual')!;
+		size(visual, 306, 300);
+		await vi.waitFor(() => expect(screen.getByText('Tap to expand')).toBeInTheDocument());
+		Object.defineProperty(visual, 'scrollHeight', { configurable: true, value: 300 });
+		visual.firstElementChild!.dispatchEvent(new Event('animationend', { bubbles: true }));
+		await vi.waitFor(() => expect(screen.queryByText('Tap to expand')).toBeNull());
+	});
+
+	it('measures again when the content grows inside a box of the same size', async () => {
+		const { container } = render(Card, { card: codeCard() });
+		const visual = container.querySelector('.visual')!;
+		size(visual, 300, 300);
+		expect(observed).toContain(visual.firstElementChild);
 	});
 
 	it('the Tap to expand pill is a button that opens the lightbox, even on a beat card', async () => {

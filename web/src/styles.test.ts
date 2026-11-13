@@ -49,8 +49,20 @@ describe('safe-area insets', () => {
 		expect(actions).toContain('env(safe-area-inset-right)');
 		expect(actions).toContain('env(safe-area-inset-bottom)');
 	});
-	it('the first card leaves the top inset to the top bar', () => {
-		expect(rule(style('lib/components/Card.svelte'), 'article.first')).toMatch(/padding-top:\s*0\.75rem/);
+	it('no card is shorter than the screen: the first card has no rule of its own', () => {
+		expect(style('lib/components/Card.svelte')).not.toContain('article.first');
+		expect(style('lib/components/Feed.svelte')).not.toContain('.placeholder.first');
+	});
+	it('the expand button sits in the bottom-left corner of the visual', () => {
+		// Top right holds Replay; the side buttons reach into the bottom right of a tall visual.
+		const expand = rule(style('lib/components/Card.svelte'), '.expand');
+		expect(expand).toMatch(/position:\s*absolute/);
+		expect(expand).toMatch(/bottom:\s*0/);
+		expect(expand).toMatch(/left:\s*0/);
+		expect(expand).not.toMatch(/right:|top:/);
+	});
+	it('the top bar is a snap point above the first card, so scrolling up shows it', () => {
+		expect(rule(style('routes/+page.svelte'), '.chrome')).toMatch(/scroll-snap-align:\s*start/);
 	});
 	it('the lightbox keeps its close button and content inside the safe area', () => {
 		const css = style('lib/components/Lightbox.svelte');
@@ -118,5 +130,43 @@ describe('reduced motion', () => {
 describe('pull-to-refresh', () => {
 	it('is off on html and on body: browsers differ in which one they read for the page scroller', () => {
 		expect(read('app.css')).toMatch(/html,\s*body\s*\{[^}]*overscroll-behavior-y:\s*none/);
+	});
+});
+
+describe('home-screen app edges', () => {
+	// iOS 26 blurs page content under the status bar and the home indicator of a home-screen
+	// app (the Liquid Glass scroll-edge effect). Field reports: WebKit skips the blur when a
+	// fixed, full-width, opaque box covers the edge.
+	it('puts an opaque band over each safe area in standalone mode only', () => {
+		const css = read('app.css');
+		const block = css.split('@media (display-mode: standalone)')[1] ?? '';
+		expect(block).not.toBe('');
+		const edge = rule(block, '.edge');
+		expect(edge).toMatch(/position:\s*fixed/);
+		expect(edge).toMatch(/left:\s*0/);
+		expect(edge).toMatch(/right:\s*0/);
+		expect(edge).toMatch(/background:\s*var\(--bg\)/);
+		expect(edge).toMatch(/pointer-events:\s*none/);
+		expect(rule(block, '.edge.top')).toMatch(/height:\s*env\(safe-area-inset-top\)/);
+		expect(rule(block, '.edge.bottom')).toMatch(/height:\s*env\(safe-area-inset-bottom\)/);
+		expect(rule(css, '.edge')).toMatch(/display:\s*none/); // outside the home-screen app
+	});
+
+	it('scrolls the cards in an inner box, so the page itself never scrolls under the bars', () => {
+		// The bands alone did not stop the blur: it reaches below the status bar. iOS draws the
+		// edge effect over the page's own scroll view, so in the home-screen app the page does
+		// not scroll; the .app box does, with the snap points.
+		const block = read('app.css').split('@media (display-mode: standalone)')[1] ?? '';
+		expect(rule(block, 'html,\n\tbody')).toMatch(/overflow:\s*hidden/);
+		const app = rule(block, '.app');
+		expect(app).toMatch(/height:\s*100dvh/);
+		expect(app).toMatch(/overflow-y:\s*auto/);
+		expect(app).toMatch(/scroll-snap-type:\s*y mandatory/);
+	});
+
+	it('the layout renders both bands', () => {
+		const layout = read('routes/+layout.svelte');
+		expect(layout).toContain('<div class="edge top" aria-hidden="true"></div>');
+		expect(layout).toContain('<div class="edge bottom" aria-hidden="true"></div>');
 	});
 });

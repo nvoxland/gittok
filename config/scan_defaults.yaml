@@ -145,9 +145,13 @@ kinds:
     - '*.csv'
 
 # A read file whose first 5 lines match one of these (case-insensitive regexes) is generated.
+# "Do not edit" alone is not a marker: hand-written files say it too ("Do not edit: write the
+# keys you change to local/"). It counts next to "generated".
 generated_markers:
-  - '@generated|do not edit|auto-?generated|code generated'
+  - '@generated|auto-?generated|automatically generated|code generated'
   - 'this file (?:is|was) (?:automatically )?generated'
+  - '(?m)^[\W_]*generated (?:by|from|with)\b'
+  - 'do not edit.{0,60}generated|generated.{0,60}do not edit'
 
 # Paths that are never a lead for a story (tool state, build output, lockfiles, source maps,
 # binary assets), also with a profile. Matched on top of the file set.

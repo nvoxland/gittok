@@ -31,6 +31,7 @@ dependencies = [
   "tree-sitter-language-pack>=1.22,<1.23",  # its grammars
   "ast-grep-py>=0.51",  # ast_grep rules in repo profiles
   "segno>=1.6",  # QR code of the pairing link (pure Python, no dependencies)
+  "pillow>=11",  # draws meme cards (memes.py)
 ]
 
 [project.scripts]

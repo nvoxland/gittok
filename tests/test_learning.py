@@ -1,4 +1,5 @@
 import json
+import math
 import random
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -12,6 +13,7 @@ from tests.conftest import make_config
 NOW = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
 T0 = int((NOW - timedelta(hours=2)).timestamp() * 1000)
 MIN = 60_000
+LIKE = learning.default_reward_config().like_floor  # a liked card scores at least this
 
 
 @pytest.fixture
@@ -88,7 +90,9 @@ def test_explicit_like_or_save_beats_skip(conn, cfg, positive):
     ev(conn, a, positive, T0 + 400, {"on": True})
     ev(conn, b, "impression", T0 + 1000)
     learning.process_events(conn, cfg, now=at(5))
-    assert rewards(conn)[a] == pytest.approx(learning.default_reward_config().weights[positive])
+    rc = learning.default_reward_config()
+    want = rc.like_floor if positive == "like" else rc.weights[positive]
+    assert rewards(conn)[a] == pytest.approx(want)
 
 
 def test_process_events_updates_story_best_reward_and_liked(conn, cfg):
@@ -115,8 +119,7 @@ def test_process_events_updates_story_best_reward_and_liked(conn, cfg):
     ev(conn, a, "skip", T0 + 10 * MIN + 100, {"ms": 100})
     ev(conn, b, "impression", T0 + 20 * MIN)
     learning.process_events(conn, cfg, now=at(60))
-    like = learning.default_reward_config().weights["like"]
-    assert story(a)["best_reward"] == pytest.approx(like)
+    assert story(a)["best_reward"] == pytest.approx(LIKE)
 
 
 def test_short_dwell_without_engagement_counts_as_skip(conn, cfg):
@@ -158,7 +161,7 @@ def test_non_dict_event_data_is_ignored(conn, cfg):
     ev(conn, a, "like", T0 + 200, {"on": True})
     ev(conn, b, "impression", T0 + 1000)
     assert learning.process_events(conn, cfg, now=at(5))["rewards"] == 1
-    assert rewards(conn)[a] == pytest.approx(0.25)
+    assert rewards(conn)[a] == pytest.approx(LIKE)
 
 
 def test_engagement_sums_and_clips_to_one(conn, cfg):
@@ -244,7 +247,7 @@ def test_events_without_session_group_by_card(conn, cfg):
     ev(conn, a, "like", T0 + 5000, {"on": True}, session=None)
     ev(conn, a, "impression", T0 + 10_000, session=None)
     learning.process_events(conn, cfg, now=at(5))
-    assert rewards(conn) == {a: pytest.approx(0.25)}
+    assert rewards(conn) == {a: pytest.approx(LIKE)}
 
 
 def test_process_events_is_idempotent(conn, cfg):
@@ -252,11 +255,11 @@ def test_process_events_is_idempotent(conn, cfg):
     ev(conn, a, "impression", T0)
     ev(conn, b, "impression", T0 + 1000)
     first = learning.process_events(conn, cfg, now=at(5))
-    snapshot = conn.execute("SELECT feature, value, alpha, beta FROM weights").fetchall()
+    snapshot = [tuple(r) for r in conn.execute("SELECT * FROM model_weights")]
     second = learning.process_events(conn, cfg, now=at(6))
     assert first["rewards"] == 1 and second == {"impressions": 0, "rewards": 0, "weights": 0}
     assert conn.execute("SELECT COUNT(*) FROM rewards").fetchone()[0] == 1
-    assert conn.execute("SELECT feature, value, alpha, beta FROM weights").fetchall() == snapshot
+    assert [tuple(r) for r in conn.execute("SELECT * FROM model_weights")] == snapshot
 
 
 def test_expected_ms_uses_default_for_unknown_format_and_caps():
@@ -284,15 +287,15 @@ def test_unknown_reward_key_is_dropped_with_a_warning_and_the_file_still_loads(c
 
     (tmp_path / "config").mkdir()
     (tmp_path / "config" / "reward.yaml").write_text(
-        "future: 1\nweights:\n  nope: 1\n  save: 0.5\nimportance:\n  zzz: 2\n"
+        "future: 1\nweights:\n  nope: 1\n  save: 0.5\n"
     )
     rc = learning.load_reward_config(cfg)
-    assert rc.weights["save"] == 0.5 and "nope" not in rc.weights and "zzz" not in rc.importance
+    assert rc.weights["save"] == 0.5 and "nope" not in rc.weights
     assert not hasattr(rc, "future")
     warnings = load_config(cfg.root, shared=cfg.root).warnings
-    for key in ("'future'", "'weights.nope'", "'importance.zzz'"):
+    for key in ("'future'", "'weights.nope'"):
         assert any(key in w and "config/reward.yaml" in w for w in warnings), (key, warnings)
-    assert len(warnings) == 3
+    assert len(warnings) == 2
 
 
 def test_shipped_reward_file_has_no_unknown_keys():
@@ -304,8 +307,8 @@ def test_shipped_reward_file_has_no_unknown_keys():
 
 def weights(conn):
     return {
-        (r["feature"], r["value"]): (r["alpha"], r["beta"])
-        for r in conn.execute("SELECT * FROM weights")
+        (r["feature"], r["value"]): (r["mean"], r["precision"], r["n"])
+        for r in conn.execute("SELECT * FROM model_weights")
     }
 
 
@@ -331,65 +334,104 @@ def test_card_features_include_stored_group_and_recency(conn, cfg):
     assert dict(learning.card_features(conn, cfg, old, now=now))["recency"] == "old"
 
 
-def test_weights_updated_from_reward_with_priors(conn, cfg):
+def model(conn, cfg, now=NOW):
+    return learning.Model.load(conn, cfg, now)
+
+
+def test_a_liked_card_raises_its_weights_and_their_certainty(conn, cfg):
     a, b = add_card(conn, cfg), add_card(conn, cfg)
     liked_impression(conn, a, b)
     res = learning.process_events(conn, cfg, now=at(5))
     w = weights(conn)
-    # tone wholesome-nerdy: share 0.20, mean share 1/6 -> m = 0.6; prior_strength 10
-    assert w[("tone", "wholesome-nerdy")] == pytest.approx((6 + 0.25, 4 + 0.75))
-    # persona has no default mix: m = 0.5
-    assert w[("persona", "archivist")] == pytest.approx((5.25, 5.75))
+    m = model(conn, cfg, at(5))
+    for key in [learning.BIAS, ("persona", "archivist"), ("tone", "wholesome-nerdy")]:
+        m0, q0 = m.prior(key)
+        assert w[key][0] > m0 and w[key][1] > q0, key
+        assert w[key][2] == pytest.approx(learning.default_reward_config().like_weight)
     assert res["weights"] == len(w) >= 8
-    assert conn.execute("SELECT DISTINCT updated_at FROM weights").fetchall()[0][
-        0
-    ] == learning._iso(at(5))
+    assert {r[0] for r in conn.execute("SELECT DISTINCT updated_at FROM model_weights")} == {
+        learning._iso(at(5))
+    }
+
+
+def test_the_reward_snapshot_keeps_the_features_and_the_familiarity(conn, cfg):
+    a, b = add_card(conn, cfg, dirs=["src/app"]), add_card(conn, cfg)
+    liked_impression(conn, a, b)
+    learning.process_events(conn, cfg, now=at(5))
+    row = conn.execute("SELECT * FROM rewards WHERE card_id = ?", (a,)).fetchone()
+    feats = {tuple(k) for k in json.loads(row["features"])}
+    assert ("familiarity", "new") in feats and ("dir", "src/app") in feats
+    assert row["signal"] == "like"
+
+
+def test_familiarity_buckets():
+    assert [learning.familiarity(n) for n in (1.0, 0.7, 0.5, 0.35, 0.1)] == [
+        "new",
+        "new",
+        "some",
+        "some",
+        "known",
+    ]
+
+
+def test_a_cross_of_angle_and_familiarity_is_learned_on_its_own(conn, cfg):
+    m = model(conn, cfg)
+    x = m.expand({("angle", "why"), ("familiarity", "known"), ("format", "meme")})
+    assert x[learning.cross_key("angle", "familiarity", "why", "known")] == 1.0
+    assert x[learning.BIAS] == 1.0 and len(x) == 5
 
 
 def test_story_type_prior_follows_category_share(conn, cfg):
     from gittok import brief
 
+    types = {t for ts in brief.CATEGORY_STORIES.values() for t in ts}
+    share = {t: learning._mix_share(cfg, "story_type", t)[0] for t in types}
+    hi, lo = max(share, key=share.get), min(share, key=share.get)
+    assert share[hi] > share[lo]
+    m = model(conn, cfg)
+    assert m.prior(("story_type", hi))[0] > m.prior(("story_type", lo))[0]
+    assert m.prior(("persona", "archivist"))[0] == 0.0
+
+
+def test_evidence_decays_toward_the_prior_with_the_half_life(conn, cfg):
     a, b = add_card(conn, cfg), add_card(conn, cfg)
     liked_impression(conn, a, b)
     learning.process_events(conn, cfg, now=at(5))
-    cats = [c for c, ts in brief.CATEGORY_STORIES.items() if "rip" in ts]
-    shares = cfg.defaults["categories"]
-    mean_share = 1 / len(shares)
-    share = sum(shares[c] for c in cats) / len(cats)
-    m = min(0.85, max(0.15, 0.5 * share / mean_share))
-    assert weights(conn)[("story_type", "rip")][0] == pytest.approx(10 * m + 0.25)
+    key = ("persona", "archivist")
+    fresh = model(conn, cfg, at(5)).state(key)
+    later = model(conn, cfg, at(5) + timedelta(days=21)).state(key)
+    m0, q0 = model(conn, cfg).prior(key)
+    assert later[0] - m0 == pytest.approx((fresh[0] - m0) / 2)
+    assert later[1] - q0 == pytest.approx((fresh[1] - q0) / 2)
+    assert later[2] == pytest.approx(fresh[2] / 2)
 
 
-def test_update_decays_evidence_before_adding(conn, cfg):
-    a, b = add_card(conn, cfg), add_card(conn, cfg, persona="greybeard")
-    liked_impression(conn, a, b)
-    learning.process_events(conn, cfg, now=at(5))
-    day21 = 21 * 24 * 60 * MIN
-    liked_impression(conn, a, b, t=day21, session="s2")
-    learning.process_events(conn, cfg, now=at(21 * 24 * 60 + 5))
-    # persona archivist: evidence (0.25, 0.75) halves after one half-life, then +0.25/+0.75
-    alpha, beta = weights(conn)[("persona", "archivist")]
-    assert alpha == pytest.approx(5 + 0.125 + 0.25, abs=1e-3)
-    assert beta == pytest.approx(5 + 0.375 + 0.75, abs=1e-3)
-
-
-def test_posterior_means_decay_lazily_without_writing(conn, cfg):
+def test_posterior_means_read_only_and_decay_lazily(conn, cfg):
     a, b = add_card(conn, cfg), add_card(conn, cfg)
     liked_impression(conn, a, b)
     learning.process_events(conn, cfg, now=at(5))
     before = weights(conn)
     fresh = learning.posterior_means(conn, cfg, "persona", now=at(5))["archivist"]
-    assert fresh[0] == pytest.approx(5.25 / 11) and fresh[1] == pytest.approx(1.0)
-    old = learning.posterior_means(conn, cfg, "persona", now=at(5) + timedelta(days=210))
-    assert old["archivist"][0] == pytest.approx(0.5, abs=0.001) and old["archivist"][1] < 0.01
+    assert fresh[0] > 0.5 and fresh[1] == pytest.approx(2.0)
+    old = learning.posterior_means(conn, cfg, "persona", now=at(5) + timedelta(days=400))
+    assert old["archivist"][0] == pytest.approx(0.5, abs=0.01) and old["archivist"][1] < 0.01
     assert weights(conn) == before
 
 
 def put_weight(conn, cfg, feature, value, good, bad, when=NOW):
-    a0, b0 = learning._prior(cfg, feature, value)
+    """A stored weight as if `good` rewards of 1 and `bad` rewards of 0 were seen."""
+    m = learning.Model(cfg, learning.load_reward_config(cfg), {}, when)
+    m0, q0 = m.prior((feature, value))
     conn.execute(
-        "INSERT OR REPLACE INTO weights VALUES (?, ?, ?, ?, ?)",
-        (feature, value, a0 + good, b0 + bad, learning._iso(when)),
+        "INSERT OR REPLACE INTO model_weights VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            feature,
+            value,
+            m0 + math.log((good + 1) / (bad + 1)),
+            q0 + (good + bad) / 4,
+            good + bad,
+            learning._iso(when),
+        ),
     )
     conn.commit()
 
@@ -398,19 +440,23 @@ def test_score_cards_is_seeded_bounded_and_does_not_write(conn, cfg):
     a, b = add_card(conn, cfg), add_card(conn, cfg, persona="greybeard")
     s1 = learning.score_cards(conn, cfg, [a, b], random.Random(7), now=NOW)
     s2 = learning.score_cards(conn, cfg, [a, b], random.Random(7), now=NOW)
-    assert s1 == s2 and set(s1) == {a, b} and all(0 <= v <= 1 for v in s1.values())
+    assert s1 == s2 and set(s1) == {a, b} and all(0 < v < 1 for v in s1.values())
     assert learning.score_cards(conn, cfg, [a, b], random.Random(8), now=NOW) != s1
     assert weights(conn) == {}
+
+
+def test_a_draw_scores_the_same_in_any_order(conn, cfg):
+    feats = [{("format", "meme"), ("tone", "roast")}, {("format", "chart"), ("tone", "roast")}]
+    m = model(conn, cfg)
+    one, two = m.draw(random.Random(5)), m.draw(random.Random(5))
+    assert [one.logit(f) for f in feats] == [two.logit(f) for f in reversed(feats)][::-1]
 
 
 def test_score_cards_prefers_features_with_good_evidence(conn, cfg):
     good = add_card(conn, cfg, persona="archivist")
     bad = add_card(conn, cfg, persona="greybeard")
-    for f, v in learning.card_features(conn, cfg, good, now=NOW):
-        put_weight(conn, cfg, f, v, good=200, bad=10, when=NOW)
-    for f, v in learning.card_features(conn, cfg, bad, now=NOW):
-        if (f, v) not in learning.card_features(conn, cfg, good, now=NOW):
-            put_weight(conn, cfg, f, v, good=10, bad=200, when=NOW)
+    put_weight(conn, cfg, "persona", "archivist", good=40, bad=2)
+    put_weight(conn, cfg, "persona", "greybeard", good=2, bad=40)
     wins = 0
     for seed in range(30):
         s = learning.score_cards(conn, cfg, [good, bad], random.Random(seed), now=NOW)
@@ -430,6 +476,41 @@ def test_reset_weights_all_or_one_feature(conn, cfg):
     assert set(weights(conn)) == {("tone", "roast")}
     assert learning.reset_weights(conn) == 1
     assert learning.reset_weights(conn) == 0
+
+
+def test_the_model_finds_the_feature_that_explains_the_dislikes(cfg):
+    """Credit assignment: memes get 👎 and charts get likes, both spread over the same dirs.
+    The format weights must take the blame and the credit; the dirs stay near neutral."""
+    rc = learning.load_reward_config(cfg)
+    m = learning.Model(cfg, rc, {}, NOW)
+    for i in range(30):
+        d = ("dir", f"d{i % 3}")
+        m.update({("format", "meme"), d}, 0.0, rc.dislike_weight, NOW)
+        m.update({("format", "chart"), d}, rc.like_floor, rc.like_weight, NOW)
+    meme, chart = m.effect(("format", "meme")), m.effect(("format", "chart"))
+    assert meme < -1 and chart > 1
+    assert all(abs(m.effect(("dir", f"d{i}"))) < 0.25 * min(-meme, chart) for i in range(3))
+
+
+def test_a_dislike_moves_the_model_more_than_a_plain_skip(cfg):
+    rc = learning.load_reward_config(cfg)
+    skip, down = (learning.Model(cfg, rc, {}, NOW) for _ in range(2))
+    skip.update({("format", "meme")}, 0.0, 1.0, NOW)
+    down.update({("format", "meme")}, 0.0, rc.dislike_weight, NOW)
+    assert down.effect(("format", "meme")) < skip.effect(("format", "meme")) < 0
+
+
+def test_relearn_rebuilds_the_same_model_from_the_rewards(conn, cfg):
+    a, b, c = add_card(conn, cfg), add_card(conn, cfg, persona="greybeard"), add_card(conn, cfg)
+    liked_impression(conn, a, b)
+    ev(conn, b, "dislike", T0 + 1100, {"on": True})
+    ev(conn, c, "impression", T0 + 2000)
+    learning.process_events(conn, cfg, now=at(5))
+    online = weights(conn)
+    assert learning.relearn(conn, cfg, now=at(5)) == 2
+    assert weights(conn).keys() == online.keys()
+    for key, row in weights(conn).items():
+        assert row == pytest.approx(online[key]), key
 
 
 def default_shares(cfg):
@@ -547,29 +628,21 @@ def test_format_factors_empty_without_evidence(conn, cfg):
 
 
 def test_format_factors_favor_better_rewarded_formats(conn, cfg):
-    put_weight(conn, cfg, "format", "meme", 45, 5)
-    put_weight(conn, cfg, "format", "chart", 5, 45)
+    put_weight(conn, cfg, "format", "meme", 12, 4)
+    put_weight(conn, cfg, "format", "chart", 4, 12)
     f = learning.format_factors(conn, cfg, now=NOW)
     assert set(f) == {"meme", "chart"}
     assert f["meme"] > 1 > f["chart"]
-    put_weight(conn, cfg, "format", "meme", 450, 50)
+    put_weight(conn, cfg, "format", "meme", 40, 10)
     assert learning.format_factors(conn, cfg, now=NOW)["meme"] > f["meme"]
 
 
-def test_dir_prefixes_count_as_one_term_in_score(conn, cfg):
+def test_dir_prefixes_share_one_unit_of_input(conn, cfg):
     deep = add_card(conn, cfg, dirs=["a/b/c/d"])
     feats = learning.card_features(conn, cfg, deep, now=NOW)
-    assert len([1 for f, _ in feats if f == "dir"]) == 4
-    rc = learning.load_reward_config(cfg)
-    seed = 3
-    s = learning.score_cards(conn, cfg, [deep], random.Random(seed), now=NOW)[deep]
-    rng = random.Random(seed)
-    draws = {key: rng.betavariate(*learning._prior(cfg, *key)) for key in sorted(feats)}
-    dir_avg = sum(d for k, d in draws.items() if k[0] == "dir") / 4
-    others = [(k, d) for k, d in draws.items() if k[0] != "dir"]
-    num = rc.importance["dir"] * dir_avg + sum(rc.importance[k[0]] * d for k, d in others)
-    den = rc.importance["dir"] + sum(rc.importance[k[0]] for k, _ in others)
-    assert s == pytest.approx(num / den)
+    x = model(conn, cfg).expand(feats)
+    dirs = [v for k, v in x.items() if k[0] == "dir"]
+    assert len(dirs) == 4 and sum(dirs) == pytest.approx(1.0)
 
 
 def test_reward_updates_every_prefix(conn, cfg):
@@ -649,3 +722,101 @@ def test_reward_slotting_knobs_merge_over_the_shipped_ones(cfg, tmp_path):
     (tmp_path / "config" / "reward.yaml").write_text("slotting:\n  repeat_days: 3\n")
     knobs = learning.load_reward_config(cfg).slotting
     assert knobs["repeat_days"] == 3 and knobs["max_srs_per_batch"] == 2
+
+
+# ---------------------------------------------------------------- thumbs up and down
+
+
+def reward_rows(conn):
+    return {r["card_id"]: (r["reward"], r["weight"]) for r in conn.execute("SELECT * FROM rewards")}
+
+
+def test_dislike_is_zero_reward_with_a_heavy_weight(conn, cfg):
+    a, b = add_card(conn, cfg), add_card(conn, cfg)
+    ev(conn, a, "impression", T0)
+    ev(conn, a, "dwell", T0 + 500, {"ms": 60_000})
+    ev(conn, a, "depth_open", T0 + 600, {"panel": 1})
+    ev(conn, a, "dislike", T0 + 700, {"on": True})
+    ev(conn, b, "impression", T0 + 1000)
+    learning.process_events(conn, cfg, now=at(5))
+    rc = learning.default_reward_config()
+    assert reward_rows(conn)[a] == (0.0, rc.dislike_weight)
+    assert rc.dislike_weight > rc.like_weight > 1
+
+
+def test_dislike_toggled_off_counts_as_a_plain_impression(conn, cfg):
+    a, b = add_card(conn, cfg), add_card(conn, cfg)
+    ev(conn, a, "impression", T0)
+    ev(conn, a, "depth_open", T0 + 600, {"panel": 1})
+    ev(conn, a, "dislike", T0 + 700, {"on": True})
+    ev(conn, a, "dislike", T0 + 800, {"on": False})
+    ev(conn, b, "impression", T0 + 1000)
+    learning.process_events(conn, cfg, now=at(5))
+    r, w = reward_rows(conn)[a]
+    assert r > 0 and w == 1
+
+
+def test_like_lifts_the_reward_to_a_floor_with_a_heavier_weight(conn, cfg):
+    a, b = add_card(conn, cfg), add_card(conn, cfg)
+    ev(conn, a, "impression", T0)
+    ev(conn, a, "skip", T0 + 300, {"ms": 300})
+    ev(conn, a, "like", T0 + 400, {"on": True})
+    ev(conn, b, "impression", T0 + 1000)
+    learning.process_events(conn, cfg, now=at(5))
+    rc = learning.default_reward_config()
+    assert reward_rows(conn)[a] == (pytest.approx(rc.like_floor), rc.like_weight)
+
+
+def test_a_dislike_marks_the_story_so_no_variant_is_made(conn, cfg):
+    from gittok import store
+
+    a, b = add_card(conn, cfg), add_card(conn, cfg)
+    ev(conn, a, "impression", T0)
+    ev(conn, a, "dislike", T0 + 400, {"on": True})
+    ev(conn, b, "impression", T0 + 1000)
+    learning.process_events(conn, cfg, now=at(5))
+    story = conn.execute(
+        "SELECT s.* FROM stories s JOIN cards c USING (story_key) WHERE c.id = ?", (a,)
+    ).fetchone()
+    assert story["disliked"] == 1
+    agent = cfg.settings.agent
+    assert "👎" in store.variant_blocker(story, "meme", agent, NOW + timedelta(days=400))
+
+
+def test_old_knew_it_and_teach_more_events_change_nothing(conn, cfg):
+    a, b = add_card(conn, cfg), add_card(conn, cfg)
+    ev(conn, a, "impression", T0)
+    ev(conn, a, "knew_it", T0 + 400, {"on": True})
+    ev(conn, a, "teach_more", T0 + 500, {"on": True})
+    ev(conn, b, "impression", T0 + 1000)
+    learning.process_events(conn, cfg, now=at(5))
+    assert reward_rows(conn)[a] == (0.0, 1)
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "requests" not in tables
+
+
+def test_value_factors_favor_the_values_the_reader_likes(conn, cfg):
+    assert learning.value_factors(conn, cfg, "tone", now=NOW) == {}
+    put_weight(conn, cfg, "tone", "roast", 30, 2)
+    put_weight(conn, cfg, "tone", "hype", 2, 30)
+    f = learning.value_factors(conn, cfg, "tone", now=NOW)
+    assert f["roast"] > 1 > f["hype"]
+    assert learning.format_factors(conn, cfg, now=NOW) == learning.value_factors(
+        conn, cfg, "format", now=NOW
+    )
+
+
+def test_a_learned_factor_is_clamped(conn, cfg):
+    put_weight(conn, cfg, "format", "meme", 900, 0)
+    put_weight(conn, cfg, "format", "chart", 0, 900)
+    f = learning.format_factors(conn, cfg, now=NOW)
+    assert f["meme"] == learning.FACTOR_MAX and f["chart"] == 1 / learning.FACTOR_MAX
+
+
+def test_a_dislike_closes_its_impression_window_at_once(conn, cfg):
+    a = add_card(conn, cfg)
+    ev(conn, a, "impression", T0)
+    ev(conn, a, "dislike", T0 + 500, {"on": True})
+    # No next impression and far under 30 minutes: the 👎 still counts now.
+    learning.process_events(conn, cfg, now=at(1))
+    assert reward_rows(conn)[a] == (0.0, learning.default_reward_config().dislike_weight)

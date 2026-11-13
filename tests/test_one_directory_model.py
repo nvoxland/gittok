@@ -20,7 +20,7 @@ OLD = (
     "scope user",
     "~/.claude",
     "mcp_loopback_only",
-    "8008/mcp",
+    "7313/mcp",
     "streamable",
 )
 # These tests name the old words to assert that they are gone.

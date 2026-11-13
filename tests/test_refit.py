@@ -80,3 +80,33 @@ def test_apply_refuses_a_different_story_type(conn, cfg, fixture_repo, tmp_path)
     (out / f"{bad}.json").write_text(json.dumps(data))
     res = refit.apply(conn, cfg, out)
     assert [r["reason"] for r in res["rejected"]] == ["story_changed"]
+
+
+def test_a_rewrite_that_keeps_the_picture_keeps_the_drawn_image(conn, cfg, fixture_repo, tmp_path):
+    """Adding comments to a drawn card must not drop its images: the status stays ready, so
+    nothing would draw them again (a comic lost both panels this way)."""
+    import dataclasses
+
+    from gittok.config import MemeTemplate
+    from tests.cards import meme_card
+
+    cfg = dataclasses.replace(cfg, meme_templates={"drake": MemeTemplate("drake", 2)})
+    cid = put(conn, cfg, meme_card(fixture_repo))
+    drawn = {"images": [{"url": f"/assets/{cid}/0.png", "width": 600, "height": 600}]}
+    old = db.loads(conn.execute("SELECT resolved FROM cards WHERE id = ?", (cid,)).fetchone()[0])
+    old["visual"] = drawn
+    conn.execute(
+        "UPDATE cards SET status = 'ready', resolved = ? WHERE id = ?", (db.dumps(old), cid)
+    )
+    conn.commit()
+    card = db.loads(conn.execute("SELECT spec FROM cards WHERE id = ?", (cid,)).fetchone()[0])
+    card["comments"] = [{"persona": "greybeard", "text": "Seen it."}]
+    out = tmp_path / "refit"
+    out.mkdir()
+    (out / f"{cid}.json").write_text(json.dumps({"card_id": cid, "card": card}))
+    res = refit.apply(conn, cfg, out)
+    assert res["replaced"] == [cid], res
+    row = conn.execute("SELECT status, resolved, spec FROM cards WHERE id = ?", (cid,)).fetchone()
+    assert row["status"] == "ready"
+    assert db.loads(row["resolved"])["visual"] == drawn
+    assert db.loads(row["spec"])["comments"][0]["text"] == "Seen it."

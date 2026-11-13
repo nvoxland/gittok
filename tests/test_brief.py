@@ -1126,11 +1126,64 @@ def test_ban_visual_kind_and_template_map_to_formats():
     assert "iceberg" not in fmts and "hot_take" in fmts
 
 
-def test_ban_difficulty_drops_interactive_slots():
-    b = build(count=20, rules=[rule("ban", "difficulty", "3")])
-    assert "interactive" not in b.quotas
-    assert sum(p.count for p in b.packets) == 20
-    assert "quiz" not in all_formats(b)
+def angles(b):
+    return [(t, a) for p in b.packets for t, a in zip(p.card_stories, p.angles, strict=True)]
+
+
+def test_every_card_slot_proposes_an_angle_from_its_story_type():
+    b = build(count=30)
+    assert all(len(p.angles) == p.count for p in b.packets)
+    for story, angle in angles(b):
+        assert angle in brief.ANGLES
+        if story in brief.ANGLE_OF:
+            assert angle == brief.ANGLE_OF[story], story
+    assert "angles, one per card" in b.packet_markdown(b.packets[0].id)
+
+
+def test_open_story_types_take_their_angle_from_what_the_reader_likes():
+    def open_angles(b):
+        return [a for t, a in angles(b) if t not in brief.ANGLE_OF]
+
+    # Only the open interactive types stay, so both briefs have open slots to compare.
+    only_open = [
+        rule("ban", "interactive", t, id=i)
+        for i, t in enumerate(("spot_the_bug", "guess_who", "guess_when"))
+    ]
+    plain = open_angles(build(count=60, rules=only_open))
+    liked = open_angles(build(count=60, rules=only_open, angle_weights={"why": 4.0}))
+    assert plain and liked, "the briefs have open story types (quiz, this_or_that)"
+    assert liked[0] == "why" and liked.count("why") > plain.count("why")
+
+
+def test_learned_angle_weights_shift_the_story_types():
+    def why_slots(b):
+        return sum(1 for t, _ in angles(b) if brief.ANGLE_OF.get(t) == "why")
+
+    assert why_slots(build(count=40, angle_weights={"why": 4.0})) > why_slots(build(count=40))
+    boosted = build(count=40, rules=[rule("boost", "angle", "why", factor=4.0)])
+    assert why_slots(boosted) > why_slots(build(count=40))
+
+
+def test_a_banned_angle_is_never_proposed():
+    b = build(count=40, rules=[rule("ban", "angle", "why")])
+    assert "why" not in {a for _, a in angles(b)} and len(angles(b)) == 40
+
+
+def test_learned_tone_weights_shift_the_tone_quotas():
+    plain = build(count=40).tone_quotas
+    roast = build(count=40, tone_weights={"roast": 4.0}).tone_quotas
+    assert roast["roast"] > plain["roast"]
+    assert sum(roast.values()) == 40
+
+
+def test_learned_persona_weights_give_a_liked_persona_more_cards():
+    def counts(b):
+        ps = [x for p in b.packets for x in p.personas]
+        return {x: ps.count(x) for x in set(ps)}
+
+    plain = counts(build(count=40))
+    liked = counts(build(count=40, persona_weights={"greybeard": 4.0}))
+    assert liked["greybeard"] > plain.get("greybeard", 0)
 
 
 def test_ban_one_interactive_story_type_keeps_the_others():
@@ -1631,3 +1684,29 @@ def test_a_variant_for_a_repo_with_no_mascot_is_not_a_mascot_format():
 def test_guidance_with_no_mascot_says_to_leave_the_field_out():
     md = brief.guidance_markdown(_personas(), formats=["mascot_scene"], mascots={})
     assert "(none: leave `mascots` out)" in md
+
+
+def test_learned_repo_weights_shift_the_repo_share():
+    def per_repo(b):
+        out = {}
+        for p in b.packets:
+            out[p.repo] = out.get(p.repo, 0) + p.count
+        return out
+
+    plain = per_repo(build2(count=20))
+    liked = per_repo(build2(count=20, repo_weights={"a": 3.0, "b": 0.5}))
+    assert liked["a"] > plain["a"] and liked.get("b", 0) > 0  # b keeps a floor
+
+
+def test_without_a_menu_the_meme_list_holds_only_templates_that_fit_the_stories():
+    """A packet that allows memes but had no meme slot listed all ~100 templates (8 KB)."""
+    from gittok.config import MemeTemplate
+
+    tpl = {f"t{i}": MemeTemplate(f"t{i}", 2, f"hint {i}", ("rip",) if i % 2 else ("quiz",))
+           for i in range(40)}  # fmt: skip
+    md = brief.guidance_markdown(
+        _personas(), formats=["meme"], meme_templates=tpl, story_types=["rip"]
+    )
+    listed = [ln for ln in md.splitlines() if ln.startswith("- `t")]
+    assert 0 < len(listed) <= brief.MEME_LIST_MAX
+    assert all(int(ln[4:].split("`")[0]) % 2 for ln in listed)  # only the ones that fit rip

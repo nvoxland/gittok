@@ -225,14 +225,33 @@ def test_learn_prints_counts_and_is_idempotent(cfg, fixture_repo, capsys):
     assert "impressions=0 rewards=0 weights=0" in capsys.readouterr().out
 
 
+def test_relearn_rebuilds_the_model_from_the_rewards(cfg, fixture_repo, capsys):
+    from gittok import db
+
+    _seed_learning(cfg, fixture_repo)
+    cli.main(["learn"])
+    db_path = cfg.settings.data_dir / "gittok.db"
+    with db.open_db(db_path) as conn:
+        before = conn.execute("SELECT COUNT(*) FROM model_weights").fetchone()[0]
+        conn.execute("DELETE FROM model_weights")
+        conn.commit()
+    capsys.readouterr()
+    assert cli.main(["relearn"]) == 0
+    assert capsys.readouterr().out.strip() == "relearned from 2 reward(s)"
+    with db.open_db(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM model_weights").fetchone()[0] == before > 0
+
+
 def test_reset_weights_all_and_by_feature(cfg, fixture_repo, capsys):
     from gittok import db
 
     _seed_learning(cfg, fixture_repo)
     cli.main(["learn"])
     with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
-        persona = conn.execute("SELECT COUNT(*) FROM weights WHERE feature='persona'").fetchone()[0]
-        total = conn.execute("SELECT COUNT(*) FROM weights").fetchone()[0]
+        persona = conn.execute(
+            "SELECT COUNT(*) FROM model_weights WHERE feature='persona'"
+        ).fetchone()[0]
+        total = conn.execute("SELECT COUNT(*) FROM model_weights").fetchone()[0]
     capsys.readouterr()
     assert cli.main(["reset-weights", "--feature", "persona"]) == 0
     assert capsys.readouterr().out.strip() == f"deleted {persona} weights"
@@ -382,10 +401,10 @@ def test_serve_serves_the_lan_by_default(cfg, monkeypatch, capsys):
     monkeypatch.setattr(cli.uvicorn, "run", lambda app, **kw: calls.append(kw))
     monkeypatch.setattr(cli.social, "lan_addresses", lambda: ["192.168.1.5"])
     assert cli.main(["serve"]) == 0
-    assert calls == [{"host": "0.0.0.0", "port": 8008}]
+    assert calls == [{"host": "0.0.0.0", "port": 7313}]
     out = capsys.readouterr().out
     tok = (cfg.settings.data_dir / "lan_token").read_text().strip()
-    assert f"pair: http://192.168.1.5:8008/pair?t={tok}" in out
+    assert f"pair: http://192.168.1.5:7313/pair?t={tok}" in out
     assert "plain HTTP" in out and "network you trust" in out
 
 
@@ -393,7 +412,7 @@ def test_serve_no_lan_binds_loopback_and_makes_no_token(cfg, monkeypatch, capsys
     calls = []
     monkeypatch.setattr(cli.uvicorn, "run", lambda app, **kw: calls.append(kw))
     assert cli.main(["serve", "--no-lan"]) == 0
-    assert calls == [{"host": "127.0.0.1", "port": 8008}]
+    assert calls == [{"host": "127.0.0.1", "port": 7313}]
     assert "pair:" not in capsys.readouterr().out
     assert not (cfg.settings.data_dir / "lan_token").exists()
 
@@ -403,17 +422,17 @@ def test_server_lan_false_setting_turns_lan_serving_off(cfg, monkeypatch, capsys
     calls = []
     monkeypatch.setattr(cli.uvicorn, "run", lambda app, **kw: calls.append(kw))
     assert cli.main(["serve"]) == 0
-    assert calls == [{"host": "127.0.0.1", "port": 8008}]
+    assert calls == [{"host": "127.0.0.1", "port": 7313}]
     assert "pair:" not in capsys.readouterr().out
     seen = _mcp_ui(cfg, monkeypatch)
     assert cli.main(["mcp", "--ui"]) == 0
-    assert seen["order"][0][1][-4:] == ["--host", "127.0.0.1", "--port", "8008"]
+    assert seen["order"][0][1][-4:] == ["--host", "127.0.0.1", "--port", "7313"]
 
 
 def test_mcp_ui_no_lan_starts_a_loopback_child(cfg, monkeypatch):
     seen = _mcp_ui(cfg, monkeypatch)
     assert cli.main(["mcp", "--ui", "--no-lan"]) == 0
-    assert seen["order"][0][1][-4:] == ["--host", "127.0.0.1", "--port", "8008"]
+    assert seen["order"][0][1][-4:] == ["--host", "127.0.0.1", "--port", "7313"]
 
 
 def test_notify_runs_one_pass_and_prints_counts(cfg, monkeypatch, capsys):
@@ -442,6 +461,7 @@ def _mcp_ui(cfg, monkeypatch, free=True):
         cli, "_spawn_ui", lambda cmd, env: seen["order"].append(("ui", cmd, env)) or "proc"
     )
     monkeypatch.setattr(cli, "_stop_at_exit", lambda proc: seen.update(stopped=proc))
+
     def fake_main(note=None, owns_server=False):
         seen["order"].append("mcp")
         seen["note"] = note
@@ -463,7 +483,7 @@ def test_mcp_ui_runs_a_feed_child_before_stdio(cfg, monkeypatch, capsys):
     ((tag, cmd, env), mcp) = seen["order"]
     assert (tag, mcp) == ("ui", "mcp")
     # A GitTok directory runs an installed tool: there is no source to watch, so no --reload.
-    assert cmd[1:] == ["-m", "gittok", "serve", "--host", "0.0.0.0", "--port", "8008", "--lan"]
+    assert cmd[1:] == ["-m", "gittok", "serve", "--host", "0.0.0.0", "--port", "7313", "--lan"]
     assert env["GITTOK_PARENT_PID"] == str(os.getpid())
     assert seen["stopped"] == "proc" and seen["note"] is None
     assert seen["owns"] is True  # the `status` tool reports it
@@ -509,10 +529,10 @@ def test_mcp_ui_skips_the_feed_when_another_directory_has_the_port(cfg, monkeypa
     assert cli.main(["mcp", "--ui"]) == 0
     assert seen["order"] == ["mcp"] and seen["owns"] is False
     err = capsys.readouterr().err
-    assert "8008 is in use" in err and "/somewhere/other-gittok" in err
+    assert "7313 is in use" in err and "/somewhere/other-gittok" in err
     # The same text reaches Claude in the MCP instructions.
     note = seen["note"]
-    assert "/somewhere/other-gittok" in note and "8008" in note
+    assert "/somewhere/other-gittok" in note and "7313" in note
     assert "another GitTok directory" in note and "server.port" in note
     assert "not the cards of this directory" in note
 
@@ -570,7 +590,7 @@ def test_health_hint_says_when_another_directory_serves_the_port(cfg, monkeypatc
     monkeypatch.setattr(cli, "_server_dir", lambda port: "/somewhere/other-gittok")
     assert cli.main(["health", "--hint"]) == 0
     (line,) = [ln for ln in capsys.readouterr().out.splitlines() if "other-gittok" in ln]
-    assert "8008" in line and "server.port" in line
+    assert "7313" in line and "server.port" in line
 
 
 def test_health_hint_is_quiet_about_the_port_when_this_directory_serves_it(
@@ -1063,9 +1083,9 @@ def test_server_lan_setting_makes_serve_act_as_with_lan(cfg, monkeypatch, capsys
     monkeypatch.setattr(cli.uvicorn, "run", lambda app, **kw: calls.append(kw))
     monkeypatch.setattr(cli.social, "lan_addresses", lambda: ["192.168.1.5"])
     assert cli.main(["serve"]) == 0
-    assert calls == [{"host": "0.0.0.0", "port": 8008}]
+    assert calls == [{"host": "0.0.0.0", "port": 7313}]
     tok = (cfg.settings.data_dir / "lan_token").read_text().strip()
-    assert f"http://192.168.1.5:8008/pair?t={tok}" in capsys.readouterr().out
+    assert f"http://192.168.1.5:7313/pair?t={tok}" in capsys.readouterr().out
 
 
 def test_server_lan_setting_makes_mcp_ui_start_a_lan_child(cfg, monkeypatch):
@@ -1220,3 +1240,60 @@ def test_version_flag_prints_the_package_version(capsys):
         cli.main(["--version"])
     assert e.value.code == 0
     assert capsys.readouterr().out.strip() == f"gittok {version('gittok')}"
+
+
+def test_pair_approves_the_code_a_device_shows(cfg, capsys):
+    from datetime import UTC, datetime
+
+    from gittok import db, pair_codes
+
+    with db.session(cfg.settings.data_dir / "gittok.db") as conn:
+        req = pair_codes.request(conn, datetime.now(UTC))
+    assert cli.main(["pair", req["code"]]) == 0
+    assert "Approved" in capsys.readouterr().out
+    assert cli.main(["pair", req["code"]]) == 1
+    assert "Pair with a code" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------- the feed address
+
+
+def _with_server(cfg, monkeypatch, **server):
+    from dataclasses import replace
+
+    new = replace(
+        cfg, settings=replace(cfg.settings, server=replace(cfg.settings.server, **server))
+    )
+    monkeypatch.setattr(cli, "load_config", lambda: new)
+    return new
+
+
+def test_url_prints_the_feed_addresses_from_the_settings(cfg, monkeypatch, capsys):
+    from gittok import social
+
+    monkeypatch.setattr(social, "lan_addresses", lambda: ["192.168.1.5"])
+    _with_server(cfg, monkeypatch, port=9123, lan=True)
+    assert cli.main(["url"]) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out == ["http://127.0.0.1:9123", "http://192.168.1.5:9123"]
+    _with_server(cfg, monkeypatch, port=9123, lan=False)
+    assert cli.main(["url"]) == 0
+    assert capsys.readouterr().out.splitlines() == ["http://127.0.0.1:9123"]
+
+
+def test_url_hint_tells_the_agent_to_give_the_user_the_address(cfg, monkeypatch, capsys):
+    from gittok import social
+
+    monkeypatch.setattr(social, "lan_addresses", lambda: ["192.168.1.5"])
+    monkeypatch.setattr(cli, "_server_dir", lambda port: None)
+    _with_server(cfg, monkeypatch, port=9123, lan=True)
+    assert cli.main(["url", "--hint"]) == 0
+    (line,) = capsys.readouterr().out.strip().splitlines()
+    assert "http://127.0.0.1:9123" in line and "http://192.168.1.5:9123" in line
+    assert "first reply" in line
+
+
+def test_url_hint_is_silent_when_another_directory_has_the_port(cfg, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_server_dir", lambda port: "/somewhere/other-gittok")
+    assert cli.main(["url", "--hint"]) == 0
+    assert capsys.readouterr().out == ""  # the health hint says so instead

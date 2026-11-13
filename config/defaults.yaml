@@ -23,4 +23,3 @@ visual_mix:
   # image renderer it asks for charts and diagrams, which the client draws.
   image_min_share: 0.5
 exploration_share: 0.18
-prior_strength: 10

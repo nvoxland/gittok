@@ -508,6 +508,14 @@ def lan_urls(port: int, addresses: list[str] | None = None) -> list[str]:
     return [f"http://{a}:{port}" for a in (lan_addresses() if addresses is None else addresses)]
 
 
+def feed_urls(cfg) -> list[str]:
+    """Where to open the feed, from the settings: this computer first, then each LAN address
+    when phone access is on (`server.lan`). Skills and hints read it here, never a port."""
+    port = cfg.settings.server.port
+    out = [f"http://127.0.0.1:{port}"]
+    return out + (lan_urls(port) if cfg.settings.server.lan else [])
+
+
 def ensure_lan_token(data_dir) -> str:
     """The LAN pairing token in `<data_dir>/lan_token` (mode 0600); created when missing."""
     path = data_dir / "lan_token"
@@ -530,7 +538,7 @@ def ensure_lan_token(data_dir) -> str:
 LAN_NOTICE = (
     "GitTok serves the feed to your local network over plain HTTP, not HTTPS. Any device on "
     "the network can reach the port, but it gets nothing until it opens the pairing link or "
-    "QR code once. Someone who can watch "
+    "QR code once, or until you tell Claude the code that it shows. Someone who can watch "
     "traffic on that network could read the pairing token and the cards, and cards hold "
     "excerpts of your code. Use it on a network you trust, such as your home network, and "
     "take care on shared or public Wi-Fi. To turn it off, ask Claude to turn off phone access "
@@ -640,7 +648,10 @@ def pairing_link(
         f"{where}The user scans a QR code with the phone camera, or opens a link on the "
         "phone, once per device. Both devices must be on the same network. A link holds a "
         "secret token: show it only to the user, and never put it in a card, a file or a "
-        "commit."
+        "commit. For an app on the phone's home screen (it keeps its own cookies, apart from "
+        "the browser), or when the camera does not suit: the user taps 'Pair with a code' on "
+        "the device and tells you the code; call pair_device with it. Say this to the user "
+        "together with the QR code."
     )
     out["notice"] = LAN_NOTICE
     return out

@@ -26,6 +26,11 @@ describe('fetchFeed', () => {
 		await fetchFeed(undefined, 20, { repo: 'r', dir: 'a/b' });
 		expect(fetchMock.mock.calls[0][0]).toBe('/api/feed?limit=20&repo=r&dir=a%2Fb');
 	});
+	it('asks for the unseen cards ahead to be ranked again', async () => {
+		fetchMock.mockResolvedValue({ ok: true, json: async () => ({ cards: [], next_cursor: null }) });
+		await fetchFeed('abc', 20, {}, ['c_2', 'c_3']);
+		expect(fetchMock.mock.calls[0][0]).toBe('/api/feed?limit=20&cursor=abc&drop=c_2%2Cc_3');
+	});
 	it('flags responses the service worker served from cache', async () => {
 		fetchMock.mockResolvedValue({
 			ok: true,

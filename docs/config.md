@@ -32,6 +32,7 @@ So your files are `<gittok dir>/local/...`, and in a clone they are `<clone>/loc
 | file_types | Extension tables, manifest names | `config/file_types.yaml` | `local/file_types.yaml` | You, or Claude by a file edit |
 | languages | Regex patterns per language | `config/languages.yaml` | `local/languages.yaml` | You, or Claude by a file edit |
 | queries | Tree-sitter languages and tags queries | `config/queries/languages.yaml`, `config/queries/<grammar>.scm` | `local/queries/languages.yaml`, `local/queries/<grammar>.scm` | You, or Claude by a file edit |
+| analyzers | Code analyzers per language, for analyzer facts | `config/analyzers.yaml` | `local/analyzers.yaml` | You, or Claude by a file edit |
 | claims | The phrases that make a typed claim | `config/claims.yaml` | `local/claims.yaml` | You, or Claude by a file edit |
 | secrets | The patterns of the secret detector | `config/secrets.yaml` | `local/secrets.yaml` | You, or Claude by a file edit |
 | meme_templates | The meme templates a writer may use | `config/meme_templates.yaml` | `local/meme_templates.yaml` | You, or Claude by a file edit |
@@ -179,7 +180,7 @@ The values below are the shipped ones.
 | Key | Value | Meaning |
 |---|---|---|
 | `host` | `127.0.0.1` | The address the server binds |
-| `port` | `8008` | The port of the feed. Give each GitTok directory its own port if two of them have a session at the same time |
+| `port` | `7313` | The port of the feed. Give each GitTok directory its own port if two of them have a session at the same time |
 | `lan` | `true` | Serve the feed to the local network, for a phone. The feed goes over plain HTTP, and each device must pair once. `false`: the server answers this computer only (the same as `--no-lan`). Read `docs/install.md`, "Phone access", for what this means on a network you do not trust. To change it, ask Claude ("turn off phone access"), or write the key; then restart the server |
 | `allowed_hosts` | `[]` | Extra `Host` names the server answers to, such as a VPN name. Its own names and addresses are always allowed |
 
@@ -241,7 +242,7 @@ The values below are the shipped ones.
 
 | Key | Value | Meaning |
 |---|---|---|
-| `memegen_url` | `http://127.0.0.1:5001` | The local memegen server |
+| `meme_source` | `https://raw.githubusercontent.com/jacebrowning/memegen/main` | Where `gittok memes --prefetch` downloads meme templates and fonts |
 | `mflux_model` | `z-image-turbo` | The mflux model family |
 | `mflux_path` | `~/.cache/mflux/z-image-turbo-q4` | The folder that `mflux-save` wrote (`docs/install.md`). Until it exists, GitTok makes no illustration cards and no mascot. Empty: quantize `mflux_model` on every run |
 | `mflux_steps` | `8` | Steps per image |
@@ -345,7 +346,7 @@ visual_mix:
 
 ### reward: weights and ranking
 
-Reward weights, expected read times, feature importance, the decay half-life, slotting values (`docs/learning.md` sections 3 to 5). An unknown key in `weights` or `importance` is ignored with a warning.
+Reward weights, the like and 👎 weights (`like_floor`, `like_weight`, `dislike_weight`), expected read times, the model priors (`prior_sd` per feature), `crosses`, the decay half-life, the lead score (`lead_score`: strength, novelty, covered, rejected) and slotting values (`docs/learning.md` sections 3 to 5 and 12). An unknown key in `weights` or `prior_sd` is ignored with a warning. After a change to `prior_sd` or `crosses`, run `gittok relearn` to rebuild the model with it.
 
 ```yaml
 # local/reward.yaml
@@ -369,7 +370,7 @@ noise: {$remove: ['*.svg']}       # a shipped entry goes only by name
 
 ### file_types: extension tables
 
-`highlight` (extension to the language name of the code view; it must be a language of the web client's highlighter, Shiki), `source_extensions`, `doc_extensions`, `comment_prefixes`, `noise_basenames`, `manifests`, `file_words`, `why_words`, `ast_grep_probe`, `todo_comment`.
+`highlight` (extension to the language name of the code view; it must be a language of the web client's highlighter, Shiki), `source_extensions`, `doc_extensions`, `comment_prefixes`, `noise_basenames`, `manifests`, `file_words`, `why_words`, `ast_grep_probe`, `todo_comment`, `two_meanings` (extension to a note, for an extension that two kinds of file share, such as `.scm` for Scheme and tree-sitter queries: the repo survey shows the note and the dirs of such files).
 
 ```yaml
 # local/file_types.yaml
@@ -429,6 +430,20 @@ languages:
 
 The grammar must be one of tree-sitter-language-pack; `gittok structure --prefetch` downloads it. `check_config` compiles each local query whose grammar is downloaded. For one repo only, put the query in the repo's profile (`queries`) instead.
 
+### analyzers: code analyzers per language
+
+The analyzers that give exact facts for a language (definitions, calls, imports, types). The repo survey shows, in `coverage`, the analyzers of each language of the repo and whether each can run now (its `binary` is on the PATH). The profiling skill runs one with your permission and converts its output. Each analyzer has `name`, `languages`, `binary`, `gives` (fact kinds: `defines`, `calls`, `imports`, `returns`, `accepts`), `how` (what to run, read-only, and how to read the output), and optional `needs`. A list item with the name of a shipped analyzer changes it.
+
+```yaml
+# local/analyzers.yaml
+analyzers:
+  - name: acme-index
+    languages: [kotlin]
+    binary: acme-index
+    gives: [defines, calls]
+    how: "acme-index --json src (read-only; writes to stdout): each def gives a defines fact, each call a calls fact"
+```
+
 ### claims: typed-claim phrases
 
 The phrases that make a card's sentence a typed claim (`returns`, `accepts`, `may_be_nil`), and the words in a return type that mean "may be nil".
@@ -453,7 +468,7 @@ To turn a shipped pattern off, name it: `patterns: {$remove: [jwt]}`. GitTok the
 
 ### meme_templates
 
-The memegen template ids a writer may use: `lines`, `hint`, `fits` (story types). A new id must exist on your memegen server.
+The memegen template ids a writer may use: `lines`, `hint`, `fits` (story types). A new id must be a template of the memegen repo; `gittok memes --prefetch` downloads it, and the brief offers only downloaded templates.
 
 ```yaml
 # local/meme_templates.yaml

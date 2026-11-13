@@ -37,24 +37,23 @@
 	let liked = $state(getFlags(card.id).liked ?? false);
 	let saved = $state(getFlags(card.id).saved ?? false);
 
-	function toggle(flag: 'liked' | 'saved') {
-		const on = flag === 'liked' ? !liked : !saved;
-		if (flag === 'liked') liked = on;
-		else saved = on;
-		setFlag(card.id, flag, on);
-		onAction?.(flag === 'liked' ? 'like' : 'save', { on });
+	let disliked = $state(getFlags(card.id).disliked ?? false);
+
+	// Like and thumbs-down exclude each other: turning one on turns the other off first.
+	function toggle(flag: 'liked' | 'saved' | 'disliked') {
+		const event = { liked: 'like', saved: 'save', disliked: 'dislike' } as const;
+		const on = !{ liked, saved, disliked }[flag];
+		const other = flag === 'liked' ? 'disliked' : flag === 'disliked' ? 'liked' : null;
+		if (on && other && (other === 'liked' ? liked : disliked)) set(other, false, event[other]);
+		set(flag, on, event[flag]);
 	}
 
-	let knewIt = $state(getFlags(card.id).knewIt ?? false);
-	let teachMore = $state(getFlags(card.id).teachMore ?? false);
-
-	// One-shot signals: the first tap fills the button and emits; later taps do nothing.
-	function signal(flag: 'knewIt' | 'teachMore') {
-		if (flag === 'knewIt' ? knewIt : teachMore) return;
-		if (flag === 'knewIt') knewIt = true;
-		else teachMore = true;
-		setFlag(card.id, flag, true);
-		onAction?.(flag === 'knewIt' ? 'knew_it' : 'teach_more', { on: true });
+	function set(flag: 'liked' | 'saved' | 'disliked', on: boolean, type: FeedEventType) {
+		if (flag === 'liked') liked = on;
+		else if (flag === 'saved') saved = on;
+		else disliked = on;
+		setFlag(card.id, flag, on);
+		onAction?.(type, { on });
 	}
 
 	let panel = $state(0);
@@ -80,10 +79,29 @@
 		const el = visualEl;
 		if (!el || typeof ResizeObserver === 'undefined') return;
 		const measure = () => (clipped = isClipped(el.scrollHeight, el.clientHeight));
+		// While a bubble pops in, wait for its animationend (below): measuring mid-pop would
+		// flash the hint on and off. The endless typing dots never end, so they do not count.
+		const moving = () =>
+			(el.getAnimations?.({ subtree: true }) ?? []).some(
+				(a) => a.effect?.getTiming().iterations !== Infinity
+			);
+		const onResize = () => {
+			if (!moving()) measure();
+		};
 		measure();
-		const ro = new ResizeObserver(measure);
+		// The box, and its content: content can grow (a new beat) in a box that keeps its size.
+		const ro = new ResizeObserver(onResize);
 		ro.observe(el);
-		return () => ro.disconnect();
+		if (el.firstElementChild) ro.observe(el.firstElementChild);
+		// A bubble pops in with a transform that sticks out of the box while it moves. No resize
+		// marks its end, so measure again when an animation or transition inside ends.
+		el.addEventListener('animationend', measure);
+		el.addEventListener('transitionend', measure);
+		return () => {
+			ro.disconnect();
+			el.removeEventListener('animationend', measure);
+			el.removeEventListener('transitionend', measure);
+		};
 	});
 
 	function openLightbox() {
@@ -225,7 +243,7 @@
 	</li>
 {/snippet}
 
-<article data-card-id={card.id} class:first>
+<article data-card-id={card.id}>
 	<header>
 		<a class="repo" href="/repo/{encodeURIComponent(card.repo)}">{card.repo}</a>
 		<span class="persona">
@@ -238,7 +256,6 @@
 		{#if card.series}
 			<span class="series">Part {card.series.part}/{card.series.of}</span>
 		{/if}
-		<span class="tone">{card.tone}</span>
 	</header>
 	<!-- A carousel: focus it, then use the arrow keys. svelte-ignore: a group that takes keys. -->
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
@@ -279,7 +296,13 @@
 							<button type="button" class="pill-hint" onclick={openLightbox}>Tap to expand</button>
 						</div>
 					{/if}
-					<button type="button" class="expand" aria-label="Expand" onclick={openLightbox}>⤢</button>
+					<!-- Only on a card that plays in steps: there a tap moves to the next step, so a
+					     button opens full screen (all steps at once). Elsewhere a tap on the visual opens
+					     it, and Tap to expand shows when it is cut off. Bottom left: Replay holds the
+					     top right, and the side buttons reach into the bottom right. -->
+					{#if !hint && beats.length > 0}
+						<button type="button" class="expand" aria-label="Expand" onclick={openLightbox}>⤢</button>
+					{/if}
 				{:else}
 					<p class="unsupported">Unsupported card type: {card.visual.kind}</p>
 				{/if}
@@ -365,54 +388,32 @@
 		<Lightbox {card} {Visual} onClose={() => (lightboxOpen = false)} />
 	{/if}
 	<div class="actions">
+		<!-- 👍 and 👎 sit together; an emoji cannot be outlined, so off is shown faded and grey. -->
 		<button type="button" aria-pressed={liked} aria-label="Like" onclick={() => toggle('liked')}>
-			<span class="icon" aria-hidden="true">{liked ? '♥' : '♡'}</span>
+			<span class="icon thumb" aria-hidden="true">👍</span>
 			<span class="label" aria-hidden="true">Like</span>
+		</button>
+		<button
+			type="button"
+			aria-pressed={disliked}
+			aria-label="Show less like this"
+			onclick={() => toggle('disliked')}
+		>
+			<span class="icon thumb" aria-hidden="true">👎</span>
+			<span class="label" aria-hidden="true">Less</span>
 		</button>
 		<button type="button" aria-pressed={saved} aria-label="Save" onclick={() => toggle('saved')}>
 			<span class="icon" aria-hidden="true">{saved ? '★' : '☆'}</span>
 			<span class="label" aria-hidden="true">Save</span>
 		</button>
-		{#if showComments}
-			<!-- Jumps to the comments panel; the panel change itself is the depth_open signal. -->
-			<button
-				type="button"
-				class="comments-btn"
-				aria-label="Comments ({visibleComments.length})"
-				onclick={openComments}
-			>
-				<span aria-hidden="true">💬</span><span class="count">{visibleComments.length}</span>
-			</button>
-		{/if}
 	</div>
-	<!-- Knowledge signals ride in the dots row so the side column stays short. -->
 	<div class="bottom-row">
-		<button
-			type="button"
-			class="pill"
-			aria-pressed={knewIt}
-			aria-label="Knew it"
-			onclick={() => signal('knewIt')}
-		>
-			<span class="icon" aria-hidden="true">{knewIt ? '✔' : '✓'}</span>
-			<span class="label" aria-hidden="true">Knew it</span>
-		</button>
 		<!-- The panel row's label says the same in words. -->
 		<div class="dots" aria-hidden="true">
 			{#each { length: count } as _, i (i)}
 				<span class="dot" class:active={i === panel}></span>
 			{/each}
 		</div>
-		<button
-			type="button"
-			class="pill"
-			aria-pressed={teachMore}
-			aria-label="Teach me more"
-			onclick={() => signal('teachMore')}
-		>
-			<span class="icon" aria-hidden="true">{teachMore ? '⊕' : '＋'}</span>
-			<span class="label" aria-hidden="true">More</span>
-		</button>
 	</div>
 </article>
 
@@ -426,13 +427,6 @@
 		/* Clear of the notch, the rounded corners and the home indicator. */
 		padding: max(0.75rem, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
 			calc(0.75rem + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
-	}
-	/* The first card shares the screen with the top bar and snaps by its bottom edge, so
-	   scrolling back to it shows the bar again. */
-	article.first {
-		height: calc(100dvh - var(--chrome-h, 0px));
-		scroll-snap-align: end;
-		padding-top: 0.75rem; /* the top bar above it holds the top inset */
 	}
 	header {
 		display: flex;
@@ -457,15 +451,6 @@
 	}
 	.repo:hover {
 		text-decoration: underline;
-	}
-	.tone {
-		flex: none;
-		margin-left: auto;
-		white-space: nowrap;
-		border: 1px solid var(--border);
-		border-radius: 999px;
-		padding: 0.1rem 0.6rem;
-		color: var(--muted);
 	}
 	.panels {
 		flex: 1;
@@ -506,7 +491,7 @@
 	.expand {
 		position: absolute;
 		bottom: 0;
-		right: 0;
+		left: 0;
 		z-index: 2;
 		width: 32px;
 		height: 32px;
@@ -702,32 +687,22 @@
 	.bottom-row {
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
+		justify-content: center;
 		gap: 0.5rem;
-	}
-	.bottom-row .pill {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.3rem;
-		min-height: 36px;
-		padding: 0 0.75rem;
-		border-radius: 999px;
-		border: 1px solid var(--border);
-		background: var(--surface);
-		color: inherit;
-		font-size: 0.8rem;
-		cursor: pointer;
-	}
-	.bottom-row .pill .label {
-		color: var(--muted);
-	}
-	.bottom-row .pill[aria-pressed='true'] {
-		color: var(--accent);
-		border-color: var(--accent);
-		background: color-mix(in srgb, var(--accent) 18%, var(--surface));
 	}
 	.actions .icon {
 		font-size: 1.2rem;
+	}
+	.actions .thumb {
+		filter: grayscale(1);
+		opacity: 0.55;
+		transition:
+			filter 0.15s,
+			opacity 0.15s;
+	}
+	.actions button[aria-pressed='true'] .thumb {
+		filter: none;
+		opacity: 1;
 	}
 	.actions .label {
 		font-size: 0.6rem;
@@ -735,20 +710,6 @@
 	}
 	.actions button[aria-pressed='true'] {
 		background: color-mix(in srgb, var(--accent) 18%, var(--surface));
-	}
-	.comments-btn {
-		display: grid;
-		place-items: center;
-		align-content: center;
-		gap: 0;
-		line-height: 1;
-	}
-	.comments-btn span:first-child {
-		font-size: 1rem;
-	}
-	.comments-btn .count {
-		font-size: 0.65rem;
-		color: var(--muted);
 	}
 	.actions button[aria-pressed='true'] {
 		color: var(--accent);

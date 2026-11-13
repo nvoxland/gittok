@@ -4,7 +4,7 @@
 data_dir: data                 # relative to the GitTok directory, or absolute / ~
 server:
   host: 127.0.0.1
-  port: 8008
+  port: 7313
   lan: true                    # serve the feed to the local network, for a phone (plain HTTP; each device pairs once). false: this computer only
   allowed_hosts: []            # extra Host names the server answers to, such as a VPN name
 agent:
@@ -60,7 +60,7 @@ render:
   mflux_quantize: 8            # quantization bits when mflux_path is empty (the model is quantized on each run)
   image_width: 768             # illustration size in pixels
   image_height: 960
-  memegen_url: http://127.0.0.1:5001  # the memegen server that draws meme cards
+  meme_source: https://raw.githubusercontent.com/jacebrowning/memegen/main  # where `gittok memes --prefetch` gets meme templates
   worker_interval_s: 5.0       # how often the render worker looks for pending cards
 repos:
   # An optional limit for the add_repo MCP tool (an agent calls it). Empty = no limit: the

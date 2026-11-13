@@ -73,10 +73,10 @@ describe('Feed', () => {
 			expect(io.options?.root ?? null).toBeNull();
 		});
 
-		it('marks only the first card as first (it shares the screen with the top bar)', () => {
+		it('the first card is a full screen like the others: no card is special', () => {
 			const { container } = setup();
 			const articles = container.querySelectorAll('article');
-			expect(articles[0]).toHaveClass('first');
+			expect(articles[0]).not.toHaveClass('first');
 			expect(articles[1]).not.toHaveClass('first');
 		});
 
@@ -403,13 +403,11 @@ describe('Feed', () => {
 				expect(onNearEnd).toHaveBeenCalledTimes(1);
 			});
 
-			it('only the first card of the list is first, also as a placeholder', async () => {
+			it('a placeholder of the first card is a full screen too', async () => {
 				const { el, show } = setupMany();
-				expect(el(1)).toHaveClass('first');
 				await show(10);
 				expect(el(1)).toHaveClass('placeholder');
-				expect(el(1)).toHaveClass('first');
-				expect(el(2)).not.toHaveClass('first');
+				expect(el(1)).not.toHaveClass('first');
 			});
 
 			it('watches cards added by the next page', async () => {
@@ -452,8 +450,8 @@ describe('Feed', () => {
 				expect(target()).toBe(el(1));
 				await fireEvent.keyDown(document.body, { key: 'ArrowUp' });
 				expect(target()).toBe(el(1));
-				// The first card snaps by its bottom edge, under the top bar.
-				expect(into).toHaveBeenLastCalledWith({ behavior: 'smooth', block: 'end' });
+				// Every card, the first too, snaps by its top.
+				expect(into).toHaveBeenLastCalledWith({ behavior: 'smooth', block: 'start' });
 			});
 
 			it('leaves the key to the browser past the last card (the end card is below)', async () => {

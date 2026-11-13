@@ -1,10 +1,12 @@
-"""Reward, Thompson-sampling weights, and category shares (docs/learning.md sections 3, 4, 9)."""
+"""Reward per impression, and the one learner: an additive model with Thompson sampling that
+ranks the feed and decides what to make (docs/learning.md sections 3, 4, 7, 9)."""
 
 from __future__ import annotations
 
 import json
 import logging
 import math
+import random
 import threading
 from collections.abc import Callable
 from contextlib import closing
@@ -12,7 +14,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from gittok import config, db, knowledge, requests
+from gittok import config, db, knowledge
 
 log = logging.getLogger(__name__)
 
@@ -28,7 +30,12 @@ class RewardConfig:
     ms_per_word: int
     expected_ms_max: int
     format_base_ms: dict
-    importance: dict
+    like_floor: float
+    like_weight: float
+    dislike_weight: float
+    prior_sd: dict
+    crosses: list
+    lead_score: dict
     half_life_days: float
     slotting: dict
 
@@ -150,7 +157,18 @@ def _watch_fraction(rc: RewardConfig, spec: dict, dwell_events: list[dict], dwel
     return min(1.0, dwell_ms / expected_ms(rc, spec))
 
 
+@dataclass(frozen=True)
+class Outcome:
+    """What one impression teaches the model: a reward in [0, 1], how many times it counts,
+    and the explicit signal behind it ('like', 'dislike' or None)."""
+
+    reward: float
+    weight: float = 1.0
+    signal: str | None = None
+
+
 def _reward(rc: RewardConfig, spec: dict, events: list[tuple[str, dict]]) -> float:
+    """The implicit reward: watch time and engagement, with a like or save on top."""
     w = rc.weights
     dwell_events = [d for t, d in events if t == "dwell"]
     dwell_ms = sum(_ms(d.get("ms", 0)) for d in dwell_events)
@@ -176,13 +194,33 @@ def _reward(rc: RewardConfig, spec: dict, events: list[tuple[str, dict]]) -> flo
     return max(0.0, min(1.0, r))
 
 
+def outcome(rc: RewardConfig, spec: dict, events: list[tuple[str, dict]]) -> Outcome:
+    """A 👎 (last toggle on) wins: reward 0, counted `dislike_weight` times. A like lifts the
+    reward to `like_floor` and counts `like_weight` times. Else the implicit reward, once."""
+    if _toggled_on(events, "dislike"):
+        return Outcome(0.0, float(rc.dislike_weight), "dislike")
+    r = _reward(rc, spec, events)
+    if _toggled_on(events, "like"):
+        return Outcome(max(r, float(rc.like_floor)), float(rc.like_weight), "like")
+    return Outcome(r)
+
+
 def _closed_impressions(conn, now_ms: int):
-    """Unprocessed impressions whose window is closed, with their window end, oldest first."""
+    """Unprocessed impressions whose window is closed, with their window end, oldest first.
+
+    A window ends at the next impression of the session, or after CAP_MS. A 👎 ends it at
+    once (at `now_ms`): the reader said what they think, and the next cards should know."""
     rows = conn.execute(
         "SELECT e.id, e.card_id, e.ts, e.data FROM events e WHERE e.type = 'impression' "
         "AND e.card_id IS NOT NULL ORDER BY e.ts, e.id"
     ).fetchall()
     done = {r[0] for r in conn.execute("SELECT impression_event_id FROM rewards")}
+    disliked = {
+        r["card_id"]: r["ts"]
+        for r in conn.execute(
+            "SELECT card_id, MAX(ts) AS ts FROM events WHERE type = 'dislike' GROUP BY card_id"
+        )
+    }
     groups: dict[tuple, list] = {}
     for r in rows:
         session = (db.loads(r["data"]) or {}).get("session")
@@ -195,6 +233,8 @@ def _closed_impressions(conn, now_ms: int):
                 continue
             nxt = items[i + 1] if i + 1 < len(items) else None
             if nxt is None and now_ms < r["ts"] + CAP_MS:
+                if disliked.get(r["card_id"], -1) >= r["ts"]:
+                    out.append((r, now_ms))
                 continue
             end = min(nxt["ts"], r["ts"] + CAP_MS) if nxt else r["ts"] + CAP_MS
             out.append((r, end))
@@ -202,13 +242,21 @@ def _closed_impressions(conn, now_ms: int):
     return out
 
 
+def _last_toggle(events: list[tuple[str, dict]], name: str) -> int | None:
+    """1 or 0 for the last toggle of `name`, None when there is none."""
+    if not any(t == name for t, _ in events):
+        return None
+    return int(_toggled_on(events, name))
+
+
 def process_events(conn, cfg, now: datetime | None = None) -> dict:
-    """Turn closed, unprocessed impressions into rewards and update weights. Idempotent."""
+    """Turn closed, unprocessed impressions into rewards and update the model. Idempotent."""
     now = _now(now)
     rc = load_reward_config(cfg)
     stats = {"impressions": 0, "rewards": 0, "weights": 0}
-    touched: set = set()
     with db.immediate(conn):
+        model = Model.load(conn, cfg, now, rc)
+        nmaps: dict[str, dict] = {}
         for imp, end in _closed_impressions(conn, int(now.timestamp() * 1000)):
             row = conn.execute("SELECT spec FROM cards WHERE id = ?", (imp["card_id"],)).fetchone()
             if row is None:
@@ -223,40 +271,51 @@ def process_events(conn, cfg, now: datetime | None = None) -> dict:
                 )
             ]
             try:
-                r = _reward(rc, spec, events)
+                out = outcome(rc, spec, events)
             except Exception:  # one odd event must not stop learning for the rest
                 log.exception("could not score impression %s", imp["id"])
                 continue
+            feats = impression_features(conn, cfg, imp["card_id"], now, nmaps)
             conn.execute(
-                "INSERT INTO rewards(card_id, impression_event_id, reward, computed_at) "
-                "VALUES (?, ?, ?, ?)",
-                (imp["card_id"], imp["id"], r, _iso(now)),
+                "INSERT INTO rewards(card_id, impression_event_id, reward, weight, signal, "
+                "features, computed_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    imp["card_id"],
+                    imp["id"],
+                    out.reward,
+                    out.weight,
+                    out.signal,
+                    json.dumps(sorted(feats)),
+                    _iso(now),
+                ),
             )
-            liked = _toggled_on(events, "like") if any(t == "like" for t, _ in events) else None
             conn.execute(
                 "UPDATE stories SET best_reward = MAX(COALESCE(best_reward, 0), ?), "
-                "liked = COALESCE(?, liked) "
+                "liked = COALESCE(?, liked), disliked = COALESCE(?, disliked) "
                 "WHERE story_key = (SELECT story_key FROM cards WHERE id = ?)",
-                (r, None if liked is None else int(liked), imp["card_id"]),
+                (
+                    out.reward,
+                    _last_toggle(events, "like"),
+                    _last_toggle(events, "dislike"),
+                    imp["card_id"],
+                ),
             )
             conn.execute(  # running mean over every reward of cards made from the lead
                 "UPDATE leads SET mean_reward = (COALESCE(mean_reward, 0) * rewards_n + ?) "
                 "/ (rewards_n + 1), rewards_n = rewards_n + 1 "
                 "WHERE id = (SELECT lead_id FROM cards WHERE id = ?)",
-                (r, imp["card_id"]),
+                (out.reward, imp["card_id"]),
             )
             stats["impressions"] += 1
             stats["rewards"] += 1
-            for feature, value in card_features(conn, cfg, imp["card_id"], now=now):
-                _update_weight(conn, cfg, rc, feature, value, r, now)
-                touched.add((feature, value))
+            if feats:
+                model.update(feats, out.reward, out.weight, now)
+        stats["weights"] = model.save(conn)
         knowledge.update_in_tx(conn)
-        requests.sync_in_tx(conn)
-    stats["weights"] = len(touched)
     return stats
 
 
-# ---------------------------------------------------------------- features and priors
+# ---------------------------------------------------------------- features
 
 
 def _recency(created_at: str, now: datetime) -> str:
@@ -289,14 +348,56 @@ def card_features(conn, cfg, card_id: str, now: datetime | None = None) -> list[
     return feats
 
 
-def _prior_strength(cfg) -> float:
-    return float(cfg.defaults.get("prior_strength", 10))
+FAMILIAR_NEW = 0.7  # novelty at or above this: the reader is new to the code
+FAMILIAR_SOME = 0.35  # at or above this: has seen some of it; below: knows it
 
 
-def _category_maps() -> tuple[dict, dict]:
-    from gittok import brief
+def familiarity(novelty: float) -> str:
+    """The `familiarity` feature value for a novelty in [0, 1] (knowledge model)."""
+    return "new" if novelty >= FAMILIAR_NEW else "some" if novelty >= FAMILIAR_SOME else "known"
 
-    return brief.CATEGORY_STORIES, brief.CATEGORY_FORMATS
+
+def familiarity_of(conn, cfg, repo: str | None, dirs, nmaps: dict) -> str:
+    """How well the reader knows the deepest of these dirs of the repo, now. `nmaps` caches
+    the repo's novelty map (repo -> map) for the caller."""
+    if not repo:
+        return familiarity(1.0)
+    if repo not in nmaps:
+        nmaps[repo] = knowledge.novelty_map(conn, repo, cfg.settings.user.git_identities)
+    deepest = max(dirs, key=lambda d: (d.count("/"), d), default=None)
+    nov = knowledge.lead_dir(f"{deepest}/_", nmaps[repo])[1] if deepest else 1.0
+    return familiarity(nov)
+
+
+def add_familiarity(conn, cfg, feats, nmaps: dict) -> None:
+    """Add the impression-time `familiarity` feature to a card's feature set, in place."""
+    repo = next((v for f, v in sorted(feats) if f == "repo"), None)
+    dirs = [v for f, v in feats if f == "dir"]
+    feats.add(("familiarity", familiarity_of(conn, cfg, repo, dirs, nmaps)))
+
+
+def impression_features(conn, cfg, card_id: str, now: datetime, nmaps: dict) -> set:
+    """What the model learns from for one impression: the card's features, and how well the
+    reader knew its code at that time."""
+    feats = set(card_features(conn, cfg, card_id, now=now))
+    if feats:
+        add_familiarity(conn, cfg, feats, nmaps)
+    return feats
+
+
+# ---------------------------------------------------------------- the model
+
+BIAS = ("bias", "")
+DEFAULT_SD = 0.5  # prior sd of a feature that reward.yaml `prior_sd` does not name
+MIX_PRIOR_MAX = 0.7  # the default mix moves a prior mean by at most this (log-odds)
+CROSS = "cross:"
+
+
+def _sigmoid(z: float) -> float:
+    if z >= 0:
+        return 1 / (1 + math.exp(-z))
+    e = math.exp(z)
+    return e / (1 + e)
 
 
 def _mix_share(cfg, feature: str, value: str) -> tuple[float, float] | None:
@@ -313,88 +414,227 @@ def _mix_share(cfg, feature: str, value: str) -> tuple[float, float] | None:
     return None
 
 
-def _prior(cfg, feature: str, value: str) -> tuple[float, float]:
-    strength = _prior_strength(cfg)
-    m = 0.5
-    found = _mix_share(cfg, feature, value)
-    if found:
-        m = min(0.85, max(0.15, 0.5 * found[0] / found[1]))
-    return strength * m, strength * (1 - m)
+def _category_maps() -> tuple[dict, dict]:
+    from gittok import brief
+
+    return brief.CATEGORY_STORIES, brief.CATEGORY_FORMATS
 
 
 def _parse_iso(s: str) -> datetime:
     return datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
 
 
-def _decayed(rc: RewardConfig, cfg, row, now: datetime) -> tuple[float, float, float, float]:
-    """(alpha, beta, alpha0, beta0) with the evidence decayed to `now`."""
-    a0, b0 = _prior(cfg, row["feature"], row["value"])
-    days = max(0.0, (now - _parse_iso(row["updated_at"])).total_seconds() / 86400)
-    k = 0.5 ** (days / rc.half_life_days)
-    return a0 + (row["alpha"] - a0) * k, b0 + (row["beta"] - b0) * k, a0, b0
+def cross_key(a: str, b: str, va: str, vb: str) -> tuple[str, str]:
+    return (f"{CROSS}{a}*{b}", f"{va}|{vb}")
 
 
-def _update_weight(conn, cfg, rc, feature, value, r, now) -> None:
-    row = conn.execute(
-        "SELECT * FROM weights WHERE feature = ? AND value = ?", (feature, value)
-    ).fetchone()
-    if row is None:
-        alpha, beta = _prior(cfg, feature, value)
-    else:
-        alpha, beta, _, _ = _decayed(rc, cfg, row, now)
-    conn.execute(
-        "INSERT INTO weights(feature, value, alpha, beta, updated_at) VALUES (?, ?, ?, ?, ?) "
-        "ON CONFLICT(feature, value) DO UPDATE SET alpha = excluded.alpha, "
-        "beta = excluded.beta, updated_at = excluded.updated_at",
-        (feature, value, alpha + r, beta + 1 - r, _iso(now)),
-    )
+class Model:
+    """The one learner: Bayesian logistic regression with a diagonal Gaussian per
+    (feature, value), updated online (Chapelle and Li 2011, "An Empirical Evaluation of
+    Thompson Sampling"). The log-odds of the reward is the sum of the weights of the active
+    features; a card's dir prefixes share one unit between them.
+
+    The prior mean comes from the default mix, the prior sd from reward.yaml `prior_sd`.
+    Evidence decays toward the prior with `half_life_days`. The stored rows are a cache:
+    `relearn` rebuilds them from the rewards.
+    """
+
+    def __init__(self, cfg, rc: RewardConfig, rows: dict, now: datetime):
+        self.cfg, self.rc, self.now = cfg, rc, now
+        self._rows = rows  # key -> (mean, precision, n, updated_at datetime)
+        self._dirty: set[tuple[str, str]] = set()
+
+    @classmethod
+    def load(cls, conn, cfg, now: datetime | None = None, rc: RewardConfig | None = None):
+        rows = {
+            (r["feature"], r["value"]): (
+                r["mean"],
+                r["precision"],
+                r["n"],
+                _parse_iso(r["updated_at"]),
+            )
+            for r in conn.execute("SELECT * FROM model_weights")
+        }
+        return cls(cfg, rc or load_reward_config(cfg), rows, _now(now))
+
+    # ---- priors and state
+
+    def prior(self, key: tuple[str, str]) -> tuple[float, float]:
+        """(mean, precision) before evidence."""
+        feature, value = key
+        family = "cross" if feature.startswith(CROSS) else feature
+        sd = float(self.rc.prior_sd.get(family, DEFAULT_SD))
+        mean = 0.0
+        found = _mix_share(self.cfg, feature, value)
+        if found and found[1] > 0:
+            ratio = max(found[0] / found[1], 0.25)
+            mean = max(-MIX_PRIOR_MAX, min(MIX_PRIOR_MAX, 0.5 * math.log(ratio)))
+        return mean, 1 / (sd * sd)
+
+    def state(self, key: tuple[str, str]) -> tuple[float, float, float]:
+        """(mean, precision, evidence) decayed to `now`."""
+        m0, q0 = self.prior(key)
+        row = self._rows.get(key)
+        if row is None:
+            return m0, q0, 0.0
+        mean, prec, n, at = row
+        days = max(0.0, (self.now - at).total_seconds() / 86400)
+        k = 0.5 ** (days / self.rc.half_life_days)
+        return m0 + (mean - m0) * k, q0 + (prec - q0) * k, n * k
+
+    def expand(self, feats) -> dict[tuple[str, str], float]:
+        """The active inputs of a feature set: the bias, each feature (dir prefixes share
+        one unit), and the crosses of reward.yaml `crosses`."""
+        feats = set(feats)
+        n_dirs = sum(1 for f, _ in feats if f == "dir")
+        x = {BIAS: 1.0}
+        for k in feats:
+            x[k] = 1 / n_dirs if k[0] == "dir" else 1.0
+        values: dict[str, list[str]] = {}
+        for f, v in sorted(feats):
+            values.setdefault(f, []).append(v)
+        for a, b in self.rc.crosses:
+            for va in values.get(a, ()):
+                for vb in values.get(b, ()):
+                    x[cross_key(a, b, va, vb)] = 1.0
+        return x
+
+    # ---- reading
+
+    def mean_logit(self, feats) -> float:
+        return sum(self.state(k)[0] * xk for k, xk in self.expand(feats).items())
+
+    def predict(self, feats) -> float:
+        """The expected reward of a card with these features, by the posterior means."""
+        return _sigmoid(self.mean_logit(feats))
+
+    def effect(self, key: tuple[str, str]) -> float:
+        """How far the evidence moved this weight from its prior mean (log-odds)."""
+        return self.state(key)[0] - self.prior(key)[0]
+
+    def values(self, feature: str) -> dict[str, tuple[float, float]]:
+        """value -> (mean weight, evidence) for every stored value of the feature."""
+        out = {}
+        for key in self._rows:
+            if key[0] == feature:
+                mean, _, n = self.state(key)
+                out[key[1]] = (mean, n)
+        return out
+
+    def draw(self, rng) -> Draw:
+        """One Thompson sample of every weight, made lazily and the same in any call order."""
+        return Draw(self, rng.getrandbits(64))
+
+    # ---- learning
+
+    def update(self, feats, y: float, c: float, now: datetime) -> None:
+        """One Laplace step for a soft label y in [0, 1], counted c times.
+
+        With a diagonal prior the new mode has w_k = m_k - c (p - y) x_k / q_k, where p is the
+        prediction at the mode, so only z = w . x needs solving: z = z0 - c s (p(z) - y) with
+        z0 = m . x and s = sum x_k^2 / q_k. The left side minus the right is increasing in z,
+        so Newton converges. Then q_k += c p (1 - p) x_k^2.
+        """
+        self.now = now
+        x = self.expand(feats)
+        st = {k: self.state(k) for k in x}
+        z0 = sum(st[k][0] * xk for k, xk in x.items())
+        s = sum(xk * xk / st[k][1] for k, xk in x.items())
+        z = z0
+        for _ in range(50):
+            p = _sigmoid(z)
+            g = z - z0 + c * s * (p - y)
+            if abs(g) < 1e-10:
+                break
+            z -= g / (1 + c * s * p * (1 - p))
+        p = _sigmoid(z)
+        r = c * (p - y)
+        for k, xk in x.items():
+            mean, prec, n = st[k]
+            self._rows[k] = (mean - r * xk / prec, prec + c * p * (1 - p) * xk * xk, n + c, now)
+            self._dirty.add(k)
+
+    def save(self, conn) -> int:
+        """Write the changed weights. Returns how many."""
+        conn.executemany(
+            "INSERT INTO model_weights(feature, value, mean, precision, n, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(feature, value) DO UPDATE SET "
+            "mean = excluded.mean, precision = excluded.precision, n = excluded.n, "
+            "updated_at = excluded.updated_at",
+            [(*k, *self._rows[k][:3], _iso(self._rows[k][3])) for k in sorted(self._dirty)],
+        )
+        n = len(self._dirty)
+        self._dirty.clear()
+        return n
 
 
-def posterior_means(
-    conn, cfg, feature: str, now: datetime | None = None
-) -> dict[str, tuple[float, float]]:
-    """value -> (posterior mean, evidence count), decayed to `now` without writing."""
-    now, rc = _now(now), load_reward_config(cfg)
-    out = {}
-    for row in conn.execute("SELECT * FROM weights WHERE feature = ?", (feature,)):
-        alpha, beta, a0, b0 = _decayed(rc, cfg, row, now)
-        out[row["value"]] = (alpha / (alpha + beta), (alpha - a0) + (beta - b0))
-    return out
+class Draw:
+    """One Thompson sample of the model. Each weight is drawn from its posterior with a
+    generator seeded by (draw seed, key), so the same draw scores the same in any order."""
+
+    def __init__(self, model: Model, seed: int):
+        self.model, self.seed = model, seed
+        self._w: dict[tuple[str, str], float] = {}
+
+    def weight(self, key: tuple[str, str]) -> float:
+        if key not in self._w:
+            mean, prec, _ = self.model.state(key)
+            rng = random.Random(f"{self.seed}:{key[0]}:{key[1]}")
+            self._w[key] = rng.gauss(mean, 1 / math.sqrt(prec))
+        return self._w[key]
+
+    def logit(self, feats) -> float:
+        return sum(self.weight(k) * xk for k, xk in self.model.expand(feats).items())
+
+    def score(self, feats) -> float:
+        """The sampled expected reward, in (0, 1)."""
+        return _sigmoid(self.logit(feats))
+
+
+def relearn(conn, cfg, now: datetime | None = None) -> int:
+    """Rebuild the model from every reward, oldest first, with the features saved at the
+    impression (or the card's current features for a reward saved without them). Returns the
+    number of rewards replayed. Run it after a change to the features or the priors."""
+    rc = load_reward_config(cfg)
+    model = Model(cfg, rc, {}, _now(now))
+    replayed = 0
+    with db.immediate(conn):
+        conn.execute("DELETE FROM model_weights")
+        for r in conn.execute("SELECT * FROM rewards ORDER BY computed_at, id").fetchall():
+            at = _parse_iso(r["computed_at"])
+            feats = {tuple(k) for k in json.loads(r["features"] or "[]")}
+            feats = feats or set(card_features(conn, cfg, r["card_id"], now=at))
+            if not feats:
+                continue
+            model.update(feats, r["reward"], r["weight"], at)
+            replayed += 1
+        model.save(conn)
+    return replayed
 
 
 def score_cards(
     conn, cfg, card_ids: list[str], rng, now: datetime | None = None, feats=None
 ) -> dict[str, float]:
-    """Thompson sample per call: one Beta draw per (feature, value), shared by all cards.
+    """One Thompson draw per call, shared by all cards: id -> sampled expected reward.
 
-    Score = importance-weighted mean of the draws over the card's features. Reads only.
-    A card's `dir` prefixes count as one term: their draws are averaged first.
-    `feats` (card id -> features, as `slotter.features_for` gives them) saves the two reads
-    per card when the caller already has the features.
+    `feats` (card id -> features, as `slotter.features_for` gives them) saves the reads per
+    card when the caller already has them. Reads only.
     """
-    now, rc = _now(now), load_reward_config(cfg)
+    now = _now(now)
     if feats is None:
-        feats = {cid: card_features(conn, cfg, cid, now=now) for cid in card_ids}
-    feats = {cid: sorted(feats.get(cid) or ()) for cid in card_ids}
-    feats = {cid: f for cid, f in feats.items() if f}
-    stored = {
-        (r["feature"], r["value"]): _decayed(rc, cfg, r, now)[:2]
-        for r in conn.execute("SELECT * FROM weights")
-    }
-    draws: dict[tuple[str, str], float] = {}
-    for key in sorted({k for f in feats.values() for k in f}):
-        alpha, beta = stored.get(key) or _prior(cfg, *key)
-        draws[key] = rng.betavariate(alpha, beta)
-    out = {}
-    for cid, f in feats.items():
-        dirs = [draws[k] for k in f if k[0] == "dir"]
-        terms = [(rc.importance.get(k[0], 0.0), draws[k]) for k in f if k[0] != "dir"]
-        if dirs:
-            terms.append((rc.importance.get("dir", 0.0), sum(dirs) / len(dirs)))
-        total = sum(w for w, _ in terms)
-        if total > 0:
-            out[cid] = sum(w * d for w, d in terms) / total
-    return out
+        feats = {cid: set(card_features(conn, cfg, cid, now=now)) for cid in card_ids}
+    draw = Model.load(conn, cfg, now).draw(rng)
+    return {cid: draw.score(f) for cid in card_ids if (f := feats.get(cid))}
+
+
+def posterior_means(
+    conn, cfg, feature: str, now: datetime | None = None
+) -> dict[str, tuple[float, float]]:
+    """value -> (expected reward of an average card with this value, evidence) for every
+    learned value of the feature. Reads only."""
+    model = Model.load(conn, cfg, now)
+    bias = model.state(BIAS)[0]
+    return {v: (_sigmoid(bias + m), n) for v, (m, n) in model.values(feature).items()}
 
 
 # ---------------------------------------------------------------- category shares
@@ -402,85 +642,66 @@ def score_cards(
 SHARE_FLOOR = 0.05
 
 
-def format_factors(conn, cfg, now: datetime | None = None) -> dict[str, float]:
-    """Learned per-format factor for the brief's format pick.
+def _effects(model: Model, feature: str) -> dict[str, tuple[float, float]]:
+    """value -> (effect of the evidence in log-odds, evidence) for values with evidence."""
+    return {
+        v: (model.effect((feature, v)), n)
+        for v, (_, n) in model.values(feature).items()
+        if n > 1e-9
+    }
 
-    For a format with evidence (mean m over n decayed observations, priors removed), and ref
-    the plain mean of m over formats with evidence (0.5 if none):
 
-        factor = (prior_strength + n * m / ref) / (prior_strength + n)
+FACTOR_MAX = 4.0  # a learned factor stays within [1/FACTOR_MAX, FACTOR_MAX]
 
-    Formats without evidence are absent, which counts as factor 1.
-    """
-    now, rc = _now(now), load_reward_config(cfg)
-    stats: dict[str, tuple[float, float]] = {}
-    for row in conn.execute("SELECT * FROM weights WHERE feature = 'format'"):
-        alpha, beta, a0, b0 = _decayed(rc, cfg, row, now)
-        ea, eb = alpha - a0, beta - b0
-        if ea + eb > 1e-9:
-            stats[row["value"]] = (ea / (ea + eb), ea + eb)
-    ref = sum(m for m, _ in stats.values()) / len(stats) if stats else 0.5
-    strength = _prior_strength(cfg)
-    if ref <= 0:
+
+def value_factors(conn, cfg, feature: str, now: datetime | None = None) -> dict[str, float]:
+    """Learned factor per value of a feature, for the brief: exp(effect - mean effect) over
+    the values with evidence, clamped to [1/FACTOR_MAX, FACTOR_MAX]. Values without evidence
+    are absent, which counts as 1. The brief scales its tone mix, persona share, repo share,
+    asked levels and format order with these."""
+    stats = _effects(Model.load(conn, cfg, now), feature)
+    if not stats:
         return {}
-    return {f: (strength + n * m / ref) / (strength + n) for f, (m, n) in stats.items()}
+    ref = sum(e for e, _ in stats.values()) / len(stats)
+    return {
+        v: min(FACTOR_MAX, max(1 / FACTOR_MAX, math.exp(e - ref))) for v, (e, _) in stats.items()
+    }
+
+
+def format_factors(conn, cfg, now: datetime | None = None) -> dict[str, float]:
+    """`value_factors` of the formats: the brief's format pick."""
+    return value_factors(conn, cfg, "format", now)
 
 
 def category_shares(conn, cfg, now: datetime | None = None) -> dict[str, float]:
-    """Learned share per default-mix category, blended with the shipped prior.
+    """Learned share per default-mix category: the default share times exp(effect_c - ref).
 
-    For category c: lm_c is the evidence-weighted mean reward of c's story types and formats
-    (evidence only, so the weight priors do not count twice), and n_c is the mean of the
-    story-type evidence and the format evidence. ref is the plain mean of lm_c over
-    categories with evidence (0.5 if none), so extra evidence in one category does not move it. Then
-
-        relative_c = lm_c / ref
-        factor_c   = (prior_strength + n_c * relative_c) / (prior_strength + n_c)
-        share_c   ~ default_share_c * factor_c      (normalised to sum to 1)
-
-    With no evidence n_c = 0, so factor = 1 and the shares equal the default mix. More
-    evidence moves factor toward relative_c, which is above 1 for better-than-average
-    categories. After normalising, no category goes below 0.05; clamped categories are fixed
+    effect_c is the evidence-weighted mean effect of the category's story types and formats
+    (the movement of their weights away from the prior, so the mix does not count twice); ref
+    is the plain mean over categories with evidence. With no evidence the shares equal the
+    default mix. After normalising, no category goes below 0.05; clamped categories are fixed
     at 0.05 and the rest are rescaled to fill the remainder.
     """
     mix = {k: float(v) for k, v in (cfg.defaults.get("categories") or {}).items()}
     if not mix:
         return {}
-    now, rc = _now(now), load_reward_config(cfg)
+    model = Model.load(conn, cfg, now)
     stories, formats = _category_maps()
-    evidence: dict[tuple[str, str], tuple[float, float]] = {}
-    for row in conn.execute("SELECT * FROM weights WHERE feature IN ('story_type', 'format')"):
-        alpha, beta, a0, b0 = _decayed(rc, cfg, row, now)
-        ea, eb = alpha - a0, beta - b0
-        if ea + eb > 1e-9:
-            evidence[(row["feature"], row["value"])] = (ea / (ea + eb), ea + eb)
-
-    stats: dict[str, tuple[float, float]] = {}  # category -> (learned mean, n)
+    evidence = {("story_type", v): e for v, e in _effects(model, "story_type").items()}
+    evidence |= {("format", v): e for v, e in _effects(model, "format").items()}
+    stats: dict[str, float] = {}
     for c in mix:
-        parts = [("story_type", stories.get(c, ())), ("format", formats.get(c, ()))]
         hits = [
-            (feature, evidence[(feature, v)])
-            for feature, vs in parts
+            evidence[(f, v)]
+            for f, vs in (("story_type", stories.get(c, ())), ("format", formats.get(c, ())))
             for v in vs
-            if (feature, v) in evidence
+            if (f, v) in evidence
         ]
-        total = sum(n for _, (_, n) in hits)
+        total = sum(n for _, n in hits)
         if total > 0:
-            lm = sum(m * n for _, (m, n) in hits) / total
-            n_c = (
-                sum(n for f, (_, n) in hits if f == "story_type") / 2
-                + sum(n for f, (_, n) in hits if f == "format") / 2
-            )
-            stats[c] = (lm, n_c)
-    ref = sum(lm for lm, _ in stats.values()) / len(stats) if stats else 0.5
-    strength = _prior_strength(cfg)
-    raw = {}
-    for c, share in mix.items():
-        factor = 1.0
-        if c in stats and ref > 0:
-            lm, n_c = stats[c]
-            factor = (strength + n_c * (lm / ref)) / (strength + n_c)
-        raw[c] = share * factor
+            stats[c] = sum(e * n for e, n in hits) / total
+    ref = sum(stats.values()) / len(stats) if stats else 0.0
+    raw = {c: share * math.exp(stats[c] - ref) if c in stats else share for c, share in mix.items()}
     total = sum(raw.values())
     if total <= 0:
         return {c: 0.0 for c in mix}
@@ -510,9 +731,9 @@ def reset_weights(conn, feature: str | None = None) -> int:
     """Delete learned weights (all, or one feature). Returns the number of rows deleted."""
     with conn:
         if feature is None:
-            cur = conn.execute("DELETE FROM weights")
+            cur = conn.execute("DELETE FROM model_weights")
         else:
-            cur = conn.execute("DELETE FROM weights WHERE feature = ?", (feature,))
+            cur = conn.execute("DELETE FROM model_weights WHERE feature = ?", (feature,))
     return cur.rowcount
 
 

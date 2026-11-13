@@ -380,7 +380,7 @@ def test_no_quiz_slot_when_no_quiz_exists_or_batch_is_short(conn, cfg, monkeypat
     assert quiz not in batch(conn, cfg, limit=6)  # under 8 cards: no quiz guarantee
 
 
-def test_features_for_matches_card_features_of_each_card(tmp_path, fixture_repo):
+def test_features_for_matches_the_impression_features_of_each_card(tmp_path, fixture_repo):
     from dataclasses import replace
     from types import SimpleNamespace
 
@@ -402,7 +402,8 @@ def test_features_for_matches_card_features_of_each_card(tmp_path, fixture_repo)
     got = slotter.features_for(conn, cfg, [*ids, "missing"], now)
     assert got["missing"] == set()
     for i in ids:
-        want = set(learning.card_features(conn, cfg, i, now=now))
+        want = learning.impression_features(conn, cfg, i, now, {})
         assert got[i] == want and ("group", "core") in want
+        assert ("familiarity", "new") in want  # the reader has seen nothing yet
     assert ("recency", "old") in got[ids[0]] and ("recency", "new") in got[ids[1]]
     conn.close()

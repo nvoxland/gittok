@@ -57,3 +57,15 @@ async def test_survey_says_what_structure_covers(cfg_go):
     out = data(await call(cfg_go, "survey_repo", {"repo": "fixture"}))
     assert "installed" in out["structure"] and "python" in out["structure"]["note"]
     assert out["languages"]["go"] == 2  # vendor/a.go and svc/main.go: a language with a query
+
+
+async def test_survey_says_where_an_extension_with_two_meanings_is(tmp_path):
+    """`.scm` is Scheme, or a tree-sitter query file. The survey gives the dirs and a note,
+    so the agent does not write a Scheme query for query files."""
+    files = {**FILES, "config/queries/go.scm": "(identifier) @name\n", "q/a.scm": "(x)\n"}
+    repo = build_history_repo(tmp_path / "r", [("base", files, "2026-01-20T10:00:00+00:00")])
+    cfg = make_config(repo, tmp_path / "cs")
+    out = data(await call(cfg, "survey_repo", {"repo": "fixture"}))
+    row = next(r for r in out["structure"]["uncovered"] if r["extension"] == ".scm")
+    assert row["dirs"] == ["config/queries", "q"]
+    assert "tree-sitter query" in row["note"]

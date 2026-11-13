@@ -28,6 +28,7 @@ from gittok import (
     home,
     learning,
     mcp_server,
+    pair_codes,
     profile,
     profiling,
     refit,
@@ -256,6 +257,14 @@ def _notify(args) -> int:
     return 0
 
 
+def _pair(args) -> int:
+    cfg = load_config()
+    with closing(db.open_db(_db_path(cfg))) as conn:
+        out = pair_codes.approve(conn, args.code, _now())
+    print(out["message"])
+    return 0 if out["ok"] else 1
+
+
 def _gc(args) -> int:
     cfg = load_config()
     with closing(db.open_db(_db_path(cfg))) as conn:
@@ -298,6 +307,11 @@ def _health(args) -> int:
         line = profiling.structure_hint(cfg)
         if line:
             print(line)
+        from . import memes
+
+        line = memes.hint(cfg)
+        if line:
+            print(line)
         line = profiling.mascot_hint(cfg, _renderers(cfg))
         if line:
             print(f"GitTok: {line}")
@@ -308,8 +322,7 @@ def _health(args) -> int:
 
 
 def _renderers(cfg) -> dict:
-    """Which image renderers can run. The meme server is not asked: only `illustration`
-    matters to the callers here, and that check opens no connection."""
+    """Which image renderers can run. Only `illustration` matters to the callers here."""
     from . import render
 
     return {"illustration": render.default_renderers(cfg)["illustration"].available()}
@@ -463,11 +476,61 @@ def _structure(args) -> int:
     return 0
 
 
+def _memes(args) -> int:
+    from . import memes
+
+    cfg = load_config()
+    missing = memes.missing(cfg)
+    if not args.prefetch:
+        status = {"downloaded": sorted(memes.downloaded(cfg)), "missing": missing}
+        print(json.dumps(status, indent=2))
+        return 0
+    if not missing:
+        print("All meme templates are downloaded.")
+        return 0
+    try:
+        res = memes.prefetch(cfg, missing)
+    except Exception as e:  # network errors
+        print(f"Download failed: {e}")
+        return 1
+    print(f"Downloaded {len(res['downloaded'])} meme templates.")
+    for tid, why in sorted(res["failed"].items()):
+        print(f"  not downloaded: {tid}: {why}")
+    return 0 if res["downloaded"] or not res["failed"] else 1
+
+
+def _url(args) -> int:
+    from . import social
+
+    cfg = load_config()
+    urls = social.feed_urls(cfg)
+    if not args.hint:
+        print("\n".join(urls))
+        return 0
+    owner = _server_dir(cfg.settings.server.port)
+    if owner is not None and Path(owner) != cfg.root:
+        return 0  # another directory has the port: `health --hint` says so
+    phone = f", and on a phone or tablet {' or '.join(urls[1:])} (pair it once)" if urls[1:] else ""
+    print(
+        f"GitTok feed: open {urls[0]} on this computer{phone}. "
+        "Give the user these addresses in your first reply of this session."
+    )
+    return 0
+
+
 def _learn(args) -> int:
     cfg = load_config()
     with closing(db.open_db(_db_path(cfg))) as conn:
         res = learning.process_events(conn, cfg)
     print("impressions={impressions} rewards={rewards} weights={weights}".format(**res))
+    return 0
+
+
+def _relearn(args) -> int:
+    cfg = load_config()
+    with closing(db.open_db(_db_path(cfg))) as conn:
+        n = learning.relearn(conn, cfg)
+    print(f"relearned from {n} reward(s)")
     return 0
 
 
@@ -795,7 +858,7 @@ def _refit(args) -> int:
 def _refeature(args) -> int:
     cfg = load_config()
     with closing(db.open_db(_db_path(cfg))) as conn:
-        print(f"refeatured {store.refeature(conn)} card(s)")
+        print(f"refeatured {store.refeature(conn, cfg)} card(s)")
     return 0
 
 
@@ -976,6 +1039,11 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(fn=_refit)
     p = sub.add_parser("refeature", help="recompute stored card features from each card's spec")
     p.set_defaults(fn=_refeature)
+    p = sub.add_parser(
+        "pair", help="approve the pairing code that a device shows ('Pair with a code')"
+    )
+    p.add_argument("code")
+    p.set_defaults(fn=_pair)
     p = sub.add_parser("notify", help="generate notifications once")
     p.set_defaults(fn=_notify)
     p = sub.add_parser(
@@ -998,12 +1066,26 @@ def main(argv: list[str] | None = None) -> int:
         help="download the grammars for the languages in the configured repos (needs network)",
     )
     p.set_defaults(fn=_structure)
+    p = sub.add_parser("url", help="print the addresses of the feed (this computer, then the LAN)")
+    p.add_argument("--hint", action="store_true", help="the SessionStart line for the agent")
+    p.set_defaults(fn=_url)
+    p = sub.add_parser("memes", help="meme templates: status, and --prefetch to download them")
+    p.add_argument(
+        "--prefetch",
+        action="store_true",
+        help="download the configured meme templates and their fonts (needs network)",
+    )
+    p.set_defaults(fn=_memes)
     p = sub.add_parser("gc", help="delete old cards, events, and files (prints counts as JSON)")
     p.add_argument("--dry-run", action="store_true", help="count what would go; change nothing")
     p.add_argument("--vacuum", action="store_true", help="shrink the database file afterwards")
     p.set_defaults(fn=_gc)
     p = sub.add_parser("learn", help="turn new impressions into rewards and update weights once")
     p.set_defaults(fn=_learn)
+    p = sub.add_parser(
+        "relearn", help="rebuild the learned model from every reward (after refeature)"
+    )
+    p.set_defaults(fn=_relearn)
     p = sub.add_parser("reset-weights", help="delete learned weights (all, or one feature)")
     p.add_argument("--feature")
     p.set_defaults(fn=_reset_weights)

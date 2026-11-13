@@ -17,26 +17,15 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
-import httpx
+import yaml
 
-from gittok import db, private
+from gittok import db, memes, private
 
 log = logging.getLogger("gittok.render")
 
 MFLUX_TIMEOUT_S = 300
 STALE_RENDERING = timedelta(minutes=30)
 RENDERING_SINCE = "rendering_since"  # key in cards.resolved while status is `rendering`
-_ESCAPES = [
-    ("_", "__"),
-    ("-", "--"),
-    (" ", "_"),
-    ("?", "~q"),
-    ("%", "~p"),
-    ("#", "~h"),
-    ("/", "~s"),
-    ('"', "''"),
-    ("\n", "~n"),
-]
 
 
 class RendererUnavailable(Exception):
@@ -61,27 +50,6 @@ class Renderer(Protocol):
     def render(self, visual: dict, cfg, spec: dict) -> list[RenderedImage]: ...
 
 
-def memegen_escape(text: str) -> str:
-    if text == "" or set(text) == {"."}:
-        # Empty is a blank line. A dot-only segment ("." or "..") would be resolved as a path
-        # segment and change the URL, and memegen has no dot escape, so render it as a blank
-        # line too. The validator rejects such lines; this keeps the URL safe on its own.
-        return "_"
-    out = []
-    for ch in text:
-        for src, dst in _ESCAPES:
-            if ch == src:
-                out.append(dst)
-                break
-        else:
-            out.append(ch)
-    return "".join(out)
-
-
-def memegen_path(template: str, lines: list[str]) -> str:
-    return f"/images/{template}/" + "/".join(memegen_escape(line) for line in lines) + ".png"
-
-
 def png_size(data: bytes) -> tuple[int, int]:
     if data[:8] != b"\x89PNG\r\n\x1a\n" or len(data) < 24:
         raise RenderError("backend did not return a PNG")
@@ -89,33 +57,28 @@ def png_size(data: bytes) -> tuple[int, int]:
 
 
 class MemeRenderer:
-    def __init__(self, base_url: str, transport: httpx.BaseTransport | None = None):
-        self.base_url = base_url.rstrip("/")
-        self._transport = transport
+    """Draws meme cards in process from the templates that `gittok memes --prefetch`
+    downloaded into `store` (memes.py)."""
 
-    def _client(self, timeout: float) -> httpx.Client:
-        return httpx.Client(timeout=timeout, transport=self._transport)
+    def __init__(self, store: Path):
+        self.store = Path(store)
 
     def available(self) -> bool:
-        try:
-            # One template, not /templates/: the full list takes about a second to build.
-            with self._client(2.0) as c:
-                return c.get(f"{self.base_url}/templates/drake").status_code < 500
-        except httpx.HTTPError:
-            return False
+        return bool(memes.downloaded_in(self.store))
 
     def render(self, visual: dict, cfg, spec: dict) -> list[RenderedImage]:
-        url = self.base_url + memegen_path(visual["template"], visual["lines"])
+        tid = visual["template"]
+        if tid not in memes.downloaded_in(self.store):
+            raise RendererUnavailable(
+                f"meme template {tid} is not downloaded: run `gittok memes --prefetch`"
+            )
         try:
-            with self._client(30.0) as c:
-                resp = c.get(url)
-        except httpx.TransportError as e:
-            raise RendererUnavailable(f"memegen unreachable: {e}") from e
-        if resp.status_code != 200:
-            raise RenderError(f"memegen returned {resp.status_code} for {visual['template']}")
-        w, h = png_size(resp.content)
-        meta = {"template": visual["template"], "lines": visual["lines"], "width": w, "height": h}
-        return [RenderedImage(resp.content, w, h, meta)]
+            data = memes.draw(self.store / "templates" / tid, self.store / "fonts", visual["lines"])
+        except (OSError, ValueError, yaml.YAMLError) as e:
+            raise RenderError(f"could not draw meme {tid}: {e}") from e
+        w, h = png_size(data)
+        meta = {"template": tid, "lines": visual["lines"], "width": w, "height": h}
+        return [RenderedImage(data, w, h, meta)]
 
 
 def _default_runner(cmd: list[str], timeout: float) -> None:
@@ -244,7 +207,7 @@ RENDERER_KEY = {"meme": "meme", "illustration": "illustration", "comic": "illust
 
 def default_renderers(cfg) -> dict[str, Renderer]:
     return {
-        "meme": MemeRenderer(cfg.settings.render.memegen_url),
+        "meme": MemeRenderer(memes.store(cfg)),
         "illustration": IllustrationRenderer(
             model=cfg.settings.render.mflux_model, path=cfg.settings.render.mflux_path
         ),

@@ -302,8 +302,8 @@ def test_list_and_mark_read(cfg, conn):
 
 
 def test_lan_urls_use_given_addresses():
-    assert social.lan_urls(8008, ["192.168.1.5", "10.0.0.2"]) == [
-        "http://192.168.1.5:8008", "http://10.0.0.2:8008"]  # fmt: skip
+    assert social.lan_urls(7313, ["192.168.1.5", "10.0.0.2"]) == [
+        "http://192.168.1.5:7313", "http://10.0.0.2:7313"]  # fmt: skip
 
 
 def test_lan_addresses_are_non_loopback_ipv4():

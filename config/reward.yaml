@@ -27,21 +27,52 @@ format_base_ms:
   comic: 6000
   iceberg: 5000
   day_in_life: 5000
-importance:
-  story_type: 1.0
-  format: 1.0
-  tone: 0.7
+# Explicit signals (docs/learning.md section 3). A 👎 is "show less like this", whatever the
+# reason: reward 0, counted dislike_weight times. A like lifts the reward to like_floor and
+# counts like_weight times. Feeds that publish their weights count a "show less" far more
+# than a like; these are small because one reader gives few signals.
+like_floor: 0.9
+like_weight: 2
+dislike_weight: 4
+# The learner (section 4) is one additive model: a weight per (feature, value) on the
+# log-odds of the reward. prior_sd is how far one value of the feature can move a score
+# before evidence: wide for what the reader cares about most, narrow for fine-grained
+# features that must back off to their parent (file below dir).
+prior_sd:
+  bias: 1.0
+  story_type: 0.8
+  format: 0.8
+  tone: 0.6
   persona: 0.5
-  repo: 0.8
+  repo: 0.7
   group: 0.4
   dir: 0.6
+  file: 0.3
+  language: 0.5
+  kind: 0.6
+  angle: 0.7
+  familiarity: 0.6
   visual_kind: 0.5
-  template: 0.5
+  template: 0.4
   meme_template: 0.4
-  recency: 0.6
+  recency: 0.5
   difficulty: 0.3
+  interactive: 0.3
   has_comments: 0.2
-  verdict: 0.6
+  verdict: 0.5
+  cross: 0.4
+# Pairs of features whose combination is learned on its own (a "cross"): the reader may like
+# `why` cards about code they know and `what` cards about code they do not.
+crosses:
+  - [angle, familiarity]
+# What to MAKE (section 12): a lead's score is the model's log-odds for its features plus
+# these terms. strength: x log(teachability strength); novelty: x novelty (what the reader
+# has not learned yet); covered and rejected: minus this per earlier card or reject.
+lead_score:
+  strength: 1.0
+  novelty: 1.5
+  covered: 0.7
+  rejected: 0.7
 half_life_days: 21
 slotting:
   repeat_days: 7

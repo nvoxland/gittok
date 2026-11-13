@@ -241,6 +241,7 @@ def submit(conn, cfg, run_id: str, cards: list | dict, packet_id: str | None = N
                     conn.execute(
                         "UPDATE cards SET lead_id = ? WHERE id = ?", (used_lead["id"], card_id)
                     )
+                    store.add_lead_features(conn, card_id, used_lead["id"])
                     ledger.mark_covered(conn, used_lead["id"], datetime.now(UTC))
                     replies.answer(conn, used_lead["id"], card_id)
                 entry = {"index": a.index, "card_id": card_id}

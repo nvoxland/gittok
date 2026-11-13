@@ -26,7 +26,6 @@ describe('Card', () => {
 		expect(container.querySelectorAll('[data-panel]')).toHaveLength(3);
 		expect(container.querySelectorAll('.dot')).toHaveLength(3);
 		expect(screen.getByText('@greybeard')).toBeInTheDocument();
-		expect(screen.getByText('dry-deadpan')).toBeInTheDocument();
 		expect(screen.getByText('gittok')).toBeInTheDocument();
 	});
 
@@ -187,7 +186,7 @@ describe('Card actions', () => {
 		const calls: [string, Record<string, unknown> | undefined][] = [];
 		const card = fakeCard({ id: 'c_like' });
 		const { unmount } = render(Card, { card, onAction: (t: string, d?: Record<string, unknown>) => calls.push([t, d]) });
-		const btn = screen.getByRole('button', { name: /like/i });
+		const btn = screen.getByRole('button', { name: 'Like' });
 		expect(btn).toHaveAttribute('aria-pressed', 'false');
 		await fireEvent.click(btn);
 		expect(btn).toHaveAttribute('aria-pressed', 'true');
@@ -201,7 +200,7 @@ describe('Card actions', () => {
 		unmount();
 		resetCardStateForTest();
 		render(Card, { card });
-		expect(screen.getByRole('button', { name: /like/i })).toHaveAttribute('aria-pressed', 'true');
+		expect(screen.getByRole('button', { name: 'Like' })).toHaveAttribute('aria-pressed', 'true');
 	});
 
 	it('save toggles and emits {on}', async () => {
@@ -214,62 +213,122 @@ describe('Card actions', () => {
 		expect(JSON.parse(localStorage.getItem('gittok.card-state')!).c_save.saved).toBe(true);
 	});
 
-	it('keeps the side column short: Knew it and More sit in the bottom row with the dots', () => {
+	it('puts the thumbs up and down together in the side column, the dots alone below', () => {
 		const { container } = render(Card, { card: fakeCard({ id: 'c_rows' }) });
 		const side = container.querySelector('.actions') as HTMLElement;
+		const names = [...side.querySelectorAll('button')].map((b) => b.getAttribute('aria-label'));
+		expect(names.slice(0, 3)).toEqual(['Like', 'Show less like this', 'Save']);
+		expect(side.textContent).toContain('👍');
+		expect(side.textContent).toContain('👎');
 		const bottom = container.querySelector('.bottom-row') as HTMLElement;
-		expect(side.querySelectorAll('button').length).toBeLessThanOrEqual(3);
-		expect(bottom).toContainElement(screen.getByRole('button', { name: 'Knew it' }));
-		expect(bottom).toContainElement(screen.getByRole('button', { name: 'Teach me more' }));
+		expect(bottom.querySelectorAll('button')).toHaveLength(0);
 		expect(bottom).toContainElement(container.querySelector('.dots') as HTMLElement);
+		// "Knew it" and "More" are gone: the learner reads likes and thumbs-downs instead.
+		expect(screen.queryByRole('button', { name: /knew it/i })).toBeNull();
+		expect(screen.queryByRole('button', { name: /teach me more/i })).toBeNull();
+	});
+
+	it('an image card has no corner button: a tap on the image opens it, and the corner covered captions', () => {
+		const card = fakeCard({
+			id: 'c_code',
+			visual: { kind: 'code', repo: 'r', path: 'a.py', commit: 'abc', lines: [1, 3] }
+		});
+		render(Card, { card });
+		expect(screen.queryByRole('button', { name: 'Expand' })).toBeNull();
+	});
+
+	it('a text or template card that fits has no expand button: full screen shows nothing more', () => {
+		for (const visual of [
+			{ kind: 'text', title: 'T', body: 'B' },
+			{ kind: 'template', template: 'breaking_news', data: { headline: 'H' } }
+		]) {
+			const card = fakeCard({ id: `c_${visual.kind}`, visual: visual as never });
+			const { unmount } = render(Card, { card });
+			expect(screen.queryByRole('button', { name: 'Expand' })).toBeNull();
+			unmount();
+		}
+	});
+
+	it('does not show the tone: it looked like a button and did nothing', () => {
+		const { container } = render(Card, { card: fakeCard({ id: 'c_tone', tone: 'hype' }) });
+		expect(container.querySelector('.tone')).toBeNull();
+		expect(container.querySelector('header')).not.toHaveTextContent('hype');
 	});
 
 	it('shows visible labels under the action icons', () => {
 		render(Card, { card: fakeCard({ id: 'c_labels' }) });
-		for (const name of ['Like', 'Save', 'Knew it', 'More']) {
+		for (const name of ['Like', 'Save', 'Less']) {
 			expect(screen.getByText(name, { selector: '.label' })).toBeInTheDocument();
 		}
 	});
 
-	it('knew it and teach more each emit once, fill, and persist', async () => {
+	it('the thumbs-down toggles, emits dislike, and persists', async () => {
 		const calls: [string, Record<string, unknown> | undefined][] = [];
-		const card = fakeCard({ id: 'c_know' });
-		const { unmount } = render(Card, { card, onAction: (t: string, d?: Record<string, unknown>) => calls.push([t, d]) });
-		const knew = screen.getByRole('button', { name: /knew it/i });
-		const more = screen.getByRole('button', { name: /teach me more/i });
-		expect(knew).toHaveAttribute('aria-pressed', 'false');
-		await fireEvent.click(knew);
-		await fireEvent.click(knew);
-		await fireEvent.click(more);
-		await fireEvent.click(more);
-		expect(knew).toHaveAttribute('aria-pressed', 'true');
-		expect(more).toHaveAttribute('aria-pressed', 'true');
+		const card = fakeCard({ id: 'c_less' });
+		const { unmount } = render(Card, {
+			card,
+			onAction: (t: string, d?: Record<string, unknown>) => calls.push([t, d])
+		});
+		const less = screen.getByRole('button', { name: 'Show less like this' });
+		expect(less).toHaveAttribute('aria-pressed', 'false');
+		await fireEvent.click(less);
+		expect(less).toHaveAttribute('aria-pressed', 'true');
+		await fireEvent.click(less);
+		expect(less).toHaveAttribute('aria-pressed', 'false');
+		await fireEvent.click(less);
 		expect(calls).toEqual([
-			['knew_it', { on: true }],
-			['teach_more', { on: true }]
+			['dislike', { on: true }],
+			['dislike', { on: false }],
+			['dislike', { on: true }]
 		]);
 		unmount();
 		resetCardStateForTest();
 		render(Card, { card });
-		expect(screen.getByRole('button', { name: /knew it/i })).toHaveAttribute('aria-pressed', 'true');
-		expect(screen.getByRole('button', { name: /teach me more/i })).toHaveAttribute('aria-pressed', 'true');
+		expect(screen.getByRole('button', { name: 'Show less like this' })).toHaveAttribute(
+			'aria-pressed',
+			'true'
+		);
 	});
 
-	it('a comments button with the count jumps to the comments panel', async () => {
+	it('like and thumbs-down exclude each other', async () => {
+		const calls: [string, Record<string, unknown> | undefined][] = [];
+		render(Card, {
+			card: fakeCard({ id: 'c_both' }),
+			onAction: (t: string, d?: Record<string, unknown>) => calls.push([t, d])
+		});
+		const like = screen.getByRole('button', { name: 'Like', pressed: false });
+		const less = screen.getByRole('button', { name: 'Show less like this' });
+		await fireEvent.click(like);
+		await fireEvent.click(less);
+		expect(like).toHaveAttribute('aria-pressed', 'false');
+		expect(less).toHaveAttribute('aria-pressed', 'true');
+		await fireEvent.click(like);
+		expect(less).toHaveAttribute('aria-pressed', 'false');
+		expect(calls).toEqual([
+			['like', { on: true }],
+			['like', { on: false }],
+			['dislike', { on: true }],
+			['dislike', { on: false }],
+			['like', { on: true }]
+		]);
+	});
+
+	it('has no comments button: the front shows the comments, and "All N comments" opens the rest', async () => {
 		const card = fakeCard({
 			depth: [{ kind: 'explain', text: 'Plain words.' }],
 			comments: [
 				{ persona: 'greybeard', text: 'Told you.' },
-				{ persona: 'archivist', text: 'Since 2019.' }
+				{ persona: 'archivist', text: 'Since 2019.' },
+				{ persona: 'shipit_sam', text: 'Ship it.' }
 			]
 		});
 		const { container } = render(Card, { card });
+		expect(container.querySelector('.comments-btn')).toBeNull();
+		expect(screen.queryByRole('button', { name: /^Comments \(/ })).toBeNull();
 		const row = container.querySelector('.panels') as HTMLElement;
 		Object.defineProperty(row, 'clientWidth', { value: 300, configurable: true });
 		row.scrollTo = vi.fn() as never;
-		const btn = screen.getByRole('button', { name: 'Comments (2)' });
-		expect(btn).toHaveTextContent('2');
-		await fireEvent.click(btn);
+		await fireEvent.click(screen.getByRole('button', { name: 'All 3 comments' }));
 		expect(row.scrollTo).toHaveBeenCalledWith({ left: 600, behavior: 'smooth' });
 	});
 
@@ -641,10 +700,14 @@ describe('Card keyboard and panels', () => {
 		const { row } = setup(
 			fakeCard({
 				depth: [{ kind: 'explain', text: 'Why.' }],
-				comments: [{ persona: 'greybeard', text: 'Told you.' }]
+				comments: [
+					{ persona: 'greybeard', text: 'Told you.' },
+					{ persona: 'archivist', text: 'Since 2019.' },
+					{ persona: 'shipit_sam', text: 'Ship it.' }
+				]
 			})
 		);
-		await fireEvent.click(screen.getByRole('button', { name: 'Comments (1)' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'All 3 comments' }));
 		expect(row.scrollTo).toHaveBeenLastCalledWith({ left: 600, behavior: 'auto' });
 		await fireEvent.keyDown(row, { key: 'ArrowRight' });
 		expect(row.scrollTo).toHaveBeenLastCalledWith({ left: 300, behavior: 'auto' });
@@ -677,8 +740,8 @@ describe('Card images', () => {
 	});
 
 	it('loads the lightbox image at once', async () => {
-		render(Card, { card: meme() });
-		await fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
+		const { container } = render(Card, { card: meme() });
+		await fireEvent.click(container.querySelector('.visual')!);
 		const img = screen.getByRole('dialog').querySelector('img.media')!;
 		expect(img.getAttribute('loading')).toBe('eager');
 	});

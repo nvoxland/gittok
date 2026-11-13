@@ -192,8 +192,10 @@ def _check_scan(d: dict) -> None:
 
 
 def _check_file_types(d: dict) -> None:
-    for key in ("highlight", "comment_prefixes", "todo_comment"):
+    for key in ("highlight", "comment_prefixes", "todo_comment", "two_meanings"):
         _map(d.get(key) or {}, key)
+    for ext, note in (d.get("two_meanings") or {}).items():
+        _need(isinstance(note, str), f"'two_meanings.{ext}' must be a note")
     for key in (
         "file_words", "source_extensions", "noise_basenames", "manifests", "ast_grep_probe",
         "why_words", "doc_extensions",
@@ -203,6 +205,25 @@ def _check_file_types(d: dict) -> None:
         _need(isinstance(name, str), f"'highlight.{ext}' must be a language name")
     for ext, pre in (d.get("comment_prefixes") or {}).items():
         _texts(pre, f"comment_prefixes.{ext}")
+
+
+ANALYZER_FIELDS = {"name", "languages", "binary", "gives", "how", "needs"}
+FACT_KINDS = {"defines", "calls", "imports", "returns", "accepts"}
+
+
+def _check_analyzers(d: dict) -> None:
+    items = d.get("analyzers") or []
+    _need(isinstance(items, list), "'analyzers' must be a list")
+    for i, a in enumerate(items):
+        where = f"analyzers[{_item_name(a) or i}]"
+        _need(isinstance(a, dict), f"'{where}' must be a map")
+        for key in ("name", "binary", "how"):
+            _need(isinstance(a.get(key), str) and a[key].strip(), f"'{where}.{key}' is needed")
+        for key in ("languages", "gives"):
+            _texts(a.get(key) or [], f"{where}.{key}")
+            _need(bool(a.get(key)), f"'{where}.{key}' is needed")
+        bad = set(a.get("gives") or ()) - FACT_KINDS
+        _need(not bad, f"'{where}.gives': unknown fact kinds {sorted(bad)}")
 
 
 def _check_claims(d: dict) -> None:
@@ -258,24 +279,32 @@ def _check_defaults(d: dict) -> None:
     for key in ("categories", "tones", "visual_mix"):
         for k, v in _map(d.get(key) or {}, key).items():
             _number(v, f"{key}.{k}")
-    for key in ("exploration_share", "prior_strength"):
+    for key in ("exploration_share",):
         if d.get(key) is not None:
             _number(d[key], key)
 
 
-REWARD_MAPS = ("weights", "format_base_ms", "importance", "slotting")
+REWARD_MAPS = ("weights", "format_base_ms", "prior_sd", "lead_score", "slotting")
 
 
 def _check_reward(d: dict) -> None:
     for key in REWARD_MAPS:
         if key in d:
             _map(d[key], key)
-    for key in ("weights", "format_base_ms", "importance"):
+    for key in ("weights", "format_base_ms", "prior_sd", "lead_score"):
         for k, v in (d.get(key) or {}).items():
             _number(v, f"{key}.{k}")
-    for key in ("skip_ms", "ms_per_word", "expected_ms_max", "half_life_days"):
+    for key in (
+        "skip_ms", "ms_per_word", "expected_ms_max", "half_life_days",
+        "like_floor", "like_weight", "dislike_weight",
+    ):  # fmt: skip
         if key in d:
             _number(d[key], key)
+    for pair in d.get("crosses") or []:
+        _need(
+            isinstance(pair, list) and len(pair) == 2 and all(isinstance(x, str) for x in pair),
+            f"crosses: each item is a pair of feature names, not {pair!r}",
+        )
 
 
 def _check_personas(d: dict) -> None:
@@ -345,7 +374,8 @@ def _spec(name: str, what: str, keys: dict, check=None, **kw) -> FileSpec:
 
 
 _REWARD_KEYS = (
-    "skip_ms", "weights", "ms_per_word", "expected_ms_max", "format_base_ms", "importance",
+    "skip_ms", "weights", "ms_per_word", "expected_ms_max", "format_base_ms",
+    "like_floor", "like_weight", "dislike_weight", "prior_sd", "crosses", "lead_score",
     "half_life_days", "slotting",
 )  # fmt: skip
 
@@ -373,7 +403,7 @@ FILES: dict[str, FileSpec] = {
             "defaults",
             "The starting mix of categories and tones, the image share, exploration",
             {
-                "": {"categories", "tones", "visual_mix", "exploration_share", "prior_strength"},
+                "": {"categories", "tones", "visual_mix", "exploration_share"},
                 "categories": None,
                 "tones": None,
                 "visual_mix": None,
@@ -382,8 +412,9 @@ FILES: dict[str, FileSpec] = {
         ),
         _spec(
             "reward",
-            "Reward weights, read times, feature importance, decay, slotting",
-            {"": _REWARD_KEYS, "weights": None, "importance": None},
+            "Reward weights, like and 👎 weights, read times, model priors, decay, lead score, "
+            "slotting",
+            {"": _REWARD_KEYS, "weights": None, "prior_sd": None},
             _check_reward,
             layered=True,
         ),
@@ -427,6 +458,12 @@ FILES: dict[str, FileSpec] = {
             rel="queries/languages.yaml",
             local="local/queries/languages.yaml and local/queries/<grammar>.scm",
             merge=MERGE + ". A local/queries/<grammar>.scm file replaces the shipped query whole",
+        ),
+        _spec(
+            "analyzers",
+            "Code analyzers per language, for the profiling skill's analyzer facts",
+            {"": {"analyzers"}, "analyzers.*": ANALYZER_FIELDS},
+            _check_analyzers,
         ),
         _spec(
             "claims",

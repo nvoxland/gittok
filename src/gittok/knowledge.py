@@ -28,11 +28,9 @@ _COUNT = {
     "explain": "explains_opened",
     "right": "quiz_right",
     "wrong": "quiz_wrong",
-    "knew_it": "knew_it",
-    "teach_more": "teach_more",
 }
 _ONCE_PER_CARD = ("seen", "explain")
-_TYPES = ("impression", "depth_open", "answer", "knew_it", "teach_more")
+_TYPES = ("impression", "depth_open", "answer")
 
 
 def _prefixes(dirs) -> set[str]:
@@ -62,7 +60,7 @@ def _kind(conn, row, data: dict) -> str | None:
         panel = data.get("panel")
         explain = _explain_panel(db.loads(card["spec"]))
         return "explain" if explain is not None and panel == explain else None
-    return t  # knew_it, teach_more
+    return None
 
 
 _SYMBOL_COL = {"cards_seen": "seen"}
@@ -226,14 +224,8 @@ def combine(row, commits_30d: int = 0, own_share: float | None = None) -> float:
         except (KeyError, IndexError):
             return 0
 
-    pos = (
-        get("cards_seen")
-        + get("seen")
-        + 2 * get("explains_opened")
-        + 2 * get("quiz_right")
-        + 4 * get("knew_it")
-    )
-    struggle = get("quiz_wrong") + get("teach_more")
+    pos = get("cards_seen") + get("seen") + 2 * get("explains_opened") + 2 * get("quiz_right")
+    struggle = get("quiz_wrong")
     nov = 1 / (1 + pos / POS_SCALE)
     nov += (1 - nov) * struggle / (struggle + STRUGGLE_SCALE)
     nov += (1 - nov) * CHURN_WEIGHT * min(1.0, max(0, commits_30d) / CHURN_COMMITS)

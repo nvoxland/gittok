@@ -1,0 +1,68 @@
+# Code analyzers that give GitTok exact facts for a language: definitions, calls, imports,
+# return types, parameters (`submit_facts`). Data, not code. The repo survey shows, for each
+# language of the repo, the analyzers here and whether each can run now (`binary` is on the
+# PATH). The gittok-profile-repo skill picks one, runs it with the user's permission, and
+# converts its output to facts with a throwaway script in its scratchpad.
+#
+# Every `how` must stay read-only: no command may write into the user's repo. To add an
+# analyzer for all your repos, write local/analyzers.yaml: its `analyzers` list adds to this
+# one (an item with the name of a shipped one changes it, docs/config.md).
+#
+# Fields: name, languages (names as the survey gives them), binary (what must be on the PATH),
+# gives (fact kinds), how (what to run and how to read its output), needs (optional: what
+# else must be there).
+
+analyzers:
+  - name: python-ast
+    languages: [python]
+    binary: python3
+    gives: [defines, calls, imports, accepts, returns]
+    how: >-
+      No install: a short script with the standard `ast` module. FunctionDef, AsyncFunctionDef
+      and ClassDef give defines (name, line, end_lineno, params); a Call inside a def gives
+      calls (caller = the def's name, callee = the called name); Import and ImportFrom give
+      imports (resolve a module of the repo to its file for resolved_path); annotations give
+      accepts and returns. Read the files from `git ls-files` at HEAD.
+
+  - name: typescript-compiler
+    languages: [typescript, javascript]
+    binary: node
+    needs: the `typescript` package in the repo's node_modules (node_modules/typescript)
+    gives: [defines, calls, imports, accepts, returns]
+    how: >-
+      A short node script with the TypeScript compiler API: ts.createProgram from the repo's
+      tsconfig.json, walk FunctionDeclaration, MethodDeclaration and arrow functions for
+      defines, CallExpression for calls (the checker gives the callee's file for callee_path),
+      import declarations for imports (resolved_path from the program), and
+      checker.typeToString for returns and accepts. Do not emit: no output files.
+
+  - name: clj-kondo
+    languages: [clojure]
+    binary: clj-kondo
+    gives: [defines, calls, imports, accepts]
+    how: >-
+      `clj-kondo --cache false --lint <source dirs> --config '{:output {:format :edn}
+      :analysis {:arglists true}}'`. `--cache false` matters: without it clj-kondo writes a
+      cache into the repo's .clj-kondo dir. In the :analysis map, :var-definitions give
+      defines (with :arglist-strs for accepts), :var-usages with a :from-var give calls (:to
+      is the callee's namespace), and :namespace-usages give imports. Add `--parallel` for a
+      big repo. Do not pass `--copy-configs`: it writes to the repo's .clj-kondo dir.
+
+  - name: go-list
+    languages: [go]
+    binary: go
+    gives: [imports]
+    how: >-
+      `go list -json ./...` in the module root: each package's GoFiles and Imports give
+      imports (a package of the module resolves to its dir). It gives no calls; the structure
+      layer finds definitions.
+
+  - name: ruby-ripper
+    languages: [ruby]
+    binary: ruby
+    gives: [defines, calls]
+    how: >-
+      No install: a short script with the standard Ripper library (Ripper.sexp, or a
+      Ripper::SexpBuilder subclass). :def and :defs nodes give defines with their line;
+      :command, :call and :method_add_arg nodes inside a def give calls (no resolution:
+      callee is the method name).

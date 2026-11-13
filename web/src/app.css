@@ -62,6 +62,48 @@ body {
 	font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
 
+/* iOS 26 blurs page content under the status bar and the home indicator of a home-screen app
+   (the Liquid Glass scroll-edge effect; reported by many projects, not documented by Apple).
+   WebKit skips the blur when a fixed, full-width, opaque box covers the edge, so the
+   home-screen app gets one band over each safe area. The cards keep their content out of the
+   safe areas already. The bands take no taps. */
+.edge {
+	display: none;
+}
+@media (display-mode: standalone) {
+	/* The bands alone did not stop the blur, which reaches below the status bar. iOS draws the
+	   edge effect over the page's own scroll view, so here the page does not scroll: the .app
+	   box does, with the snap points (Feed.svelte sets them on html for a browser tab). */
+	html,
+	body {
+		height: 100%;
+		overflow: hidden;
+	}
+	.app {
+		height: 100dvh;
+		overflow-y: auto;
+		scroll-snap-type: y mandatory;
+		overscroll-behavior-y: none;
+	}
+	.edge {
+		display: block;
+		position: fixed;
+		left: 0;
+		right: 0;
+		z-index: 50;
+		background: var(--bg);
+		pointer-events: none;
+	}
+	.edge.top {
+		top: 0;
+		height: env(safe-area-inset-top);
+	}
+	.edge.bottom {
+		bottom: 0;
+		height: env(safe-area-inset-bottom);
+	}
+}
+
 /* A safety net for every animation and transition, also ones added later. Components still
    turn off their own, and script scrolls ask lib/motion.ts. */
 @media (prefers-reduced-motion: reduce) {

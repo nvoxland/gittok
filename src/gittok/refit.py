@@ -35,7 +35,9 @@ def apply(conn, cfg, in_dir: Path) -> dict:
     for path in sorted(in_dir.glob("*.json")):
         data = json.loads(path.read_text())
         card_id, card = data["card_id"], data["card"]
-        row = conn.execute("SELECT spec, status FROM cards WHERE id = ?", (card_id,)).fetchone()
+        row = conn.execute(
+            "SELECT spec, status, resolved FROM cards WHERE id = ?", (card_id,)
+        ).fetchone()
         if row is None:
             rejected.append({"card_id": card_id, "reason": "unknown_card", "detail": ""})
             continue
@@ -61,14 +63,20 @@ def apply(conn, cfg, in_dir: Path) -> dict:
             r = rejects[0]
             rejected.append({"card_id": card_id, "reason": r.reason, "detail": r.detail})
             continue
-        _replace(conn, card_id, accepted[0], old, row["status"])
+        _replace(conn, cfg, card_id, accepted[0], old, row["status"], db.loads(row["resolved"]))
         replaced.append(card_id)
     return {"replaced": replaced, "rejected": rejected}
 
 
-def _replace(conn, card_id: str, acc, old: dict, status: str) -> None:
+def _replace(conn, cfg, card_id: str, acc, old: dict, status: str, old_resolved=None) -> None:
     card = acc.card
-    redraw = card["visual"]["kind"] in store.RENDERED_KINDS and card["visual"] != old["visual"]
+    drawn = card["visual"]["kind"] in store.RENDERED_KINDS
+    redraw = drawn and card["visual"] != old["visual"]
+    resolved = acc.resolved
+    if drawn and not redraw and isinstance(old_resolved, dict):
+        # The picture did not change: keep what the renderer drew. The status stays as it
+        # was, so nothing would draw it again.
+        resolved = {**resolved, "visual": old_resolved.get("visual")}
     with conn:
         conn.execute(
             "UPDATE cards SET format = ?, persona = ?, tone = ?, spec = ?, resolved = ?, "
@@ -78,9 +86,9 @@ def _replace(conn, card_id: str, acc, old: dict, status: str) -> None:
                 card["persona"],
                 card["tone"],
                 db.dumps(card),
-                db.dumps(acc.resolved),
+                db.dumps(resolved),
                 "pending_render" if redraw else status,
                 card_id,
             ),
         )
-        store.set_features(conn, card_id, card)
+        store.set_features(conn, card_id, card, cfg)

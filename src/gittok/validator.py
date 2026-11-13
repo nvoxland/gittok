@@ -78,6 +78,26 @@ MAX_HOOK = 140
 FRONT_BUDGET = 360
 ITEM_COST = 25
 MAX_FRONT_CODE_LINES = 12
+
+
+def limits_markdown() -> str:
+    """The size limits that reject most cards, from the constants that check them. A writer
+    reads this first (`get_packet`)."""
+    return (
+        "## Hard limits (a card that breaks one is rejected)\n\n"
+        "- `angle` (what, how, why, who or risk) is required on every card.\n"
+        f"- `hook`: at most {MAX_HOOK} characters.\n"
+        f"- Front text: each character costs 1, each list item {ITEM_COST} more; the budget is "
+        f"{FRONT_BUDGET}. Put detail in depth panels.\n"
+        f"- A code visual on the front: at most {MAX_FRONT_CODE_LINES} lines.\n"
+        f"- Every line range (visual, depth panels, sources): at most {MAX_SPAN} lines. To cite "
+        "a whole file, leave `lines` out of the source.\n"
+        "- Every path must exist at the commit you cite. A lead from old history can name a "
+        "path that was renamed or deleted since: cite the commit where the path exists, or "
+        "the path it has now.\n"
+    )
+
+
 _NOT_SHOWN = {"kind", "template", "repo", "path", "commit", "from", "tier", "prompt", "excerpt"}
 
 

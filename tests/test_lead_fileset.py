@@ -117,10 +117,10 @@ def test_stored_rows_for_ignored_paths_are_not_offered(conn, tmp_path, fixture_r
             "'','',?,'t',1,'h',?,?)",
             (p, f"p:{p}", ledger.iso(NOW), ledger.iso(NOW)),
         )
-    conn.execute(  # a pinned follow-up request stays, whatever its path
+    conn.execute(  # a pinned notification lead stays, whatever its path
         "INSERT INTO leads(repo, story_type, kind, path, commit_sha, blob_sha, lead_key, text,"
         " strength, head_sha, first_seen_at, last_seen_at) VALUES ('r','hot_spot','path',"
-        "'gen/pin.py','','','req:1','t',1,'h',?,?)",
+        "'gen/pin.py','','','notif:1','t',1,'h',?,?)",
         (ledger.iso(NOW), ledger.iso(NOW)),
     )
     f = bad_fs()

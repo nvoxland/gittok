@@ -32,10 +32,12 @@ from gittok import (
     knowledge,
     learning,
     private,
+    profiles,
     rule_stats,
     signals,
     social,
 )
+from gittok import config as config_mod
 from gittok.config import load_config, unknown_repo
 
 log = logging.getLogger(__name__)
@@ -57,11 +59,17 @@ FEATURES = (
     "visual_kind",
     "template",
     "recency",
-    "difficulty",
+    "angle",
+    "file",
+    "language",
+    "kind",
+    "tag",
+    "familiarity",
     "has_comments",
     "interactive",
     "verdict",
 )
+FREE_VALUES = ("file", "tag")  # any value: a path, a detector tag
 
 
 DEFAULT_FACTOR = {"boost": 2.0, "prefer": 1.5}
@@ -98,8 +106,7 @@ def _schema_values() -> dict[str, list[str]]:
         "verdict": props["verdict"]["enum"],
         "visual_kind": kinds,
         "template": defs["template_visual"]["properties"]["template"]["enum"],
-        "difficulty": [str(n) for n in range(props["difficulty"]["minimum"],
-                                             props["difficulty"]["maximum"] + 1)],
+        "angle": props["angle"]["enum"],
     }  # fmt: skip
 
 
@@ -141,12 +148,19 @@ def _check_value(cfg, feature: str, value) -> str:
         if value.lower() in yes | no:
             return "1" if value.lower() in yes else "0"
         raise _bad_value(feature, value, ["1", "0"])
+    if feature in FREE_VALUES:
+        if not value:
+            raise SteeringError(f"A {feature} rule needs a value.")
+        return value.strip("/") if feature == "file" else value
     known = {
         **_schema_values(),
         "persona": list(cfg.personas),
         "repo": list(cfg.repos),
         "group": list(cfg.groups),
         "recency": ["new", "recent", "old"],
+        "language": sorted(set(config_mod.language_by_extension().values())),
+        "kind": [*profiles.KIND_ORDER, "source"],
+        "familiarity": ["new", "some", "known"],
         "interactive": list(brief.CATEGORY_STORIES["interactive"]),
     }[feature]
     if value not in known:
@@ -349,7 +363,12 @@ _NOUN = {
     "visual_kind": "{} visuals",
     "template": "{} templates",
     "recency": "{} cards",
-    "difficulty": "difficulty {} cards",
+    "angle": "'{}' cards",
+    "file": "cards about {}",
+    "language": "{} cards",
+    "kind": "{} code cards",
+    "tag": "{} cards",
+    "familiarity": "cards about code you {}",
     "has_comments": "cards with comments",
     "interactive": "{} quiz cards",
     "verdict": "{} code cards",

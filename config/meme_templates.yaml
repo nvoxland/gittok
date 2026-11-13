@@ -1,7 +1,7 @@
 # memegen template ids the agent may use (SPEC §10.7). Your own go in local/meme_templates.yaml
 # (merged per id; `$remove: [id]` drops one). Each entry: lines = how many text
-# lines the template takes, and a hint for the agent. The renderer checks ids against the
-# running memegen instance's /templates list and logs any that do not exist.
+# lines the template takes, and a hint for the agent. `gittok memes --prefetch` downloads each
+# template from the memegen repo; the brief offers only downloaded ones.
 templates:
   drake:      {lines: 2, hint: "top = rejected option, bottom = preferred option", fits: [hot_spot, before_after, cursed_clever_line]}
   db:         {lines: 3, hint: "distracted boyfriend: new shiny thing, the one looking, the ignored one", fits: [secret_couples, new_arrival, whose_code]}
@@ -53,7 +53,6 @@ templates:
   pool:       {lines: 3, hint: "ignoring the drowning kid: the real problem, the person, the distraction", fits: [hot_spot, ancient_todo, new_arrival]}
   drowning:   {lines: 3, hint: "drowning high five: the person helping, the other helper, what is drowning", fits: [hot_spot, commit_drama, secret_couples]}
   home:       {lines: 3, hint: "we have food at home: what you ask for, the reply, the sad version we actually have", fits: [new_arrival, before_after, rip]}
-  chair:      {lines: 6, hint: "American Chopper argument: six lines of an escalating argument that ends with a chair thrown", fits: [commit_drama, hot_spot, whose_code]}
   captain:    {lines: 2, hint: "I am the captain now: what was lost or taken over, the new owner", fits: [whose_code, rip, new_arrival]}
   regret:     {lines: 2, hint: "immediately regret: the decision, the immediate regret", fits: [commit_drama, cursed_clever_line, rip]}
   gears:      {lines: 2, hint: "what really grinds my gears: the annoying thing", fits: [hot_spot, ancient_todo, secret_couples]}
@@ -64,3 +63,45 @@ templates:
   hagrid:     {lines: 2, hint: "I should not have said that: what was said or committed, the regret", fits: [commit_drama, whose_code, ancient_todo]}
   remembers:  {lines: 2, hint: "Pepperidge Farm remembers: nostalgic memory of the old way", fits: [archaeology, rip, before_after]}
   ive:        {lines: 2, hint: "Jony Ive redesigns: the thing, the sleek over-simplified version", fits: [before_after, new_arrival, what_it_does]}
+
+  # Picked for code, git and on-call humor.
+  headaches:  {lines: 1, hint: "types of headaches: the worst one is the line (e.g. 'breaking production')", fits: [hot_spot, cursed_clever_line, commit_drama]}
+  iw:         {lines: 2, hint: "insanity wolf: a reckless dev habit in two parts ('does testing', 'in production')", fits: [cursed_clever_line, commit_drama, hot_spot]}
+  live:       {lines: 2, hint: "Bill O'Reilly 'do it live': the risky shortcut, 'do it live!'", fits: [commit_drama, hot_spot, cursed_clever_line]}
+  ackbar:     {lines: 2, hint: "Admiral Ackbar: the innocent-looking code or change, 'it's a trap!'", fits: [spot_the_bug, cursed_clever_line, hot_spot]}
+  inigo:      {lines: 2, hint: "Inigo Montoya: 'you keep using that name', 'I do not think it means what you think it means' (misleading names)", fits: [what_it_does, cursed_clever_line, archaeology]}
+  say:        {lines: 2, hint: "say the line, Bart: the question to the senior engineer, 'it depends'", fits: [what_it_does, this_or_that, analogy]}
+  ants:       {lines: 2, hint: "do you want ants: 'do you want <bug>?', 'because that's how you get <bug>'", fits: [spot_the_bug, cursed_clever_line, hot_spot]}
+  chosen:     {lines: 2, hint: "Obi-Wan 'you were the chosen one': what the code was meant to fix, what it did instead", fits: [rip, before_after, commit_drama]}
+  wishes:     {lines: 1, hint: "genie rules (no wishing for more wishes...): the forbidden request (e.g. 'I want to divide by zero')", fits: [cursed_clever_line, what_it_does, spot_the_bug]}
+  xy:         {lines: 2, hint: "X all the Y: the verb, 'all the things!' (refactor all the things)", fits: [hot_spot, commit_drama, new_arrival]}
+  yodawg:     {lines: 2, hint: "Xzibit yo dawg: 'yo dawg', 'I heard you like X, so I put an X in your X' (recursion, wrappers)", fits: [cursed_clever_line, what_it_does, journey]}
+  gone:       {lines: 2, hint: "'and it's gone': the confident move, '...aaaand it's gone' (deleted, lost, reverted)", fits: [rip, commit_drama, archaeology]}
+  touch:      {lines: 2, hint: "Principal Skinner: 'am I so out of touch?', 'no, it's the <others> who are wrong'", fits: [whose_code, ancient_todo, this_or_that]}
+  bihw:       {lines: 2, hint: "farmer 'it ain't much': the tiny change, 'but it's honest work'", fits: [commit_drama, whose_code, before_after]}
+  dwight:     {lines: 2, hint: "Schrute facts: a common belief as a question, 'False.' and the dry correction", fits: [what_it_does, analogy, cursed_clever_line]}
+  wddth:      {lines: 2, hint: "we don't do that here: the thing someone does, 'we don't do that here' (a convention)", fits: [cursed_clever_line, whose_code, what_it_does]}
+  happening:  {lines: 2, hint: "Ron Paul 'it's happening': the long-awaited event, 'it's happening'", fits: [new_arrival, commit_drama, before_after]}
+  cheems:     {lines: 2, hint: "Cheems: the risky moment ('deploy on Friday'), the false calm ('nothing will go wrong')", fits: [hot_spot, commit_drama, cursed_clever_line]}
+  mouth:      {lines: 3, hint: "woman holding dog's mouth: who promises it, who is excited, who knows it cannot work", fits: [this_or_that, commit_drama, whose_code]}
+  noah:       {lines: 4, hint: "what the hell is this: thing A, thing B, the cursed mix of both, 'what the hell is this?'", fits: [cursed_clever_line, secret_couples, before_after]}
+  vince:      {lines: 3, hint: "Vince McMahon reaction: three options, each more exciting than the last", fits: [before_after, this_or_that, journey]}
+  facepalm:   {lines: 2, hint: "Picard facepalm: what happened, the facepalm line", fits: [spot_the_bug, cursed_clever_line, commit_drama]}
+  crazypills: {lines: 2, hint: "Zoolander: what everyone else does, 'I feel like I'm taking crazy pills'", fits: [cursed_clever_line, whose_code, hot_spot]}
+  light:      {lines: 2, hint: "Lion King: 'what about that shadowy place?' (the scary dir or file), 'that's beyond our borders, you must never go there'", fits: [archaeology, ancient_todo, hot_spot]}
+  genie:      {lines: 2, hint: "genie: 'phenomenal cosmic power', 'itty bitty living space' (a tiny function that does a lot)", fits: [what_it_does, cursed_clever_line, analogy]}
+  worst:      {lines: 2, hint: "'worst day of my life': the bad day, '...of your life so far' (worse is coming)", fits: [hot_spot, commit_drama, ancient_todo]}
+  bus:        {lines: 2, hint: "two guys on a bus: the one by the rock wall (sad side), the one by the view (happy side)", fits: [this_or_that, whose_code, before_after]}
+  grave:      {lines: 3, hint: "Grant Gustin next to a grave: the gravestone text, the mourner, who caused it", fits: [rip, archaeology, commit_drama]}
+  ntot:       {lines: 3, hint: "no take, only throw: the polite request, 'no take!', 'only throw' (code that only throws, never handles)", fits: [cursed_clever_line, spot_the_bug, what_it_does]}
+  kombucha:   {lines: 2, hint: "kombucha girl: trying it (disgust), trying it again (maybe it's good?)", fits: [before_after, new_arrival, this_or_that]}
+  jetpack:    {lines: 2, hint: "nothing to do here: the setup, 'nothing to do here' (a no-op, an empty function)", fits: [what_it_does, ancient_todo, cursed_clever_line]}
+  box:        {lines: 2, hint: "Se7en 'what's in the box?': the black-box module, 'what's in the box!?'", fits: [what_it_does, archaeology, journey]}
+  country:    {lines: 2, hint: "what a country: a contradictory name or rule as a question, 'what a country!'", fits: [cursed_clever_line, what_it_does, secret_couples]}
+  fetch:      {lines: 2, hint: "Mean Girls 'stop trying to make fetch happen': the pattern nobody adopts, 'it's not going to happen'", fits: [ancient_todo, whose_code, rip]}
+  elmo:       {lines: 4, hint: "Elmo choosing: the good option, the person, the tempting bad option, the good option again (rejected)", fits: [this_or_that, before_after, cursed_clever_line]}
+  3hd:        {lines: 3, hint: "three-headed dragon: two sensible heads, one derpy head (the odd one out)", fits: [secret_couples, this_or_that, whose_code]}
+  scc:        {lines: 2, hint: "sudden clarity Clarence: 'oh my god', the realization (the bug was there all along)", fits: [spot_the_bug, archaeology, cursed_clever_line]}
+  ski:        {lines: 2, hint: "ski instructor: 'if you <do the risky thing>', 'you're gonna have a bad time'", fits: [cursed_clever_line, spot_the_bug, hot_spot]}
+  winter:     {lines: 2, hint: "Ned Stark: 'brace yourselves', the thing that is coming (deprecation, migration, release)", fits: [new_arrival, ancient_todo, hot_spot]}
+  stop-it:    {lines: 2, hint: "'stop it, get some help': what someone keeps doing, 'stop it. get some help.'", fits: [cursed_clever_line, whose_code, hot_spot]}

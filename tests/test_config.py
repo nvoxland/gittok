@@ -120,14 +120,13 @@ def test_settings_defaults_when_absent(tmp_path):
     write(tmp_path, "repos.yaml", "repos:\n  a:\n    path: /x\n")
     cfg = load_config(tmp_path)
     s = cfg.settings
-    assert (s.server.host, s.server.port) == ("127.0.0.1", 8008)
+    assert (s.server.host, s.server.port) == ("127.0.0.1", 7313)
     assert (s.agent.default_count, s.agent.max_count) == (10, 20)
     assert (s.agent.per_day_runs, s.agent.packet_size) == (4, 2)
     assert s.analysis.churn_windows_days == (30, 90, 365)
     assert s.analysis.history_window_days == 720
     assert s.research.max_read_lines == 300
     # A file the root does not have is the shipped one.
-    assert cfg.defaults["prior_strength"] == 10
     assert "greybeard" in cfg.personas
 
 
@@ -198,7 +197,7 @@ def test_shipped_config_has_meme_templates_and_render_settings(tmp_path):
     cfg = load_config(tmp_path, shared=Path(__file__).parents[1])
     assert cfg.meme_templates["drake"].lines == 2
     assert cfg.settings.render.max_illustrations_per_run == 6
-    assert cfg.settings.render.memegen_url.startswith("http://127.0.0.1")
+    assert cfg.settings.render.meme_source.startswith("https://raw.githubusercontent.com/")
 
 
 def test_meme_template_fits_is_loaded(tmp_path):

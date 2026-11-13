@@ -100,10 +100,10 @@ def test_pinned_leads_are_exempt_from_subject_cooldown(conn, cfg):
     conn.execute(
         "INSERT INTO leads(repo, story_type, kind, path, commit_sha, lead_key, text, strength,"
         " head_sha, first_seen_at, last_seen_at) VALUES ('r', 'hot_spot', 'path', 'src/a.py', '',"
-        " 'req:1', 'asked', 1.0, 'h', 'x', 'x')"
+        " 'notif:1', 'asked', 1.0, 'h', 'x', 'x')"
     )
     subject_card(conn, {"kind": "code", "repo": "r", "path": "src/a.py"}, [], age=2)
-    assert [x.key for x in hot(conn, cfg)] == ["req:1", "p:lib/b.py"]
+    assert [x.key for x in hot(conn, cfg)] == ["notif:1", "p:lib/b.py"]
 
 
 def test_rejected_lead_ranks_lower_and_recovers_after_the_window(conn, cfg):

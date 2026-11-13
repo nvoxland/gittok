@@ -1,6 +1,6 @@
 # Feed API contract
 
-All endpoints are served by `gittok serve` (default `http://127.0.0.1:8008`). Request and response bodies are JSON, except where a route says otherwise (`/pair`, `/assets/*`, `/api/avatars/*`, the web app). The routes are defined in `src/gittok/api.py`.
+All endpoints are served by `gittok serve` (default `http://127.0.0.1:7313`). Request and response bodies are JSON, except where a route says otherwise (`/pair`, `/assets/*`, `/api/avatars/*`, the web app). The routes are defined in `src/gittok/api.py`.
 
 ## Routes
 
@@ -28,6 +28,9 @@ All endpoints are served by `gittok serve` (default `http://127.0.0.1:8008`). Re
 | GET | `/api/avatars/{handle}` | A persona avatar image |
 | GET | `/assets/{folder}/{file}` | A card image or mascot image |
 | GET | `/pair?t=<token>` | Pair a LAN device (no cookie needed) |
+| POST | `/pair/code` | Ask for a pairing code (no cookie needed; LAN serving only) |
+| GET | `/pair/wait` | Show the code with a Copy button, or set the pairing cookie once it is approved (no cookie needed) |
+| GET | `/pair.js` | The Copy button's script (no cookie needed) |
 | GET | `/pairing` | The pairing page with the QR codes (loopback requests only) |
 | GET | `/healthz` | Liveness |
 | GET | any other path | The web app (`index.html` for unknown paths) |
@@ -39,12 +42,12 @@ The server checks each request in this order. The first check that fails answers
 1. **Host.** The `Host` header must be a known local name: `127.0.0.1`, `localhost`, `[::1]`, one of this machine's LAN IPv4 addresses, its host name (also the short name and `<short name>.local`), or a name in `server.allowed_hosts` (`config/settings.yaml` or `local/settings.yaml`). The port is ignored. Any other, missing or repeated `Host` gets **421** `{"detail": "unknown Host", "code": "unknown_host"}`. This applies to every path.
 2. **Origin.** A request that is not `GET`, `HEAD` or `OPTIONS` and has an `Origin` header whose host is not in the same list gets **403** `{"detail": "cross-origin request", "code": "cross_origin"}`. A request with no `Origin` passes.
 3. **The pairing page.** `/pairing` answers only loopback requests (see below), with or without the pairing cookie. Other requests get **403** `{"detail": "the pairing page is loopback-only", "code": "pairing_loopback_only"}`.
-4. **Pairing.** When the server has a pairing token, a request that is not loopback needs the `cs_lan` cookie on every path except `/pair`. The server has a token whenever it binds a non-loopback address: with `server.lan: true` (the default), `--lan`, or a non-loopback `--host`. It has none when LAN serving is off (`server.lan: false` or `--no-lan`). Without the cookie, `/api/*` gets **401** `{"detail": "pair this device", "code": "unpaired"}` and every other path gets a 401 HTML page. Loopback requests never need the cookie. The web app shows "This device is not paired" on a 401 from the feed. When the server has no pairing token, a request with a proxy header (see below) cannot pair, so it gets **403** `{"detail": "<text>", "code": "proxy_needs_pairing"}` on every path; `/mcp` keeps its own 403 from check 3.
+4. **Pairing.** When the server has a pairing token, a request that is not loopback needs the `cs_lan` cookie on every path except `/pair`, `/pair/code`, `/pair/wait`, `/pair.js`, and the app icons and manifest (`/apple-touch-icon.png`, `/icon-192.png`, `/icon-512.png`, `/icon-maskable-512.png`, `/manifest.webmanifest`). The server has a token whenever it binds a non-loopback address: with `server.lan: true` (the default), `--lan`, or a non-loopback `--host`. It has none when LAN serving is off (`server.lan: false` or `--no-lan`). Without the cookie, `/api/*` gets **401** `{"detail": "pair this device", "code": "unpaired"}` and every other path gets a 401 HTML page. Loopback requests never need the cookie. The web app shows "This device is not paired" on a 401 from the feed. When the server has no pairing token, a request with a proxy header (see below) cannot pair, so it gets **403** `{"detail": "<text>", "code": "proxy_needs_pairing"}` on every path; `/mcp` keeps its own 403 from check 3.
 5. **Body size.** A body over 1 MB gets **413** `{"detail": "request body too large", "code": "body_too_large"}`. A `Content-Length` that is not a number gets **400** `{"detail": "bad content-length", "code": "bad_content_length"}`.
 
 A request is "loopback" when the TCP peer has a loopback address and the request has none of the headers `X-Forwarded-For`, `Forwarded`, `X-Forwarded-Host`, `X-Forwarded-Proto` and `X-Real-IP`. A reverse proxy on the same machine connects from a loopback address and adds such a header, so its requests are not loopback: they get no `/pairing`, they need the pairing cookie when the server has a token, and they are refused when it has none. The server does not use the value of these headers. A proxy that sends none of them still counts as loopback: see `docs/install.md`, "HTTPS on a LAN".
 
-Every response has `Content-Security-Policy`, `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` (see `docs/social.md`, "LAN access").
+Every response has `Content-Security-Policy`, `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` (`same-origin` on the two pairing pages for a device that is not paired, so that their form posts its real `Origin`; see `docs/social.md`, "LAN access").
 
 ## Errors
 
@@ -78,16 +81,21 @@ Three errors do not have this shape:
 
 ## GET /api/feed
 
-Query parameters: `limit` (1 to 50, default 20), `cursor` (the `next_cursor` of the page before), `repo` and `dir` (optional: only cards of that repo, or under that directory of it). A cursor that the server cannot read returns 400 `invalid cursor`.
+Query parameters: `limit` (1 to 50, default 20), `cursor` (the `next_cursor` of the page before), `repo` and `dir` (optional: only cards of that repo, or under that directory of it), `drop` (optional, with a cursor: comma-separated ids of cards the client holds but the reader has not seen). A cursor that the server cannot read returns 400 `invalid cursor`.
+
+With `drop`, the server first learns from the events it has (a 👎 closes its impression at once), then takes the dropped cards out of the cursor's served list and ranks them again with the rest. The web app asks this way 1.2 s after a 👎, so the cards ahead reflect it (`docs/learning.md` section 5).
 
 ```json
 {
   "cards": [Card, ...],
   "next_cursor": "string or null",
+  "cursor": "string",
   "resume_card_id": "string or null",
   "generating": false
 }
 ```
+
+`cursor` names every card sent so far, also when the feed is exhausted (`next_cursor` is null then). Asked with it later, the feed returns only the cards made since. The web app does this at the end of the feed: every 10 s while `generating` is true, and when the app comes back on screen.
 
 `generating` is `true` while a generation run is open (it started in the last `agent.wake_cooldown_hours` and has not finished). The end-of-feed card uses it to say that new cards are being made now. The client ignores it in an answer that comes from its offline cache.
 
@@ -175,7 +183,7 @@ Body: `{ "repo": "storefront", "path": "src/billing", "on": true }`. `path` is 1
 { "events": [ { "card_id": "c_...", "type": "impression", "ts": 1730000000000, "data": { "ms": 4200, "panel": 1 } } ] }
 ```
 
-`type` is one of `impression`, `dwell`, `skip`, `scroll_back`, `depth_open`, `lightbox_open`, `like`, `save`, `explain_more`, `answer`, `source_tap`, `beats_done`, `replay`, `beat_tap`, `knew_it`, `teach_more`. `ts` is in milliseconds. `card_id` and `data` are optional. A batch holds at most 500 events, and each `data` is at most 4 KB as JSON.
+`type` is one of `impression`, `dwell`, `skip`, `scroll_back`, `depth_open`, `lightbox_open`, `like`, `save`, `dislike`, `explain_more`, `answer`, `source_tap`, `beats_done`, `replay`, `beat_tap`. `knew_it` and `teach_more` (retired buttons) are accepted and dropped, so an old queued batch does not fail; `stored` does not count them. `ts` is in milliseconds. `card_id` and `data` are optional. A batch holds at most 500 events, and each `data` is at most 4 KB as JSON.
 
 Response: `{ "stored": 3 }`. An unknown type, or a batch over a limit, is rejected whole with 422. The server writes the reason to `<data_dir>/logs/rejected-events.log`.
 
@@ -185,12 +193,12 @@ A `save` event (`data: {"on": bool}`) also updates the `saved_cards` table in th
 
 Not an HTTP route. A writer subagent calls it for one work packet. Fields:
 
-- `id`, `repo`, `repos`, `count`, `suggested_model`, `categories`, `story_types`, `formats`, `tones`, `personas`.
-- `leads`: lead text, one per line of `packet_markdown`.
+- `id`, `repo`, `repos`, `count`, `suggested_model`, `categories`, `story_types`, `formats`, `tones`, `personas`, `angles` (one per card: the proposed `what`, `how`, `why`, `who` or `risk`).
 - `lead_refs`: one object per lead, same order. Keys: `story_type`, `repo`, `kind` (`commit`, `path`, or `none`), `commit`, `path`, `lines` (`[start, end]` or null), `text`, `id` (the lead ledger row, or null for a lead computed on the fly). `submit_cards(packet_id)` uses `id` to mark the lead covered.
 - `packet_markdown`: the packet, focus lines, and recent stories not to repeat.
-- `materials_markdown`: evidence for the leads. A commit lead gets subject, author, date, `--stat` (15 files), and the diff of the most-changed file (80 lines). A path lead gets the blob sha, 60 numbered lines, top 3 blame authors, and first and last commit dates. At most 6 KB per lead and 30 KB per packet, cut with `[truncated]`. Computed on each call, not stored.
-- `guidance_markdown`: card-writing rules and the sections for the packet's formats.
+- `materials_markdown`: evidence for the leads. A commit lead gets subject, author, date, `--stat` (15 files), and the diff of the most-changed file (80 lines). A path lead gets the blob sha, 60 numbered lines, top 3 blame authors, and first and last commit dates. At most 4 KB per lead (6 KB for an explaining story type) and 12 KB per packet, cut with `[truncated]`. Computed on each call, not stored.
+
+The writing guidance comes from a second tool, `get_guidance(run_id, packet_id)`: `guidance_markdown`, the card-writing rules and the section of each format the packet allows. When the packet has no meme menu, the meme list holds at most 12 templates, those that fit its story types first. Two calls, because one reply with both went over 50 KB, and Claude Code saves a reply that large to a file a writer cannot open. Each reply stays under `mcp_server.MAX_REPLY_CHARS` (40,000 characters).
 
 `finish_run` returns `seconds_per_card`: run duration divided by accepted cards, rounded to 0.1 s (null when no card was accepted).
 

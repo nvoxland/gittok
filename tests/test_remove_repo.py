@@ -56,7 +56,6 @@ BY_CARD = (
     "saved_cards:card_id",
     "knowledge_events:card_id",
     "replies:card_id",
-    "requests:card_id",
 )
 BY_NAME = (
     "story_views",
@@ -68,7 +67,6 @@ BY_NAME = (
     "knowledge",
     "knowledge_symbols",
     "digests",
-    "requests",
 )
 BY_REPO_ID = (
     "git_signals",
@@ -129,10 +127,6 @@ def fill(conn, cfg, name: str) -> str:
         "INSERT INTO replies(card_id, persona, comment_index, text, created_at) "
         "VALUES (?, 'penny', 0, 'hi', ?)",
         (cid, t),
-    )
-    q(
-        "INSERT INTO requests(card_id, repo, story_type, created_at) VALUES (?, ?, 'rip', ?)",
-        (cid, name, t),
     )
     q("INSERT INTO story_views(repo, sha, seen_at) VALUES (?, 'abc', ?)", (name, t))
     q(
@@ -208,7 +202,8 @@ def fill(conn, cfg, name: str) -> str:
         (name, t),
     )
     q(
-        "INSERT INTO weights(feature, value, alpha, beta, updated_at) VALUES ('repo', ?, 3, 1, ?)",
+        "INSERT INTO model_weights(feature, value, mean, precision, n, updated_at) "
+        "VALUES ('repo', ?, 0.5, 5, 2, ?)",
         (name, t),
     )
     conn.commit()
@@ -289,7 +284,8 @@ def test_remove_repo_deletes_cards_rows_files_and_profile_and_nothing_of_another
         assert run["repo_id"] is None and run["brief"] is None
         # learned taste is about the user: the weights stay
         assert (
-            conn.execute("SELECT COUNT(*) FROM weights WHERE feature = 'repo'").fetchone()[0] == 2
+            conn.execute("SELECT COUNT(*) FROM model_weights WHERE feature = 'repo'").fetchone()[0]
+            == 2
         )
     assert not (data / "assets" / a).exists() and (data / "assets" / b).is_dir()
     assert not (data / "runs" / "run-alpha").exists() and (data / "runs" / "run-beta").is_dir()
@@ -311,7 +307,7 @@ def test_remove_repo_feeds_closed_impressions_to_the_weights_before_it_deletes_t
     steering.remove_repo(ycfg, "alpha")
     with closing(open_db(ycfg)) as conn:
         assert conn.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 0
-        learned = {r[0] for r in conn.execute("SELECT feature FROM weights")}
+        learned = {r[0] for r in conn.execute("SELECT feature FROM model_weights")}
     assert {"format", "story_type", "persona"} <= learned
 
 

@@ -9,6 +9,7 @@ import hmac
 import html
 import ipaddress
 import logging
+import mimetypes
 import random
 import re
 import socket
@@ -38,6 +39,7 @@ from gittok import (
     gitq,
     knowledge,
     learning,
+    pair_codes,
     private,
     profile,
     render,
@@ -67,25 +69,152 @@ EventType = Literal[
     "beats_done",
     "replay",
     "beat_tap",
+    "dislike",
+    # Retired with the "Knew it" and "More" buttons. A phone may still send a queued batch
+    # with them: it is accepted, and these events are dropped.
     "knew_it",
     "teach_more",
 ]
+RETIRED_EVENTS = frozenset({"knew_it", "teach_more"})
 
 
 MAX_EVENT_DATA_BYTES = 4096
+MAX_DROP = 100  # card ids one feed refresh may drop
 MAX_BODY_BYTES = 1024 * 1024
 LAN_COOKIE = "cs_lan"
 LAN_COOKIE_MAX_AGE = 10 * 365 * 86400
 _SHA = re.compile(r"[0-9a-fA-F]{7,40}")
 
-PAIR_HTML = (
-    "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'>"
-    "<title>GitTok</title><h1>Pair this device</h1>"
-    "<p>On the computer that runs GitTok, ask Claude for the pairing QR code, and scan it "
-    "with this device.</p>"
-    "<p>A server that was started by hand with <code>gittok serve</code> prints the pairing "
-    "link.</p>"
+PAIR_COOKIE = "cs_pair"  # the secret id of this device's pairing-code request
+# The pages a device sees before it pairs. Same colors as the web app (web/src/app.css),
+# light and dark. No inline script: the CSP allows only this server's script files.
+_PAIR_CSS = (
+    ":root{--bg:#f6f6f4;--surface:#fff;--text:#1b1b1d;--muted:#6a6a70;--border:#dcdcd8;"
+    "--accent:#3b6ef5;--on-accent:#fff;--well:#f0f0ec;color-scheme:light dark}"
+    "@media (prefers-color-scheme:dark){:root{--bg:#0e0e10;--surface:#18181b;--text:#ececee;"
+    "--muted:#9a9aa2;--border:#2c2c31;--accent:#7a9cff;--on-accent:#0e0e10;--well:#101013}}"
+    "*{box-sizing:border-box}"
+    "body{margin:0;min-height:100dvh;display:flex;align-items:center;justify-content:center;"
+    "background:var(--bg);color:var(--text);"
+    "font:17px/1.5 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;"
+    "padding:max(1.5rem,env(safe-area-inset-top)) 16px max(1.5rem,env(safe-area-inset-bottom))}"
+    "main{width:100%;max-width:26rem;background:var(--surface);border:1px solid var(--border);"
+    "border-radius:20px;padding:1.75rem 1.5rem}"
+    ".brand{display:flex;align-items:center;gap:.6rem;color:var(--muted);font-weight:600;"
+    "margin-bottom:1.25rem}"
+    ".brand img{width:36px;height:36px;border-radius:9px}"
+    "h1{font-size:1.6rem;line-height:1.2;margin:0 0 .5rem}"
+    "p{margin:.5rem 0}.muted{color:var(--muted);font-size:.92rem}"
+    ".well{margin:1.25rem 0 1rem;padding:1rem;border-radius:14px;background:var(--well);"
+    "border:1px solid var(--border);text-align:center}"
+    ".well .label{display:block;color:var(--muted);font-size:.9rem;margin-bottom:.15rem}"
+    ".code{display:block;font:700 2.3rem/1.15 ui-monospace,SFMono-Regular,Menlo,monospace;"
+    "letter-spacing:.06em;font-variant-numeric:tabular-nums}"
+    "button{font:inherit;font-weight:600;width:100%;min-height:48px;border-radius:12px;"
+    "border:0;cursor:pointer;background:var(--accent);color:var(--on-accent)}"
+    "button:active{transform:scale(.98)}"
+    "button.done{background:var(--well);color:var(--text);border:1px solid var(--border)}"
+    ".status{display:flex;align-items:center;gap:.55rem;margin-top:1.25rem;color:var(--muted);"
+    "font-size:.95rem}"
+    ".dot{width:9px;height:9px;border-radius:50%;background:var(--accent);flex:none;"
+    "animation:pulse 1.4s ease-in-out infinite}"
+    "@keyframes pulse{50%{opacity:.25}}"
+    "@media (prefers-reduced-motion:reduce){.dot{animation:none}}"
+    ".or{display:flex;align-items:center;gap:.75rem;color:var(--muted);font-size:.9rem;"
+    "margin:1.25rem 0 .75rem}.or::before,.or::after{content:'';flex:1;height:1px;"
+    "background:var(--border)}"
+    "code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em}"
 )
+_PAIR_HEAD = (
+    "<!doctype html><html lang=en><meta charset=utf-8>"
+    "<meta name=viewport content='width=device-width,initial-scale=1,viewport-fit=cover'>"
+    "<title>GitTok: pair this device</title>"
+    # The phone takes the home-screen icon from the page it is on, also before it pairs.
+    '<link rel="apple-touch-icon" href="/apple-touch-icon.png">'
+    '<link rel="manifest" href="/manifest.webmanifest">'
+    '<meta name="apple-mobile-web-app-capable" content="yes">'
+    f"<style>{_PAIR_CSS}</style>"
+)
+_BRAND = '<div class="brand"><img src="/apple-touch-icon.png" alt="">GitTok</div>'
+_CODE_FORM = (
+    '<form method="post" action="/pair/code"><button type="submit">Pair with a code</button></form>'
+)
+
+
+def _pair_page(body: str, head: str = "") -> str:
+    return f"{_PAIR_HEAD}{head}<main>{_BRAND}{body}</main></html>"
+
+
+PAIR_HTML = _pair_page(
+    "<h1>Pair this device</h1>"
+    '<p class="muted">This feed runs on your computer. Pair once to open it here.</p>'
+    "<p>Get a short code, then tell Claude on the computer: “pair code” and the code.</p>"
+    f"{_CODE_FORM}"
+    '<div class="or">or</div>'
+    "<p>You can also ask Claude for the pairing QR code on the computer, and scan it with "
+    "this device.</p>"
+    '<p class="muted">A server started by hand with <code>gittok serve</code> prints the '
+    "pairing link.</p>"
+)
+
+
+# The copy button of the wait page. A file, not an inline script: the CSP allows scripts of
+# this server only. Plain HTTP on the LAN is not a secure context, so `navigator.clipboard`
+# is missing there; selecting a text field and `execCommand('copy')` still works.
+PAIR_JS = """document.addEventListener('click', function (e) {
+  var b = e.target.closest('button[data-copy]');
+  if (!b) return;
+  var text = b.getAttribute('data-copy');
+  function done(ok) {
+    b.textContent = ok ? 'Copied \u2713' : 'Select the code and copy it';
+    if (ok) b.classList.add('done');
+  }
+  function fallback() {
+    var t = document.createElement('textarea');
+    t.value = text;
+    t.setAttribute('readonly', '');
+    t.style.position = 'fixed';
+    t.style.opacity = '0';
+    document.body.appendChild(t);
+    t.select();
+    t.setSelectionRange(0, text.length);
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
+    document.body.removeChild(t);
+    done(ok);
+  }
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(function () { done(true); }, fallback);
+  } else {
+    fallback();
+  }
+});
+"""
+
+
+def pair_wait_html(code: str | None) -> str:
+    """The page a device sees while its code waits for approval. It loads again every few
+    seconds; a button copies what to tell Claude (`/pair.js`)."""
+    if code is None:
+        return _pair_page(
+            "<h1>Pair this device</h1>"
+            "<p>This device has no code that waits. A code lasts 10 minutes and works once.</p>"
+            f"{_CODE_FORM}"
+        )
+    shown = html.escape(code)
+    return _pair_page(
+        "<h1>Pair this device</h1>"
+        "<p>Tell Claude on the computer that runs GitTok:</p>"
+        f'<div class="well"><span class="label">pair code</span>'
+        f'<span class="code">{shown}</span></div>'
+        f'<button type="button" class="copy" data-copy="pair code {shown}">Copy</button>'
+        '<div class="status"><span class="dot"></span>'
+        "<span>Waiting for Claude to approve. This page opens the feed by itself.</span></div>"
+        '<p class="muted">The code lasts 10 minutes.</p>'
+        '<script src="/pair.js"></script>',
+        head='<meta http-equiv="refresh" content="3">',
+    )
+
 
 _PAIRING_HEAD = (
     "<!doctype html><html lang=en><meta charset=utf-8>"
@@ -175,6 +304,10 @@ NO_PAIRING_DETAIL = (
     "with --no-lan), restart, then open the pairing link through the proxy."
 )
 NO_STORE = {"Cache-Control": "no-store"}
+# With `no-referrer`, a browser posts a form with `Origin: null`, which the Origin check
+# refuses. The pairing pages hold the "Pair with a code" form, so they use `same-origin`: the
+# real origin goes to this server, and nothing goes to another site.
+PAIR_PAGE_HEADERS = {**NO_STORE, "Referrer-Policy": "same-origin"}
 
 
 def _is_forwarded(scope) -> bool:
@@ -370,6 +503,21 @@ def _error_json(status: int, code: str, detail: str) -> JSONResponse:
     return JSONResponse({"detail": detail, "code": code}, status)
 
 
+# Paths that a device that is not paired may use: the token link and pairing by code.
+UNPAIRED_PATHS = frozenset({"/pair", "/pair/code", "/pair/wait", "/pair.js"})
+# Public files of the web build that a phone fetches when it adds the app to its home screen.
+# They hold no user data. Exact paths only.
+APP_ICON_PATHS = frozenset(
+    {
+        "/apple-touch-icon.png",
+        "/icon-192.png",
+        "/icon-512.png",
+        "/icon-maskable-512.png",
+        "/manifest.webmanifest",
+    }
+)
+
+
 class SecurityMiddleware:
     """Host allowlist, Origin check, loopback-only pairing page, LAN pairing cookie, a request body
     size limit, and the security headers of every response."""
@@ -398,10 +546,14 @@ class SecurityMiddleware:
     def _with_headers(self, send):
         async def send_with_headers(msg):
             if msg["type"] == "http.response.start":
+                own = dict((k.lower(), v) for k, v in msg.get("headers", []))
+                # A pairing page asks for same-origin (`PAIR_PAGE_HEADERS`); nothing else
+                # can loosen no-referrer.
+                same = own.get(b"referrer-policy") == b"same-origin"
                 extra = {
                     b"content-security-policy": self.csp.value().encode(),
                     b"x-content-type-options": b"nosniff",
-                    b"referrer-policy": b"no-referrer",
+                    b"referrer-policy": b"same-origin" if same else b"no-referrer",
                 }
                 kept = [(k, v) for k, v in msg.get("headers", []) if k.lower() not in extra]
                 msg = {**msg, "headers": kept + list(extra.items())}
@@ -458,12 +610,12 @@ class SecurityMiddleware:
         elif not self.token and _is_forwarded(scope):
             # A proxied request is never local, and without a token nothing can pair it.
             return await reply(_error_json(403, "proxy_needs_pairing", NO_PAIRING_DETAIL))
-        elif self.token and not loopback and path != "/pair":
+        elif self.token and not loopback and path not in UNPAIRED_PATHS | APP_ICON_PATHS:
             cookie = _cookie(scope, LAN_COOKIE)
             if cookie is None or not hmac.compare_digest(cookie.encode(), self.token.encode()):
                 if path.startswith("/api/"):
                     return await reply(_error_json(401, "unpaired", "pair this device"))
-                return await reply(HTMLResponse(PAIR_HTML, 401))
+                return await reply(HTMLResponse(PAIR_HTML, 401, headers=PAIR_PAGE_HEADERS))
 
         headers = dict(scope["headers"])
         try:
@@ -764,6 +916,43 @@ def create_app(
         )
         return resp
 
+    @app.post("/pair/code")
+    def pair_code():
+        if not lan_token:
+            raise ApiError(404, "phone_access_off", "phone access is off")
+        with conn() as c:
+            try:
+                req = pair_codes.request(c, datetime.now(UTC))
+            except pair_codes.TooManyRequests as e:
+                raise ApiError(429, "too_many_pair_requests", str(e)) from None
+        resp = RedirectResponse("/pair/wait", status_code=303)
+        ttl = int(pair_codes.CODE_TTL.total_seconds())
+        resp.set_cookie(PAIR_COOKIE, req["id"], max_age=ttl, httponly=True, samesite="lax")
+        return resp
+
+    @app.get("/pair/wait")
+    def pair_wait(request: Request):
+        if not lan_token:
+            raise ApiError(404, "phone_access_off", "phone access is off")
+        rid = request.cookies.get(PAIR_COOKIE) or ""
+        with conn() as c:
+            st = pair_codes.status(c, rid, datetime.now(UTC)) if rid else {"state": "unknown"}
+        if st["state"] == "approved":
+            resp = RedirectResponse("/", status_code=303)
+            resp.set_cookie(
+                LAN_COOKIE, lan_token, max_age=LAN_COOKIE_MAX_AGE, httponly=True, samesite="lax"
+            )
+            resp.delete_cookie(PAIR_COOKIE)
+            return resp
+        code = st.get("code") if st["state"] == "pending" else None
+        return HTMLResponse(pair_wait_html(code), headers=PAIR_PAGE_HEADERS)
+
+    @app.get("/pair.js")
+    def pair_js():
+        return Response(
+            PAIR_JS, media_type=mimetypes.types_map[".js"], headers={"Cache-Control": "no-cache"}
+        )
+
     @app.get(social.PAIRING_PAGE)
     def pairing(request: Request):
         port = request.url.port or get_config().settings.server.port
@@ -780,13 +969,21 @@ def create_app(
         cursor: str | None = None,
         repo: str | None = None,
         dir: str | None = None,
+        drop: str | None = Query(None, max_length=4000),
     ):
+        # `drop`: comma-separated ids of cards the client holds but the reader has not seen.
+        # The client asks with it after a 👎: learn from the events now, then rank those cards
+        # again with the rest (feed.page).
         cfg = get_config()
+        dropped = [d for d in (drop or "").split(",") if d][:MAX_DROP]
         try:
             with conn() as c:
                 now = datetime.now(UTC)
+                if dropped:
+                    learning.process_events(c, cfg, now)
+                seed = random.randrange(2**31)
                 cards, next_cursor, resume = feedmod.page(
-                    c, cfg, limit, cursor, random.randrange(2**31), now, repo, dir
+                    c, cfg, limit, cursor, seed, now, repo, dir, dropped
                 )
                 generating = supply.run_open(c, cfg, now)  # for the end-of-feed message
         except InvalidCursor:
@@ -794,6 +991,9 @@ def create_app(
         return {
             "cards": cards,
             "next_cursor": next_cursor,
+            # Always set: at the end of the feed the client asks with it again for new cards.
+            "cursor": next_cursor
+            or feedmod.sent_cursor(cursor, [c["id"] for c in cards], seed, dropped),
             "resume_card_id": resume,
             "generating": generating,
         }
@@ -938,14 +1138,15 @@ def create_app(
     @app.post("/api/events")
     def events(batch: EventBatch):
         now = db.now_iso()
+        kept = [e for e in batch.events if e.type not in RETIRED_EVENTS]
         with conn() as c:
             c.executemany(
                 "INSERT INTO events(card_id, type, ts, data, received_at) VALUES (?, ?, ?, ?, ?)",
-                [(e.card_id, e.type, e.ts, db.dumps(e.data), now) for e in batch.events],
+                [(e.card_id, e.type, e.ts, db.dumps(e.data), now) for e in kept],
             )
-            for card_id in {e.card_id for e in batch.events if e.type == "save" and e.card_id}:
+            for card_id in {e.card_id for e in kept if e.type == "save" and e.card_id}:
                 _sync_saved(c, card_id)
-        return {"stored": len(batch.events)}
+        return {"stored": len(kept)}
 
     @app.get("/assets/{folder}/{file}")
     def asset(folder: str, file: str):

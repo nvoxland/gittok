@@ -9,6 +9,7 @@ story is blocked (`offerable`). See docs/learning.md, "Lead ledger".
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
@@ -19,14 +20,12 @@ from gittok import (
     knowledge,
     learning,
     replies,
-    requests,
     social,
     store,
     storykey,
 )
 
 WIDE_LIMIT = 50  # leads kept per story type per refresh
-UNKNOWN_INTEREST = 0.5
 
 
 def iso(dt: datetime) -> str:
@@ -108,7 +107,6 @@ def refresh(
 
 
 _SERVER_PREFIXES = (
-    requests.KEY_PREFIX,
     social.NOTIF_PREFIX,
     social.DIGEST_PREFIX,
     replies.KEY_PREFIX,
@@ -156,7 +154,8 @@ def _current(conn, repo: str, story_type: str, files=None) -> list:
     """Rows seen in the repo's latest refresh, i.e. still present at its current head, and
     inside the file set (`files`; the bootstrap set when None).
 
-    Unserved follow-up requests ("req:" keys) always count: no refresh drops them.
+    Unserved server-made leads (notifications, digests, replies) always count: no refresh
+    drops them.
     """
     rows = conn.execute(
         "SELECT * FROM leads WHERE repo = ? AND story_type = ? AND (last_seen_at = "
@@ -169,17 +168,27 @@ def _current(conn, repo: str, story_type: str, files=None) -> list:
     return [r for r in rows if _in_files(r, files)]
 
 
-def _interest(path: str, means: dict[str, tuple[float, float]]) -> float:
-    """Mean dir interest over the parent dir prefixes of `path` (0.5 where unknown)."""
-    parts = path.split("/")[:-1]
-    if not parts:
-        return UNKNOWN_INTEREST
-    prefixes = ["/".join(parts[: i + 1]) for i in range(len(parts))]
-    return sum(means[p][0] if p in means else UNKNOWN_INTEREST for p in prefixes) / len(prefixes)
+def lead_features(cfg, ld: brief.Lead, nmap: dict, fileset=None) -> set[tuple[str, str]]:
+    """The features a card made from this lead would have before it is written, as the
+    learner names them: repo, group, story type, the dir prefixes and file of its path, the
+    language, the file kind (with the repo's file set), the detector tag, and how well the
+    reader knows the code now. The model scores a lead with these."""
+    feats = {("repo", ld.repo), ("story_type", ld.story_type)}
+    if ld.repo in cfg.repos and cfg.repos[ld.repo].group:
+        feats.add(("group", cfg.repos[ld.repo].group))
+    path = brief.head_path(ld)
+    file = path if ld.kind != "none" else None  # a "none" lead's path is a dir, not a file
+    parts = [p for p in (path or "").split("/") if p][: -1 if file else None]
+    feats |= {("dir", "/".join(parts[: i + 1])) for i in range(len(parts))}
+    feats |= store.path_features(file, fileset)
+    if tag := store.lead_tag(ld.key):
+        feats.add(("tag", tag))
+    feats.add(("familiarity", learning.familiarity(knowledge.lead_dir(path, nmap)[1])))
+    return feats
 
 
 def _pinned(r) -> bool:
-    """Server-made leads (follow-up requests, hot-file notifications) skip filters and go first."""
+    """Server-made leads (hot-file notifications, digests, replies) skip filters and go first."""
     return r["lead_key"].startswith(_SERVER_PREFIXES)
 
 
@@ -311,7 +320,7 @@ def ranked(
     story_type: str,
     now: datetime,
     limit: int,
-    dir_means: dict | None = None,
+    scorer=None,
     blocks: _StoryBlocks | None = None,
     nmap: dict | None = None,
     subjects: _Subjects | None = None,
@@ -320,22 +329,26 @@ def ranked(
     """Current leads for one story type, best first, without leads still in their cooldown
     or whose story is blocked.
 
-    score = (0.5 + interest) x strength x novelty x 0.5 ** times_covered x 0.5 ** rejects.
+    score = model log-odds of the lead's features (`lead_features`)
+            + strength x log(strength) + novelty x novelty
+            - covered x times_covered - rejected x rejects
+
+    with the weights of reward.yaml `lead_score` (docs/learning.md section 12). The model is
+    the same one that ranks the feed, so what the reader likes (a repo, a dir, a file, a
+    language, a detector tag, a story type, familiar or new code) decides what gets made.
+    `scorer` (features -> log-odds) is a Thompson draw of the model for a brief; by default
+    the posterior means. Strength is how teachable the lead is (signal rank, scout rating,
+    rule factor). Novelty (knowledge model, damped by the symbol factor) is what the reader
+    has not learned yet: it stays a fixed term so the feed keeps teaching new code.
 
     `rejects` counts the cards rejected on the lead in the last `agent.subject_cooldown_days`.
     A lead is also left out while its commit or path is the subject of a recent card (any
-    story type). Server-made leads (requests, notifications) skip both filters.
-
-    Novelty (knowledge.lead_dir; 1.0 for an unknown dir) leads: what the reader has not learned
-    comes first. Interest is a mild factor in [0.5, 1.5] so it only breaks near-ties; it stays
-    because the learned dir reward is still the best signal of what the reader enjoys. Novelty
-    already falls as cards are seen, and a symbol factor (knowledge.SymbolContext) damps leads
-    whose definitions are all seen and boosts "next door" ones, so `times_covered` is the only
-    other repeat brake.
+    story type). Server-made leads (notifications, digests, replies) skip both filters and
+    go first.
     """
     cutoff = iso(now - timedelta(days=cfg.settings.agent.lead_cooldown_days))
-    if dir_means is None:
-        dir_means = learning.posterior_means(conn, cfg, "dir", now)
+    if scorer is None:
+        scorer = learning.Model.load(conn, cfg, now).mean_logit
     if blocks is None:
         blocks = _StoryBlocks(_blocked_stories(conn, cfg, now))
     if subjects is None:
@@ -352,15 +365,22 @@ def ranked(
         nmap = knowledge.novelty_map(conn, repo, cfg.settings.user.git_identities)
 
     symbols = knowledge.SymbolContext(conn, repo)
+    weights = learning.load_reward_config(cfg).lead_score
+    fileset = files if files is not None or repo not in cfg.repos else cfg.fileset(repo)
 
     def score(r) -> float:
         nov = knowledge.lead_dir(r["path"], nmap)[1]
         nov *= symbols.factor(r["path"], json.loads(r["lines"]) if r["lines"] else None)
-        interest = 0.5 + _interest(r["path"], dir_means)
         rejects = r["times_rejected"] if (r["last_rejected_at"] or "") >= reject_cutoff else 0
-        return interest * r["strength"] * nov * 0.5 ** r["times_covered"] * 0.5**rejects
+        return (
+            scorer(lead_features(cfg, _lead(r), nmap, fileset))
+            + weights.get("strength", 1.0) * math.log(max(r["strength"], 1e-3))
+            + weights.get("novelty", 0.0) * nov
+            - weights.get("covered", 0.0) * r["times_covered"]
+            - weights.get("rejected", 0.0) * rejects
+        )
 
-    # Follow-up requests go first: the reader asked for them.
+    # Server-made leads go first: they answer something that just happened.
     rows.sort(key=lambda r: (not _pinned(r), -score(r), r["id"]))
     return [_lead(r) for r in rows[:limit]]
 
@@ -373,6 +393,7 @@ def for_brief(
     limit: int = WIDE_LIMIT,
     analyses: dict | None = None,
     filesets: dict | None = None,
+    rng=None,
 ) -> dict:
     """`build_brief(ledger=...)` input: (repo, story type) -> ranked leads.
 
@@ -380,14 +401,17 @@ def for_brief(
     cooldown (the list is then empty: nothing fresh to offer). Absent pairs fall back to
     computing leads from signals. `analyses` (repo -> signals.analyze result) lets the candidate
     leads be redone first, so ratings made since the last refresh count. `filesets` (repo ->
-    FileSet; default: the config's) drops stored rows outside the repo's file set.
+    FileSet; default: the config's) drops stored rows outside the repo's file set. `rng`
+    makes one Thompson draw of the model for all the leads (a brief explores); without it the
+    leads are ranked by the posterior means.
     """
     for repo, a in (analyses or {}).items():
         if repo in repos:
             refresh_candidates(
                 conn, repo, a.get("signals") or {}, a.get("t0"), a.get("head_sha") or "", now
             )
-    dir_means = learning.posterior_means(conn, cfg, "dir", now)
+    model = learning.Model.load(conn, cfg, now)
+    scorer = model.draw(rng).logit if rng is not None else model.mean_logit
     blocks = _StoryBlocks(_blocked_stories(conn, cfg, now))
     subjects = _Subjects(conn, cfg, now)
     ids = cfg.settings.user.git_identities
@@ -399,7 +423,7 @@ def for_brief(
         for t in types:
             if _current(conn, repo, t, fs):
                 out[(repo, t)] = ranked(
-                    conn, cfg, repo, t, now, limit, dir_means, blocks, nmaps[repo], subjects, fs
+                    conn, cfg, repo, t, now, limit, scorer, blocks, nmaps[repo], subjects, fs
                 )
     return out
 
@@ -494,5 +518,4 @@ def mark_covered(conn, lead_id: int, now: datetime) -> None:
         "UPDATE leads SET times_covered = times_covered + 1, last_covered_at = ? WHERE id = ?",
         (iso(now), lead_id),
     )
-    requests.mark_served(conn, lead_id, iso(now))
     social.mark_served(conn, lead_id)

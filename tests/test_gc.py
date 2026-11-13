@@ -368,15 +368,16 @@ def test_weights_unchanged_by_gc(conn, cfg):
     cid = add_card(conn, cfg)
     seen(conn, cid, 20)
     conn.execute(
-        "INSERT INTO weights(feature, value, alpha, beta, updated_at) VALUES ('f', 'v', 2, 3, ?)",
+        "INSERT INTO model_weights(feature, value, mean, precision, n, updated_at) "
+        "VALUES ('f', 'v', 0.2, 3, 1, ?)",
         (iso(1),),
     )
     conn.commit()
-    before = [tuple(r) for r in conn.execute("SELECT * FROM weights ORDER BY 1, 2")]
+    before = [tuple(r) for r in conn.execute("SELECT * FROM model_weights ORDER BY 1, 2")]
 
     gc.collect(conn, cfg, NOW)
 
-    assert [tuple(r) for r in conn.execute("SELECT * FROM weights ORDER BY 1, 2")] == before
+    assert [tuple(r) for r in conn.execute("SELECT * FROM model_weights ORDER BY 1, 2")] == before
 
 
 def test_last_result_written_and_read(conn, cfg):

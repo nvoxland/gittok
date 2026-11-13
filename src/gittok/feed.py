@@ -116,6 +116,18 @@ def filter_excluded(conn, repo: str | None, dir: str | None) -> set[str]:
     return {r[0] for r in conn.execute("SELECT id FROM cards")} - keep
 
 
+def sent_cursor(cursor: str | None, ids: list[str], seed: int, drop=()) -> str:
+    """A cursor of every card sent so far: the ones `cursor` names (less `drop`) and `ids`.
+    Unlike `next_cursor` it is there when the feed is exhausted too: asked with it later, the
+    feed returns only cards made since (a generation run that is still going)."""
+    served: list[str] = []
+    if cursor:
+        served, seed = decode_cursor(cursor)
+        dropped = {token(i) for i in drop}
+        served = [t for t in served if t not in dropped]
+    return encode_cursor((served + [token(i) for i in ids])[-MAX_SERVED:], seed)
+
+
 def page(
     conn,
     cfg,
@@ -125,6 +137,7 @@ def page(
     now: datetime,
     repo: str | None = None,
     dir: str | None = None,
+    drop=(),
 ) -> tuple[list[dict], str | None, str | None]:
     """The next batch of public cards, the cursor for the one after (None when exhausted), and
     the resume card id.
@@ -132,11 +145,17 @@ def page(
     `seed` is used only when there is no cursor; a cursor carries its own seed. Without a
     cursor (a fresh load), the card last seen goes first so a reload resumes on it; that card
     id is the third value, and it is None otherwise.
+
+    `drop` (card ids) takes cards out of the cursor's served list: the client sent them but
+    the reader has not seen them yet. After a 👎 the client asks again with the cards ahead
+    of the reader dropped, so they are ranked again with what the learner just learned.
     """
     served: list[str] = []
     resume = None
     if cursor:
         served, seed = decode_cursor(cursor)
+        dropped = {token(i) for i in drop}
+        served = [t for t in served if t not in dropped]
     elif not (repo or dir):
         resume = last_seen_card(conn, cfg)
     hidden = filter_excluded(conn, repo, dir) if (repo or dir) else set()

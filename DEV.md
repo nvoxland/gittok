@@ -34,7 +34,7 @@ Start Claude Code in the clone:
 claude
 ```
 
-The project `.mcp.json` makes Claude Code start `uv run gittok mcp --ui`. Approve the `gittok` MCP server when Claude Code asks. That process is the MCP server (stdio). It also starts a child `gittok serve --reload` that serves the feed on port 8008 while the session runs (an installed tool starts the child without `--reload`). The child restarts when a file in `src/gittok/` changes. A change to the MCP tools themselves needs `/mcp`, gittok, Reconnect.
+The project `.mcp.json` makes Claude Code start `uv run gittok mcp --ui`. Approve the `gittok` MCP server when Claude Code asks. That process is the MCP server (stdio). It also starts a child `gittok serve --reload` that serves the feed on port 7313 while the session runs (an installed tool starts the child without `--reload`). The child restarts when a file in `src/gittok/` changes. A change to the MCP tools themselves needs `/mcp`, gittok, Reconnect.
 
 A clone is its own GitTok directory: your repo list and settings are in `local/`, the database is in `data/`, and clones of repos added by URL are in `repos/`. All three are in `.gitignore`. `GITTOK_ROOT=<dir>` makes a `gittok` command in any directory use that clone or GitTok directory. It is the only such variable.
 
@@ -43,7 +43,7 @@ Then use GitTok as the README says: ask Claude to add a repo, profile it, make c
 Commands that help during development (`uv run gittok --help` lists all):
 
 ```bash
-uv run gittok serve                  # the feed server by hand, without a session (:8008, no MCP)
+uv run gittok serve                  # the feed server by hand, without a session (:7313, no MCP)
 uv run gittok serve --no-lan         # the same, for this computer only
 uv run gittok repos add <name> <path-or-url>
 uv run gittok structure --prefetch   # download the tree-sitter grammars (once, needs network)
@@ -53,7 +53,7 @@ uv run gittok render                 # one render pass
 uv run gittok init /tmp/gittok-try   # make a GitTok directory with the code of the clone
 ```
 
-If port 8008 is in use (another session, or a `gittok serve` that you started), `gittok mcp --ui` runs MCP only and tells Claude which directory has the port.
+If port 7313 is in use (another session, or a `gittok serve` that you started), `gittok mcp --ui` runs MCP only and tells Claude which directory has the port.
 
 A directory from `uv run gittok init` has a `.mcp.json` that runs the `gittok` on your PATH, not the clone. To try the clone's code in such a directory, install the clone as the tool first (`uv tool install --editable .`), or build and install the wheel (below).
 

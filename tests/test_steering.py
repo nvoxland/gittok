@@ -83,7 +83,7 @@ def test_add_rule_checks_values_against_known_ones(conn, cfg):
         ("recency", "ancient"),
         ("has_comments", "maybe"),
         ("interactive", "meme"),
-        ("difficulty", "9"),
+        ("angle", "deep"),
     ]:
         with pytest.raises(steering.SteeringError, match=feature):
             steering.add_rule(conn, cfg, type="ban", feature=feature, value=value)
@@ -96,7 +96,7 @@ def test_add_rule_checks_values_against_known_ones(conn, cfg):
         ("visual_kind", "code"),
         ("template", "hot_take"),
         ("recency", "new"),
-        ("difficulty", "2"),
+        ("angle", "why"),
         ("interactive", "quiz"),
     ]
     for feature, value in ok:
@@ -205,9 +205,9 @@ def reward(conn, cfg, card_id, value, days_ago, now=NOW):
         "VALUES (?, ?, ?, ?)",
         (card_id, cur.lastrowid, value, "2026-06-01T00:00:00Z"),
     )
-    rc = learning.load_reward_config(cfg)
-    for f, v in learning.card_features(conn, cfg, card_id, now=now):
-        learning._update_weight(conn, cfg, rc, f, v, value, now)
+    model = learning.Model.load(conn, cfg, now)
+    model.update(set(learning.card_features(conn, cfg, card_id, now=now)), value, 1.0, now)
+    model.save(conn)
     conn.commit()
 
 
@@ -388,10 +388,15 @@ def test_card_stats_sums_events_dwell_rewards_answers(conn, cfg):
 
 
 def test_reset_defaults_wraps_learning_reset(conn, cfg, taste):
-    n_format = conn.execute("SELECT COUNT(*) FROM weights WHERE feature = 'format'").fetchone()[0]
+    n_format = conn.execute(
+        "SELECT COUNT(*) FROM model_weights WHERE feature = 'format'"
+    ).fetchone()[0]
     assert steering.reset_defaults(conn, "format") == {"deleted": n_format}
-    assert conn.execute("SELECT COUNT(*) FROM weights WHERE feature = 'format'").fetchone()[0] == 0
-    left = conn.execute("SELECT COUNT(*) FROM weights").fetchone()[0]
+    assert (
+        conn.execute("SELECT COUNT(*) FROM model_weights WHERE feature = 'format'").fetchone()[0]
+        == 0
+    )
+    left = conn.execute("SELECT COUNT(*) FROM model_weights").fetchone()[0]
     assert left > 0
     assert steering.reset_defaults(conn) == {"deleted": left}
     with pytest.raises(steering.SteeringError, match="feature"):
@@ -698,8 +703,8 @@ def test_add_repo_checks_the_roots_before_it_runs_git(ycfg, tmp_path, monkeypatc
 
 def test_add_repo_next_step_makes_a_mascot_between_the_profile_and_the_cards():
     text = steering.next_step("gamma")
-    assert text.index("gittok-profile-repo") < text.index("set_mascot") < text.index(
-        "gittok-generate"
+    assert (
+        text.index("gittok-profile-repo") < text.index("set_mascot") < text.index("gittok-generate")
     )
     for word in ("renderers.illustration", "status", "one line", "change it by asking"):
         assert word in text, word

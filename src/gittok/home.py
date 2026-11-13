@@ -27,8 +27,8 @@ MARKER_HEAD = (
 
 LAN_LINES = (
     "Phone access is on: while a session runs, the feed is served to your local network over "
-    "plain HTTP. A device gets nothing until it opens the pairing link or QR code once. Use "
-    "it on a network you trust.",
+    "plain HTTP. A device gets nothing until it opens the pairing link or QR code once, or "
+    "until you tell your coding agent the code that it shows. Use it on a network you trust.",
     "To turn it off, ask your coding agent to turn off phone access.",
 )
 

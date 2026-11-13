@@ -93,6 +93,81 @@ describe('feed page', () => {
 		expect(fetchMock.mock.calls.some(([u]) => String(u).includes('cursor=cur1'))).toBe(true);
 	});
 
+	it('a thumbs-down sends the events, then ranks the unseen cards ahead again', async () => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+		class FakeIO {
+			constructor(public cb: (e: Partial<IntersectionObserverEntry>[]) => void) {}
+			observe(target: Element) {
+				if (target.getAttribute('data-card-id') === 'c_1')
+					this.cb([{ target, isIntersecting: true, intersectionRatio: 0.9 }]);
+			}
+			unobserve() {}
+			disconnect() {}
+		}
+		vi.stubGlobal('IntersectionObserver', FakeIO);
+		const card = (n: number) => fakeCard({ id: `c_${n}`, hook: `Hook ${n}` });
+		const first = { cards: [card(1), card(2), card(3)], next_cursor: 'cur1' };
+		const fresh = { cards: [card(4), card(2)], next_cursor: 'cur2' };
+		const urls: string[] = [];
+		fetchMock.mockImplementation(async (url: string) => {
+			urls.push(String(url));
+			return {
+				ok: true,
+				headers: { get: () => null },
+				json: async () =>
+					url.startsWith('/api/feed')
+						? structuredClone(url.includes('drop=') ? fresh : first)
+						: { notifications: [], unread: 0, stories: [] }
+			};
+		});
+		try {
+			render(Page);
+			await screen.findByText('Hook 1');
+			const less = screen.getAllByRole('button', { name: 'Show less like this' })[0];
+			await fireEvent.click(less);
+			await vi.advanceTimersByTimeAsync(2000);
+			expect(await screen.findByText('Hook 4')).toBeInTheDocument();
+			const hooks = screen.getAllByRole('article').map((a) => a.textContent ?? '');
+			expect(hooks.findIndex((t) => t.includes('Hook 4'))).toBe(1);
+			expect(hooks.some((t) => t.includes('Hook 3'))).toBe(false);
+			const refresh = urls.findIndex((u) => u.includes('drop=c_2%2Cc_3'));
+			const events = urls.findIndex((u) => u === '/api/events');
+			expect(refresh).toBeGreaterThan(-1);
+			expect(urls[refresh]).toContain('cursor=cur1');
+			expect(events).toBeGreaterThan(-1);
+			expect(events).toBeLessThan(refresh);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('a thumbs-down taken back at once does not refresh the feed', async () => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+		const urls: string[] = [];
+		fetchMock.mockImplementation(async (url: string) => {
+			urls.push(String(url));
+			return {
+				ok: true,
+				headers: { get: () => null },
+				json: async () =>
+					url.startsWith('/api/feed')
+						? { cards: [fakeCard({ id: 'c_1', hook: 'Hook 1' })], next_cursor: 'cur1' }
+						: { notifications: [], unread: 0, stories: [] }
+			};
+		});
+		try {
+			render(Page);
+			await screen.findByText('Hook 1');
+			const less = screen.getByRole('button', { name: 'Show less like this' });
+			await fireEvent.click(less);
+			await fireEvent.click(less);
+			await vi.advanceTimersByTimeAsync(2000);
+			expect(urls.some((u) => u.includes('drop='))).toBe(false);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it('keeps the answer of the resumed card and clears the other served ones', async () => {
 		setAnswer('c_1', 0);
 		setAnswer('c_2', 1);
@@ -111,7 +186,7 @@ describe('feed page', () => {
 		render(Page);
 		const end = await screen.findByRole('region', { name: 'End of feed' });
 		expect(end).toHaveTextContent(/caught up/i);
-		expect(end).toHaveTextContent('/gittok-generate');
+		expect(end).toHaveTextContent('"make more cards"');
 		const articles = screen.getAllByRole('article');
 		expect(articles[articles.length - 1].compareDocumentPosition(end)).toBe(
 			Node.DOCUMENT_POSITION_FOLLOWING
@@ -125,8 +200,10 @@ describe('feed page', () => {
 		expect(end).toHaveTextContent(
 			'GitTok makes more cards by itself while a session of your coding agent is open in your GitTok directory.'
 		);
-		expect(end).toHaveTextContent('To get more right away, ask the agent there: "make more cards"');
-		expect(end).toHaveTextContent('/gittok-generate');
+		expect(end).toHaveTextContent('To get more right away, ask the agent there: "make more cards".');
+		// What to say, not a tool: no product name and no command.
+		expect(end).not.toHaveTextContent('/gittok-generate');
+		expect(end).not.toHaveTextContent('Claude Code');
 		expect(end).not.toHaveTextContent(/being made now/i);
 		expect(screen.getByRole('button', { name: /check for new cards/i })).toBeInTheDocument();
 	});
@@ -264,7 +341,8 @@ describe('feed page', () => {
 		});
 
 		it('hidden then visible does not refetch or change the list', async () => {
-			route({ '/api/feed': { cards: [card(1), card(2)], next_cursor: null } });
+			// Not at the end of the feed: coming back changes nothing.
+			route({ '/api/feed': { cards: [card(1), card(2)], next_cursor: 'more' } });
 			render(Page);
 			await screen.findByText('Hook 1');
 			const feedCalls = () => fetchMock.mock.calls.filter(([u]) => String(u).startsWith('/api/feed')).length;
@@ -300,11 +378,84 @@ describe('feed page', () => {
 		expect(screen.getAllByRole('article')).toHaveLength(2);
 	});
 
+	function feedRoutes(responses: (url: string) => unknown) {
+		const urls: string[] = [];
+		fetchMock.mockImplementation(async (url: string) => {
+			urls.push(String(url));
+			return {
+				ok: true,
+				headers: { get: () => null },
+				json: async () =>
+					url.startsWith('/api/feed')
+						? responses(String(url))
+						: { notifications: [], unread: 0, stories: [] }
+			};
+		});
+		return urls;
+	}
+
+	it('while cards are being made, the end card adds them as they come', async () => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+		const one = fakeCard({ id: 'c_1', hook: 'Hook 1' });
+		const two = fakeCard({ id: 'c_2', hook: 'Hook 2' });
+		const urls = feedRoutes((u) =>
+			u.includes('cursor=sent1')
+				? { cards: [two], next_cursor: null, cursor: 'sent2', generating: false }
+				: { cards: [one], next_cursor: null, cursor: 'sent1', generating: true }
+		);
+		try {
+			render(Page);
+			await screen.findByText('Hook 1');
+			await vi.advanceTimersByTimeAsync(11_000);
+			expect(await screen.findByText('Hook 2')).toBeInTheDocument();
+			expect(urls.some((u) => u.includes('cursor=sent1'))).toBe(true);
+			// The run is over: no more checks.
+			const asked = urls.filter((u) => u.startsWith('/api/feed')).length;
+			await vi.advanceTimersByTimeAsync(60_000);
+			expect(urls.filter((u) => u.startsWith('/api/feed')).length).toBe(asked);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('coming back to the app at the end of the feed checks for new cards', async () => {
+		const one = fakeCard({ id: 'c_1', hook: 'Hook 1' });
+		const two = fakeCard({ id: 'c_2', hook: 'Hook 2' });
+		const urls = feedRoutes((u) =>
+			u.includes('cursor=sent1')
+				? { cards: [two], next_cursor: null, cursor: 'sent2' }
+				: { cards: [one], next_cursor: null, cursor: 'sent1' }
+		);
+		render(Page);
+		await screen.findByText('Hook 1');
+		const vis = vi.spyOn(document, 'visibilityState', 'get');
+		vis.mockReturnValue('hidden');
+		document.dispatchEvent(new Event('visibilitychange'));
+		vis.mockReturnValue('visible');
+		document.dispatchEvent(new Event('visibilitychange'));
+		expect(await screen.findByText('Hook 2')).toBeInTheDocument();
+		expect(urls.some((u) => u.includes('cursor=sent1'))).toBe(true);
+		vis.mockRestore();
+	});
+
+	it('Check for new cards asks with the cursor of what was sent', async () => {
+		const urls = feedRoutes(() => ({
+			cards: [fakeCard({ id: 'c_1', hook: 'Hook 1' })],
+			next_cursor: null,
+			cursor: 'sent1'
+		}));
+		render(Page);
+		await screen.findByText('Hook 1');
+		await fireEvent.click(await screen.findByRole('button', { name: /check for new cards/i }));
+		await screen.findByText('No new cards yet.');
+		expect(urls.filter((u) => u.startsWith('/api/feed')).at(-1)).toContain('cursor=sent1');
+	});
+
 	it('shows the end card for an empty feed too', async () => {
 		route({ '/api/feed': { cards: [], next_cursor: null } });
 		render(Page);
 		expect(await screen.findByRole('region', { name: 'End of feed' })).toHaveTextContent(
-			'/gittok-generate'
+			'"make more cards"'
 		);
 	});
 
@@ -521,12 +672,21 @@ describe('feed page', () => {
 		expect(bar.contains(feedEl)).toBe(false);
 	});
 
-	it('tells the first card how tall the top bar is', async () => {
-		route({ '/api/feed': feed, '/api/stories': { stories: [] } });
-		const { container } = render(Page);
-		await screen.findByText('A hook');
-		const app = container.querySelector('.app') as HTMLElement;
-		expect(app.style.getPropertyValue('--chrome-h')).toMatch(/^\d+px$/);
+	it('opens on the first card, a full screen, with the top bar scrolled away above it', async () => {
+		const into = vi.fn();
+		const real = Element.prototype.scrollIntoView;
+		Element.prototype.scrollIntoView = into;
+		try {
+			route({ '/api/feed': feed, '/api/stories': { stories: [] } });
+			const { container } = render(Page);
+			await screen.findByText('A hook');
+			await vi.waitFor(() => expect(into).toHaveBeenCalled());
+			const first = container.querySelector('[data-card-id]');
+			expect(into.mock.contexts[0]).toBe(first);
+			expect(into.mock.calls[0][0]).toMatchObject({ block: 'start', behavior: 'instant' });
+		} finally {
+			Element.prototype.scrollIntoView = real;
+		}
 	});
 
 	it('applies the playback speed from /api/prefs before showing cards', async () => {

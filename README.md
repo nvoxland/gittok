@@ -14,7 +14,7 @@ It is a fast way to learn a codebase you just joined, and a surprisingly fun way
 - **It is private.** Everything runs on your own machine. GitTok never writes to your repos and calls no model API of its own.
 
 <!-- screenshot -->
-<p align="center"><img src="docs/images/card-group-chat.png" width="360" alt="A GitTok post: a group chat between the feed's regulars about two commits that deleted the Save button and the two reverts that brought it back."></p>
+<p align="center"><img src="docs/images/card-comic.png" width="360" alt="A GitTok post on a phone: a two-panel comic of an orange octopus bouncer with a clipboard, explaining which cards garbage collection keeps and which it bins, with comments from the feed's regulars."></p>
 
 ## Requirements
 
@@ -34,6 +34,8 @@ claude
 
 The `images` extra adds mflux, which draws the illustration and comic posts. It works on Apple silicon only. It is a large download: about 1 GB now, and a model later ([docs/install.md](docs/install.md), "Illustration renderer", has the one-time model setup). On a Mac that is not Apple silicon the extra adds nothing.
 
+Meme posts need their template images once: Claude offers to download them (about 20 MB), or run `gittok memes --prefetch`. GitTok draws the memes itself; nothing else to install.
+
 `gittok init <dir>` makes a **GitTok directory**. It holds everything GitTok needs and everything GitTok makes:
 
 - `AGENTS.md`: it tells your coding agent what the directory is and how to work with GitTok.
@@ -42,7 +44,7 @@ The `images` extra adds mflux, which draws the illustration and comic posts. It 
 
 The first time you start `claude` in the directory, Claude Code asks you to approve the MCP server `gittok`. Approve it.
 
-**GitTok runs only while a Claude Code session is open in that directory.** The session starts the MCP server (Claude talks to it over stdio), and the MCP server starts the feed server on port 8008. When the session ends, the feed stops. Nothing is installed outside the directory, and nothing starts by itself.
+**GitTok runs only while a Claude Code session is open in that directory.** The session starts the MCP server (Claude talks to it over stdio), and the MCP server starts the feed server on port 7313. When the session ends, the feed stops. Nothing is installed outside the directory, and nothing starts by itself.
 
 
 ## Use it
@@ -56,8 +58,8 @@ Start Claude Code in your GitTok directory (`cd ~/gittok`, then `claude`). You m
    GitTok reads a directory in place and never changes it. It clones a URL into `repos/` of the GitTok directory and fetches it before each analysis.
 
    Claude then profiles the repo: it reads the repo and writes the rules that find the code worth teaching. This takes a few minutes and some of your model quota. Claude may ask your permission to run a code analyzer, and it may offer to download grammars so that GitTok reads the code structure better. After that, Claude makes the first posts. You do not have to ask for either step.
-2. **Open the feed** on this computer: <http://127.0.0.1:8008>. It answers while the session is open.
-3. **Pair your phone.** "Pair my phone." Claude opens a page with a QR code. Scan it with the phone camera. Both devices must be on the same network. You do this once for each device.
+2. **Open the feed** on this computer: <http://127.0.0.1:7313>. It answers while the session is open.
+3. **Pair your phone.** "Pair my phone." Claude opens a page with a QR code. Scan it with the phone camera. Both devices must be on the same network. You do this once for each device. For an app on the home screen, tap "Pair with a code" in the app instead, and tell Claude the code it shows.
 
 Later:
 
@@ -70,7 +72,7 @@ Later:
 GitTok is made for a phone, so the feed server serves the feed to your local network while a session is open. Know what that means:
 
 - The feed goes over plain HTTP, not HTTPS.
-- Any device on the same network can reach the port. It gets nothing until it opens the pairing link or QR code once. Claude talks to GitTok over stdio; the MCP server is not on the network.
+- Any device on the same network can reach the port. It gets nothing until it opens the pairing link or QR code once, or until you tell Claude the code that it shows. Claude talks to GitTok over stdio; the MCP server is not on the network.
 - Someone who can watch traffic on that network could read the pairing token and the posts. Posts hold excerpts of your code.
 - So use it on a network you trust, such as your home network. Take care on shared or public Wi-Fi.
 - To turn it off, say "turn off phone access", or set `server.lan: false` in `local/settings.yaml` of the GitTok directory. The server then answers this computer only.

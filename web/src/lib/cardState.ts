@@ -6,7 +6,7 @@ import type { Reply } from './types.ts';
 const KEY = 'gittok.card-state';
 const ANSWER_KEY = 'gittok.answers';
 
-export type CardFlags = { liked?: boolean; saved?: boolean; knewIt?: boolean; teachMore?: boolean };
+export type CardFlags = { liked?: boolean; saved?: boolean; disliked?: boolean };
 
 let flagsCache: Record<string, CardFlags> | undefined;
 let answersCache: Record<string, StoredAnswer> | undefined;

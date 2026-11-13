@@ -575,6 +575,30 @@ def fix_hunks(path: Path | str, chains: list[dict], limit: int = 30) -> list[dic
     return out
 
 
+def renames(repo: Path | str, ref: str, commits: list[Commit]) -> dict[str, str | None]:
+    """{path: its path at `ref`, or None when it is gone} for each path of `commits` that is
+    not at `ref`. Leads from history name the paths of their time; this says where they are
+    now. Renames come from the whole history (one `--diff-filter=R` log), oldest first."""
+    at_head = set(gitq.ls_tree_blobs(repo, ref))
+    seen = {f.path for c in commits for f in c.files} - at_head
+    if not seen:
+        return {}
+    out = gitq.run(repo, "log", ref, "--format=", "--name-status", "-M", "--diff-filter=R", "--")
+    moved: dict[str, str] = {}
+    for line in reversed(out.splitlines()):
+        parts = line.split("\t")
+        if len(parts) == 3 and parts[0].startswith("R"):
+            moved[parts[1]] = parts[2]
+
+    def final(path: str) -> str | None:
+        hops = 0
+        while path in moved and hops < 100:  # a chain of renames; a cycle stops
+            path, hops = moved[path], hops + 1
+        return path if path in at_head else None
+
+    return {p: final(p) for p in sorted(seen)}
+
+
 SIGNAL_KINDS = (
     "churn",
     "co_change",
@@ -590,6 +614,7 @@ SIGNAL_KINDS = (
     "oldest_lines",
     "todo_ages",
     "recent_commits",
+    "renames",
 )
 
 
@@ -653,6 +678,7 @@ def analyze(
         ),
         "todo_ages": lambda: todo_ages(path, ref, settings.todo_max_hits),
         "recent_commits": lambda: recent_commits(commits, t0),
+        "renames": lambda: renames(path, ref, commits),
     }
     computed: list[tuple[str, str, int]] = []
     for kind in SIGNAL_KINDS:

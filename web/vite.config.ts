@@ -9,9 +9,10 @@ export default defineConfig({
 		})
 	],
 	server: {
+		// The feed server of the clone (`server.port`); set GITTOK_PORT if you changed it.
 		proxy: {
-			'/api': 'http://127.0.0.1:8008',
-			'/healthz': 'http://127.0.0.1:8008'
+			'/api': `http://127.0.0.1:${process.env.GITTOK_PORT ?? '7313'}`,
+			'/healthz': `http://127.0.0.1:${process.env.GITTOK_PORT ?? '7313'}`
 		}
 	},
 	resolve: process.env.VITEST ? { conditions: ['browser'] } : undefined,

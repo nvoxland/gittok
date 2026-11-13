@@ -297,6 +297,40 @@ class Lead:
     id: int | None = None  # ledger row id, when the lead came from the ledger
     key: str | None = None  # synthetic ledger key for leads with no single identity in history
     intro: str | None = None  # set to the dir when this lead is an intro slot's (reader new to it)
+    # The path at HEAD when it is not `path` (a commit lead on a file renamed since); "" when
+    # the file is gone at HEAD. None: `path` is the path at HEAD.
+    now: str | None = None
+
+
+def head_path(ld: Lead) -> str | None:
+    """The lead's path at HEAD: None when the file is gone (or the lead has no path)."""
+    if ld.now is None:
+        return ld.path
+    return ld.now or None
+
+
+def at_head(leads: list[Lead], renames: dict | None, story_type: str = "") -> list[Lead]:
+    """Leads with their paths as HEAD has them (`renames` is the signal). A path lead (about a
+    file now) takes the new path, or goes when the file is gone. A commit lead keeps the path
+    of its commit, which is true there, and says where the file is now."""
+    if not renames:
+        return leads
+    out = []
+    for ld in leads:
+        if ld.path is None or ld.path not in renames:
+            out.append(ld)
+            continue
+        new = renames[ld.path]
+        if ld.kind == "path":
+            if new:
+                out.append(replace(ld, path=new, text=ld.text.replace(ld.path, new)))
+            continue
+        if story_type == "rip":  # the story is the deletion
+            out.append(replace(ld, now=new or ""))
+            continue
+        note = f" (now at {new})" if new else " (gone at HEAD)"
+        out.append(replace(ld, text=ld.text + note, now=new or ""))
+    return out
 
 
 def leads_for(
@@ -487,6 +521,7 @@ def lead_refs_for(
     # CANDIDATE_STORIES come from rated candidates (candidate_leads), not from churn.
     fs = _fs(files)
     known = _commit_paths(sig)
+    out = at_head(out, sig.get("renames"), story_type)
     return [x for x in out if lead_in_files(x, fs, known.get(x.commit or ""))][:limit]
 
 
@@ -759,6 +794,7 @@ class Packet:
     templates: list[list[str] | None] = field(default_factory=list)
     repos: list[str] = field(default_factory=list)  # all repos the packet covers; [0] is `repo`
     intro: int = 0  # cards of this packet that must use an intro-flagged lead
+    angles: list[str] = field(default_factory=list)  # per card: the proposed angle
 
 
 @dataclass
@@ -846,6 +882,11 @@ class Brief:
             f"- story types: {', '.join(pk.story_types)}",
             f"- tones, one per card: {', '.join(pk.tones)}",
             f"- personas, one per card: {', '.join(pk.personas)}",
+            *(
+                [f"- angles, one per card (what, how, why, who, risk): {', '.join(pk.angles)}"]
+                if pk.angles
+                else []
+            ),
             "- leads:",
         ]
         if pk.allowed:
@@ -924,6 +965,22 @@ def _factors(rules, feature: str) -> dict[str, float]:
     return out
 
 
+# The angle of a card: what kind of knowledge it gives (docs/learning.md section 4).
+ANGLES = ("what", "how", "why", "who", "risk")
+# The angle each story type has by default. A story type not listed (quiz, this_or_that) can
+# be about anything: the brief picks its angle from what the reader likes.
+ANGLE_OF = {
+    "what_it_does": "what", "new_arrival": "what", "analogy": "what", "weekly_recap": "what",
+    "journey": "how", "snippet_callouts": "how", "ripple": "how",
+    "archaeology": "why", "rip": "why", "commit_drama": "why", "before_after": "why",
+    "ancient_todo": "why", "guess_when": "why",
+    "whose_code": "who", "guess_who": "who", "secret_couples": "who",
+    "spot_the_bug": "risk", "cursed_clever_line": "risk", "hot_spot": "risk",
+    "drift_alert": "risk",
+}  # fmt: skip
+REPO_WEIGHT_MIN, REPO_WEIGHT_MAX = 0.25, 4.0
+
+
 def _banned(rules, feature: str) -> set[str]:
     return {r["value"] for r in rules if r["type"] == "ban" and r["feature"] == feature}
 
@@ -980,10 +1037,10 @@ def _banned_formats(rules) -> set[str]:
 
 
 def _banned_stories(rules) -> set[str]:
+    """Banned story types, and the story types whose angle is banned ("no history cards")."""
+    angles = _banned(rules, "angle")
     gone = set(_banned(rules, "story_type")) | set(_banned(rules, "interactive"))
-    if _banned(rules, "difficulty"):
-        gone |= set(CATEGORY_STORIES["interactive"])
-    return gone
+    return gone | {t for t, a in ANGLE_OF.items() if a in angles}
 
 
 def _interleave(quotas: dict[str, int]) -> list[str]:
@@ -1098,6 +1155,10 @@ def build_brief(
     filesets: dict[str, FileSet] | None = None,
     min_spot_the_bug: float = 0.0,
     facts_conn=None,
+    tone_weights: dict[str, float] | None = None,
+    persona_weights: dict[str, float] | None = None,
+    repo_weights: dict[str, float] | None = None,
+    angle_weights: dict[str, float] | None = None,
 ) -> Brief:
     """Build the brief.
 
@@ -1118,6 +1179,12 @@ def build_brief(
     `min_spot_the_bug` (a share of `count`) reserves that many spot_the_bug slots before the
     category quotas are used, when some repo has a lead for it. The quota of the interactive
     category grows to hold them.
+
+    `tone_weights`, `persona_weights`, `repo_weights` and `angle_weights` (value -> factor,
+    1 = neutral) come from the learner (`learning.value_factors`): they scale the default
+    tone mix, the persona share, the repo share, and the story types of each angle (and the
+    angle proposed for an open story type). A repo factor is clamped to
+    [REPO_WEIGHT_MIN, REPO_WEIGHT_MAX] so no repo starves.
     """
     return _BriefBuilder(
         repo_signals=repo_signals,
@@ -1146,6 +1213,10 @@ def build_brief(
         filesets=filesets,
         min_spot_the_bug=min_spot_the_bug,
         facts_conn=facts_conn,
+        tone_weights=tone_weights or {},
+        persona_weights=persona_weights or {},
+        repo_weights=repo_weights or {},
+        angle_weights=angle_weights or {},
     ).build()
 
 
@@ -1180,6 +1251,10 @@ class _BriefBuilder:
     filesets: dict[str, FileSet] | None
     min_spot_the_bug: float
     facts_conn: Any
+    tone_weights: dict[str, float]
+    persona_weights: dict[str, float]
+    repo_weights: dict[str, float]
+    angle_weights: dict[str, float]
 
     def build(self) -> Brief:
         if not self.repo_signals:
@@ -1305,7 +1380,16 @@ class _BriefBuilder:
         }
         self.live = {c for c in CATEGORY_STORIES if self.stories_in[c] and self.formats_in[c]}
         self.fmt_boost = _factors(rules, "format")
-        self.story_boost = _factors(rules, "story_type")
+        # A story type is weighted by its own rules and by the learned and steered factor of
+        # its angle: a reader who likes `why` cards gets more archaeology, rip and drama.
+        angle_rules, story_rules = _factors(rules, "angle"), _factors(rules, "story_type")
+        self.angle_factor = {
+            a: self.angle_weights.get(a, 1.0) * angle_rules.get(a, 1.0) for a in ANGLES
+        }
+        self.story_boost = {
+            t: story_rules.get(t, 1.0) * self.angle_factor.get(ANGLE_OF.get(t, ""), 1.0)
+            for t in {*ANGLE_OF, *story_rules}
+        }
         self.repo_boost = _factors(rules, "repo")
         self.group_boost = _factors(rules, "group")
         self.fmt_caps = _caps(rules, "format", count)
@@ -1453,7 +1537,7 @@ class _BriefBuilder:
         banned_tones = _banned(rules, "tone") | self.zero["tone"]
         tone_boost = _factors(rules, "tone")
         tones_in = {
-            k: w * tone_boost.get(k, 1.0)
+            k: w * tone_boost.get(k, 1.0) * self.tone_weights.get(k, 1.0)
             for k, w in defaults.get("tones", {}).items()
             if k not in banned_tones
         }
@@ -1463,9 +1547,19 @@ class _BriefBuilder:
         self.tone_pool = _interleave(tone_quotas)
         self.repo_names = sorted(self.repo_signals)
         persona_cycle = list(self.personas) or list(DEFAULT_PERSONAS)
-        self.persona_cycle = [
+        persona_cycle = [
             p for p in persona_cycle if p not in _banned(rules, "persona")
         ] or persona_cycle
+        # Each persona's share follows what the reader liked from it (1 = neutral).
+        persona_quotas = largest_remainder(
+            {p: self.persona_weights.get(p, 1.0) for p in persona_cycle}, count
+        )
+        self.persona_pool = _interleave(persona_quotas) or persona_cycle
+        # The angles for open story types (quiz, this_or_that), by what the reader likes.
+        open_angles = {
+            a: self.angle_factor[a] for a in ANGLES if a not in _banned(rules, "angle")
+        } or dict.fromkeys(ANGLES, 1.0)
+        self.angle_pool = _interleave(largest_remainder(open_angles, count)) or list(ANGLES)
         self.cross_groups = {
             g: [r for r in rs if r in self.repo_signals]
             for g, rs in sorted(self.groups.items())
@@ -1555,7 +1649,9 @@ class _BriefBuilder:
             {
                 r: 0.0  # no rated candidate in this repo: its share goes to the other repos
                 if only_candidates and not any(leads_by[(r, t)] for t in stories_in[category])
-                else self.repo_boost.get(r, 1.0) * self.group_boost.get(self.group_of.get(r), 1.0)
+                else self.repo_boost.get(r, 1.0)
+                * self.group_boost.get(self.group_of.get(r), 1.0)
+                * min(REPO_WEIGHT_MAX, max(REPO_WEIGHT_MIN, self.repo_weights.get(r, 1.0)))
                 for r in order
             },
             n,
@@ -1755,7 +1851,8 @@ class _BriefBuilder:
 
     def _packets(self) -> list[Packet]:
         slots, slot_allowed = self.slots, self.slot_allowed
-        persona_cycle = self.persona_cycle
+        persona_pool, angle_pool = self.persona_pool, self.angle_pool
+        open_at = 0  # the next pool angle for a slot of an open story type
         # The image share is a soft target the packet states; no format is forced.
         image_share = float((self.defaults.get("visual_mix") or {}).get("image_min_share") or 0)
         packets: list[Packet] = []
@@ -1764,6 +1861,13 @@ class _BriefBuilder:
             chunk = [slots[i] for i in chunk_ix]
             types = list(dict.fromkeys(t for _, _, t, _, _ in chunk))
             pairs = self._packet_leads(pi, repo, grp, types, chunk_ix)
+            angles = []
+            for _, _, t, _, _ in chunk:
+                if t in ANGLE_OF:
+                    angles.append(ANGLE_OF[t])
+                else:
+                    angles.append(angle_pool[open_at % len(angle_pool)])
+                    open_at += 1
             packets.append(
                 Packet(
                     id=f"p{len(packets) + 1}",
@@ -1774,9 +1878,9 @@ class _BriefBuilder:
                     suggested_model="haiku" if cheap else "sonnet",
                     tones=self.tone_pool[slot_no : slot_no + len(chunk)],
                     personas=[
-                        persona_cycle[(slot_no + i) % len(persona_cycle)]
-                        for i in range(len(chunk))
+                        persona_pool[(slot_no + i) % len(persona_pool)] for i in range(len(chunk))
                     ],
+                    angles=angles,
                     leads=[line for line, _ in pairs],
                     lead_refs=[r if isinstance(r, dict) else asdict(r) for _, r in pairs],
                     formats=[f for _, _, _, f, _ in chunk],
@@ -1826,10 +1930,13 @@ def _assign_intro(
         if nmap is None:
             continue
         for rank, ld in enumerate(by_text.values()):
-            d, n = knowledge.lead_dir(ld.path, nmap)
+            path = head_path(ld)
+            if ld.path is not None and path is None:
+                continue  # the file is gone at HEAD: no intro to code no one can see
+            d, n = knowledge.lead_dir(path, nmap)
             fs = (filesets or {}).get(repo)
-            code = code_file(ld.path, fs) if ld.path else code_path(f"{d}/x", fs)
-            code = code and place_ok(fs, ld.path, ld.key)  # the profile reads the file
+            code = code_file(path, fs) if path else code_path(f"{d}/x", fs)
+            code = code and place_ok(fs, path, ld.key)  # the profile reads the file
             if d and n >= INTRO_MIN_NOVELTY and code and code_path(f"{d}/x", fs):
                 cands.setdefault((repo, d), []).append((rank, story, ld))
                 nov_of[(repo, d)] = n
@@ -1891,6 +1998,9 @@ def _format_sections() -> dict[str, str]:
     }
 
 
+MEME_LIST_MAX = 12  # templates listed when a packet has no meme menu of its own
+
+
 def guidance_markdown(
     personas: dict,
     formats=None,
@@ -1898,6 +2008,7 @@ def guidance_markdown(
     mascots: dict | None = None,
     menus: list | None = None,
     repos=None,
+    story_types=None,
 ) -> str:
     """Card-writing rules for a packet subagent: base guidance plus the format sections.
 
@@ -1906,6 +2017,8 @@ def guidance_markdown(
 
     `formats=None` includes every format section; a list includes only those (`[]` is base only).
     `menus` (a packet's meme menus) limits the meme template list to the templates in them.
+    Without a menu the list holds at most MEME_LIST_MAX templates, those that fit
+    `story_types` (the packet's) first: the whole list was about 8 KB of every packet.
     """
     from importlib.resources import files
 
@@ -1921,6 +2034,10 @@ def guidance_markdown(
     menu_ids = [t for m in menus or [] for t in m or []]
     if menu_ids:
         shown = {t: shown[t] for t in dict.fromkeys(menu_ids) if t in shown}
+    else:
+        stories = set(story_types or ())
+        fit = [t for t in shown.values() if stories & set(t.fits)]
+        shown = {t.id: t for t in (fit or list(shown.values()))[:MEME_LIST_MAX]}
     tpl = "\n".join(f"- `{t.id}` ({t.lines} lines): {t.hint}" for t in shown.values())
     masc = "\n".join(
         f"- `{m.name}` (repo {(m.repo if repos is None or m.repo in repos else None) or 'none'})"

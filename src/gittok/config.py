@@ -104,7 +104,8 @@ class ResearchSettings:
 @dataclass(frozen=True)
 class RenderSettings:
     max_illustrations_per_run: int = 6
-    memegen_url: str = "http://127.0.0.1:5001"
+    # Where `gittok memes --prefetch` downloads meme templates and fonts from (memes.py).
+    meme_source: str = "https://raw.githubusercontent.com/jacebrowning/memegen/main"
     mflux_model: str = "z-image-turbo"
     mflux_path: str = ""  # folder from `mflux-save -q N`; empty = quantize mflux_model per run
     mflux_steps: int = 8
@@ -148,7 +149,7 @@ class MemeTemplate:
 @dataclass(frozen=True)
 class ServerSettings:
     host: str = "127.0.0.1"
-    port: int = 8008
+    port: int = 7313
     lan: bool = True  # serve the feed to the LAN (paired devices only); false: loopback only
     # Extra Host names the server answers to (its own names and addresses are always allowed).
     allowed_hosts: tuple[str, ...] = ()
@@ -623,6 +624,7 @@ def load_scan_defaults(root: Path | None = None, home: Path | None = None) -> di
 _FILE_TYPE_KEYS = {
     "highlight", "file_words", "source_extensions", "noise_basenames", "manifests",
     "ast_grep_probe", "why_words", "doc_extensions", "comment_prefixes", "todo_comment",
+    "two_meanings",
 }  # fmt: skip
 
 
@@ -651,6 +653,30 @@ def language_extensions() -> frozenset[str]:
         return frozenset(out)
 
     return overlay.derived(("languages", "queries"), "extensions", build)
+
+
+def language_by_extension() -> dict[str, str]:
+    """Extension (with its dot) -> language name, from languages.yaml, then the tags-query
+    languages of queries/languages.yaml for extensions that languages.yaml does not map."""
+    from . import overlay
+
+    def build(langs: dict, queries: dict) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for name, raw in (queries.get("languages") or {}).items():
+            out.update(dict.fromkeys(raw.get("extensions") or (), name))
+        for name, raw in (langs.get("languages") or {}).items():
+            out.update(dict.fromkeys(raw["extensions"], name))
+        return out
+
+    return overlay.derived(("languages", "queries"), "language_by_extension", build)
+
+
+def language_of(path: str) -> str | None:
+    """The language of a file from its extension, or None."""
+    dot = path.rfind(".")
+    if dot <= path.rfind("/"):
+        return None
+    return language_by_extension().get(path[dot:].lower())
 
 
 def source_extensions() -> frozenset[str]:

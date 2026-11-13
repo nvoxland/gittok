@@ -7,7 +7,7 @@ from gittok import db
 
 SPEC_TABLES = {
     "repos", "groups", "repo_groups", "git_signals", "runs", "cards", "card_features",
-    "assets", "events", "rewards", "weights", "rules", "personas", "mascots", "srs",
+    "assets", "events", "rewards", "model_weights", "rules", "personas", "mascots", "srs",
     "notifications", "stories", "leads", "saved_cards",
 }  # fmt: skip
 
@@ -25,9 +25,10 @@ def test_migrate_creates_all_spec_tables(tmp_path):
 def test_migrate_twice_applies_nothing_second_time(tmp_path):
     conn = db.connect(tmp_path / "x.db")
     first = db.migrate(conn)
-    assert first == ["0001_schema.sql"]
+    assert first == ["0001_schema.sql", "0002_pair_requests.sql", "0003_one_learner.sql"]
     assert db.migrate(conn) == []
-    assert conn.execute("SELECT name FROM schema_migrations").fetchall()[0]["name"] == first[0]
+    names = [r["name"] for r in conn.execute("SELECT name FROM schema_migrations ORDER BY name")]
+    assert names == first
 
 
 def test_wal_mode_on_file_db(tmp_path):
@@ -297,3 +298,18 @@ def test_an_existing_data_dir_keeps_its_mode(tmp_path):
         assert stat.S_IMODE((d / "gittok.db").stat().st_mode) == 0o600
     finally:
         os.umask(old)
+
+
+def test_one_learner_migration(tmp_path):
+    conn = db.open_db(tmp_path / "x.db")
+    names = table_names(conn)
+    assert "requests" not in names and "weights" not in names and "model_weights" in names
+
+    def cols(t):
+        return {r["name"] for r in conn.execute(f"PRAGMA table_info({t})")}
+
+    assert {"weight", "signal", "features"} <= cols("rewards")
+    assert "disliked" in cols("stories")
+    assert {"mean", "precision", "n", "updated_at"} <= cols("model_weights")
+    for t in ("knowledge", "knowledge_symbols"):
+        assert not {"knew_it", "teach_more"} & cols(t)

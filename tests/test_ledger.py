@@ -82,19 +82,19 @@ def test_refresh_stores_kind_none_leads_with_synthetic_keys(conn):
 def seed_dir_interest(conn, **means):
     for d, m in means.items():
         conn.execute(
-            "INSERT INTO weights(feature, value, alpha, beta, updated_at) "
-            "VALUES ('dir', ?, ?, ?, ?)",
-            (d, m * 100, (1 - m) * 100, ledger.iso(NOW)),
+            "INSERT INTO model_weights(feature, value, mean, precision, n, updated_at) "
+            "VALUES ('dir', ?, ?, 100, 100, ?)",
+            (d, m - 0.5, ledger.iso(NOW)),
         )
 
 
 def test_ranked_prefers_interesting_uncovered_leads(conn, cfg):
     refresh(conn, sig("src/a.py", "lib/b.py", "docs/c.py"))
     ids = {r["path"]: r["id"] for r in rows(conn)}
-    # src ranks first by strength, but lib is loved and src is not; docs is unknown (0.5).
+    # src ranks first by strength, but lib is liked and src is not; docs is unknown.
     seed_dir_interest(conn, lib=1.0, src=0.0)
     order = [x.path for x in ledger.ranked(conn, cfg, "r", "hot_spot", NOW, 10)]
-    # scores 0.75, 0.5, 0.33: interest is only a mild factor (0.5 + interest)
+    # log-odds +0.5 / -0.5 from the model, plus log(strength) 0 / -0.69 / -1.1
     assert order == ["lib/b.py", "src/a.py", "docs/c.py"]
     # covering lib twice quarters its score: it drops to the bottom but stays offered
     conn.execute("UPDATE leads SET times_covered = 2 WHERE id = ?", (ids["lib/b.py"],))
@@ -296,3 +296,36 @@ def test_match_lead_requires_same_story_type_and_matches_dirs_and_other_line_ran
     hit = {**card(), "story_type": "whose_code", "dirs": ["src"]}
     assert ledger.match_lead(hit, d)["id"] == 5
     assert ledger.match_lead({**hit, "dirs": ["lib"]}, d) is None
+
+
+def put_model_weight(conn, feature, value, mean):
+    conn.execute(
+        "INSERT OR REPLACE INTO model_weights(feature, value, mean, precision, n, updated_at) "
+        "VALUES (?, ?, ?, 100, 100, ?)",
+        (feature, value, mean, ledger.iso(NOW)),
+    )
+
+
+def test_lead_features_describe_a_lead_like_its_card(conn, cfg):
+    refresh(conn, sig("src/app/a.py"))
+    (row,) = rows(conn)
+    feats = ledger.lead_features(cfg, ledger._lead(row), {})
+    assert {("repo", "r"), ("story_type", "hot_spot"), ("dir", "src"), ("dir", "src/app")} <= feats
+    assert {("file", "src/app/a.py"), ("language", "python"), ("familiarity", "new")} <= feats
+
+
+def test_the_model_ranks_leads_by_every_learned_feature(conn, cfg):
+    refresh(conn, sig("src/a.py", "lib/b.ts"))
+    assert [x.path for x in ledger.ranked(conn, cfg, "r", "hot_spot", NOW, 10)][0] == "src/a.py"
+    put_model_weight(conn, "language", "typescript", 2.0)  # the reader likes TypeScript cards
+    assert [x.path for x in ledger.ranked(conn, cfg, "r", "hot_spot", NOW, 10)][0] == "lib/b.ts"
+
+
+def test_a_brief_draw_explores_but_follows_strong_evidence(conn, cfg):
+    import random
+
+    refresh(conn, sig("src/a.py", "lib/b.py"))
+    put_model_weight(conn, "dir", "lib", 3.0)
+    for seed in range(5):
+        out = ledger.for_brief(conn, cfg, ["r"], NOW, rng=random.Random(seed))
+        assert out[("r", "hot_spot")][0].path == "lib/b.py"

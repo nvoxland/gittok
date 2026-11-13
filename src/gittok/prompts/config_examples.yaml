@@ -51,6 +51,14 @@ queries: |
       extensions: {.zig: zig}
       comment: "//"
 
+analyzers: |
+  analyzers:
+    - name: acme-index
+      languages: [kotlin]
+      binary: acme-index
+      gives: [defines, calls]
+      how: "acme-index --json src (read-only; writes to stdout): each def gives a defines fact, each call a calls fact"
+
 claims: |
   nilable_words: [undefined]
 

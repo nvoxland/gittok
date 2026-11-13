@@ -21,7 +21,7 @@ from pathlib import Path
 
 import yaml
 
-from . import candidates, config, detectors, gitq, profiles, secrets, signals, structure
+from . import candidates, config, detectors, gitq, overlay, profiles, secrets, signals, structure
 from .config import ConfigError, unknown_repo
 from .profiles import FileSet, Profile, fileset_for
 
@@ -356,6 +356,7 @@ def survey(cfg, conn, repo_name: str) -> dict:
         "ast_grep": _ast_grep_info(),
         "structure": _structure_info(files, by_ext)
         | {"missing_grammars": _missing_grammars(cfg, repo_name)},
+        "coverage": coverage(cfg, repo_name, lang_counts, by_ext, langs, files),
         "profile": None,
     }
     file = profile_path(cfg, repo_name)
@@ -379,6 +380,87 @@ def _missing_grammars(cfg, repo_name: str) -> list[str]:
     return structure.missing(needed_grammars(cfg, repo_name))
 
 
+def _query_source(cfg, repo_name: str, grammar: str | None) -> str | None:
+    """Where the tags query of `grammar` comes from: profile, local, shipped, or None."""
+    if not grammar:
+        return None
+    prof = cfg.profile(repo_name)
+    if prof is not None and grammar in (prof.queries or {}):
+        return "profile"
+    found = overlay.query_file(grammar)
+    if found is None:
+        return None
+    return "local" if "local" in found.parts[-3:] else "shipped"
+
+
+def coverage(
+    cfg, repo_name: str, lang_counts: Counter, by_ext: dict, langs: dict, files=()
+) -> list[dict]:
+    """One row per language of the repo, most files first: what GitTok can use for it and
+    what it lacks (`gaps`, each with the skill step that fixes it). Analyzers come from
+    config/analyzers.yaml; one is `ready` when its binary is on the PATH. Only a ready one
+    carries its `how`, which keeps the survey small."""
+    import shutil
+
+    ext_n = Counter(posixpath.splitext(p)[1].lower() for p, _, _ in files)
+
+    catalog = overlay.data("analyzers").get("analyzers") or []
+    prof = cfg.profile(repo_name)
+    queries = (prof.queries if prof is not None else None) or None
+    rows = []
+    for language, n in lang_counts.most_common():
+        if language == "other":
+            continue
+        # The grammar of the extension with the most files here (.ts before .js).
+        exts = sorted(
+            (e for e, lang in by_ext.items() if lang == language), key=lambda e: -ext_n[e]
+        )
+        grammar = next(
+            (g for e in exts if (g := structure.grammar_of_path(f"x{e}", queries))), None
+        )
+        ready = bool(grammar) and structure.available() and structure.ready(grammar)
+        query = _query_source(cfg, repo_name, grammar)
+        analyzers = []
+        for a in catalog:
+            if language not in (a.get("languages") or ()):
+                continue
+            up = shutil.which(a["binary"]) is not None
+            analyzers.append(
+                {"name": a["name"], "ready": up, "binary": a["binary"], "gives": list(a["gives"])}
+                | ({"how": a["how"]} if up else {})
+                | ({"needs": a["needs"]} if up and a.get("needs") else {})
+            )
+        gaps = []
+        if grammar and not ready:
+            gaps.append(f"grammar {grammar} is not downloaded (step 2a)")
+        if not query:
+            gaps.append("no tags query: write one in the profile's `queries` (step 5b)")
+        if language not in langs:
+            gaps.append(
+                "no regex patterns: offer the user local/languages.yaml for all repos "
+                "(the gittok-steer skill makes it)"
+            )
+        if not analyzers:
+            gaps.append(
+                "no analyzer in config/analyzers.yaml: look for one this stack has (step 2b)"
+            )
+        elif not any(a["ready"] for a in analyzers):
+            gaps.append("no analyzer can run now: none of their binaries is on the PATH (step 2b)")
+        rows.append(
+            {
+                "language": language,
+                "files": n,
+                "grammar": grammar,
+                "grammar_ready": ready,
+                "query": query,
+                "patterns": language in langs,
+                "analyzers": analyzers,
+                "gaps": gaps,
+            }
+        )
+    return rows
+
+
 def _structure_info(files, by_ext: dict) -> dict:
     """What the structure layer covers, and the file types it does not (a profile `queries`
     entry can cover them: see docs/learning.md)."""
@@ -388,11 +470,21 @@ def _structure_info(files, by_ext: dict) -> dict:
         for p, _, _ in files
         if posixpath.splitext(p)[1] and posixpath.splitext(p)[1] not in by_ext
     )
+    two = overlay.data("file_types").get("two_meanings") or {}
     rows = []
     for ext, n in uncovered.most_common():
         grammar = structure.grammar_of_extension(ext) if ext not in skip else None
         if grammar:
-            rows.append({"extension": ext, "files": n, "grammar": grammar})
+            row = {"extension": ext, "files": n, "grammar": grammar}
+            if ext in two:
+                dirs = Counter(
+                    posixpath.dirname(p) or "."
+                    for p, _, _ in files
+                    if posixpath.splitext(p)[1].lower() == ext
+                )
+                row["dirs"] = sorted(d for d, _ in dirs.most_common(5))
+                row["note"] = f"{ext} is {two[ext]}. Look at a file before you write a query."
+            rows.append(row)
     return {
         "installed": structure.available(),
         "note": "Shipped queries cover: "
@@ -404,7 +496,8 @@ def _structure_info(files, by_ext: dict) -> dict:
 
 
 def _cap(out: dict, limit: int = SURVEY_CAP) -> dict:
-    """Shrink lists until the JSON fits. Cuts manifest lines, then dirs, then manifests."""
+    """Shrink lists until the JSON fits. Cuts manifest lines, then dirs, then analyzer `how`
+    texts, then manifests."""
 
     def size() -> int:
         return len(json.dumps(out))
@@ -422,6 +515,12 @@ def _cap(out: dict, limit: int = SURVEY_CAP) -> dict:
         out["extensions"] = dict(list(out["extensions"].items())[:n])
         out["hints"]["paths"] = out["hints"]["paths"][:n]
         out["hints"]["truncated"] = True
+    for row in out.get("coverage") or []:  # before whole manifests go: the long `how` texts
+        if size() <= limit:
+            return out
+        for a in row["analyzers"]:
+            if a.pop("how", None) is not None:
+                a["how_cut"] = 'the survey was too big: call get_config(file="analyzers")'
     while size() > limit and out["manifests"]:
         out["manifests"].pop()
     out["truncated"] = True

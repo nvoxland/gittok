@@ -74,18 +74,15 @@ def test_wrong_quiz_raises_and_right_quiz_lowers(conn, cfg):
     assert knowledge.novelty(conn, "fixture", "src") < base
 
 
-def test_knew_it_lowers_and_teach_more_raises(conn, cfg):
+def test_retired_knew_it_and_teach_more_events_do_not_move_novelty(conn, cfg):
     a = add_card(conn, cfg, dirs=["src"])
     ev(conn, a, "impression")
     run(conn, cfg)
     base = knowledge.novelty(conn, "fixture", "src")
     ev(conn, a, "knew_it", ts=T + 1)
-    run(conn, cfg)
-    known = knowledge.novelty(conn, "fixture", "src")
-    assert known < base
     ev(conn, a, "teach_more", ts=T + 2)
     run(conn, cfg)
-    assert knowledge.novelty(conn, "fixture", "src") > known
+    assert knowledge.novelty(conn, "fixture", "src") == base
 
 
 def test_explain_panel_open_counts_once_per_card(conn, cfg):
@@ -112,7 +109,6 @@ def test_reprocessing_does_not_change_numbers(conn, cfg):
     a = add_card(conn, cfg, dirs=["src"])
     ev(conn, a, "impression")
     ev(conn, a, "answer", {"choice": 0, "correct": False}, ts=T + 1)
-    ev(conn, a, "knew_it", ts=T + 2)
     run(conn, cfg)
     snap = [tuple(r) for r in conn.execute("SELECT * FROM knowledge ORDER BY dir")]
     n = knowledge.novelty(conn, "fixture", "src")
@@ -121,7 +117,7 @@ def test_reprocessing_does_not_change_numbers(conn, cfg):
     assert [tuple(r) for r in conn.execute("SELECT * FROM knowledge ORDER BY dir")] == snap
     assert knowledge.novelty(conn, "fixture", "src") == n
     row = conn.execute("SELECT * FROM knowledge WHERE dir='src'").fetchone()
-    assert (row["cards_seen"], row["quiz_wrong"], row["knew_it"]) == (1, 1, 1)
+    assert (row["cards_seen"], row["quiz_wrong"]) == (1, 1)
 
 
 def test_churn_does_not_make_a_dir_less_novel(conn, cfg):
@@ -164,12 +160,6 @@ def test_novelty_map_and_coverage_and_profile(conn, cfg):
     prof = steering.get_profile(conn, cfg)["knowledge"]
     assert prof[0]["novelty"] == 1.0 or "novelty" in prof[0]
     json.dumps(prof)
-
-
-def test_api_accepts_knew_it_and_teach_more():
-    from gittok import api
-
-    assert {"knew_it", "teach_more"} <= set(api.EventType.__args__)
 
 
 def test_git_identities_setting():

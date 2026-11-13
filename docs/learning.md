@@ -17,6 +17,8 @@ Existing types keep their meaning. Data per type:
 | `scroll_back` | a card already seen this session becomes visible again | `{}` |
 | `depth_open` | horizontal panel changes | `{"panel": int}` |
 | `like` / `save` | toggle buttons | `{"on": bool}` |
+| `dislike` | the 👎 button ("Show less like this"), a toggle; turning it on turns `like` off and back | `{"on": bool}` |
+| `knew_it`, `teach_more` | retired with the "Knew it" and "More" buttons. `POST /api/events` still accepts them (a phone may send an old queued batch) and drops them. | |
 | `explain_more` | retired: the "?" button is now a comments button whose jump to the comments panel is a `depth_open`. Old events still count. | `{}` |
 | `answer` | a choice is picked on an interactive card | `{"choice": int, "correct": bool \| null}` |
 | `source_tap` | a file/commit link in a depth panel is tapped | `{"panel": int}` |
@@ -53,9 +55,10 @@ New story types and their server-side truth checks:
 
 ## 3. Reward (per impression)
 
-An impression window is the events for a card from one `impression` until the next `impression` of any card in the same client session, capped at 30 minutes. (The client sends a `session` string in every event's `data`; events without one are grouped by card and 30-minute gaps.)
+An impression window is the events for a card from one `impression` until the next `impression` of any card in the same client session, capped at 30 minutes. (The client sends a `session` string in every event's `data`; events without one are grouped by card and 30-minute gaps.) A `dislike` event closes its window at once: the next feed refresh (section 5) already knows it.
 
 ```
+if dislike on (last toggle):  reward = 0, weight = dislike_weight (4), signal = dislike
 skipped = a `skip` event, or dwell_ms < skip_ms (reward.yaml, default 1000) with dwell events
           and no other engagement (client did not send `skip`)
 if skipped and not (like on or save on): reward = 0      # explicit positive feedback wins
@@ -67,38 +70,63 @@ else:
          + w.source_tap (once) + w.scroll_back + w.answer (any answer)
          + w.complete (beats_done) + w.replay (once)
   reward = clip(reward, 0, 1)
+if like on: reward = max(reward, like_floor (0.9)), weight = like_weight (2), signal = like
+else: weight = 1
 expected_ms(card) = format_base_ms[format] + ms_per_word * words(hook + visual text + first explain panel)
                     capped at expected_ms_max
 ```
+The weight is how many times the impression counts in the model (section 4). A 👎 means "show less like this", whatever the reason (known already, boring, not my kind of card): the learner works out what it was from all the 👎 and 👍 over many cards. Feeds that published their ranking weights count a "show less" far more than a like; GitTok keeps the ratio small, because one reader gives few signals. A 👎 also marks the card's story (`stories.disliked`): it is never told again in another format.
+
 Watch fraction works like a video's: time on screen after a beat card finished earns nothing (it mostly means "looked away"), and tapping through to the end does not count as fully watched. Static and beat cards share one 0..1 scale, so autoplay gets no free credit.
 
-Defaults: `w.complete 0.15, w.replay 0.30, w.dwell 0.45, depth_open 0.15, explain_more 0.15, like 0.25, save 0.30, source_tap 0.10, scroll_back 0.35, answer 0.20`; `ms_per_word 250`, `expected_ms_max 45000`; `format_base_ms`: memes 1500, charts 3000, code 4000, threads/comics 6000, others 2500 (per-format table in reward.yaml).
+Defaults: `w.complete 0.15, w.replay 0.30, w.dwell 0.45, depth_open 0.15, explain_more 0.15, like 0.25, save 0.30, source_tap 0.10, scroll_back 0.35, answer 0.20`; `like_floor 0.9`, `like_weight 2`, `dislike_weight 4`; `ms_per_word 250`, `expected_ms_max 45000`; `format_base_ms`: memes 1500, charts 3000, code 4000, threads/comics 6000, others 2500 (per-format table in reward.yaml).
 
 `ms` values from the client are cleaned before use: non-numeric, null or negative becomes 0, and the value is capped at 24 hours. Events whose `data` is not an object are treated as having no data. One bad event never stops the processing of the others.
 
-Rewards are written to `rewards` (one row per impression, idempotent on `impression_event_id`).
+Rewards are written to `rewards` (one row per impression, idempotent on `impression_event_id`), with the `weight`, the `signal` (`like`, `dislike` or none) and `features`: the features of the impression (section 4) at that time.
 
-## 4. Weights (Thompson sampling, SPEC §12.3)
+## 4. The learner: one additive model (Thompson sampling, SPEC §12.3)
 
-- Features per card come from `card_features` (story_type, format, persona, tone, repo, dir, visual_kind, template, difficulty, has_comments) plus `group` (from config) and `recency` (`new` < 7 days, `recent` < 30, `old`).
-- One Beta(α, β) per (feature, value) in `weights`. Prior: α0 = prior_strength · m, β0 = prior_strength · (1 − m), with m = 0.5 by default and, for features in the default mix (category via story type/format, tone), m = clip(0.5 · share / mean_share, 0.15, 0.85).
-- Update per reward r: decay first — the evidence part (α − α0, β − β0) is multiplied by 0.5^(Δdays / half_life_days) since `updated_at` — then α += r, β += 1 − r, for every feature value of the card.
-- Card score = Σ_f importance[f] · sample_f / Σ importance over the card's features, where sample_f ~ Beta(α, β). Importances in reward.yaml: story_type 1.0, format 1.0, tone 0.7, persona 0.5, repo 0.8, group 0.4, dir 0.6, visual_kind 0.5, template 0.5, meme_template 0.4, recency 0.6, difficulty 0.3, has_comments 0.2.
-- `dir` features are path prefixes. A card gets the dirs it names, plus the parent dir of every path in its sources, its visual (when it has a path), and its `code` and `code_diff` depth panels. Each dir adds all its prefixes: `a/b/c` gives `a`, `a/b`, `a/b/c`. A file at the repo root adds no dir. Reward updates every prefix, so a parent dir learns from its children.
-- A card's `dir` prefixes count as one term in the score. The sampled values are averaged, and `importance.dir` is applied once. A deep card does not outweigh `format` or `story_type`.
-- `gittok refeature` recomputes `card_features` for all cards from their stored specs. Run it after a change to how features are derived. `gittok refit --apply` does the same for each card it rewrites.
-- `half_life_days` 21, `prior_strength` from `config/defaults.yaml` (10).
+One model ranks the feed (section 5) and decides what to make (sections 7 and 12). It is a Bayesian logistic regression with one Gaussian weight per (feature, value) in `model_weights` (`mean`, `precision`, decayed evidence `n`), updated online one reward at a time (Chapelle and Li 2011, "An Empirical Evaluation of Thompson Sampling"). The log-odds of the reward is the sum of the weights of the active features. So the weights are learned together: when memes get 👎 in many dirs, the `format meme` weight takes the blame and the dirs stay near neutral.
+
+Features of a card (`card_features`, written by `store`):
+
+| feature | value |
+|---|---|
+| `story_type`, `format`, `persona`, `tone`, `repo` | from the card |
+| `angle` | what kind of knowledge the card gives: `what` (what it is, where it lives), `how` (how it works, what calls what), `why` (why it is like this, how it got here), `who` (who wrote it, who owns it), `risk` (bugs, smells, edge cases). The brief proposes it from the story type (`brief.ANGLE_OF`); the writer keeps it or sets the angle the card really has. It groups the story types, so a like on one `why` story type teaches the model about the others, and it describes the open story types (quiz, this_or_that) that can be about anything. |
+| `dir` | path prefixes: the dirs the card names, plus the parent dir of every path in its sources, its visual and its `code` and `code_diff` panels; `a/b/c` gives `a`, `a/b`, `a/b/c`. A file at the repo root adds no dir. |
+| `file` | the main path: the visual's path, else the first cited path |
+| `language` | from the extension of each cited path (`languages.yaml`, then the tags-query languages) |
+| `kind` | the main file's kind in the repo's file set: `test`, `fixture`, `generated`, `docs`, `vendored` or `source` |
+| `tag` | the detector tag of the card's lead (a profile rule or a builtin miner), when the lead is a candidate |
+| `visual_kind`, `template`, `meme_template`, `verdict`, `has_comments`, `interactive` | from the card |
+
+Derived at read time: `group` (from config), `recency` (`new` < 7 days, `recent` < 30, `old`), and `familiarity`: how well the reader knows the card's deepest dir now (knowledge model, section 14): `new` (novelty ≥ 0.7), `some` (≥ 0.35) or `known`. The reward snapshot keeps the familiarity of the impression.
+
+Inputs: a bias, 1 for each feature, and 1/n for each of a card's n `dir` prefixes (they share one unit, so a deep card does not outweigh its format). Crosses (reward.yaml `crosses`, default `[angle, familiarity]`) add one input per pair of values (`cross:angle*familiarity = why|known`): the reader may like `why` cards about code they know and `what` cards about code they do not.
+
+- Prior: mean 0, except for the default mix (story type and format via their category, tone): 0.5 · ln(share / mean share), clamped to ±0.7. The prior sd per feature is reward.yaml `prior_sd` (wide for what readers care about, narrow for `file`, which must back off to its dir).
+- Update for reward y counted c times (the reward's weight): with z0 = Σ m·x and s = Σ x²/q, solve z = z0 − c·s·(σ(z) − y) by Newton; then each active weight moves to m − c·(σ(z) − y)·x/q and its precision grows by c·σ(z)(1 − σ(z))·x². Before the update the evidence decays: mean and precision move back toward the prior by 0.5^(Δdays / half_life_days), half-life 21 days.
+- Thompson sampling: a draw samples each weight from N(mean, 1/precision), seeded by (draw seed, feature, value), so one draw scores the same in any order. Card score = σ(Σ sampled w·x): a sampled expected reward.
+- The stored weights are a cache: `gittok relearn` rebuilds them from the rewards, oldest first, with each reward's saved features. Run `gittok refeature` and then `gittok relearn` after a change to how features are derived or to the priors.
 
 Public API (`src/gittok/learning.py`):
 ```python
-def process_events(conn, cfg, now=None) -> dict            # new impressions → rewards → weight updates; idempotent
+def process_events(conn, cfg, now=None) -> dict            # closed impressions → rewards → model updates; idempotent
 def card_features(conn, cfg, card_id) -> list[tuple[str, str]]
-def score_cards(conn, cfg, card_ids, rng) -> dict[str, float]   # Thompson sample per call
-def posterior_means(conn, cfg, feature: str) -> dict[str, tuple[float, float]]  # value -> (mean, n_evidence)
-def category_shares(conn, cfg) -> dict[str, float]          # learned share per default-mix category, blended with the prior
+class Model:                                                # Model.load(conn, cfg, now)
+    def draw(self, rng) -> Draw                             # Draw.logit(feats), Draw.score(feats)
+    def mean_logit(self, feats) -> float; def predict(self, feats) -> float
+    def update(self, feats, y, c, now) -> None; def save(self, conn) -> int
+def relearn(conn, cfg) -> int                               # rebuild model_weights from rewards
+def score_cards(conn, cfg, card_ids, rng) -> dict[str, float]   # one draw per call
+def posterior_means(conn, cfg, feature) -> dict[str, tuple[float, float]]  # value -> (expected reward of an average card, evidence)
+def value_factors(conn, cfg, feature) -> dict[str, float]  # value -> factor for the brief
+def category_shares(conn, cfg) -> dict[str, float]          # learned share per default-mix category
 def reset_weights(conn, feature: str | None = None) -> int
 ```
-`process_events` runs in the serve worker every 30 s and via `gittok learn`.
+`process_events` runs in the serve worker every 30 s, via `gittok learn`, and before a feed refresh (section 5).
 
 ## 5. Slotting (SPEC §12.4) — `src/gittok/slotter.py`
 
@@ -113,6 +141,8 @@ def reset_weights(conn, feature: str | None = None) -> int
 8. SRS: at most 2 due cards per batch, placed at positions ≥ 3.
 
 The cursor is an opaque base64 of `{"served": [short ids], "seed": int}`; a malformed cursor is a 400. `seed` makes a batch reproducible for tests.
+
+Refresh after a 👎: the web app waits 1.2 s (a 👎 taken back in that time does nothing), sends its queued events, and asks `GET /api/feed?cursor=...&drop=<ids>` with the ids of the cards it holds ahead of the disliked one. The server runs `process_events` first (the 👎 closed its window, section 3), takes the dropped ids out of the served list, and ranks them again with the rest. The app keeps the cards up to the disliked one and replaces the ones after it.
 
 ## 6. Spaced repetition (SPEC §12.5)
 
@@ -131,13 +161,17 @@ How many cards a run makes (`src/gittok/supply.py`): `get_brief` without `count`
 
 When `want` is 0, `get_brief` returns `nothing_to_do` and opens no run. An explicit `count` skips this.
 
-### Format factors
+### Learned factors: formats, tones, personas, repos, angles
 
-`learning.format_factors` turns format rewards into a factor per format. For a format with evidence (mean `m`, count `n`, priors removed), `ref` is the plain mean of `m` over formats with evidence (0.5 if none):
+`learning.value_factors(feature)` gives a factor per value with evidence: exp(effect − mean effect over those values), clamped to [0.25, 4], where effect is how far the evidence moved the weight from its prior. A value without evidence has no factor (1). `mix_inputs` passes them to `build_brief`:
 
-    factor = (prior_strength + n * m / ref) / (prior_strength + n)
+- `format_weights`: `_pick_format` multiplies the factor into the rule boost.
+- `tone_weights`: scale the default tone mix (after bans and boosts).
+- `persona_weights`: each persona's share of the cards (replaces the plain persona cycle).
+- `repo_weights`: scale each repo's share of a category, clamped to [0.25, 4] so no repo starves.
+- `angle_weights`: scale the story types of each angle (with the story type's own rule boost), so a reader who likes `why` cards gets more archaeology, rip and commit drama. Each card slot proposes an angle: its story type's default (`brief.ANGLE_OF`), or for an open story type (quiz, this_or_that) the next angle of a pool weighted by the factors. The packet lists them ("angles, one per card"); the writer sets the card's real `angle`, which is what the model learns.
 
-A format without evidence has no factor (1). `mix_inputs` passes the factors to `build_brief` as `format_weights`. `_pick_format` multiplies the factor into the rule boost. Rules still win: bans, caps and boosts work as before. With no evidence the picks do not change.
+Rules still win: bans, caps and boosts work as before. With no evidence nothing changes.
 
 ### Image share target
 
@@ -151,7 +185,7 @@ Saved state lives in the `saved_cards` table (`card_id`, `saved_at`, `saved_ts`)
 
 ## 9. Reset
 
-`gittok reset-weights [--feature F]` and `learning.reset_weights`. The MCP tool `reset_defaults` calls the same function.
+`gittok reset-weights [--feature F]` and `learning.reset_weights`. The MCP tool `reset_defaults` calls the same function. `gittok relearn` rebuilds the model from the rewards instead (section 4).
 
 ## 10. Which rules change generation (brief) and which only rank (slotter)
 
@@ -164,14 +198,15 @@ Saved state lives in the `saved_cards` table (`card_id`, `saved_at`, `saved_ts`)
 | ban `dir` | leads under the dir are dropped | cards removed |
 | ban `visual_kind`, `template` | formats that can only produce them are not assigned (`meme` kind: `meme`; template `X`: format `X`) | cards removed |
 | ban `interactive` (value = story type) | that story type is not assigned | cards removed |
-| ban `difficulty` | all interactive story types are dropped | cards removed |
+| ban `angle` | the story types of that angle are not assigned, and the angle is never proposed | cards removed |
 | limit `format`, `story_type`, `repo`, `tone` | share ceiling on matching slots (best effort when no alternative remains; share 0 acts as a ban) | share ceiling on the batch |
 | limit on other features | no effect | share ceiling on the batch |
 | boost, prefer `format`, `story_type`, `repo`, `group`, `tone` | slot weight times the factor | score times the factor |
 | boost, prefer `dir` | matching leads come first | score times the factor |
+| boost, prefer `angle` | the story types of that angle get more slots, and open story types get that angle more | score times the factor |
 | focus `repo`, `dir` | slot weight (1 + slots) / leads first, plus a focus line | reserved slots |
 | focus `format`, `story_type`, `group`, `tone` | like boost with factor 1 + slots | reserved slots |
-| any rule on `recency`, `has_comments`, `persona` (except ban), `template` or `visual_kind` (except ban) | no effect | ranking only |
+| any rule on `recency`, `has_comments`, `persona` (except ban), `template` or `visual_kind` (except ban), `file`, `language`, `kind`, `tag`, `familiarity`, `angle` (limit, focus) | no effect | ranking only |
 
 ## 11. Garbage collection
 
@@ -209,20 +244,20 @@ Removing a repo (`remove_repo`, `gittok repos remove`) uses the same code at onc
 | `events`, `rewards`, `knowledge_events`, `saved_cards`, `replies`, `requests`, `notifications` of those cards | deleted (an old card deleted by the rules above keeps them) |
 | `replies.answered_card_id`, `digests.card_id` that point at such a card | set to NULL |
 | `stories` of the repo | deleted, unless a card of another repo still has the story key |
-| `leads`, `candidates`, `candidate_ratings`, `scout_batches`, `knowledge`, `knowledge_symbols`, `digests`, `requests`, `story_views` of the repo | deleted |
+| `leads`, `candidates`, `candidate_ratings`, `scout_batches`, `knowledge`, `knowledge_symbols`, `digests`, `story_views` of the repo | deleted |
 | `git_signals`, `fact_*`, `repo_groups`, `mascots` rows of the repo, and its `repos` row | deleted |
 | `hot_file` notifications of the repo, `rules` on the repo (`feature = repo`), followed paths of the repo | deleted |
 | `runs` of the repo | kept without the repo and the brief (the daily run cap counts them); an open run becomes `expired`; the folder `data/runs/<id>/` is deleted |
-| `weights` | kept: they are about the reader |
+| `model_weights` | kept: they are about the reader |
 | files | `data/assets/<card_id>/` of each card, after the rows are committed |
 
-The rows go in one transaction and the files after it, so a crash leaves a whole database. Before the rows go, `process_events` runs once, so closed impressions of these cards still reach the weights. An impression that is still open (the last minutes) is lost. A card of another repo that only cites the removed repo stays: it is drawn from its stored `resolved` data, and a source in the removed repo has no link.
+The rows go in one transaction and the files after it, so a crash leaves a whole database. Before the rows go, `process_events` runs once, so closed impressions of these cards still reach the model. An impression that is still open (the last minutes) is lost. A card of another repo that only cites the removed repo stays: it is drawn from its stored `resolved` data, and a source in the removed repo has no link.
 
 What stays, and why:
 
 - `stories`: the duplicate check reads it, so a deleted story is not made again.
 - `leads` that a card used: coverage history stays.
-- `rewards` and `weights`: this is what the feed learned. A pass never changes the weights.
+- `rewards` and `model_weights`: this is what the feed learned. A pass never changes the model.
 - `events` that are newer than the newest reward, and events of impressions with no reward yet: the learner has not used them.
 - Fresh unseen cards: gc never lowers the backlog.
 
@@ -241,16 +276,22 @@ What a row holds:
 - `first_seen_at`, `last_seen_at`, `head_sha`: set again on each refresh.
 - `times_covered`, `last_covered_at`, `mean_reward`, `rewards_n`: see below.
 
-`get_brief` draws leads from the ledger. A row is a candidate when it was seen in the latest refresh of its repo (it still exists at HEAD) and its `last_covered_at` is not within `agent.lead_cooldown_days` (30). Candidates are sorted by:
+`get_brief` draws leads from the ledger. A row is a candidate when it was seen in the latest refresh of its repo (it still exists at HEAD) and its `last_covered_at` is not within `agent.lead_cooldown_days` (30). Candidates are sorted by one score from the same model that ranks the feed (section 4):
 
-`score = interest x strength x 0.5 ^ times_covered`
+```
+score = model log-odds of the lead's features
+      + lead_score.strength x ln(strength)
+      + lead_score.novelty  x novelty x symbol factor
+      - lead_score.covered  x times_covered
+      - lead_score.rejected x rejects
+```
 
-`interest` is the mean of the `dir` posterior means (section 4) over the parent dir prefixes of the lead's path. An unknown prefix counts as 0.5. A lead with no path counts as 0.5. Ties go to the lower row id. `focus` and `ban` dir rules still filter the leads by text. If the repo has no ledger rows for a story type, the brief computes the leads from signals as before. If all rows of a type are in cooldown, the type has no leads.
+The lead's features (`ledger.lead_features`) are the ones its card would have before it is written: repo, group, story type, the dir prefixes and `file` of its path, `language`, `kind`, the detector `tag`, and `familiarity`. So what the reader likes decides what gets made, not only what is shown. `get_brief` makes one Thompson draw for all its leads (it explores); other callers use the posterior means. Strength is how teachable the lead is (signal rank, scout rating, rule factor). Novelty stays a fixed term so the feed keeps teaching new code; the learned part of "new or familiar" is the `familiarity` feature. Defaults (reward.yaml `lead_score`): strength 1.0, novelty 1.5, covered 0.7, rejected 0.7. Ties go to the lower row id. `focus` and `ban` dir rules still filter the leads by text. If the repo has no ledger rows for a story type, the brief computes the leads from signals as before. If all rows of a type are in cooldown, the type has no leads.
 
 Dedup (`ledger.ranked`, `ledger.offerable`):
 
-- Subject cooldown: a card's subject is its visual's commit or path, else its first source's. A commit or path that was the subject of a ready (or `pending_render`) card made in the last `agent.subject_cooldown_days` (14) is not offered, in any story type. Server-made leads (`req:`, `notif:`) skip this filter.
-- Rejects: when `submit_cards(packet_id)` rejects a card (not for `over_quota` or `illustration_budget`) that cites a packet lead, the lead gets `times_rejected + 1` and `last_rejected_at`. In `score` it is multiplied by `0.5 ^ times_rejected` while `last_rejected_at` is inside the subject cooldown window. After the window the penalty is gone.
+- Subject cooldown: a card's subject is its visual's commit or path, else its first source's. A commit or path that was the subject of a ready (or `pending_render`) card made in the last `agent.subject_cooldown_days` (14) is not offered, in any story type. Server-made leads (`notif:`, digests, replies) skip this filter.
+- Rejects: when `submit_cards(packet_id)` rejects a card (not for `over_quota` or `illustration_budget`) that cites a packet lead, the lead gets `times_rejected + 1` and `last_rejected_at`. In `score` it costs `lead_score.rejected` per reject while `last_rejected_at` is inside the subject cooldown window. After the window the penalty is gone.
 - Packets: `build_brief` deals the leads of a (repo, story type) round robin over the packets that hold that type. An intro lead is only in its own packet. A commit or path is offered to one packet of a repo. So two packets of one repo never share a lead.
 - Cross-repo leads (recap, drift, ripple) have no ledger row, so they have no cooldown. A card cannot be tied to one of them (it cites commits of several repos and carries no lead id), so coverage would be a guess.
 
@@ -356,7 +397,7 @@ The brief offers variants. `ledger.variants` lists the stories that meet the rew
 
 ## 14. What the reader knows (knowledge model) — `src/gittok/knowledge.py`
 
-The `knowledge` table (migration 0012) holds counts per `(repo, dir)`: `cards_seen`, `explains_opened`, `quiz_right`, `quiz_wrong`, `knew_it`, `teach_more`, `last_seen_ts`. `process_events` calls `knowledge.update_in_tx` after the rewards, in the same transaction.
+The `knowledge` table (migration 0012) holds counts per `(repo, dir)`: `cards_seen`, `explains_opened`, `quiz_right`, `quiz_wrong`, `last_seen_ts`. `process_events` calls `knowledge.update_in_tx` after the rewards, in the same transaction.
 
 Events counted:
 
@@ -365,7 +406,6 @@ Events counted:
 | `cards_seen` | `impression`, once per card |
 | `explains_opened` | `depth_open` whose `panel` is the explain panel, once per card. Panel 0 is the visual; depth panel `i` is panel `i + 1`. The explain panel is the first depth panel of kind `explain`. |
 | `quiz_right`, `quiz_wrong` | `answer` with `correct` true or false (the server sets it). `null` counts nothing. |
-| `knew_it`, `teach_more` | events of the same name (the buttons come later; the API accepts them now) |
 
 Idempotent: each counted event is written to `knowledge_events(event_id, ts)`. An event already there is skipped, so reprocessing changes nothing. This is the same idea as `rewards.impression_event_id`.
 
@@ -374,10 +414,10 @@ A card counts toward each repo in its `repo` features and each of its `dir` feat
 Novelty (0 = known, 1 = new), `knowledge.novelty(conn, repo, dir)`:
 
 ```
-pos      = cards_seen + 2 explains_opened + 2 quiz_right + 4 knew_it
-struggle = quiz_wrong + teach_more
+pos      = cards_seen + 2 explains_opened + 2 quiz_right
+struggle = quiz_wrong
 n = 1 / (1 + pos / 4)                          # never seen: 1
-n = n + (1 - n) * struggle / (struggle + 2)    # wrong answers and "teach more" lift it
+n = n + (1 - n) * struggle / (struggle + 2)    # wrong answers lift it
 n = n + (1 - n) * 0.3 * min(1, commits_30d / 10)   # others changed it lately (signals churn, 30 days)
 n = n * (1 - 0.25 * own_share)                 # only when settings.user.git_identities is set
 ```
@@ -388,7 +428,7 @@ A dir with no row has novelty 1. `commits_30d` comes from the stored churn signa
 
 ### Knowledge per symbol
 
-The `knowledge_symbols` table (migration 0023) holds the same counts per `(repo, symbol)`: `seen`, `explains_opened`, `quiz_right`, `quiz_wrong`, `knew_it`, `teach_more`, `last_seen`. The symbol is `fact_defines.symbol` from the syntax facts. It is updated in the same pass as the dir counts (same events, same once-per-card rule, same `knowledge_events` guard, so reprocessing changes nothing).
+The `knowledge_symbols` table (migration 0023) holds the same counts per `(repo, symbol)`: `seen`, `explains_opened`, `quiz_right`, `quiz_wrong`, `last_seen`. The symbol is `fact_defines.symbol` from the syntax facts. It is updated in the same pass as the dir counts (same events, same once-per-card rule, same `knowledge_events` guard, so reprocessing changes nothing).
 
 A card's symbols (`knowledge.card_symbols`): the symbols named by `resolved["facts"]` when the card has them; else the innermost definitions that overlap the lines of its code visual and code panels, plus backticked names (`` `name` `` or `` `name()` ``) that match at most 3 definitions in the card's repos.
 

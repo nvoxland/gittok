@@ -206,10 +206,21 @@ def test_slotter_reads_card_features_in_one_query_not_one_per_card(cfg, monkeypa
     monkeypatch.setattr(learning, "score_cards", lambda *a, **k: {})
     few, many = _feed_queries(cfg, 4), _feed_queries(cfg, 24)
     assert len(many) == len(few), (len(few), len(many))
-    assert sum("card_features" in q for q in many) <= 2
+    # Two for the batch read, one for the novelty map of the one repo (familiarity).
+    assert sum("card_features" in q for q in many) <= 3
     assert slotter.features_for  # the batch read
 
 
 def test_feed_request_query_count_does_not_grow_with_the_number_of_cards(cfg):
     few, many = _feed_queries(cfg, 4), _feed_queries(cfg, 24)
     assert len(many) == len(few), (len(few), len(many))
+
+
+def test_a_refresh_lets_the_unseen_cards_ahead_be_ranked_again(conn, cfg):
+    ids = [add(conn, cfg, text_card(FX)) for _ in range(4)]
+    first, cursor, _ = feed.page(conn, cfg, 4, None, 7, NOW)
+    shown, ahead = first[0]["id"], [c["id"] for c in first[1:]]
+    # The reader is on the first card; the three ahead were sent but not seen.
+    again, _, _ = feed.page(conn, cfg, 4, cursor, 7, NOW, drop=ahead)
+    got = {c["id"] for c in again}
+    assert shown not in got and got == set(ahead) and set(ids) == {shown, *ahead}

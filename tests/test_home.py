@@ -53,11 +53,12 @@ def test_init_writes_a_stdio_mcp_entry_for_the_installed_command(tmp_path):
     assert entry == {"type": "stdio", "command": "gittok", "args": ["mcp", "--ui"]}
 
 
-def test_init_settings_have_the_two_hooks_and_the_feed_watch_permission(tmp_path):
+def test_init_settings_have_the_three_hooks_and_the_feed_watch_permission(tmp_path):
     home.init(tmp_path / "g", "1.2.3")
     s = json.loads((tmp_path / "g" / ".claude" / "settings.json").read_text())
     (group,) = s["hooks"]["SessionStart"]
     assert [h["command"] for h in group["hooks"]] == [
+        "gittok url --hint 2>/dev/null || true",
         "gittok health --hint 2>/dev/null || true",
         "gittok feed-watch --hint 2>/dev/null || true",
     ]

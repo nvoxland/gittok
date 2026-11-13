@@ -34,7 +34,7 @@ This document describes the design. The exact contracts are in `docs/`: card for
             │   weights + rules + coverage          ▼             │
             │                     │           Validator           │
             │                     │                 ▼             │
-            │                     │   Render worker (memegen,     │
+            │                     │   Render worker (Pillow memes,│
             │                     │   mflux)                      │
             │                     │                 ▼             │
             │   Ranker/Slotter ◄── SQLite ◄── cards + assets      │
@@ -66,7 +66,7 @@ There are two processes, and a Claude Code session owns both:
 | Git analysis | The `git` program (log, blame, diff, show). `gitq.py` is the only module that starts it |
 | Code structure | tree-sitter (definitions, references, imports), with regex patterns as the fallback; ast-grep for profile rules |
 | Content agent | A Claude Code session that runs the `gittok-generate` skill against the GitTok MCP server |
-| Memes | A local memegen server (optional) |
+| Memes | Pillow, in process, with memegen's templates (downloaded once by `gittok memes --prefetch`) |
 | Illustrations | mflux on Apple silicon (optional) |
 | Code and diagrams in the client | Shiki for syntax highlighting, Mermaid for diagram cards |
 | Web app | SvelteKit with the static adapter, CSS scroll-snap |
@@ -298,7 +298,7 @@ GitTok computes signals per repo and stores them in SQLite, cached by the head c
 - **Cost control.** The driver only hands out packet ids. Each packet goes to a `gittok-writer` subagent that has only GitTok tools, on the packet's model (haiku for concrete leads, sonnet for explanatory ones). The writer calls `get_packet` for its leads, the attached materials (commit stat and diff, or numbered file lines and blame), and the guidance. It researches with read-only tools (`git_log`, `git_show`, `git_blame`, `git_grep`, `read_file`, `list_dir`, and the fact tools) only for what the materials lack. It calls `submit_cards` itself. The server validates, stores the accepted cards, and returns the reject reasons. The writer fixes rejected cards once. It replies with one line, so card JSON never passes through the driver.
 - `finish_run` closes the run and records the models used and the result of each packet.
 - The server enforces the card count per run and the run count per day in `get_brief`.
-- The writing guidance is `src/gittok/prompts/generate.md`. `get_packet` returns it.
+- The writing guidance is `src/gittok/prompts/generate.md`. `get_guidance` returns it with the sections of the packet's formats.
 - Text from a repo (commit messages, code, comments) is data. The skills and agents are told never to treat it as instructions, and writers and scouts have no config-editing tools.
 
 ### 10.5 Card spec (agent output)
@@ -315,7 +315,8 @@ A card is a JSON object. The contract is `src/gittok/schema/card.schema.json`, a
 | `depth` | 1 to 4 panels: explanation, code, or diff |
 | `sources` | The commits, paths and line ranges the card cites |
 | `facts`, `claims` | Ids of the code facts and the interpretive claims the text relies on |
-| `comments`, `interaction`, `series`, `account`, `difficulty`, `verdict` | Optional parts |
+| `angle` | What kind of knowledge the card gives: `what`, `how`, `why`, `who` or `risk` |
+| `comments`, `interaction`, `series`, `account`, `verdict` | Optional parts |
 
 ### 10.6 Validation (no model)
 
@@ -329,7 +330,7 @@ A card is a JSON object. The contract is `src/gittok/schema/card.schema.json`, a
 
 ### 10.7 Rendering
 
-- **Meme**: the local memegen server draws a PNG.
+- **Meme**: the server draws a PNG with Pillow: the template image, and each line in its text box, the way memegen lays them out (`memes.py`).
 - **Illustration and comic, and persona avatars**: mflux, with the mascot style and seed. The client overlays captions; text is never drawn into the image.
 - **Code, diff, chart, template formats, diagram**: the client draws them from structured data.
 - Meme, illustration and comic cards are stored as `pending_render`. They appear in the feed after the render worker draws them. When a renderer is not installed, the brief does not ask for its formats.
@@ -345,9 +346,9 @@ A card is a JSON object. The contract is `src/gittok/schema/card.schema.json`, a
 
 - Full-screen vertical snap scroll. Horizontal swipe for depth panels.
 - Stories row, notifications, repo pages, persona pages, file pages, saved cards.
-- Actions per card: like, save, comments, answer (interactive cards), reply to a comment.
+- Actions per card: like, 👎 ("show less like this"), save, comments, answer (interactive cards), reply to a comment. Like and 👎 exclude each other.
 - An installable web app with an offline copy of the last batch. This part needs HTTPS or `localhost` (`docs/install.md`, "HTTPS on a LAN").
-- The client records events and sends them in batches to `POST /api/events`: impression, dwell, skip, scroll back, depth open, like, save, answer, source tap, and the play events of cards that play piece by piece. `docs/learning.md` section 1 has the list.
+- The client records events and sends them in batches to `POST /api/events`: impression, dwell, skip, scroll back, depth open, like, 👎 (`dislike`), save, answer, source tap, and the play events of cards that play piece by piece. `docs/learning.md` section 1 has the list.
 
 ---
 
@@ -363,19 +364,19 @@ Each impression gets a reward in [0, 1]:
 - Dwell is compared with the **expected read time** of the card's format and length. A thread takes longer than a meme.
 - Depth open, like, save, source tap and scroll back add to it.
 - On an interactive card, an answer counts as engagement, right or wrong.
+- A like lifts the reward to a floor and counts twice. A 👎 is a reward of 0 that counts four times, whatever the reason was: the learner finds what the reader wants less of from all the 👎 over many cards.
 
 The weights are in `config/reward.yaml`.
 
 ### 12.2 Features
 
-Each card has feature values: story type, format, persona, tone, repo, group, dir, visual kind, recency, difficulty, and more (`importance` in `config/reward.yaml` lists them).
+Each card has feature values: story type, format, persona, tone, repo, group, dir, file, language, file kind, detector tag, angle (what, how, why, who, risk), visual kind, recency, and how well the reader knows the code at the time (`familiarity`). `prior_sd` in `config/reward.yaml` lists them.
 
 ### 12.3 Model
 
-- **Thompson sampling with a Beta(α, β) per feature value**, updated from rewards.
-- A card's score is the importance-weighted mean of the sampled values of its features. This is simple, and it can be explained.
-- α and β decay with time, so interests can shift (`half_life_days`).
-- The default mix (section 13) seeds the priors.
+- **One learner**: a Bayesian logistic regression with a Gaussian weight per feature value, updated online from rewards, and Thompson sampling. The weights of a card's features add up to its log-odds, so they are learned together: the feature that explains the 👎 takes the blame. It can be explained: each weight says how much one value moves a card.
+- The weights decay toward the prior with time, so interests can shift (`half_life_days`).
+- The default mix (section 13) seeds the priors. The rewards keep the features of each impression, so the model can be rebuilt (`gittok relearn`).
 
 ### 12.4 Slotting (builds the feed)
 
@@ -394,7 +395,7 @@ A wrong answer on an interactive card brings the card back after growing interva
 
 ### 12.6 Driving generation
 
-The weights also feed the quotas of the brief (section 10.3): make more of what scores well, and a little of everything else. The ranker orders what exists. The brief decides what gets made.
+The same model decides what gets made (section 10.3). It scores the leads by their features (repo, dir, file, language, kind, tag, story type, familiarity) plus how teachable and how new they are, and it sets the category quotas, the tone mix, the persona share, the repo share and the angle of each card (the story types of an angle the reader likes get more slots): make more of what scores well, and a little of everything else. The ranker orders what exists. The brief decides what gets made.
 
 ---
 
@@ -422,7 +423,6 @@ tones:
 visual_mix:
   image_min_share: 0.5   # least share of cards in an image format
 exploration_share: 0.18
-prior_strength: 10       # pseudo-observations behind each prior
 ```
 
 A reset (`reset_defaults`, or `gittok reset-weights`) deletes the learned weights, so the feed starts from this mix again. `local/defaults.yaml` changes the mix for one GitTok directory; like every shipped file, it has a local file that is merged over it (`docs/config.md`, "The merge rule").
@@ -451,7 +451,7 @@ The MCP server is named `gittok`. Its tools fall into these groups:
 
 | Group | Tools |
 |---|---|
-| Generation | `get_brief`, `get_packet`, `submit_cards`, `check_cards`, `finish_run`, `get_card_schema` |
+| Generation | `get_brief`, `get_packet`, `get_guidance`, `submit_cards`, `check_cards`, `finish_run`, `get_card_schema` |
 | Scouting | `scout_status`, `get_candidates`, `rate_candidates` |
 | Read-only research | `git_log`, `git_show`, `git_blame`, `git_grep`, `read_file`, `list_dir`, `defined_where`, `who_calls`, `what_calls`, `symbol_history`, `facts_for` |
 | Repo profiles | `survey_repo`, `test_detector`, `save_profile`, `rule_stats`, `submit_facts` |
@@ -460,7 +460,7 @@ The MCP server is named `gittok`. Its tools fall into these groups:
 | Steering | `list_rules`, `add_rule`, `remove_rule`, `reset_defaults`, `set_playback_speed` |
 | Config | `list_repos`, `add_repo`, `remove_repo`, `set_group`, `set_mascot`, `edit_persona` |
 | Config files (read-only) | `config_files`, `get_config`, `check_config` |
-| Phone access | `pairing_link`, `set_lan` |
+| Phone access | `pairing_link`, `pair_device`, `set_lan` |
 
 Every repo tool takes a configured repo name, never a path. The one exception is `add_repo`, which takes the path or URL of the repo to add.
 
@@ -488,7 +488,7 @@ One database file in the data directory. The schema is `src/gittok/migrations/`.
 - `runs`: one row per generation run (brief, counts, reject reasons).
 - `cards`: the spec as JSON, status, run id. Unique on `(story_key, format)`: one story may be told again in another format (`docs/learning.md` section 13).
 - `card_features`, `assets`.
-- `events`, `rewards`, `weights`, `rules`, `srs`, `prefs`.
+- `events`, `rewards`, `model_weights`, `rules`, `srs`, `prefs`.
 - `notifications`, `story_views`, `replies`.
 - `stories`: one row per story ever made. Garbage collection never deletes it, so duplicate checks survive card deletion. The exception is a removed repo: all its data goes.
 - `saved_cards`: the cards the reader saved. Garbage collection never deletes a saved card.

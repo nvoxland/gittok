@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import Feed from '#lib/components/Feed.svelte';
 	import StoriesRow from '#lib/components/StoriesRow.svelte';
 	import StoryViewer from '#lib/components/StoryViewer.svelte';
@@ -18,7 +18,7 @@
 	import { setPlaybackSpeed } from '#lib/beats.ts';
 	import { createBatcher } from '#lib/batcher.ts';
 	import { clearAnswers } from '#lib/cardState.ts';
-	import type { Card, FeedFilter, Story } from '#lib/types.ts';
+	import type { Card, FeedEvent, FeedFilter, Story } from '#lib/types.ts';
 
 	// /?repo=x&dir=y shows only cards under that dir; a chip in the top bar clears it.
 	function readFilter(): FeedFilter {
@@ -52,6 +52,9 @@
 	let noRepos = $state(false);
 	let fromCache = $state(false);
 	let nextCursor: string | null = null;
+	// Names every card the server sent this session, also at the end of the feed (where
+	// next_cursor is null). Asked with it, the server sends only cards made since.
+	let sentCursor: string | null = null;
 	// No more pages: the feed ends with the caught-up card.
 	let atEnd = $state(false);
 	// A generation run is open on the server now (from the newest feed answer, never from cache).
@@ -111,12 +114,15 @@
 		const onVis = () => {
 			// iOS suspends a hidden page and can cancel a normal request: send with sendBeacon.
 			if (document.visibilityState === 'hidden') batcher.flushOnExit();
+			// Back at the end of the feed: a run may have made cards meanwhile.
+			else if (atEnd && !checking) void checkAgain(true);
 		};
 		document.addEventListener('visibilitychange', onVis);
 		void load();
 		void loadStories();
 		return () => {
 			document.removeEventListener('visibilitychange', onVis);
+			clearTimeout(refreshTimer);
 			batcher.stop();
 		};
 	});
@@ -147,6 +153,15 @@
 		else set(message(e));
 	}
 
+	// The page opens on the first card, a full screen like every other. The top bar sits above
+	// it, a snap point of its own: scroll up to see the stories, Saved and the bell.
+	async function showFirstCard() {
+		await tick();
+		document
+			.querySelector('.feed [data-card-id]')
+			?.scrollIntoView?.({ behavior: 'instant', block: 'start' });
+	}
+
 	async function load() {
 		loading = true;
 		error = null;
@@ -170,7 +185,9 @@
 					? await fetchRepos().then((r) => r.length === 0, () => false)
 					: false;
 			cards = fresh;
+			void showFirstCard();
 			nextCursor = feed.next_cursor;
+			sentCursor = feed.cursor ?? feed.next_cursor ?? sentCursor;
 			atEnd = nextCursor === null;
 		} catch (e) {
 			failed(e, (msg) => (error = msg));
@@ -190,6 +207,7 @@
 			clearAnswers(fresh.map((c) => c.id));
 			cards = [...cards, ...fresh];
 			nextCursor = feed.next_cursor;
+			sentCursor = feed.cursor ?? feed.next_cursor ?? sentCursor;
 			atEnd = nextCursor === null;
 			generating = !!feed.generating && !feed.fromCache;
 			moreError = null;
@@ -201,31 +219,85 @@
 		}
 	}
 
-	// From the caught-up card: ask for a fresh first page and add the cards not shown yet.
-	async function checkAgain() {
-		checking = true;
-		checkedEmpty = false;
-		checkError = null;
+	// After a 👎 the feed reacts at once: send the events, then let the server rank the cards
+	// ahead of the disliked one again with what it just learned. A short wait lets a 👎 that
+	// was a slip be taken back first.
+	const REFRESH_AFTER_DISLIKE_MS = 1200;
+	let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+
+	function onFeedEvent(e: FeedEvent) {
+		batcher.push(e);
+		if (e.type !== 'dislike' && e.type !== 'like') return;
+		clearTimeout(refreshTimer);
+		refreshTimer = undefined;
+		if (e.type === 'dislike' && e.data?.on) {
+			refreshTimer = setTimeout(() => void refreshAhead(e.card_id), REFRESH_AFTER_DISLIKE_MS);
+		}
+	}
+
+	async function refreshAhead(cardId: string) {
+		const at = cards.findIndex((c) => c.id === cardId);
+		const cursor = nextCursor ?? sentCursor;
+		if (at < 0 || !cursor || loadingMore) return;
+		loadingMore = true;
 		try {
-			const feed = await fetchFeed(undefined, 20, filter);
+			await batcher.flush();
+			const kept = cards.slice(0, at + 1);
+			const ahead = cards.slice(at + 1).map((c) => c.id);
+			const feed = await fetchFeed(cursor, 20, filter, ahead);
+			const have = new Set(kept.map((c) => c.id));
+			const fresh = feed.cards.filter((c) => !have.has(c.id));
+			clearAnswers(fresh.map((c) => c.id).filter((id) => !ahead.includes(id)));
+			cards = [...kept, ...fresh];
+			nextCursor = feed.next_cursor;
+			sentCursor = feed.cursor ?? feed.next_cursor ?? sentCursor;
+			atEnd = nextCursor === null;
+		} catch {
+			// Keep the cards the page has: the feed still works without the refresh.
+		} finally {
+			loadingMore = false;
+		}
+	}
+
+	// While a run is making cards, the end card asks for them by itself.
+	const POLL_WHILE_GENERATING_MS = 10_000;
+	$effect(() => {
+		if (!atEnd || !generating || loading) return;
+		const timer = setInterval(() => {
+			if (!checking) void checkAgain(true);
+		}, POLL_WHILE_GENERATING_MS);
+		return () => clearInterval(timer);
+	});
+
+	// From the caught-up card: ask for the cards not sent yet and add them. `quiet` (a check
+	// the page makes by itself) shows no "No new cards yet" and no error.
+	async function checkAgain(quiet = false) {
+		checking = true;
+		if (!quiet) {
+			checkedEmpty = false;
+			checkError = null;
+		}
+		try {
+			const feed = await fetchFeed(sentCursor ?? undefined, 20, filter);
 			const have = new Set(cards.map((c) => c.id));
 			const fresh = feed.cards.filter((c) => !have.has(c.id));
 			clearAnswers(fresh.map((c) => c.id));
 			cards = [...cards, ...fresh];
 			nextCursor = feed.next_cursor;
+			sentCursor = feed.cursor ?? feed.next_cursor ?? sentCursor;
 			atEnd = nextCursor === null;
 			generating = !!feed.generating && !feed.fromCache;
-			checkedEmpty = fresh.length === 0;
+			if (!quiet) checkedEmpty = fresh.length === 0;
 		} catch (e) {
 			// Not "no new cards": the check itself failed.
-			failed(e, (msg) => (checkError = msg));
+			if (!quiet) failed(e, (msg) => (checkError = msg));
 		} finally {
 			checking = false;
 		}
 	}
 </script>
 
-<!-- The page scrolls; the top bar scrolls away with the first card. -->
+<!-- The page scrolls; the top bar sits above the first card, scrolled away when it loads. -->
 <div class="app" style="--chrome-h: {chromeH}px">
 <header class="chrome" aria-label="Top bar" bind:offsetHeight={chromeH}>
 	<div class="stories-slot"><StoriesRow {stories} onOpen={(i) => (openStory = i)} /></div>
@@ -285,7 +357,7 @@
 		</section>
 	{:else}
 		{#if cards.length > 0}
-			<Feed {cards} onEvent={(e) => batcher.push(e)} onNearEnd={loadMore} onActive={rememberCurrent} />
+			<Feed {cards} onEvent={onFeedEvent} onNearEnd={loadMore} onActive={rememberCurrent} />
 			<GestureHints />
 		{/if}
 		{#if moreError}
@@ -305,12 +377,9 @@
 						GitTok makes more cards by itself while a session of your coding agent is open in your
 						GitTok directory.
 					</p>
-					<p>
-						To get more right away, ask the agent there: "make more cards". In Claude Code,
-						<code>/gittok-generate</code> does the same.
-					</p>
+					<p>To get more right away, ask the agent there: "make more cards".</p>
 				{/if}
-				<button type="button" onclick={checkAgain} disabled={checking}>
+				<button type="button" onclick={() => checkAgain()} disabled={checking}>
 					{checking ? 'Checking…' : checkError ? 'Try again' : 'Check for new cards'}
 				</button>
 				{#if checkError}
@@ -328,6 +397,7 @@
 <style>
 	/* The top bar takes its own row, so it never covers a card's header. */
 	.chrome {
+		scroll-snap-align: start;
 		display: flex;
 		align-items: center;
 		border-bottom: 1px solid var(--border);

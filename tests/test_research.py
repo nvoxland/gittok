@@ -5,7 +5,7 @@ import subprocess
 
 import pytest
 
-from gittok import research
+from gittok import gitq, research
 from gittok.config import (
     AgentSettings,
     AnalysisSettings,
@@ -355,3 +355,29 @@ def test_git_grep_limit_must_be_positive(cfg):
     for n in (0, -1):
         with pytest.raises(ResearchError, match="limit"):
             research.git_grep(cfg, "fix", "def", limit=n)
+
+
+@pytest.mark.parametrize("pattern", [r"^def\s+helper\(", r"def \w+\(\):", r"^d\w\w\shelper"])
+def test_git_grep_takes_perl_style_classes(cfg, pattern):
+    """Agents write `\\s` and `\\w` (the profile rules use Python regex too). POSIX ERE has
+    neither, so the search used to find nothing and gave no error."""
+    assert "src/app.py:4:def helper():" in research.git_grep(cfg, "fix", pattern)
+
+
+@pytest.mark.parametrize("pattern", [r"^def\s+helper\(", r"def [\w]+\(\):"])
+def test_git_grep_without_perl_regex_translates_the_classes(cfg, monkeypatch, pattern):
+    """A git built without PCRE refuses -P; the search then runs -E with POSIX classes."""
+    real = gitq.run_bytes
+
+    def no_pcre(root, *args, **kw):
+        if "-P" in args:
+            raise gitq.GitError("git grep failed: fatal: cannot use Perl-compatible regexes")
+        return real(root, *args, **kw)
+
+    monkeypatch.setattr(gitq, "run_bytes", no_pcre)
+    assert "src/app.py:4:def helper():" in research.git_grep(cfg, "fix", pattern)
+
+
+def test_git_grep_pathspec_takes_braces(cfg):
+    out = research.git_grep(cfg, "fix", "def helper", pathspec="src/{app,nope}.py")
+    assert out == "src/app.py:4:def helper():"

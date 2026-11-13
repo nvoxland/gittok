@@ -125,6 +125,66 @@ def list_dir(cfg, repo: str, path: str = "", ref=None) -> str:
     return "\n".join(sorted(dirs) + sorted(files))
 
 
+# Perl-style classes as POSIX classes, for a git built without PCRE: (outside a bracket
+# expression, inside one). The negated forms have no form inside brackets.
+_POSIX = {
+    "s": ("[[:space:]]", "[:space:]"),
+    "S": ("[^[:space:]]", None),
+    "w": ("[[:alnum:]_]", "[:alnum:]_"),
+    "W": ("[^[:alnum:]_]", None),
+    "d": ("[0-9]", "0-9"),
+    "D": ("[^0-9]", None),
+}
+MAX_PATHSPECS = 32
+
+
+def posix_classes(pattern: str) -> str:
+    """`pattern` with `\\s`, `\\w`, `\\d` (and the negated forms) as POSIX classes."""
+    out, i, in_bracket = [], 0, False
+    while i < len(pattern):
+        c = pattern[i]
+        if c == "\\" and i + 1 < len(pattern):
+            nxt = pattern[i + 1]
+            form = _POSIX.get(nxt, (None, None))[1 if in_bracket else 0]
+            out.append(form if form is not None else c + nxt)
+            i += 2
+            continue
+        if c == "[" and not in_bracket:
+            in_bracket = True
+            out.append(c)
+            i += 1
+            if i < len(pattern) and pattern[i] == "^":
+                out.append("^")
+                i += 1
+            if i < len(pattern) and pattern[i] == "]":  # a literal ] first in the bracket
+                out.append("]")
+                i += 1
+            continue
+        if c == "]" and in_bracket:
+            in_bracket = False
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def expand_braces(spec: str) -> list[str]:
+    """`src/{a,b}.py` -> [`src/a.py`, `src/b.py`]. Git pathspecs have no braces."""
+    m = re.search(r"\{([^{}]*,[^{}]*)\}", spec)
+    if not m:
+        return [spec]
+    out: list[str] = []
+    for part in m.group(1).split(","):
+        out += expand_braces(spec[: m.start()] + part + spec[m.end() :])
+        if len(out) > MAX_PATHSPECS:
+            raise ResearchError(f"pathspec {spec!r} expands to more than {MAX_PATHSPECS} paths")
+    return out
+
+
+def _no_pcre(e: gitq.GitError) -> bool:
+    text = str(e).lower()
+    return "perl" in text or "pcre" in text
+
+
 def git_grep(
     cfg,
     repo: str,
@@ -134,15 +194,17 @@ def git_grep(
     limit: int = 100,
     fixed: bool = False,
 ) -> str:
-    """Search file contents; at most `limit` hits. `pathspec` keeps git glob behavior
-    (e.g. `src/*.py`); every other tool treats paths literally."""
+    """Search file contents; at most `limit` hits. The pattern is a Perl-style regex (`\\s`,
+    `\\w`, `\\d` work), as the profile rules are. `pathspec` keeps git glob behavior
+    (e.g. `src/*.py`) and takes braces (`src/{a,b}.py`); every other tool treats paths
+    literally."""
     if limit < 1:
         raise ResearchError("limit must be >= 1")
     root, ref = _resolve(cfg, repo, ref)
-    args = ["grep", "-n", "-I", "-F" if fixed else "-E", "-e", pattern, ref, "--"]
-    if pathspec and (spec := _clean_path(pathspec)):
-        args.append(spec)
-    try:
+    specs = expand_braces(spec) if pathspec and (spec := _clean_path(pathspec)) else []
+
+    def run(mode: str, pat: str) -> bytes:
+        args = ["grep", "-n", "-I", mode, "-e", pat, ref, "--", *specs]
         _, data = gitq.run_bytes(
             root,
             *args,
@@ -150,6 +212,18 @@ def git_grep(
             max_bytes=cfg.settings.research.max_output_bytes,
             literal_pathspecs=False,
         )
+        return data
+
+    try:
+        if fixed:
+            data = run("-F", pattern)
+        else:
+            try:
+                data = run("-P", pattern)
+            except gitq.GitError as e:
+                if not _no_pcre(e):
+                    raise
+                data = run("-E", posix_classes(pattern))  # a git built without PCRE
     except gitq.GitError as e:
         detail = str(e).rsplit(": ", 1)[-1]
         raise ResearchError(f"git grep failed: {detail}") from e

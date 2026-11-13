@@ -47,7 +47,28 @@ def test_feed_pages_with_cursor_without_repeats(cfg, client, fixture_repo):
     assert {first["cards"][0]["id"], second["cards"][0]["id"]} == set(ids)
     third = client.get("/api/feed", params={"limit": 1, "cursor": second["next_cursor"]}).json()
     third.pop("generating")
+    assert third.pop("cursor")  # at the end too: the client asks with it for new cards
     assert third == {"cards": [], "next_cursor": None, "resume_card_id": None}
+
+
+def test_feed_refresh_learns_first_and_ranks_the_dropped_cards_again(cfg, client, fixture_repo):
+    import time
+
+    ids = seed(cfg, fixture_repo, [example_card(fixture_repo), text_card(fixture_repo)])
+    first = client.get("/api/feed", params={"limit": 2}).json()
+    on, ahead = first["cards"][0]["id"], first["cards"][1]["id"]
+    now = int(time.time() * 1000)
+    events = [
+        {"card_id": on, "type": "impression", "ts": now - 2000, "data": {"session": "s"}},
+        {"card_id": on, "type": "dislike", "ts": now - 1000, "data": {"on": True, "session": "s"}},
+    ]
+    client.post("/api/events", json={"events": events})
+    again = client.get(
+        "/api/feed", params={"limit": 2, "cursor": first["next_cursor"], "drop": ahead}
+    ).json()
+    assert [c["id"] for c in again["cards"]] == [ahead] and set(ids) == {on, ahead}
+    with db.session(cfg.settings.data_dir / "gittok.db") as conn:
+        assert conn.execute("SELECT signal FROM rewards").fetchone()[0] == "dislike"
 
 
 def test_feed_cursor_is_base64_json_with_served_and_seed(cfg, client, fixture_repo):
@@ -122,6 +143,18 @@ def test_events_accept_the_beat_player_types(client):
 def test_events_accept_lightbox_open(client):
     events = [{"card_id": "c_1", "type": "lightbox_open", "ts": 1, "data": {"kind": "code"}}]
     assert client.post("/api/events", json={"events": events}).json() == {"stored": 1}
+
+
+def test_events_accept_dislike_and_drop_the_retired_types(cfg, client):
+    events = [
+        {"card_id": "c_1", "type": "dislike", "ts": 1, "data": {"on": True}},
+        {"card_id": "c_1", "type": "knew_it", "ts": 2, "data": {"on": True}},
+        {"card_id": "c_1", "type": "teach_more", "ts": 3, "data": {"on": True}},
+    ]
+    # A phone may still hold a queued batch from before Knew it and More were removed.
+    assert client.post("/api/events", json={"events": events}).json() == {"stored": 1}
+    with db.session(cfg.settings.data_dir / "gittok.db") as conn:
+        assert [r["type"] for r in conn.execute("SELECT type FROM events")] == ["dislike"]
 
 
 def test_events_reject_unknown_type(client):
@@ -910,3 +943,15 @@ def test_feed_says_whether_a_generation_run_is_open(cfg, client, fixture_repo):
     with db.session(cfg.settings.data_dir / "gittok.db") as conn:
         runs.finish_run(conn, run_id, None)
     assert client.get("/api/feed").json()["generating"] is False
+
+
+def test_the_feed_always_returns_a_cursor_that_asks_for_new_cards_only(cfg, client, fixture_repo):
+    first_ids = seed(cfg, fixture_repo, [example_card(fixture_repo)])
+    first = client.get("/api/feed", params={"limit": 20}).json()
+    assert first["next_cursor"] is None  # the feed is exhausted for now
+    assert first["cursor"]  # but this cursor remembers what was sent
+    again = client.get("/api/feed", params={"limit": 20, "cursor": first["cursor"]}).json()
+    assert again["cards"] == [] and again["cursor"]
+    new_ids = seed(cfg, fixture_repo, [text_card(fixture_repo)])  # a run made one more
+    later = client.get("/api/feed", params={"limit": 20, "cursor": again["cursor"]}).json()
+    assert [c["id"] for c in later["cards"]] == new_ids and new_ids != first_ids

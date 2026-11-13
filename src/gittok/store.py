@@ -7,7 +7,7 @@ import secrets
 import time
 from datetime import UTC, datetime, timedelta
 
-from gittok import db
+from gittok import config, db
 from gittok.config import Repo
 
 
@@ -45,12 +45,47 @@ def _card_dirs(card: dict) -> set[str]:
     return out
 
 
-def _features(card: dict) -> set[tuple[str, str]]:
+def _cited_paths(card: dict) -> list[str]:
+    """Every path the card cites: visual first, then sources, then code depth panels."""
+    paths = [card["visual"]["path"]] if card["visual"].get("path") else []
+    paths += [s["path"] for s in card.get("sources", []) if s.get("path")]
+    paths += [
+        p["path"]
+        for p in card.get("depth", [])
+        if p.get("kind") in ("code", "code_diff") and p.get("path")
+    ]
+    return list(dict.fromkeys(p.strip("/") for p in paths))
+
+
+def main_path(card: dict) -> str | None:
+    """The file a card is mostly about: the visual's path, else the first cited path."""
+    paths = _cited_paths(card)
+    return paths[0] if paths else None
+
+
+def path_features(path: str | None, fileset=None) -> set[tuple[str, str]]:
+    """The features a file gives a card or a lead: `file`, `language`, and (with the repo's
+    file set) `kind`: test, fixture, generated, docs, vendored or source."""
+    if not path:
+        return set()
+    feats = {("file", path)}
+    if lang := config.language_of(path):
+        feats.add(("language", lang))
+    if fileset is not None:
+        feats.add(("kind", fileset.kind(path) or "source"))
+    return feats
+
+
+def _features(card: dict, fileset=None) -> set[tuple[str, str]]:
+    """The features of a card for the learner (docs/learning.md section 4). `fileset` is the
+    file set of the card's first repo; without it there is no `kind`."""
     feats = {(k, card[k]) for k in ("story_type", "format", "persona", "tone")}
     feats |= {("repo", r) for r in card["repos"]}
     feats |= {("dir", d) for d in _card_dirs(card)}
-    if card.get("difficulty") is not None:
-        feats.add(("difficulty", str(card["difficulty"])))
+    if card.get("angle"):
+        feats.add(("angle", card["angle"]))
+    feats |= path_features(main_path(card), fileset)
+    feats |= {("language", lang) for p in _cited_paths(card) if (lang := config.language_of(p))}
     if "interaction" in card:
         feats.add(("interactive", card["story_type"]))
     if card.get("verdict"):
@@ -64,21 +99,47 @@ def _features(card: dict) -> set[tuple[str, str]]:
     return feats
 
 
-def set_features(conn, card_id: str, card: dict) -> None:
-    """Replace a card's stored features (caller owns the transaction)."""
+def _fileset(cfg, card: dict):
+    repo = (card.get("repos") or [None])[0]
+    return cfg.fileset(repo) if cfg is not None and repo in cfg.repos else None
+
+
+def set_features(conn, card_id: str, card: dict, cfg=None) -> None:
+    """Replace a card's stored features (caller owns the transaction), its lead's included."""
     conn.execute("DELETE FROM card_features WHERE card_id = ?", (card_id,))
     conn.executemany(
         "INSERT INTO card_features(card_id, feature, value) VALUES (?, ?, ?)",
-        [(card_id, f, v) for f, v in sorted(_features(card))],
+        [(card_id, f, v) for f, v in sorted(_features(card, _fileset(cfg, card)))],
     )
+    row = conn.execute("SELECT lead_id FROM cards WHERE id = ?", (card_id,)).fetchone()
+    if row and row["lead_id"] is not None:
+        add_lead_features(conn, card_id, row["lead_id"])
 
 
-def refeature(conn) -> int:
-    """Recompute card_features for every card from its stored spec. Returns the card count."""
+def lead_tag(lead_key: str | None) -> str | None:
+    """The detector tag of a candidate lead ("cand:<path>:<line>:<tag>"), else None."""
+    if not lead_key or not lead_key.startswith("cand:"):
+        return None
+    return lead_key.rsplit(":", 1)[1] or None
+
+
+def add_lead_features(conn, card_id: str, lead_id: int) -> None:
+    """Add what the card's lead knows: the `tag` of the detector that found it."""
+    row = conn.execute("SELECT lead_key FROM leads WHERE id = ?", (lead_id,)).fetchone()
+    if row and (tag := lead_tag(row["lead_key"])):
+        conn.execute(
+            "INSERT OR IGNORE INTO card_features(card_id, feature, value) VALUES (?, 'tag', ?)",
+            (card_id, tag),
+        )
+
+
+def refeature(conn, cfg=None) -> int:
+    """Recompute card_features for every card from its stored spec and its lead. Returns the
+    card count. Run `gittok relearn` after it so the model learns from the new features."""
     rows = conn.execute("SELECT id, spec FROM cards").fetchall()
     with conn:
         for r in rows:
-            set_features(conn, r["id"], db.loads(r["spec"]))
+            set_features(conn, r["id"], db.loads(r["spec"]), cfg)
     return len(rows)
 
 
@@ -143,7 +204,7 @@ def insert_card(conn, cfg, run_id: str, acc, now: str | None = None) -> str:
     )
     conn.executemany(
         "INSERT INTO card_features(card_id, feature, value) VALUES (?, ?, ?)",
-        [(card_id, f, v) for f, v in sorted(_features(card))],
+        [(card_id, f, v) for f, v in sorted(_features(card, _fileset(cfg, card)))],
     )
     created = now or db.now_iso()
     conn.execute(
@@ -177,9 +238,12 @@ def variant_blocker(story, fmt: str, agent, now: datetime) -> str | None:
 
     `story` is the `stories` row, or None for a new story (always allowed). A story is told
     again only in a new format, if it did well or was liked, and long enough after its last card.
+    A story with a 👎 is never told again.
     """
     if story is None:
         return None
+    if story["disliked"]:
+        return "the reader marked this story 👎 (show less like this)"
     if fmt in db.loads(story["formats"]):
         return f"story was already told in format {fmt}"
     if not story["liked"] and (story["best_reward"] or 0) < agent.variant_min_reward:

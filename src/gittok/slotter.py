@@ -272,11 +272,13 @@ FEATURE_CHUNK = 500  # card ids per query (sqlite limits the number of parameter
 
 
 def features_for(conn, cfg, ids: list[str], now: datetime) -> dict[str, set[tuple[str, str]]]:
-    """Card id -> its features, as `learning.card_features` gives them for one card (stored
-    rows plus the derived `group` and `recency`), read with two queries per FEATURE_CHUNK
-    cards and not two per card. An unknown card has no features."""
+    """Card id -> its features, as the learner sees them at an impression: the stored rows,
+    the derived `group` and `recency`, and `familiarity` (how well the reader knows the
+    card's code now). Read with two queries per FEATURE_CHUNK cards and not two per card. An
+    unknown card has no features."""
     from gittok import learning
 
+    nmaps: dict[str, dict] = {}
     out: dict[str, set[tuple[str, str]]] = {i: set() for i in ids}
     for at in range(0, len(ids), FEATURE_CHUNK):
         chunk = ids[at : at + FEATURE_CHUNK]
@@ -293,6 +295,7 @@ def features_for(conn, cfg, ids: list[str], now: datetime) -> dict[str, set[tupl
             repos = [v for f, v in feats if f == "repo" and v in cfg.repos]
             feats |= {("group", cfg.repos[r].group) for r in repos if cfg.repos[r].group}
             feats.add(("recency", learning._recency(created_at, now)))
+            learning.add_familiarity(conn, cfg, feats, nmaps)
     return out
 
 

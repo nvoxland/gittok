@@ -6,7 +6,6 @@ import time
 import zlib
 from pathlib import Path
 
-import httpx
 import pytest
 
 from gittok import db, render, runs
@@ -14,26 +13,6 @@ from gittok.config import Mascot, RenderSettings
 from gittok.render import RenderedImage
 from tests.cards import text_card
 from tests.conftest import make_config
-
-
-@pytest.mark.parametrize(
-    ("text", "expected"),
-    [
-        ("hello world", "hello_world"),
-        ("a_b", "a__b"),
-        ("a-b", "a--b"),
-        ("why?", "why~q"),
-        ("100%", "100~p"),
-        ("#1", "~h1"),
-        ("a/b", "a~sb"),
-        ('say "hi"', "say_''hi''"),
-        ("one\ntwo", "one~ntwo"),
-        ("", "_"),
-        ("  ", "__"),
-    ],
-)
-def test_memegen_escape(text, expected):
-    assert render.memegen_escape(text) == expected
 
 
 def png_bytes(w=4, h=6) -> bytes:
@@ -48,44 +27,6 @@ def png_bytes(w=4, h=6) -> bytes:
         + chunk(b"IDAT", zlib.compress(raw))
         + chunk(b"IEND", b"")
     )
-
-
-def test_meme_renderer_fetches_escaped_url_and_reads_size():
-    seen = []
-
-    def handler(request):
-        seen.append(request.url.raw_path.decode())
-        return httpx.Response(200, content=png_bytes(30, 20))
-
-    r = render.MemeRenderer("http://memegen.test", transport=httpx.MockTransport(handler))
-    visual = {"kind": "meme", "template": "drake", "lines": ["a b?", "c/d"]}
-    (img,) = r.render(visual, None, {})
-    assert seen == ["/images/drake/a_b~q/c~sd.png"]
-    assert (img.width, img.height) == (30, 20)
-    assert img.meta["template"] == "drake"
-
-
-def test_meme_renderer_availability_and_connection_errors():
-    def down(request):
-        raise httpx.ConnectError("refused")
-
-    r = render.MemeRenderer("http://memegen.test", transport=httpx.MockTransport(down))
-    assert r.available() is False
-    with pytest.raises(render.RendererUnavailable):
-        r.render({"template": "drake", "lines": ["x"]}, None, {})
-
-    ok = render.MemeRenderer(
-        "http://memegen.test", transport=httpx.MockTransport(lambda req: httpx.Response(200))
-    )
-    assert ok.available() is True
-
-
-def test_meme_renderer_http_error_is_render_error():
-    r = render.MemeRenderer(
-        "http://memegen.test", transport=httpx.MockTransport(lambda req: httpx.Response(404))
-    )
-    with pytest.raises(render.RenderError):
-        r.render({"template": "nope", "lines": ["x"]}, None, {})
 
 
 def render_cfg(fixture_repo, tmp_path, **render_kw):
@@ -363,15 +304,6 @@ def test_render_worker_survives_a_failing_pass(fixture_repo, tmp_path, monkeypat
     assert not worker.is_alive()
 
 
-def test_memegen_path_never_has_dot_segments():
-    for lines in (["."], ["..", "ok"], ["a", "..."], [".", "."]):
-        path = render.memegen_path("drake", lines)
-        segs = path.removesuffix(".png").split("/")
-        assert "." not in segs and ".." not in segs, path
-        assert all(set(seg) != {"."} for seg in segs[3:]), path
-    assert render.memegen_path("drake", ["a.b", "c"]) == "/images/drake/a.b/c.png"
-
-
 class ReentrantRenderer(FakeRenderer):
     """While rendering the first card, runs a second pass on another connection."""
 
@@ -508,19 +440,6 @@ def test_mflux_command_matches_model_family(monkeypatch):
     assert render._mflux_command("z-image-turbo") == ["/bin/zi"]
     assert render._mflux_command("flux2-klein-4b") == ["/bin/f2"]
     assert render._mflux_command("schnell") == ["/bin/gen"]
-
-
-def test_meme_availability_probes_one_template_not_the_full_list():
-    # /templates/ lists every template and takes ~1 s; a 1 s probe flapped.
-    seen = []
-
-    def handler(request):
-        seen.append(request.url.path)
-        return httpx.Response(200)
-
-    r = render.MemeRenderer("http://memegen.test", transport=httpx.MockTransport(handler))
-    assert r.available() is True
-    assert seen == ["/templates/drake"]
 
 
 def test_illustration_with_no_mascot_draws_the_scene_alone(fixture_repo, tmp_path):

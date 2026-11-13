@@ -64,14 +64,14 @@ The package carries its own shared files: `config/`, the web app, and the origin
 
 ### The session owns the server
 
-When you start `claude` in the directory, Claude Code starts `gittok mcp --ui`. That process is the MCP server: Claude talks to it over stdio. It also starts the feed server (`gittok serve`) as a child process on port 8008. The feed server serves the feed and the web app, and does the background work (rendering, learning, notifications, clean-up). It has no MCP endpoint. When the session ends, the child stops. So the feed, on this computer and on a phone, works only while a session is open.
+When you start `claude` in the directory, Claude Code starts `gittok mcp --ui`. That process is the MCP server: Claude talks to it over stdio. It also starts the feed server (`gittok serve`) as a child process on port 7313. The feed server serves the feed and the web app, and does the background work (rendering, learning, notifications, clean-up). It has no MCP endpoint. When the session ends, the child stops. So the feed, on this computer and on a phone, works only while a session is open.
 
 A `gittok` command (`gittok repos`, `gittok health`, ...) finds the GitTok directory by walking up from the current directory to `gittok.yaml`. Outside a GitTok directory, every command but `gittok init`, `gittok --version` and `gittok --help` stops with one line that says so. To use a directory from another place, set `GITTOK_ROOT=<dir>` for that command.
 
 ### More than one session, more than one directory
 
-- **Two sessions in the same directory.** The first session owns the feed server. The second finds port 8008 in use and runs the MCP server only. Both sessions work, and both see the same cards. The feed stops when the first session ends; then run `/mcp`, gittok, Reconnect in the other session to start it again. Claude is told this when the session starts.
-- **Two directories.** You can make as many GitTok directories as you like (for example `gittok init ~/gittok-work`). Each has its own repos, cards and settings. Two of them cannot serve the same port at the same time: the second session gets the MCP tools for its own directory, but the feed on port 8008 still shows the first directory. Claude is told which directory has the port. To use both at once, set another port in one of them, in `local/settings.yaml`:
+- **Two sessions in the same directory.** The first session owns the feed server. The second finds port 7313 in use and runs the MCP server only. Both sessions work, and both see the same cards. The feed stops when the first session ends; then run `/mcp`, gittok, Reconnect in the other session to start it again. Claude is told this when the session starts.
+- **Two directories.** You can make as many GitTok directories as you like (for example `gittok init ~/gittok-work`). Each has its own repos, cards and settings. Two of them cannot serve the same port at the same time: the second session gets the MCP tools for its own directory, but the feed on port 7313 still shows the first directory. Claude is told which directory has the port. To use both at once, set another port in one of them, in `local/settings.yaml`:
 
   ```yaml
   server:
@@ -126,12 +126,14 @@ repos:
 
 GitTok is made for a phone, so LAN serving is on by default (`server.lan: true`). While a session is open, the feed server binds all interfaces, and a device that is not this computer must pair once.
 
-To pair a phone, ask Claude: "Pair my phone." Claude calls the `pairing_link` tool. It opens `http://127.0.0.1:8008/pairing` in the browser of this computer. That page shows one QR code for each LAN address of the computer, with the link as text. Scan the code with the phone camera. Both devices must be on the same network. The page answers this computer only. A server that you start by hand with `gittok serve` also prints the pairing links (lines that begin with `pair:`).
+To pair a phone, ask Claude: "Pair my phone." Claude calls the `pairing_link` tool. It opens `http://127.0.0.1:7313/pairing` in the browser of this computer. That page shows one QR code for each LAN address of the computer, with the link as text. Scan the code with the phone camera. Both devices must be on the same network. The page answers this computer only. A server that you start by hand with `gittok serve` also prints the pairing links (lines that begin with `pair:`).
+
+If the QR code does not suit, for example for an app on the phone's home screen (it keeps its own cookies, apart from the browser), open GitTok on the device and tap "Pair with a code". The device shows a code such as `K7QM-2D`. Tell Claude: "pair code K7QM-2D" (or run `gittok pair K7QM-2D`). The device opens the feed a few seconds later. A code lasts 10 minutes and works once.
 
 What this means for your network:
 
 - The feed goes over plain HTTP, not HTTPS.
-- Any device on the same network can reach the port. It gets nothing until it opens the pairing link or QR code once. The MCP server speaks stdio only; the feed server has no MCP endpoint.
+- Any device on the same network can reach the port. It gets nothing until it opens the pairing link or QR code once, or until you tell Claude the code that it shows. The MCP server speaks stdio only; the feed server has no MCP endpoint.
 - Someone who can watch traffic on that network could read the pairing token and the cards. Cards hold excerpts of your code.
 - So use it on a network you trust, such as your home network. Take care on shared or public Wi-Fi.
 - "HTTPS on a LAN" below has an optional recipe.
@@ -171,7 +173,7 @@ Start a new session after the update, so Claude Code loads the new files. Do the
 Two things are outside the directory, and neither comes from `gittok init`:
 
 - The grammar cache of the tree-sitter pack: `rm -rf ~/Library/Caches/tree-sitter-language-pack`.
-- The optional renderers: remove the memegen container and image (`docker rm -f memegen`, `docker rmi memegen`), and delete the folder that `mflux-save` wrote.
+- The optional illustration renderer: delete the folder that `mflux-save` wrote. (The meme templates are in `data/memes/`, inside the directory.) An older install may have a memegen Docker container: `docker rm -f memegen`, `docker rmi memegen`.
 
 ## A clone of the source
 
@@ -206,6 +208,7 @@ Two SessionStart hooks tell a Claude Code session when the feed wants cards (`do
       {
         "matcher": "",
         "hooks": [
+          { "type": "command", "command": "gittok url --hint 2>/dev/null || true" },
           { "type": "command", "command": "gittok health --hint 2>/dev/null || true" },
           { "type": "command", "command": "gittok feed-watch --hint 2>/dev/null || true" }
         ]
@@ -218,9 +221,10 @@ Two SessionStart hooks tell a Claude Code session when the feed wants cards (`do
 }
 ```
 
+- `gittok url --hint` prints one line with the addresses of the feed (this computer, and the LAN when phone access is on), from `server.port`. Claude gives them to you in its first reply. It prints nothing when another GitTok directory has the port. `gittok url` prints the addresses alone.
 - `gittok health --hint` prints nothing when nothing is needed. It prints one line when the feed is low, when a repo has no profile (Claude then profiles it), when its manifests changed or several of its rules do badly (Claude then offers a new profile), when a grammar is missing, when analyzer facts are stale, when the directory has the files of another GitTok version, or when another GitTok directory has the port.
 - `gittok feed-watch --hint` always prints one line. It tells the session to start `gittok feed-watch` in the background. The permission line lets that exact command run without a prompt.
-- If you do not want sessions to start card generation by themselves, remove the second hook and the permission. Put such a change in `.claude/settings.local.json`, or expect `gittok update` to write the shipped file again (it keeps your copy as `settings.json.bak`).
+- If you do not want sessions to start card generation by themselves, remove the `feed-watch` hook and the permission. Put such a change in `.claude/settings.local.json`, or expect `gittok update` to write the shipped file again (it keeps your copy as `settings.json.bak`).
 
 A clone of the source has the same hooks with `uv run --quiet gittok ...` commands, and its hint names `uv run --quiet gittok feed-watch`.
 
@@ -237,18 +241,16 @@ gittok structure --prefetch    # download the grammars for the repos in local/re
 
 In a clone, write `uv run gittok structure`. The package holds no grammars. They are a bundle of about 26 MB (12 languages) that the pack downloads from GitHub on first use into `~/Library/Caches/tree-sitter-language-pack/`. `--prefetch` does this once, on purpose, so a mining run never waits on the network. A grammar that is not in the cache is not used; `gittok health --hint` (the SessionStart hook) prints one line naming the missing grammars. Offline, run `--prefetch` on a machine with network and copy the cache dir. Shipped queries: python, typescript/tsx/javascript/svelte, clojure, go, ruby, java, rust. Another stack: let the profile skill write a `queries` entry (docs/learning.md, "The structure layer").
 
-## Meme renderer (memegen)
+## Meme templates
 
-Meme cards are drawn by a local [memegen](https://github.com/jacebrowning/memegen) server at `settings.render.memegen_url` (default `http://127.0.0.1:5001`). There is no public image, so build it from source. The build file is `Containerfile`, and the app listens on 5000 inside the container.
+GitTok draws meme posts itself, with Pillow. It needs the template images, the text layouts and the fonts of [memegen](https://github.com/jacebrowning/memegen) (MIT). Download them once (about 20 MB, needs network):
 
 ```bash
-git clone --depth 1 https://github.com/jacebrowning/memegen.git
-cd memegen && docker build -f Containerfile -t memegen .
-docker run -d --name memegen --restart unless-stopped -p 127.0.0.1:5001:5000 memegen
-curl -s http://127.0.0.1:5001/templates/ | head -c 200   # JSON means it works
+gittok memes --prefetch     # in a clone: uv run gittok memes --prefetch
+gittok memes                # which templates are downloaded, and which are missing
 ```
 
-Restart the feed server afterwards (`/mcp`, gittok, Reconnect). Until memegen answers, the brief skips the `meme` format and meme cards stay `pending_render`.
+Or ask Claude: the SessionStart hint offers the download while templates are missing. The files go to `data/memes/` of the GitTok directory. Only template files are downloaded; no card text leaves your computer. The template images belong to their owners, so GitTok does not ship them. `settings.render.meme_source` names where they come from (the memegen repo on GitHub). Until a template is downloaded, the brief does not offer it, and with none downloaded it makes no meme posts. A template you add in `local/meme_templates.yaml` must be a memegen template id; run `--prefetch` again to get it.
 
 ## Illustration renderer (mflux)
 
@@ -315,13 +317,13 @@ LAN serving is on by default (`server.lan: true`): the feed server (started by `
 
 You do not need this to use the feed. Plain HTTP on the LAN works in a browser tab. HTTPS is needed only for "Add to Home Screen" as an installed app with offline mode, because browsers register a service worker only on HTTPS or `localhost`.
 
-**The project does not test these recipes.** GitTok itself serves plain HTTP only. The recipes use a second program on the same computer that holds the certificate and forwards to `http://127.0.0.1:8008`. Read the two warnings first.
+**The project does not test these recipes.** GitTok itself serves plain HTTP only. The recipes use a second program on the same computer that holds the certificate and forwards to `http://127.0.0.1:7313`. Read the two warnings first.
 
 **Warning 1: a proxy needs LAN serving on (the default), and each device must pair.** A proxy on the same computer connects from `127.0.0.1`. GitTok does not treat such a request as local when it has one of the headers `X-Forwarded-For`, `Forwarded`, `X-Forwarded-Host`, `X-Forwarded-Proto` or `X-Real-IP`. A request with one of these headers never gets the pairing page (HTTP 403), and it needs the pairing cookie, the same as a LAN device. Know these limits:
 
 - The server has a pairing token when LAN serving is on (the default) or when `--host` is not a loopback address. If you turned LAN serving off (`server.lan: false`, or `--no-lan`) there is no token, so nothing can pair: GitTok refuses every request that has one of these headers with HTTP 403 (`proxy_needs_pairing`). Set `server.lan: true` again and restart before you use a proxy.
 - A proxy that sends none of these headers still looks local, so it skips pairing and can open the pairing page. Tailscale Serve and Caddy send the headers by default. nginx sends them only when its config has `proxy_set_header X-Forwarded-For ...`. Do not remove these headers in the proxy config.
-- Pair each device on the address that it uses. Open `https://<the proxy's name>/pair?t=<token>` on the device: the token is the last part of the pairing link (ask Claude for the pairing link, or read it on the pairing page). A cookie from the plain `http://<LAN address>:8008` address does not count for the proxy's name.
+- Pair each device on the address that it uses. Open `https://<the proxy's name>/pair?t=<token>` on the device: the token is the last part of the pairing link (ask Claude for the pairing link, or read it on the pairing page). A cookie from the plain `http://<LAN address>:7313` address does not count for the proxy's name.
 
 Also limit who can reach the proxy.
 
@@ -337,7 +339,7 @@ server:
 For devices in your own tailnet. Tailscale gets a real certificate, so the phone needs no setup beyond Tailscale itself. HTTPS certificates must be on for the tailnet (Tailscale admin console, DNS page).
 
 ```bash
-tailscale serve --bg 8008        # serves https://<machine>.<tailnet>.ts.net to the tailnet
+tailscale serve --bg 7313        # serves https://<machine>.<tailnet>.ts.net to the tailnet
 tailscale serve status           # shows the URL
 ```
 
@@ -362,7 +364,7 @@ mymac.local:8443 {
 	tls /path/to/mymac.local.pem /path/to/mymac.local-key.pem
 	@pairing path /pairing
 	respond @pairing 403
-	reverse_proxy 127.0.0.1:8008
+	reverse_proxy 127.0.0.1:7313
 }
 ```
 

@@ -88,10 +88,45 @@ def test_store_card_writes_features(conn, cfg, fixture_repo):
         ("tone", "dry-deadpan"),
         ("repo", "fixture"),
         ("dir", "billing"),
-        ("difficulty", "2"),
+        ("angle", "what"),
+        ("file", "billing/invoice.py"),
+        ("language", "python"),
+        ("kind", "source"),
         ("has_comments", "1"),
         ("visual_kind", "code"),
     }
+
+
+def test_a_test_file_gets_the_test_kind(conn, cfg, fixture_repo):
+    card = example_card(fixture_repo)
+    feats = store._features(card, cfg.fileset("fixture"))
+    assert ("kind", "source") in feats
+    card["visual"]["path"] = "tests/test_invoice.py"
+    assert ("kind", "test") in store._features(card, cfg.fileset("fixture"))
+
+
+def test_the_lead_tag_becomes_a_feature_and_refeature_keeps_it(conn, cfg, fixture_repo):
+    _insert_run(conn)
+    card_id = store_card(conn, cfg, "r_1", _accept(cfg, example_card(fixture_repo)))
+    conn.execute(
+        "INSERT INTO leads(id, repo, story_type, kind, path, lead_key, text, strength, head_sha, "
+        "first_seen_at, last_seen_at) VALUES (7, 'fixture', 'what_it_does', 'path', "
+        "'billing/invoice.py', 'cand:billing/invoice.py:1:money', 't', 1, 'h', 't', 't')"
+    )
+    conn.execute("UPDATE cards SET lead_id = 7 WHERE id = ?", (card_id,))
+    store.add_lead_features(conn, card_id, 7)
+
+    def tags():
+        return {
+            r[0]
+            for r in conn.execute(
+                "SELECT value FROM card_features WHERE card_id = ? AND feature = 'tag'", (card_id,)
+            )
+        }
+
+    assert tags() == {"money"}
+    assert store.refeature(conn, cfg) == 1
+    assert tags() == {"money"}
 
 
 def test_interactive_card_gets_interactive_feature_with_story_type(

@@ -38,17 +38,17 @@ def net(monkeypatch):
 
 
 def test_pairing_link_gives_a_link_per_address_and_opens_the_qr_page(cfg, net):
-    net.update({("127.0.0.1", 8008), (LAN, 8008), ("10.0.0.7", 8008)})
+    net.update({("127.0.0.1", 7313), (LAN, 7313), ("10.0.0.7", 7313)})
     opened = []
     out = social.pairing_link(_lan(cfg), open_url=opened.append)
     token = (cfg.settings.data_dir / "lan_token").read_text().strip()
     assert out["lan"] is True
     assert out["links"] == [
-        {"address": LAN, "url": f"http://{LAN}:8008/pair?t={token}"},
-        {"address": "10.0.0.7", "url": f"http://10.0.0.7:8008/pair?t={token}"},
+        {"address": LAN, "url": f"http://{LAN}:7313/pair?t={token}"},
+        {"address": "10.0.0.7", "url": f"http://10.0.0.7:7313/pair?t={token}"},
     ]
-    assert out["qr_page"] == "http://127.0.0.1:8008/pairing" and out["opened"] is True
-    assert opened == ["http://127.0.0.1:8008/pairing"]
+    assert out["qr_page"] == "http://127.0.0.1:7313/pairing" and out["opened"] is True
+    assert opened == ["http://127.0.0.1:7313/pairing"]
     assert token not in out["qr_page"]
     assert "only to the user" in out["message"] and "same network" in out["message"]
     assert out["notice"] == social.LAN_NOTICE
@@ -65,8 +65,23 @@ def test_the_lan_notice_states_the_facts():
     assert len(text) < 800
 
 
+def test_the_lan_texts_name_all_ways_to_pair():
+    for text in (social.LAN_NOTICE, " ".join(home.LAN_LINES)):
+        assert "pairing link" in text and "QR code" in text
+        assert "code that it shows" in text, text
+
+
+def test_pairing_link_offers_pairing_with_a_code(cfg, net):
+    """A home-screen app keeps its own cookies, so the QR code pairs the browser, not the
+    app. The result tells the agent about the other way."""
+    net.update({("127.0.0.1", 7313), (LAN, 7313)})
+    out = social.pairing_link(_lan(cfg), open_url=lambda url: True)
+    assert "Pair with a code" in out["message"] and "pair_device" in out["message"]
+    assert "home screen" in out["message"]
+
+
 def test_pairing_link_can_skip_the_browser(cfg, net):
-    net.update({("127.0.0.1", 8008), (LAN, 8008)})
+    net.update({("127.0.0.1", 7313), (LAN, 7313)})
     opened = []
     out = social.pairing_link(_lan(cfg), open_browser=False, open_url=opened.append)
     assert opened == [] and out["opened"] is False
@@ -74,7 +89,7 @@ def test_pairing_link_can_skip_the_browser(cfg, net):
 
 
 def test_pairing_link_reports_a_browser_that_did_not_open(cfg, net):
-    net.update({("127.0.0.1", 8008), (LAN, 8008)})
+    net.update({("127.0.0.1", 7313), (LAN, 7313)})
 
     def broken(url):
         raise OSError("no browser")
@@ -86,19 +101,19 @@ def test_pairing_link_reports_a_browser_that_did_not_open(cfg, net):
 
 def test_pairing_link_sees_a_server_started_with_the_lan_flag(cfg, net):
     """`--lan` is not in the settings: the answer comes from what the server serves."""
-    net.update({("127.0.0.1", 8008), (LAN, 8008)})
+    net.update({("127.0.0.1", 7313), (LAN, 7313)})
     out = social.pairing_link(_lan(cfg, False), open_url=lambda url: True)
     assert out["lan"] is True and len(out["links"]) == 1
 
 
 def test_pairing_link_when_phone_access_is_off(cfg, net):
-    net.add(("127.0.0.1", 8008))
+    net.add(("127.0.0.1", 7313))
     opened = []
     out = social.pairing_link(_lan(cfg, False), open_url=opened.append)
     assert out == {
         "lan": False,
         "links": [],
-        "qr_page": "http://127.0.0.1:8008/pairing",
+        "qr_page": "http://127.0.0.1:7313/pairing",
         "opened": False,
         "message": out["message"],
     }
@@ -108,7 +123,7 @@ def test_pairing_link_when_phone_access_is_off(cfg, net):
 
 
 def test_pairing_link_when_the_setting_is_on_but_the_server_did_not_restart(cfg, net):
-    net.add(("127.0.0.1", 8008))
+    net.add(("127.0.0.1", 7313))
     opened = []
     out = social.pairing_link(_lan(cfg), open_url=opened.append)
     assert out["lan"] is False and out["links"] == [] and opened == []
@@ -122,13 +137,13 @@ def test_pairing_link_when_the_server_is_not_running(cfg, net):
     opened = []
     out = social.pairing_link(_lan(cfg), open_url=opened.append)
     assert out["links"] == [] and out["opened"] is False and out["qr_page"] is None
-    assert "does not answer" in out["message"] and "8008" in out["message"]
+    assert "does not answer" in out["message"] and "7313" in out["message"]
     assert "Reconnect" in out["message"] and "gittok install" not in out["message"]
     assert opened == []
 
 
 def test_pairing_link_without_a_lan_address(cfg, net, monkeypatch):
-    net.add(("127.0.0.1", 8008))
+    net.add(("127.0.0.1", 7313))
     monkeypatch.setattr(social, "lan_addresses", lambda: [])
     out = social.pairing_link(_lan(cfg), open_url=lambda url: True)
     assert out["links"] == [] and "no LAN address" in out["message"]
@@ -152,7 +167,7 @@ pytestmark_anyio = pytest.mark.anyio
 
 @pytestmark_anyio
 async def test_pairing_link_tool_opens_the_page_through_the_injected_opener(cfg, net):
-    net.update({("127.0.0.1", 8008), (LAN, 8008)})
+    net.update({("127.0.0.1", 7313), (LAN, 7313)})
     opened = []
     lan = _lan(cfg)
     server = mcp_server.build_server(lambda: lan, open_url=opened.append)
@@ -164,11 +179,31 @@ async def test_pairing_link_tool_opens_the_page_through_the_injected_opener(cfg,
         for word in ("card", "file", "commit"):
             assert word in doc
         out = data(await client.call_tool("pairing_link", {}))
-        assert opened == ["http://127.0.0.1:8008/pairing"] and out["opened"] is True
+        assert opened == ["http://127.0.0.1:7313/pairing"] and out["opened"] is True
         assert out["notice"] == social.LAN_NOTICE
-        assert out["links"][0]["url"].startswith(f"http://{LAN}:8008/pair?t=")
+        assert out["links"][0]["url"].startswith(f"http://{LAN}:7313/pair?t=")
         out = data(await client.call_tool("pairing_link", {"open_browser": False}))
         assert len(opened) == 1 and out["opened"] is False
+
+
+@pytestmark_anyio
+async def test_pair_device_tool_approves_the_code_the_user_gave(cfg):
+    from datetime import UTC, datetime
+
+    from gittok import db, pair_codes
+
+    with db.session(cfg.settings.data_dir / "gittok.db") as conn:
+        req = pair_codes.request(conn, datetime.now(UTC))
+    async with Client(mcp_server.build_server(lambda: cfg)) as client:
+        tools = {t.name: t for t in (await client.list_tools()).tools}
+        doc = " ".join(tools["pair_device"].description.split())
+        assert "the user" in doc and "never" in doc.lower() and "Pair with a code" in doc
+        out = data(await client.call_tool("pair_device", {"code": req["code"].lower()}))
+        assert out["ok"] is True and out["notice"] == social.LAN_NOTICE
+        again = data(await client.call_tool("pair_device", {"code": req["code"]}))
+        assert again["ok"] is False and "Pair with a code" in again["message"]
+    with db.session(cfg.settings.data_dir / "gittok.db") as conn:
+        assert pair_codes.status(conn, req["id"], datetime.now(UTC))["state"] == "approved"
 
 
 @pytestmark_anyio
@@ -230,7 +265,7 @@ async def test_add_repo_tool_accepts_a_repo_anywhere_on_a_fresh_install(tmp_path
 
 def test_server_instructions_say_the_user_manages_gittok_by_asking():
     text = mcp_server.INSTRUCTIONS
-    for name in ("add_repo", "remove_repo", "set_lan", "pairing_link", "add_rule"):
+    for name in ("add_repo", "remove_repo", "set_lan", "pairing_link", "pair_device", "add_rule"):
         assert name in text, name
     assert "gittok-steer" in text and "gittok-generate" in text
     assert "plain HTTP" in text and "local network" in text
@@ -240,7 +275,8 @@ def test_server_instructions_say_the_user_manages_gittok_by_asking():
 
 CONFIG_TOOLS = {
     "add_repo", "remove_repo", "set_group", "set_mascot", "edit_persona", "set_playback_speed",
-    "set_lan", "pairing_link", "add_rule", "remove_rule", "reset_defaults", "save_profile",
+    "set_lan", "pairing_link", "pair_device", "add_rule", "remove_rule", "reset_defaults",
+    "save_profile",
 }  # fmt: skip
 
 
@@ -276,7 +312,7 @@ def test_generation_and_profiling_forbid_the_config_tools(path):
         for ln in text.splitlines()
         if re.search(r"[Nn]ever call|Do not call", ln) and "`add_repo`" in ln
     )
-    for name in ("add_repo", "remove_repo", "set_lan", "pairing_link"):
+    for name in ("add_repo", "remove_repo", "set_lan", "pairing_link", "pair_device"):
         assert f"`{name}`" in rule, (path, name)
 
 

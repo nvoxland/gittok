@@ -151,8 +151,7 @@
 		const el = els[next];
 		if (!el) return; // past either end: the browser scrolls (the top bar, the end card)
 		e.preventDefault();
-		// The first card snaps by its bottom edge, under the top bar.
-		el.scrollIntoView?.({ behavior: scrollBehavior(), block: next === 0 ? 'end' : 'start' });
+		el.scrollIntoView?.({ behavior: scrollBehavior(), block: 'start' });
 	}
 </script>
 
@@ -171,7 +170,6 @@
 		{:else}
 			<article
 				class="placeholder"
-				class:first={i === 0}
 				data-card-id={card.id}
 				aria-label={card.hook}
 			></article>
@@ -184,13 +182,10 @@
 	:global(html) {
 		scroll-snap-type: y mandatory;
 	}
-	/* Same box as a card (Card.svelte: article), so the page height and the snap points never move. */
+	/* Same box as a card (Card.svelte: article), so the page height and the snap points never move.
+	   Every card, the first too, is one full screen that snaps by its top. */
 	.placeholder {
 		height: 100dvh;
 		scroll-snap-align: start;
-	}
-	.placeholder.first {
-		height: calc(100dvh - var(--chrome-h, 0px));
-		scroll-snap-align: end;
 	}
 </style>

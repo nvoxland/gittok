@@ -25,7 +25,7 @@ def rule_cand(conn, path, start, tag, rule_id, rating=None):
     conn.commit()
 
 
-def card(conn, cid, path, start, tag, reward=None, events=()):
+def card(conn, cid, path, start, tag, reward=None, signal=None, weight=1.0):
     key = f"cand:{path}:{start}:{tag}"
     conn.execute(
         "INSERT OR IGNORE INTO leads(repo, story_type, kind, path, lead_key, text, strength, "
@@ -40,13 +40,9 @@ def card(conn, cid, path, start, tag, reward=None, events=()):
     )
     if reward is not None:
         conn.execute(
-            "INSERT INTO rewards(card_id, reward, computed_at) VALUES (?,?,'2026-05-31T00:00:00Z')",
-            (cid, reward),
-        )
-    for i, kind in enumerate(events):
-        conn.execute(
-            "INSERT INTO knowledge_events(event_id, ts, card_id, kind) VALUES (?,?,?,?)",
-            (abs(hash(cid)) % 100000 + i, i, cid, kind),
+            "INSERT INTO rewards(card_id, reward, weight, signal, computed_at) "
+            "VALUES (?,?,?,?,'2026-05-31T00:00:00Z')",
+            (cid, reward, weight, signal),
         )
     conn.commit()
 
@@ -58,8 +54,8 @@ def two_rules(conn):
     rule_cand(conn, "b.py", 1, "smell", "bad", rating=(1, "bad"))
     rule_cand(conn, "b.py", 20, "smell", "bad")
     cand(conn, "c.py", 1, "core", rating=(3, "core"))
-    card(conn, "c1", "a.py", 1, "smell", reward=0.9, events=["knew_it"])
-    card(conn, "c2", "a.py", 20, "smell", reward=0.7, events=["teach_more"])
+    card(conn, "c1", "a.py", 1, "smell", reward=0.9, signal="like")
+    card(conn, "c2", "a.py", 20, "smell", reward=0.7)
     card(conn, "c3", "b.py", 1, "smell", reward=0.1)
     card(conn, "c4", "c.py", 1, "core", reward=0.5)
 
@@ -71,7 +67,7 @@ def by_rule(conn):
 def test_rollup_per_rule(conn, two_rules):
     good = by_rule(conn)["good"]
     assert (good["found"], good["rated"], good["mean_teachable"]) == (2, 2, 4.5)
-    assert (good["cards"], good["knew_it"], good["teach_more"]) == (2, 1, 1)
+    assert (good["cards"], good["likes"], good["dislikes"]) == (2, 1, 0)
     assert good["mean_reward"] == pytest.approx(0.8)
     bad = by_rule(conn)["bad"]
     assert (bad["found"], bad["rated"], bad["mean_teachable"], bad["cards"]) == (2, 1, 1.0, 1)
@@ -160,3 +156,13 @@ def test_get_profile_has_rule_outcomes(conn, two_rules, tmp_path):
     )
     prof = steering.get_profile(conn, cfg)
     assert prof["rule_outcomes"]["r"][0]["rule"] == "good"
+
+
+def test_a_dislike_counts_with_its_weight_in_the_mean_reward(conn):
+    rule_cand(conn, "a.py", 1, "smell", "meh")
+    rule_cand(conn, "a.py", 20, "smell", "meh")
+    card(conn, "c1", "a.py", 1, "smell", reward=0.8)
+    card(conn, "c2", "a.py", 20, "smell", reward=0.0, signal="dislike", weight=3.0)
+    row = by_rule(conn)["meh"]
+    assert row["dislikes"] == 1
+    assert row["mean_reward"] == pytest.approx(0.8 / 4)

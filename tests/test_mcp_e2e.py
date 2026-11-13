@@ -35,16 +35,23 @@ async def test_scripted_run_stores_valid_cards_and_reports_rejects(fixture_repo,
         assert pk0["suggested_model"] in ("haiku", "sonnet")
         assert set(pk0) == {"id", "repo", "count", "suggested_model", "categories", "formats"}
 
-        # Each subagent fetches its own packet: leads, recent stories, guidance with formats.
+        # Each subagent fetches its own packet (leads, recent stories, evidence), then the
+        # guidance for its formats in a second call: one reply with both was over 50 KB, and
+        # the harness saved it to a file the writer could not read.
         for pk in brief["packets"]:
-            got = data(
-                await client.call_tool("get_packet", {"run_id": run_id, "packet_id": pk["id"]})
-            )
+            args = {"run_id": run_id, "packet_id": pk["id"]}
+            raw = await client.call_tool("get_packet", args)
+            got = data(raw)
             assert got["count"] == pk["count"] and len(got["formats"]) == pk["count"]
             assert f"## Packet {pk['id']}" in got["packet_markdown"]
-            assert "Real people" in got["guidance_markdown"]
+            assert "guidance_markdown" not in got and "leads" not in got  # leads: packet_markdown
+            graw = await client.call_tool("get_guidance", args)
+            guide = data(graw)["guidance_markdown"]
+            assert "Real people" in guide
             for fmt in got["formats"]:
-                assert f"### Format: `{fmt}`" in got["guidance_markdown"]
+                assert f"### Format: `{fmt}`" in guide
+            for reply in (raw, graw):
+                assert len(reply.content[0].text) < mcp_server.MAX_REPLY_CHARS
 
         # It researches with the read-only tools...
         shown = await client.call_tool(
@@ -171,10 +178,11 @@ async def test_get_brief_uses_learned_mix_when_rewards_exist(fixture_repo, tmp_p
     with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         for f in brief.CATEGORY_FORMATS["code"]:
             if f != "code_card":
-                a0, b0 = learning._prior(cfg, "format", f)
+                m = learning.Model(cfg, learning.load_reward_config(cfg), {}, learning._now(None))
+                m0, q0 = m.prior(("format", f))
                 conn.execute(
-                    "INSERT OR REPLACE INTO weights VALUES (?, ?, ?, ?, ?)",
-                    ("format", f, a0 + 50, b0, learning._iso(learning._now(None))),
+                    "INSERT OR REPLACE INTO model_weights VALUES (?, ?, ?, ?, ?, ?)",
+                    ("format", f, m0 + 2, q0 + 12, 50, learning._iso(learning._now(None))),
                 )
         for i in range(7):
             conn.execute(
@@ -256,7 +264,7 @@ async def test_get_packet_attaches_materials(fixture_repo, tmp_path):
         for pk in brief["packets"]:
             args = {"run_id": run_id, "packet_id": pk["id"]}
             seen.append(data(await client.call_tool("get_packet", args)))
-        assert all(len(g["lead_refs"]) == len(g["leads"]) for g in seen)
+        assert all(g["lead_refs"] and "leads" not in g for g in seen)
         joined = "\n".join(g["materials_markdown"] for g in seen)
         assert "```diff" in joined or "blob " in joined
 
@@ -322,3 +330,23 @@ async def test_get_brief_with_no_repos_returns_a_message_and_opens_no_run(fixtur
             assert "add_repo" in out["message"] and "terminal" not in out["message"]
     with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
         assert conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 0
+
+
+async def test_get_packet_starts_with_the_hard_limits(fixture_repo, tmp_path):
+    """Writers broke the size limits again and again (excerpt_too_long, too_long): the limits
+    were deep in the guidance. Each packet now starts with them, from the validator."""
+    from gittok import validator
+
+    cfg = make_config(fixture_repo, tmp_path, packet_size=2)
+    async with Client(mcp_server.build_server(lambda: cfg)) as client:
+        brief = data(await client.call_tool("get_brief", {"count": 2}))
+        pk = brief["packets"][0]
+        got = data(
+            await client.call_tool("get_packet", {"run_id": brief["run_id"], "packet_id": pk["id"]})
+        )
+    assert next(iter(got)) == "limits_markdown"
+    text = got["limits_markdown"]
+    for n in (validator.MAX_HOOK, validator.FRONT_BUDGET, validator.ITEM_COST,
+              validator.MAX_FRONT_CODE_LINES, validator.MAX_SPAN):  # fmt: skip
+        assert str(n) in text, n
+    assert "check_cards" not in text

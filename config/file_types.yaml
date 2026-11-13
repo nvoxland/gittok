@@ -210,3 +210,13 @@ comment_prefixes:
 todo_comment:
   prefixes: ["#", "//", ";", "--", "/*", "*", "<!--"]
   words: [TODO, FIXME, HACK, XXX]
+
+# Extensions that two kinds of file share. The repo survey shows the note and the dirs of such
+# files next to the grammar it would use, so the agent checks before it writes a query.
+two_meanings:
+  .scm: "Scheme code, or tree-sitter query files (often in a queries/ dir): a query file is not Scheme"
+  .h: "a C or a C++ header"
+  .m: "Objective-C, or MATLAB / Octave"
+  .pl: "Perl, or Prolog"
+  .v: "Verilog, or Coq / Rocq"
+  .md: "Markdown, or a skill or agent prompt that a tool reads"

@@ -12,12 +12,19 @@ from __future__ import annotations
 import unicodedata
 
 from gittok import db
-from gittok.requests import _place
 
 REPLY_STRENGTH = 2.0
 KEY_PREFIX = "reply:"
 MAX_CHARS = 280
 _DROPPED = frozenset({"Cc", "Cf", "Cs", "Co", "Cn"})  # control, format, unassigned
+
+
+def card_place(spec: dict) -> tuple[str, str]:
+    """(path, commit) the card is about: its sources first, then visual and depth panels."""
+    parts = [*spec.get("sources", []), spec.get("visual", {}), *spec.get("depth", [])]
+    path = next((p["path"] for p in parts if p.get("path")), "")
+    commit = next((p["commit"] for p in parts if p.get("commit")), "")
+    return path, commit
 
 
 class ReplyError(ValueError):
@@ -67,7 +74,7 @@ def add(conn, card_id: str, comment_index: int, text: str, now: str | None = Non
     comment = comments[comment_index]
     persona = comment["persona"]
     now = now or db.now_iso()
-    path, commit = _place(spec)
+    path, commit = card_place(spec)
     cur = conn.execute(
         "INSERT INTO replies(card_id, persona, comment_index, text, created_at) "
         "VALUES (?, ?, ?, ?, ?)",

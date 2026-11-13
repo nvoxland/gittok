@@ -9,4 +9,7 @@
 	});
 </script>
 
+<!-- Opaque bands over the safe areas in the home-screen app: see .edge in app.css. -->
+<div class="edge top" aria-hidden="true"></div>
+<div class="edge bottom" aria-hidden="true"></div>
 {@render children()}

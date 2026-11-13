@@ -26,7 +26,7 @@ def call(app, method, path, peer, **kw):
     async def go():
         transport = httpx.ASGITransport(app=app, client=(peer, 5000))
         async with httpx.AsyncClient(
-            transport=transport, base_url="http://localhost:8008", cookies=cookies
+            transport=transport, base_url="http://localhost:7313", cookies=cookies
         ) as c:
             return await c.request(method, path, **kw)
 
@@ -192,7 +192,7 @@ def raw(app, method, path, headers, peer="127.0.0.1"):
         scope = {
             "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
             "method": method, "path": path, "raw_path": path.encode(), "query_string": b"",
-            "scheme": "http", "root_path": "", "server": ("127.0.0.1", 8008),
+            "scheme": "http", "root_path": "", "server": ("127.0.0.1", 7313),
             "client": (peer, 5000),
             "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
         }  # fmt: skip
@@ -219,7 +219,7 @@ def strict_app(strict_cfg, monkeypatch):
 
 
 @pytest.mark.parametrize("path", ["/api/feed", "/", "/pair", "/assets/mascots/x.png"])
-@pytest.mark.parametrize("host", ["evil.example", "evil.example:8008", "testserver", ""])
+@pytest.mark.parametrize("host", ["evil.example", "evil.example:7313", "testserver", ""])
 def test_unknown_host_is_421_on_every_path_even_from_loopback(strict_app, path, host):
     r = raw(strict_app, "GET", path, {"Host": host})
     assert r["status"] == 421
@@ -232,9 +232,9 @@ def test_missing_host_is_421(strict_app):
 @pytest.mark.parametrize(
     "host",
     [
-        "localhost", "localhost:8008", "LOCALHOST:8008", "127.0.0.1", "127.0.0.1:8008",
-        "[::1]", "[::1]:8008", "192.168.1.5:8008", "deskbox.local:8008", "Deskbox.local",
-        "deskbox:8008", "localhost.",
+        "localhost", "localhost:7313", "LOCALHOST:7313", "127.0.0.1", "127.0.0.1:7313",
+        "[::1]", "[::1]:7313", "192.168.1.5:7313", "deskbox.local:7313", "Deskbox.local",
+        "deskbox:7313", "localhost.",
     ],
 )  # fmt: skip
 def test_own_names_and_addresses_are_accepted(strict_app, host):
@@ -255,7 +255,7 @@ def test_settings_allowed_hosts_are_accepted(strict_cfg, monkeypatch):
     server = replace(strict_cfg.settings.server, allowed_hosts=("Feed.Example.net",))
     cfg2 = replace(strict_cfg, settings=replace(strict_cfg.settings, server=server))
     app = api.create_app(lambda: cfg2)
-    assert raw(app, "GET", "/api/feed", {"Host": "feed.example.net:8008"})["status"] == 200
+    assert raw(app, "GET", "/api/feed", {"Host": "feed.example.net:7313"})["status"] == 200
     assert raw(app, "GET", "/api/feed", {"Host": "other.example.net"})["status"] == 421
 
 
@@ -265,11 +265,11 @@ def test_a_new_lan_address_is_accepted_without_a_restart(strict_cfg, monkeypatch
     monkeypatch.setattr(social, "lan_addresses", lambda: list(addrs))
     monkeypatch.setattr(api, "_now", lambda: now[0])
     app = api.create_app(lambda: strict_cfg)
-    assert raw(app, "GET", "/api/feed", {"Host": "192.168.1.5:8008"})["status"] == 200
-    assert raw(app, "GET", "/api/feed", {"Host": "10.0.0.7:8008"})["status"] == 421
+    assert raw(app, "GET", "/api/feed", {"Host": "192.168.1.5:7313"})["status"] == 200
+    assert raw(app, "GET", "/api/feed", {"Host": "10.0.0.7:7313"})["status"] == 421
     addrs[:] = ["10.0.0.7"]
     now[0] += 10
-    assert raw(app, "GET", "/api/feed", {"Host": "10.0.0.7:8008"})["status"] == 200
+    assert raw(app, "GET", "/api/feed", {"Host": "10.0.0.7:7313"})["status"] == 200
 
 
 def test_unknown_hosts_do_not_force_a_lookup_per_request(strict_cfg, monkeypatch):
@@ -283,16 +283,16 @@ def test_unknown_hosts_do_not_force_a_lookup_per_request(strict_cfg, monkeypatch
 
 
 @pytest.mark.parametrize("method", ["POST", "PUT", "DELETE", "PATCH"])
-@pytest.mark.parametrize("origin", ["http://evil.example", "null", "http://evil.example:8008"])
+@pytest.mark.parametrize("origin", ["http://evil.example", "null", "http://evil.example:7313"])
 def test_state_changing_request_with_foreign_origin_is_403(strict_app, method, origin):
-    r = raw(strict_app, method, "/api/events", {"Host": "localhost:8008", "Origin": origin})
+    r = raw(strict_app, method, "/api/events", {"Host": "localhost:7313", "Origin": origin})
     assert r["status"] == 403
 
 
 def test_origin_in_the_allowlist_or_absent_is_fine(strict_app):
-    ok = {"Host": "localhost:8008"}
+    ok = {"Host": "localhost:7313"}
     body = {"events": []}
-    for origin in ("http://localhost:5173", "http://192.168.1.5:8008", "http://[::1]:8008"):
+    for origin in ("http://localhost:5173", "http://192.168.1.5:7313", "http://[::1]:7313"):
         h = {"Origin": origin}
         r = call(strict_app, "POST", "/api/events", "127.0.0.1", json=body, headers=h)
         assert r.status_code == 200, origin
@@ -531,7 +531,7 @@ def test_middleware_errors_carry_a_code_next_to_detail(cfg, lan_app, strict_app)
             "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
             "method": "POST", "path": "/api/events", "raw_path": b"/api/events",
             "query_string": b"", "scheme": "http", "root_path": "",
-            "server": ("127.0.0.1", 8008), "client": ("127.0.0.1", 5000),
+            "server": ("127.0.0.1", 7313), "client": ("127.0.0.1", 5000),
             "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
         }  # fmt: skip
         asyncio.run(strict_app(scope, receive, send))
@@ -547,8 +547,8 @@ def test_pairing_page_shows_a_qr_code_and_the_link_per_address(lan_app, monkeypa
     assert r.status_code == 200 and r.headers["content-type"].startswith("text/html")
     assert r.headers["cache-control"] == "no-store"
     assert r.text.count("<svg") == 2 and "<script" not in r.text.lower()
-    assert f"http://192.168.1.5:8008/pair?t={TOKEN}" in r.text
-    assert f"http://10.0.0.7:8008/pair?t={TOKEN}" in r.text
+    assert f"http://192.168.1.5:7313/pair?t={TOKEN}" in r.text
+    assert f"http://10.0.0.7:7313/pair?t={TOKEN}" in r.text
     assert r.text.index("192.168.1.5") < r.text.index("10.0.0.7")  # the primary address first
     assert "Scan with your phone's camera" in r.text and "same network" in r.text
     note = r.text[r.text.rindex("</svg>") :]
@@ -598,7 +598,7 @@ def test_pairing_page_is_refused_for_a_proxied_request(cfg, lan_app, headers):
 def test_pairing_page_needs_a_known_host(strict_app):
     r = raw(strict_app, "GET", "/pairing", {"Host": "evil.example"})
     assert r["status"] == 421
-    assert raw(strict_app, "GET", "/pairing", {"Host": "127.0.0.1:8008"})["status"] == 200
+    assert raw(strict_app, "GET", "/pairing", {"Host": "127.0.0.1:7313"})["status"] == 200
 
 
 def test_real_server_access_log_has_no_token_for_the_pairing_page(cfg, capfd, monkeypatch):
@@ -620,3 +620,164 @@ def test_real_server_access_log_has_no_token_for_the_pairing_page(cfg, capfd, mo
         t.join(5)
     logged = "".join(capfd.readouterr())
     assert "/pairing" in logged and TOKEN not in logged
+
+
+# --- pairing by code ---------------------------------------------------------------------------
+
+
+def _approve(cfg, code):
+    from datetime import UTC, datetime
+
+    from gittok import db, pair_codes
+
+    with db.session(cfg.settings.data_dir / "gittok.db") as conn:
+        return pair_codes.approve(conn, code, datetime.now(UTC))
+
+
+def _code_in(text):
+
+    from gittok import pair_codes
+
+    return pair_codes.CODE_RE.search(text).group(0)
+
+
+def test_unpaired_page_offers_pairing_with_a_code(lan_app):
+    r = call(lan_app, "GET", "/", "192.168.1.9", headers={"Accept": "text/html"})
+    assert 'action="/pair/code"' in r.text and 'method="post"' in r.text
+    assert "Pair with a code" in r.text
+
+
+def test_pair_by_code_from_request_to_cookie(cfg, lan_app):
+    lan = "192.168.1.9"
+    r = call(lan_app, "POST", "/pair/code", lan, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/pair/wait"
+    req = r.cookies["cs_pair"]
+    assert TOKEN not in r.text
+
+    wait = call(lan_app, "GET", "/pair/wait", lan, cookies={"cs_pair": req})
+    assert wait.status_code == 200
+    code = _code_in(wait.text)
+    assert "http-equiv=refresh" in wait.text.replace('"', "")
+    assert TOKEN not in wait.text and wait.headers["cache-control"] == "no-store"
+    # Not approved yet: still no cookie, and the feed stays closed.
+    assert "cs_lan" not in wait.headers.get("set-cookie", "")
+    assert call(lan_app, "GET", "/api/feed", lan).status_code == 401
+
+    assert _approve(cfg, code)["ok"] is True
+    done = call(lan_app, "GET", "/pair/wait", lan, cookies={"cs_pair": req}, follow_redirects=False)
+    assert done.status_code == 303 and done.headers["location"] == "/"
+    cookies = done.headers.get_list("set-cookie")
+    assert any(c.startswith(f"cs_lan={TOKEN}") and "httponly" in c.lower() for c in cookies)
+    assert call(lan_app, "GET", "/api/feed", lan, cookies={"cs_lan": TOKEN}).status_code == 200
+    # The approval is used once: the same request id gets nothing again.
+    again = call(lan_app, "GET", "/pair/wait", lan, cookies={"cs_pair": req})
+    assert "cs_lan" not in again.headers.get("set-cookie", "")
+    assert "Pair with a code" in again.text
+
+
+def test_pair_wait_without_a_request_offers_a_new_code(lan_app):
+    r = call(lan_app, "GET", "/pair/wait", "192.168.1.9")
+    assert r.status_code == 200 and "Pair with a code" in r.text
+    r = call(lan_app, "GET", "/pair/wait", "192.168.1.9", cookies={"cs_pair": "forged"})
+    assert "Pair with a code" in r.text and TOKEN not in r.text
+
+
+def test_pair_code_refuses_a_cross_origin_post(lan_app):
+    r = call(
+        lan_app, "POST", "/pair/code", "192.168.1.9", headers={"Origin": "http://evil.example"}
+    )
+    assert r.status_code == 403
+
+
+def test_pair_code_when_too_many_wait(cfg, lan_app, monkeypatch):
+    from gittok import pair_codes
+
+    monkeypatch.setattr(pair_codes, "MAX_PENDING", 1)
+    assert call(lan_app, "POST", "/pair/code", "192.168.1.9").status_code in (200, 303)
+    r = call(lan_app, "POST", "/pair/code", "192.168.1.9", follow_redirects=False)
+    assert r.status_code == 429
+
+
+def test_pair_by_code_is_off_without_a_lan_token(cfg):
+    app = api.create_app(lambda: cfg)
+    assert call(app, "POST", "/pair/code", "127.0.0.1", follow_redirects=False).status_code == 404
+
+
+def test_pair_pages_let_their_form_send_its_real_origin(lan_app):
+    """With `no-referrer`, a browser posts the form with `Origin: null`, which the Origin
+    check refuses. The pairing pages use `same-origin`: the real origin goes to this server
+    only."""
+    lan = "192.168.1.9"
+    page = call(lan_app, "GET", "/", lan, headers={"Accept": "text/html"})
+    assert page.headers["referrer-policy"] == "same-origin"
+    wait = call(lan_app, "GET", "/pair/wait", lan)
+    assert wait.headers["referrer-policy"] == "same-origin"
+    # Every other page keeps no-referrer.
+    assert call(lan_app, "GET", "/api/feed", lan).headers["referrer-policy"] == "no-referrer"
+    # The form's real origin passes; a null origin is still refused.
+    ok = call(
+        lan_app,
+        "POST",
+        "/pair/code",
+        lan,
+        headers={"Origin": "http://localhost:7313"},
+        follow_redirects=False,
+    )
+    assert ok.status_code == 303
+    bad = call(lan_app, "POST", "/pair/code", lan, headers={"Origin": "null"})
+    assert bad.status_code == 403
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/apple-touch-icon.png",
+        "/icon-192.png",
+        "/icon-512.png",
+        "/icon-maskable-512.png",
+        "/manifest.webmanifest",
+    ],
+)
+def test_an_unpaired_device_gets_the_app_icons(cfg, lan_app, path):
+    """A phone adds the app to its home screen with the icon that it can fetch at that
+    moment. These files hold no user data, so they need no pairing."""
+    r = call(lan_app, "GET", path, "192.168.1.9")
+    assert r.status_code != 401, r.text[:80]
+
+
+def test_an_unpaired_device_gets_nothing_else(lan_app):
+    for path in ("/", "/index.html", "/api/feed", "/assets/x/y.png", "/icon-192.png/../api/feed"):
+        assert call(lan_app, "GET", path, "192.168.1.9").status_code == 401, path
+
+
+def test_pair_pages_name_the_app_icon_and_manifest(lan_app):
+    for path in ("/", "/pair/wait"):
+        text = call(lan_app, "GET", path, "192.168.1.9", headers={"Accept": "text/html"}).text
+        assert '<link rel="apple-touch-icon" href="/apple-touch-icon.png">' in text, path
+        assert '<link rel="manifest" href="/manifest.webmanifest">' in text, path
+
+
+def test_the_public_icon_paths_are_the_icon_files_of_the_web_app():
+    from pathlib import Path
+
+    static = Path(__file__).parents[1] / "web" / "static"
+    files = {f"/{p.name}" for p in static.iterdir() if p.suffix in (".png", ".webmanifest")}
+    assert api.APP_ICON_PATHS == files
+
+
+def test_the_wait_page_has_a_button_that_copies_what_to_tell_claude(lan_app):
+    lan = "192.168.1.9"
+    req = call(lan_app, "POST", "/pair/code", lan, follow_redirects=False).cookies["cs_pair"]
+    wait = call(lan_app, "GET", "/pair/wait", lan, cookies={"cs_pair": req})
+    code = _code_in(wait.text)
+    assert f'data-copy="pair code {code}"' in wait.text
+    assert '<script src="/pair.js"></script>' in wait.text
+    assert "<script>" not in wait.text  # no inline script: the CSP allows only files of 'self'
+    assert "script-src 'self'" in wait.headers["content-security-policy"]
+
+
+def test_the_copy_script_is_served_before_pairing(lan_app):
+    r = call(lan_app, "GET", "/pair.js", "192.168.1.9")
+    assert r.status_code == 200 and "javascript" in r.headers["content-type"]
+    # Plain HTTP on the LAN has no navigator.clipboard: the script falls back to execCommand.
+    assert "navigator.clipboard" in r.text and "execCommand('copy')" in r.text

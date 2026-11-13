@@ -5,6 +5,10 @@
         "hooks": [
           {
             "type": "command",
+            "command": "gittok url --hint 2>/dev/null || true"
+          },
+          {
+            "type": "command",
             "command": "gittok health --hint 2>/dev/null || true"
           },
           {

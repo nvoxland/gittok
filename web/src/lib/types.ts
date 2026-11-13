@@ -210,6 +210,8 @@ export type Card = {
 export type FeedResponse = {
 	cards: Card[];
 	next_cursor: string | null;
+	// Every card sent so far, also at the end of the feed: ask with it for new cards.
+	cursor?: string | null;
 	// The card last seen, served first on a fresh load (null when there is none).
 	resume_card_id?: string | null;
 	// A generation run is open on the server now: new cards are on their way.
@@ -226,8 +228,7 @@ export type FeedEventType =
 	| 'lightbox_open'
 	| 'like'
 	| 'save'
-	| 'knew_it'
-	| 'teach_more'
+	| 'dislike'
 	| 'answer'
 	| 'source_tap'
 	| 'beats_done'
