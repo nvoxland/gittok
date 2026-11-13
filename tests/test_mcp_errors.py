@@ -54,7 +54,7 @@ async def test_locked_database_names_the_cause(fixture_repo, tmp_path, monkeypat
         async with Client(server) as client:
             res = await client.call_tool(
                 "add_rule",
-                {"type": "ban", "feature": "format", "value": "meme", "reason": "no memes"},
+                {"type": "limit", "feature": "format", "value": "meme", "max_share": 0},
             )
     finally:
         holder.rollback()

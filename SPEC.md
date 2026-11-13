@@ -96,7 +96,7 @@ repos:
 ```
 
 - A repo is a local directory, or a remote URL that GitTok clones into its own `repos/` directory and fetches before each analysis.
-- Groups are ranking features: the feed can learn "cares about the-app, skims the rest".
+- Groups are learning features: the feed can learn "cares about the-app, skims the rest".
 - Within a group, the agent may write cross-repo stories (section 6.4).
 - Analysis is read-only. GitTok never writes to a working tree, an index, or a local branch of your repos. A repo with `fetch: true` gets a fetch that updates remote-tracking refs only.
 - Each repo has a **profile** (`local/profiles/<repo>.yaml`): rules, kept as data, that find the code worth teaching. The `gittok-profile-repo` skill writes it. The agent runs that skill by itself for a repo with no profile: right after the repo is added, and before it makes cards. For a repo that has a profile, the agent only offers a revision. See `docs/learning.md`, "Candidate score and repo profiles".
@@ -109,7 +109,7 @@ The core idea: **what the story is** is separate from **how it is presented**.
 
 A **card** = Story × Format × Persona × Tone (plus the repo's mascot when illustrated).
 
-One story ("billing/ has had 4 reverts this month") can become a meme, a thread, an iceberg layer, a news bulletin, or a persona's hot take. This gives variety without more facts. It also lets the ranker learn format, persona and tone preferences apart from the topic.
+One story ("billing/ has had 4 reverts this month") can become a meme, a thread, an iceberg layer, a news bulletin, or a persona's hot take. This gives variety without more facts. It also lets the learner tell format, persona and tone preferences apart from the topic.
 
 The story types and formats below are the values of `story_type` and `format` in the card schema (`src/gittok/schema/card.schema.json`).
 
@@ -199,7 +199,7 @@ The agent picks a format that fits the story, guided by the brief. `docs/formats
 
 ### 7.1 Personas (invented creator accounts)
 
-A cast of fictional posters. Each has a handle, an avatar, and a voice. Persona is a ranking feature.
+A cast of fictional posters. Each has a handle, an avatar, and a voice. Persona is a learning feature.
 
 | Persona | Handle | Voice |
 |---|---|---|
@@ -258,11 +258,11 @@ mascots:
 
 ## 9. Tones
 
-Every card has one tone. Tone is a ranking feature, so the feed learns the mix the reader likes.
+Every card has one tone. Tone is a learning feature, so the feed learns the mix the reader likes.
 
 `wholesome-nerdy` · `dry-deadpan` · `roast` · `hype` · `chaotic-absurd` · `earnest-teacher`
 
-The default tone mix is in section 13. Rules can limit or ban a tone.
+The default tone mix is in section 13. A rule can limit a tone, also to 0.
 
 ---
 
@@ -378,16 +378,14 @@ Each card has feature values: story type, format, persona, tone, repo, group, di
 - The weights decay toward the prior with time, so interests can shift (`half_life_days`).
 - The default mix (section 13) seeds the priors. The rewards keep the features of each impression, so the model can be rebuilt (`gittok relearn`).
 
-### 12.4 Slotting (builds the feed)
+### 12.4 Serving the feed
 
-After scoring, in order:
+Cards are expensive to make, there are never many, and they are made as the reader scrolls. So the feed does not rank: it serves every card the reader has not seen, oldest first. Only these rules apply:
 
-1. **Rules** (section 14): bans remove, boosts multiply, focus reserves slots, limits cap a share.
-2. **Exploration**: a share of the slots goes to cards outside the learned taste.
-3. **Learning boost**: code areas the reader has seen little get reserved slots.
-4. **Rhythm**: no more than 2 cards of the same format in a row; fast cards and slow cards alternate.
-5. **One story, one slot**, and **series** parts in order and spaced.
-6. **Repeat limit**: a card comes back within the repeat window only through spaced repetition.
+1. **One story, one slot**, and **series** parts in order and spaced.
+2. **Seen once**: a card comes back only through spaced repetition.
+
+Rules (section 14) shape generation only.
 
 ### 12.5 Spaced repetition
 
@@ -395,7 +393,7 @@ A wrong answer on an interactive card brings the card back after growing interva
 
 ### 12.6 Driving generation
 
-The same model decides what gets made (section 10.3). It scores the leads by their features (repo, dir, file, language, kind, tag, story type, familiarity) plus how teachable and how new they are, and it sets the category quotas, the tone mix, the persona share, the repo share and the angle of each card (the story types of an angle the reader likes get more slots): make more of what scores well, and a little of everything else. The ranker orders what exists. The brief decides what gets made.
+The same model decides what gets made (section 10.3). It scores the leads by their features (repo, dir, file, language, kind, tag, story type, familiarity) plus how teachable and how new they are, and it sets the category quotas, the tone mix, the persona share, the repo share and the angle of each card (the story types of an angle the reader likes get more slots): make more of what scores well, and a little of everything else. The learner only decides what gets made: the mix of each run. It never orders the cards that exist.
 
 ---
 
@@ -422,7 +420,6 @@ tones:
 
 visual_mix:
   image_min_share: 0.5   # least share of cards in an image format
-exploration_share: 0.18
 ```
 
 A reset (`reset_defaults`, or `gittok reset-weights`) deletes the learned weights, so the feed starts from this mix again. `local/defaults.yaml` changes the mix for one GitTok directory; like every shipped file, it has a local file that is merged over it (`docs/config.md`, "The merge rule").
@@ -435,13 +432,13 @@ Rules are plain records in SQLite. They always override learned weights.
 
 ```
 boost   dir=api-server/sync   x2.0   until 2026-11-06
-ban     format=horoscope
+limit   format=horoscope      max_share=0
 focus   repo=billing          slots=3   until 2026-11-13
 limit   tone=roast            max_share=0.10
 prefer  persona=greybeard     x1.5
 ```
 
-Types: `boost`, `ban`, `focus`, `limit`, `prefer`. A rule may expire. Each rule records who made it and why (the user's own words). `docs/learning.md` section 10 says which rules change generation and which only change the order.
+Types: `boost`, `focus`, `limit`, `prefer`. "Never X" is a limit with share 0; there is no ban, and the reader's own words for anything else go in `local/guidance.md`. A rule may expire. Each rule records who made it and why (the user's own words). Rules shape what gets made, never the order of the feed (`docs/learning.md` section 10).
 
 ---
 
@@ -460,7 +457,7 @@ The MCP server is named `gittok`. Its tools fall into these groups:
 | Steering | `list_rules`, `add_rule`, `remove_rule`, `reset_defaults`, `set_playback_speed` |
 | Config | `list_repos`, `add_repo`, `remove_repo`, `set_group`, `set_mascot`, `edit_persona` |
 | Config files (read-only) | `config_files`, `get_config`, `check_config` |
-| Phone access | `pairing_link`, `pair_device`, `set_lan` |
+| Phone access | `feed_address`, `pair_device`, `set_lan` |
 
 Every repo tool takes a configured repo name, never a path. The one exception is `add_repo`, which takes the path or URL of the repo to add.
 
@@ -471,7 +468,7 @@ The user manages GitTok by asking the agent in plain words: the server's MCP ins
 - `list_repos` gives per repo `profiled`, `cards`, `unseen` and `last_card_at`. `feed_health` gives the backlog, also per repo (`by_repo`). `recent_cards(limit, repo)` names the repo and group of each card. `recent_runs(limit)` gives the last runs with counts and the top reject reasons. `status` gives the version, the directory and its files version, and the state of the feed server.
 - Every shipped config file has a local file in `local/` that is merged over it. There is no tool that writes any setting: on the user's request the agent edits the local file with its own file tools. `config_files` lists the files with their merge rule, `get_config(file, key)` gives the shipped, local and effective value, and `check_config` loads everything again and returns errors and warnings. The writer and scout subagents do not have these tools, and generation and profiling never edit `local/` by hand.
 - `status` also gives `renderers` (`illustration`, `meme`): whether each image renderer can run now.
-- `pairing_link` returns the pairing links, opens the loopback-only QR page (`/pairing`) in the browser, and carries a `notice` about LAN serving that the agent relays to the user. `set_lan` writes only `server.lan` in `local/settings.yaml`; the change needs a server restart.
+- `feed_address` returns the addresses where the running server answers (this computer and each LAN address a phone can open) and carries a `notice` about LAN serving that the agent relays to the user. A device pairs only by code: it shows the code ("Pair with a code"), the user tells the agent, and `pair_device` approves it. No link, page or QR code holds the token. `set_lan` writes only `server.lan` in `local/settings.yaml`; the change needs a server restart.
 
 The server writes `<data_dir>/profile.md`, a plain-English summary of the learned taste, once a day. The CLI (`gittok --help`) gives the same functions without an agent.
 

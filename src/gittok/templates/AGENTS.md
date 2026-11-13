@@ -16,9 +16,9 @@ First run, when no repo is configured:
 2. Do what its `next` says, without a question: profile the repo (the rules that find the code worth teaching); if `status`
    shows `renderers.illustration` true, give it a mascot that fits it (`set_mascot`); then make the first cards (see below).
    Say each in one line. With no profile instructions (last section), skip the profile: GitTok uses its default rules.
-3. For the phone, call `pairing_link`. Tell the user what its `notice` says: the feed is served to the local network over
-   plain HTTP, and a device must pair once. `set_lan` turns phone access off or on. Show the pairing link only to the user.
-   For a home-screen app, the user taps "Pair with a code" on the device and says the code: call `pair_device(code)`.
+3. For the phone, call `feed_address` and give the user its `phone` address. On the phone the user opens it, taps
+   "Pair with a code", and tells you the code: call `pair_device(code)`. Tell the user what the `notice` says: the feed is
+   served to the local network over plain HTTP, and a device must pair once. `set_lan` turns phone access off or on.
 
 Other requests: `list_repos`, `set_group`, `remove_repo` (it also deletes the repo's cards, profile and mascot: tell the user
 the counts); `add_rule`, `list_rules`, `remove_rule`, `get_taste_profile` to steer the feed. To change a default (file sets, languages,

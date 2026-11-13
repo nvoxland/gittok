@@ -17,7 +17,7 @@ Requires the `gittok` MCP server (tools named `mcp__gittok__*`). If those tools 
 
 ## Tools
 
-`list_repos`, `survey_repo(repo)`, `list_dir(repo, path)`, `read_file(repo, path)`, `git_grep(repo, pattern)`, `test_detector(repo, rule, scan?, ignore?)`, `save_profile(repo, profile)`, `rule_stats(repo)`, `submit_facts(repo, head_sha, tool, facts)`, and the read-only `get_config(file, key)` (for `analyzers` when the survey cut its `how` texts). Do not call any other config tool (`add_repo`, `remove_repo`, `set_lan`, `pairing_link`, `pair_device`, `add_rule`, `set_group`, `set_mascot`, `edit_persona`, `reset_defaults`). Never edit a file in `local/` or `config/` by hand (no file tools on them, no shell): the one thing you write is this repo's profile, and only through `save_profile`.
+`list_repos`, `survey_repo(repo)`, `list_dir(repo, path)`, `read_file(repo, path)`, `git_grep(repo, pattern)`, `test_detector(repo, rule, scan?, ignore?)`, `save_profile(repo, profile)`, `rule_stats(repo)`, `submit_facts(repo, head_sha, tool, facts)`, and the read-only `get_config(file, key)` (for `analyzers` when the survey cut its `how` texts). Do not call any other config tool (`add_repo`, `remove_repo`, `set_lan`, `feed_address`, `pair_device`, `add_rule`, `set_group`, `set_mascot`, `edit_persona`, `reset_defaults`). Never edit a file in `local/` or `config/` by hand (no file tools on them, no shell): the one thing you write is this repo's profile, and only through `save_profile`.
 
 ## What the profile holds
 

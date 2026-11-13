@@ -27,15 +27,12 @@ export class ApiError extends Error {
 export async function fetchFeed(
 	cursor?: string,
 	limit = 20,
-	filter: FeedFilter = {},
-	// Cards the page holds but the reader has not seen: the server ranks them again.
-	drop: string[] = []
+	filter: FeedFilter = {}
 ): Promise<FeedResponse> {
 	const params = new URLSearchParams({ limit: String(limit) });
 	if (cursor) params.set('cursor', cursor);
 	if (filter.repo) params.set('repo', filter.repo);
 	if (filter.dir) params.set('dir', filter.dir);
-	if (drop.length) params.set('drop', drop.join(','));
 	const res = await fetch(`/api/feed?${params}`);
 	// The status lets the page tell "this device is not paired" (401) from other failures.
 	if (!res.ok) throw new ApiError(`GET /api/feed failed: ${res.status}`, res.status);

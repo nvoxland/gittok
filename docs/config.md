@@ -28,7 +28,7 @@ So your files are `<gittok dir>/local/...`, and in a clone they are `<clone>/loc
 | settings | Server, agent, analysis, render and clean-up settings | `config/settings.yaml` | `local/settings.yaml` | You, or Claude by a file edit. The `set_lan` tool writes `server.lan` |
 | personas | Names, voices and bios of the cast | `config/personas.yaml` | `local/personas.yaml` | The `edit_persona` tool, `gittok persona edit`, or you |
 | defaults | The starting mix of categories and tones | `config/defaults.yaml` | `local/defaults.yaml` | You, or Claude by a file edit |
-| reward | Reward weights, read times, decay, slotting | `config/reward.yaml` | `local/reward.yaml` | You, or Claude by a file edit |
+| reward | Reward weights, read times, decay, lead score | `config/reward.yaml` | `local/reward.yaml` | You, or Claude by a file edit |
 | scan_defaults | The file set of a repo with no profile | `config/scan_defaults.yaml` | `local/scan_defaults.yaml` | You, or Claude by a file edit |
 | file_types | Extension tables, manifest names | `config/file_types.yaml` | `local/file_types.yaml` | You, or Claude by a file edit |
 | languages | Regex patterns per language | `config/languages.yaml` | `local/languages.yaml` | You, or Claude by a file edit |
@@ -353,7 +353,7 @@ Each example is a whole local file. It holds only what changes.
 
 ### defaults: the starting mix
 
-The share of each category and tone before the feed has learned anything, the least share of image cards a packet asks for (`visual_mix.image_min_share`; a soft target that only counts formats which can be drawn), the exploration share, and the prior strength. "Less memes" is a rule (`add_rule`), not a change here; change this file when you want another starting point.
+The share of each category and tone before the feed has learned anything, the least share of image cards a packet asks for (`visual_mix.image_min_share`; a soft target that only counts formats which can be drawn), and the prior strength. "Less memes" is a rule (`add_rule`), not a change here; change this file when you want another starting point.
 
 ```yaml
 # local/defaults.yaml
@@ -363,9 +363,9 @@ visual_mix:
   image_min_share: 0.3
 ```
 
-### reward: weights and ranking
+### reward: weights and the learner
 
-Reward weights, the like and 👎 weights (`like_floor`, `like_weight`, `dislike_weight`), expected read times, the model priors (`prior_sd` per feature), `crosses`, the decay half-life, the lead score (`lead_score`: strength, novelty, covered, rejected) and slotting values (`docs/learning.md` sections 3 to 5 and 12). An unknown key in `weights` or `prior_sd` is ignored with a warning. `half_life_days` and each `prior_sd` value must be above 0. After a change to `prior_sd` or `crosses`, run `gittok relearn` to rebuild the model with it.
+Reward weights, the like and 👎 weights (`like_floor`, `like_weight`, `dislike_weight`), expected read times, the model priors (`prior_sd` per feature), `crosses`, the decay half-life, the lead score (`lead_score`: strength, novelty, covered, rejected, followed) and the feed's few serving values (`slotting`: `repeat_days`, `max_srs_per_batch`) (`docs/learning.md` sections 3 to 5 and 12). An unknown key in `weights` or `prior_sd` is ignored with a warning. `half_life_days` and each `prior_sd` value must be above 0. After a change to `prior_sd` or `crosses`, run `gittok relearn` to rebuild the model with it.
 
 ```yaml
 # local/reward.yaml

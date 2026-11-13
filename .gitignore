@@ -12,3 +12,6 @@ local/
 /repos/
 dist/
 *.db
+
+# The docs site build (mkdocs build)
+site/

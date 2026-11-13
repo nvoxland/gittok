@@ -145,11 +145,11 @@ CASES = {
         ),
     ),  # fmt: skip
     "defaults": (
-        "categories: {memes: 0.05}\nexploration_share: 0.3\nzzz: 1\n",
+        "categories: {memes: 0.05}\nvisual_mix: {image_min_share: 0.3}\nzzz: 1\n",
         lambda d: (
             d["categories"]["memes"] == 0.05
             and d["categories"]["code"] == shipped("defaults.yaml")["categories"]["code"]
-            and d["exploration_share"] == 0.3
+            and d["visual_mix"]["image_min_share"] == 0.3
         ),
     ),
     "reward": (
@@ -284,13 +284,13 @@ def test_local_secret_pattern_redacts_at_once(tmp_path):
 def test_a_load_is_cached_until_the_local_file_changes(tmp_path):
     first = overlay.load("defaults", home=tmp_path)
     assert overlay.load("defaults", home=tmp_path) is first
-    p = local(tmp_path, "defaults.yaml", "exploration_share: 0.4\n")
+    p = local(tmp_path, "defaults.yaml", "visual_mix: {image_min_share: 0.4}\n")
     second = overlay.load("defaults", home=tmp_path)
-    assert second is not first and second.data["exploration_share"] == 0.4
+    assert second is not first and second.data["visual_mix"]["image_min_share"] == 0.4
     assert overlay.load("defaults", home=tmp_path) is second
-    p.write_text("exploration_share: 0.5\n")
+    p.write_text("visual_mix: {image_min_share: 0.5}\n")
     os.utime(p, ns=(1, 1))  # same size: the time alone must count
-    assert overlay.load("defaults", home=tmp_path).data["exploration_share"] == 0.5
+    assert overlay.load("defaults", home=tmp_path).data["visual_mix"]["image_min_share"] == 0.5
     p.unlink()
     assert overlay.load("defaults", home=tmp_path).data == overlay.shipped("defaults")
 
@@ -306,13 +306,13 @@ def test_memo_lives_as_long_as_the_loaded_file(tmp_path):
 
 
 def test_load_config_uses_the_local_files_and_collects_their_warnings(tmp_path):
-    local(tmp_path, "defaults.yaml", "exploration_share: 0.4\nnope: 1\n")
+    local(tmp_path, "defaults.yaml", "visual_mix: {image_min_share: 0.4}\nnope: 1\n")
     local(tmp_path, "scan_defaults.yaml", "scan: ['*.proto']\n")
     local(tmp_path, "meme_templates.yaml", "templates: {mine: {lines: 1, hint: h}}\n")
     local(tmp_path, "languages.yaml", "thresholds: {long_function: 99}\n")
     local(tmp_path, "file_types.yaml", "bogus: 1\n")
     cfg = load_config(tmp_path, shared=config_mod.shipped_root())
-    assert cfg.defaults["exploration_share"] == 0.4
+    assert cfg.defaults["visual_mix"]["image_min_share"] == 0.4
     assert "*.proto" in cfg.scan_defaults["scan"]
     assert cfg.meme_templates["mine"].hint == "h" and "drake" in cfg.meme_templates
     assert cfg.languages["thresholds"]["long_function"] == 99

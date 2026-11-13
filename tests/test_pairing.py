@@ -1,5 +1,5 @@
-"""Phone pairing: the pairing_link logic, its MCP tool, set_lan and remove_repo over MCP, and
-the rule that no subagent or generation skill gets a config-editing tool."""
+"""Phone pairing: the feed_address logic, its MCP tool, pairing by code, set_lan and remove_repo
+over MCP, and the rule that no subagent or generation skill gets a config-editing tool."""
 
 import re
 from dataclasses import replace
@@ -37,116 +37,73 @@ def net(monkeypatch):
     return up
 
 
-def test_pairing_link_gives_a_link_per_address_and_opens_the_qr_page(cfg, net):
+def test_feed_address_gives_the_phone_address_and_the_pair_code_steps(cfg, net):
     net.update({("127.0.0.1", 7313), (LAN, 7313), ("10.0.0.7", 7313)})
-    opened = []
-    out = social.pairing_link(_lan(cfg), open_url=opened.append)
-    token = (cfg.settings.data_dir / "lan_token").read_text().strip()
+    out = social.feed_address(_lan(cfg))
     assert out["lan"] is True
-    assert out["links"] == [
-        {"address": LAN, "url": f"http://{LAN}:7313/pair?t={token}"},
-        {"address": "10.0.0.7", "url": f"http://10.0.0.7:7313/pair?t={token}"},
-    ]
-    assert out["qr_page"] == "http://127.0.0.1:7313/pairing" and out["opened"] is True
-    assert opened == ["http://127.0.0.1:7313/pairing"]
-    assert token not in out["qr_page"]
-    assert "only to the user" in out["message"] and "same network" in out["message"]
+    assert out["computer"] == "http://127.0.0.1:7313"
+    assert out["phone"] == [f"http://{LAN}:7313", "http://10.0.0.7:7313"]
+    msg = out["message"]
+    assert "Pair with a code" in msg and "pair_device" in msg and "same network" in msg
     assert out["notice"] == social.LAN_NOTICE
+    assert "?t=" not in str(out)  # no token link: a device pairs by its code only
 
 
 def test_the_lan_notice_states_the_facts():
     text = social.LAN_NOTICE
     assert "MCP" not in text  # MCP is stdio only: the feed server has no MCP endpoint
-    for fact in ("plain HTTP", "not HTTPS", "pairing link or QR code",
+    for fact in ("plain HTTP", "not HTTPS", "Pair with a code",
                  "watch traffic", "excerpts of your code", "network you trust",
                  "public Wi-Fi", "turn off phone access", "server.lan: false",
-                 "docs/install.md"):  # fmt: skip
+                 "nvoxland.github.io/gittok/install/"):  # fmt: skip
         assert fact in text, fact
     assert len(text) < 800
 
 
-def test_the_lan_texts_name_all_ways_to_pair():
+def test_the_lan_texts_name_only_the_pair_code():
     for text in (social.LAN_NOTICE, " ".join(home.LAN_LINES)):
-        assert "pairing link" in text and "QR code" in text
-        assert "code that it shows" in text, text
+        assert "Pair with a code" in text, text
+        assert "QR" not in text and "pairing link" not in text, text
 
 
-def test_pairing_link_offers_pairing_with_a_code(cfg, net):
-    """A home-screen app keeps its own cookies, so the QR code pairs the browser, not the
-    app. The result tells the agent about the other way."""
-    net.update({("127.0.0.1", 7313), (LAN, 7313)})
-    out = social.pairing_link(_lan(cfg), open_url=lambda url: True)
-    assert "Pair with a code" in out["message"] and "pair_device" in out["message"]
-    assert "home screen" in out["message"]
-
-
-def test_pairing_link_can_skip_the_browser(cfg, net):
-    net.update({("127.0.0.1", 7313), (LAN, 7313)})
-    opened = []
-    out = social.pairing_link(_lan(cfg), open_browser=False, open_url=opened.append)
-    assert opened == [] and out["opened"] is False
-    assert [x["address"] for x in out["links"]] == [LAN]  # only addresses that answer
-
-
-def test_pairing_link_reports_a_browser_that_did_not_open(cfg, net):
-    net.update({("127.0.0.1", 7313), (LAN, 7313)})
-
-    def broken(url):
-        raise OSError("no browser")
-
-    out = social.pairing_link(_lan(cfg), open_url=broken)
-    assert out["opened"] is False and out["links"]
-    assert social.pairing_link(_lan(cfg), open_url=lambda url: False)["opened"] is False
-
-
-def test_pairing_link_sees_a_server_started_with_the_lan_flag(cfg, net):
+def test_feed_address_sees_a_server_started_with_the_lan_flag(cfg, net):
     """`--lan` is not in the settings: the answer comes from what the server serves."""
     net.update({("127.0.0.1", 7313), (LAN, 7313)})
-    out = social.pairing_link(_lan(cfg, False), open_url=lambda url: True)
-    assert out["lan"] is True and len(out["links"]) == 1
+    out = social.feed_address(_lan(cfg, False))
+    assert out["lan"] is True and out["phone"] == [f"http://{LAN}:7313"]
 
 
-def test_pairing_link_when_phone_access_is_off(cfg, net):
+def test_feed_address_when_phone_access_is_off(cfg, net):
     net.add(("127.0.0.1", 7313))
-    opened = []
-    out = social.pairing_link(_lan(cfg, False), open_url=opened.append)
-    assert out == {
-        "lan": False,
-        "links": [],
-        "qr_page": "http://127.0.0.1:7313/pairing",
-        "opened": False,
-        "message": out["message"],
-    }
+    out = social.feed_address(_lan(cfg, False))
+    assert out["lan"] is False and out["phone"] == []
+    assert out["computer"] == "http://127.0.0.1:7313"
     assert "Phone access is off" in out["message"] and "set_lan" in out["message"]
-    assert opened == []
     assert not (cfg.settings.data_dir / "lan_token").exists()  # no token is made for nothing
 
 
-def test_pairing_link_when_the_setting_is_on_but_the_server_did_not_restart(cfg, net):
+def test_feed_address_when_the_setting_is_on_but_the_server_did_not_restart(cfg, net):
     net.add(("127.0.0.1", 7313))
-    opened = []
-    out = social.pairing_link(_lan(cfg), open_url=opened.append)
-    assert out["lan"] is False and out["links"] == [] and opened == []
+    out = social.feed_address(_lan(cfg))
+    assert out["lan"] is False and out["phone"] == []
     assert "start again" in out["message"] and "Reconnect" in out["message"]
     for old in ("launchctl", "LaunchAgent", "gittok install"):
         assert old not in social.LAN_RESTART
     assert "new session" in social.LAN_RESTART and "gittok serve" in social.LAN_RESTART
 
 
-def test_pairing_link_when_the_server_is_not_running(cfg, net):
-    opened = []
-    out = social.pairing_link(_lan(cfg), open_url=opened.append)
-    assert out["links"] == [] and out["opened"] is False and out["qr_page"] is None
+def test_feed_address_when_the_server_is_not_running(cfg, net):
+    out = social.feed_address(_lan(cfg))
+    assert out["phone"] == [] and out["computer"] is None
     assert "does not answer" in out["message"] and "7313" in out["message"]
     assert "Reconnect" in out["message"] and "gittok install" not in out["message"]
-    assert opened == []
 
 
-def test_pairing_link_without_a_lan_address(cfg, net, monkeypatch):
+def test_feed_address_without_a_lan_address(cfg, net, monkeypatch):
     net.add(("127.0.0.1", 7313))
     monkeypatch.setattr(social, "lan_addresses", lambda: [])
-    out = social.pairing_link(_lan(cfg), open_url=lambda url: True)
-    assert out["links"] == [] and "no LAN address" in out["message"]
+    out = social.feed_address(_lan(cfg))
+    assert out["phone"] == [] and "no LAN address" in out["message"]
 
 
 def test_accepts_is_true_only_for_a_listening_port():
@@ -166,24 +123,17 @@ pytestmark_anyio = pytest.mark.anyio
 
 
 @pytestmark_anyio
-async def test_pairing_link_tool_opens_the_page_through_the_injected_opener(cfg, net):
+async def test_feed_address_tool_gives_the_phone_address_and_no_qr_tool_exists(cfg, net):
     net.update({("127.0.0.1", 7313), (LAN, 7313)})
-    opened = []
     lan = _lan(cfg)
-    server = mcp_server.build_server(lambda: lan, open_url=opened.append)
+    server = mcp_server.build_server(lambda: lan)
     async with Client(server) as client:
         tools = {t.name: t for t in (await client.list_tools()).tools}
-        doc = " ".join(tools["pairing_link"].description.split())
-        assert "only to the user" in doc and "never" in doc.lower()
-        assert "notice" in doc and "first time" in doc
-        for word in ("card", "file", "commit"):
-            assert word in doc
-        out = data(await client.call_tool("pairing_link", {}))
-        assert opened == ["http://127.0.0.1:7313/pairing"] and out["opened"] is True
-        assert out["notice"] == social.LAN_NOTICE
-        assert out["links"][0]["url"].startswith(f"http://{LAN}:7313/pair?t=")
-        out = data(await client.call_tool("pairing_link", {"open_browser": False}))
-        assert len(opened) == 1 and out["opened"] is False
+        assert "pairing_link" not in tools
+        doc = " ".join(tools["feed_address"].description.split())
+        assert "pair my phone" in doc and "notice" in doc and "first time" in doc
+        out = data(await client.call_tool("feed_address", {}))
+    assert out["phone"] == [f"http://{LAN}:7313"] and out["notice"] == social.LAN_NOTICE
 
 
 @pytestmark_anyio
@@ -215,7 +165,7 @@ async def test_set_lan_tool_writes_the_setting_and_says_to_restart(fixture_repo,
         assert out["lan"] is False and "Reconnect" in out["restart"]
         assert config_mod.load_config(ycfg.root).settings.server.lan is False
         out = data(await client.call_tool("set_lan", {"enabled": True}))
-        assert out["lan"] is True and "pairing_link" in out["restart"]
+        assert out["lan"] is True and "feed_address" in out["restart"]
         assert config_mod.load_config(ycfg.root).settings.server.lan is True
         bad = await client.call_tool("set_lan", {"enabled": "maybe"})
         assert bad.is_error
@@ -265,7 +215,7 @@ async def test_add_repo_tool_accepts_a_repo_anywhere_on_a_fresh_install(tmp_path
 
 def test_server_instructions_say_the_user_manages_gittok_by_asking():
     text = mcp_server.INSTRUCTIONS
-    for name in ("add_repo", "remove_repo", "set_lan", "pairing_link", "pair_device", "add_rule"):
+    for name in ("add_repo", "remove_repo", "set_lan", "feed_address", "pair_device", "add_rule"):
         assert name in text, name
     assert "gittok-steer" in text and "gittok-generate" in text
     assert "plain HTTP" in text and "local network" in text
@@ -275,7 +225,7 @@ def test_server_instructions_say_the_user_manages_gittok_by_asking():
 
 CONFIG_TOOLS = {
     "add_repo", "remove_repo", "set_group", "set_mascot", "edit_persona", "set_playback_speed",
-    "set_lan", "pairing_link", "pair_device", "add_rule", "remove_rule", "reset_defaults",
+    "set_lan", "feed_address", "pair_device", "add_rule", "remove_rule", "reset_defaults",
     "save_profile",
 }  # fmt: skip
 
@@ -312,7 +262,7 @@ def test_generation_and_profiling_forbid_the_config_tools(path):
         for ln in text.splitlines()
         if re.search(r"[Nn]ever call|Do not call", ln) and "`add_repo`" in ln
     )
-    for name in ("add_repo", "remove_repo", "set_lan", "pairing_link", "pair_device"):
+    for name in ("add_repo", "remove_repo", "set_lan", "feed_address", "pair_device"):
         assert f"`{name}`" in rule, (path, name)
 
 
@@ -321,10 +271,11 @@ def test_steer_skill_handles_repo_and_phone_requests():
     head = text.split("---")[1]
     for phrase in ("add a repo", "remove a repo", "phone", "pairing"):
         assert phrase in head, phrase
-    for name in ("add_repo", "remove_repo", "set_lan", "pairing_link"):
+    for name in ("add_repo", "remove_repo", "set_lan", "feed_address", "pair_device"):
         assert f"`{name}" in text, name
     assert "plain HTTP" in text and "`notice`" in text
     assert "first sets GitTok up" in text
+    assert "Pair with a code" in text and "QR" not in text and "pairing link" not in text
 
 
 # --- profiling and first cards happen without a question ----------------------------------------

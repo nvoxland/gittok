@@ -73,10 +73,8 @@ lead_score:
   novelty: 1.5
   covered: 0.7
   rejected: 0.7
+  followed: 1.0   # a lead in the dir of a file the reader follows
 half_life_days: 21
-slotting:
-  repeat_days: 7
-  learning_boost_share: 0.10
-  max_srs_per_batch: 2
-  fast_formats: [meme, text_meme, fun_fact, chart, hot_take]
-  slow_formats: [thread, comic, code_card, quiz, iceberg, day_in_life]
+slotting:  # serving the feed: unseen cards oldest first; no learned ranking
+  repeat_days: 7          # two versions of one story are at least this far apart
+  max_srs_per_batch: 2    # quiz reviews per page

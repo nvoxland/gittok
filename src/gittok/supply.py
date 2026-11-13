@@ -51,22 +51,15 @@ def unseen_by_repo(conn, cfg, rc, now: datetime) -> dict[str, int]:
     return out
 
 
-def unseen_ready(conn, rc, now: datetime) -> list[str]:
-    """Ready cards with no impression in the last `repeat_days`, by id. Cards of every stored
-    repo: a caller that serves or counts the feed takes out `unconfigured_cards`."""
-    from gittok import slotter  # slotter imports this module
-
-    cutoff_ms = int((now - timedelta(days=slotter._knobs(rc)["repeat_days"])).timestamp() * 1000)
-    recent = {
-        r[0]
-        for r in conn.execute(
-            "SELECT DISTINCT card_id FROM events WHERE type = 'impression' AND ts >= ? "
-            "AND card_id IS NOT NULL",
-            (cutoff_ms,),
-        )
-    }
-    rows = conn.execute("SELECT id FROM cards WHERE status = 'ready' ORDER BY id").fetchall()
-    return [r["id"] for r in rows if r["id"] not in recent]
+def unseen_ready(conn, rc=None, now: datetime | None = None) -> list[str]:
+    """Ready cards that were never shown (no impression), by id. A card once seen comes back
+    only as a due quiz review (srs). Cards of every stored repo: a caller that serves or
+    counts the feed takes out `unconfigured_cards`. `rc` and `now` are unused."""
+    rows = conn.execute(
+        "SELECT id FROM cards c WHERE status = 'ready' AND NOT EXISTS "
+        "(SELECT 1 FROM events e WHERE e.card_id = c.id AND e.type = 'impression') ORDER BY id"
+    ).fetchall()
+    return [r["id"] for r in rows]
 
 
 def burn_per_day(conn, now: datetime, days: int = 7) -> float:

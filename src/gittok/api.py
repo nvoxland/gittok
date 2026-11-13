@@ -8,7 +8,6 @@ import hashlib
 import hmac
 import html
 import ipaddress
-import logging
 import mimetypes
 import random
 import re
@@ -21,7 +20,6 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
-import segno
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exception_handlers import request_validation_exception_handler
@@ -79,7 +77,6 @@ RETIRED_EVENTS = frozenset({"knew_it", "teach_more"})
 
 
 MAX_EVENT_DATA_BYTES = 4096
-MAX_DROP = 100  # card ids one feed refresh may drop
 MAX_BODY_BYTES = 1024 * 1024
 LAN_COOKIE = "cs_lan"
 LAN_COOKIE_MAX_AGE = 10 * 365 * 86400
@@ -150,11 +147,7 @@ PAIR_HTML = _pair_page(
     '<p class="muted">This feed runs on your computer. Pair once to open it here.</p>'
     "<p>Get a short code, then tell Claude on the computer: “pair code” and the code.</p>"
     f"{_CODE_FORM}"
-    '<div class="or">or</div>'
-    "<p>You can also ask Claude for the pairing QR code on the computer, and scan it with "
-    "this device.</p>"
-    '<p class="muted">A server started by hand with <code>gittok serve</code> prints the '
-    "pairing link.</p>"
+    '<p class="muted">Pair each browser and each app on the home screen once.</p>'
 )
 
 
@@ -216,52 +209,6 @@ def pair_wait_html(code: str | None) -> str:
     )
 
 
-_PAIRING_HEAD = (
-    "<!doctype html><html lang=en><meta charset=utf-8>"
-    "<meta name=viewport content='width=device-width,initial-scale=1'>"
-    "<title>GitTok: pair a phone</title>"
-    "<style>body{font:16px/1.5 system-ui,sans-serif;max-width:34rem;margin:2rem auto;"
-    "padding:0 1rem;color:#111;background:#fff}svg{background:#fff;max-width:100%;height:auto}"
-    "code{word-break:break-all}section{margin:1.5rem 0}.note{color:#444;font-size:.9rem}"
-    "</style><h1>Pair a phone with GitTok</h1>"
-)
-
-
-def pairing_html(lan_token: str | None, port: int, addresses: list[str]) -> str:
-    """The page behind /pairing: one QR code per LAN address, drawn here as inline SVG (no
-    script). Only a loopback request gets it, because it shows the pairing token."""
-    if not lan_token:
-        body = (
-            "<p>Phone access is off: this server answers this computer only.</p>"
-            "<p>Ask Claude to turn on phone access. That sets <code>server.lan: true</code> in "
-            "<code>local/settings.yaml</code>; then the server must start again.</p>"
-        )
-    elif not addresses:
-        body = (
-            "<p>This computer has no LAN address now. Connect it to a network, then load this "
-            "page again.</p>"
-        )
-    else:
-        body = "<p>Scan with your phone's camera. Both devices must be on the same network.</p>"
-        if len(addresses) > 1:
-            body += (
-                "<p>This computer has more than one network address. The first code is for "
-                "the main one. Use the code of the network that the phone is on.</p>"
-            )
-        for link in social.pair_links(port, lan_token, addresses):
-            qr = segno.make(link["url"], error="m").svg_inline(scale=6, border=4)
-            body += (
-                f"<section><h2>{html.escape(link['address'])}</h2>{qr}"
-                f"<p><code>{html.escape(link['url'])}</code></p></section>"
-            )
-        body += (
-            f"<p class=note>{html.escape(social.LAN_NOTE)}</p>"
-            "<p class=note>Each device opens its link once. Do not share this page or the "
-            "link: the link holds the pairing token.</p>"
-        )
-    return f"{_PAIRING_HEAD}{body}</html>"
-
-
 class FollowBody(BaseModel):
     repo: str
     path: str = Field(min_length=1, max_length=400)
@@ -301,7 +248,7 @@ PROXY_HEADERS = frozenset(
 NO_PAIRING_DETAIL = (
     "This request came through a reverse proxy, and LAN serving is turned off, so this server "
     "has no pairing token. Set `server.lan: true` in local/settings.yaml (and do not start "
-    "with --no-lan), restart, then open the pairing link through the proxy."
+    "with --no-lan), restart, then pair the device by code through the proxy."
 )
 NO_STORE = {"Cache-Control": "no-store"}
 # With `no-referrer`, a browser posts a form with `Origin: null`, which the Origin check
@@ -471,25 +418,6 @@ class _Csp:
         return self._value
 
 
-class PairTokenFilter(logging.Filter):
-    """Removes the query of `/pair?t=<token>` from access log lines."""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        args = record.args
-        if isinstance(args, tuple):
-            record.args = tuple(
-                "/pair?[redacted]" if isinstance(a, str) and a.startswith("/pair?") else a
-                for a in args
-            )
-        return True
-
-
-def hide_pair_token_in_access_log() -> None:
-    logger = logging.getLogger("uvicorn.access")
-    if not any(isinstance(f, PairTokenFilter) for f in logger.filters):
-        logger.addFilter(PairTokenFilter())
-
-
 class ApiError(HTTPException):
     """An error with a stable `code` for programs, next to the `detail` text for people."""
 
@@ -503,8 +431,8 @@ def _error_json(status: int, code: str, detail: str) -> JSONResponse:
     return JSONResponse({"detail": detail, "code": code}, status)
 
 
-# Paths that a device that is not paired may use: the token link and pairing by code.
-UNPAIRED_PATHS = frozenset({"/pair", "/pair/code", "/pair/wait", "/pair.js"})
+# Paths that a device that is not paired may use: pairing by code.
+UNPAIRED_PATHS = frozenset({"/pair/code", "/pair/wait", "/pair.js"})
 # Public files of the web build that a phone fetches when it adds the app to its home screen.
 # They hold no user data. Exact paths only.
 APP_ICON_PATHS = frozenset(
@@ -598,16 +526,7 @@ class SecurityMiddleware:
                 if k == b"origin" and not await self.hosts.allows(_origin_host(v)):
                     return await reply(_error_json(403, "cross_origin", "cross-origin request"))
 
-        if path == social.PAIRING_PAGE:
-            # The page shows the pairing token: only this computer gets it, never a paired
-            # device and never a proxied request.
-            if not loopback:
-                refused = _error_json(
-                    403, "pairing_loopback_only", "the pairing page is loopback-only"
-                )
-                refused.headers.update(NO_STORE)
-                return await reply(refused)
-        elif not self.token and _is_forwarded(scope):
+        if not self.token and _is_forwarded(scope):
             # A proxied request is never local, and without a token nothing can pair it.
             return await reply(_error_json(403, "proxy_needs_pairing", NO_PAIRING_DETAIL))
         elif self.token and not loopback and path not in UNPAIRED_PATHS | APP_ICON_PATHS:
@@ -889,7 +808,6 @@ def create_app(
         api_log=lambda: get_config().settings.data_dir / "logs" / "api.log",
         get_config=get_config,
     )
-    hide_pair_token_in_access_log()
 
     @app.exception_handler(RequestValidationError)
     async def log_rejected_events(request: Request, exc: RequestValidationError):
@@ -906,16 +824,6 @@ def create_app(
     @app.exception_handler(ApiError)
     async def api_error(_request: Request, exc: ApiError):
         return _error_json(exc.status_code, exc.code, exc.detail)
-
-    @app.get("/pair")
-    def pair(t: str = ""):
-        if not lan_token or not hmac.compare_digest(t.encode(), lan_token.encode()):
-            raise ApiError(401, "bad_pairing_token", "bad pairing token")
-        resp = RedirectResponse("/", status_code=303)
-        resp.set_cookie(
-            LAN_COOKIE, lan_token, max_age=LAN_COOKIE_MAX_AGE, httponly=True, samesite="lax"
-        )
-        return resp
 
     @app.post("/pair/code")
     def pair_code():
@@ -954,12 +862,6 @@ def create_app(
             PAIR_JS, media_type=mimetypes.types_map[".js"], headers={"Cache-Control": "no-cache"}
         )
 
-    @app.get(social.PAIRING_PAGE)
-    def pairing(request: Request):
-        port = request.url.port or get_config().settings.server.port
-        addresses = social.lan_addresses() if lan_token else []
-        return HTMLResponse(pairing_html(lan_token, port, addresses), headers=NO_STORE)
-
     def conn():
         """`with conn() as c:` commits (or rolls back on an error), then closes the connection."""
         return db.session(get_config().settings.data_dir / "gittok.db")
@@ -970,21 +872,14 @@ def create_app(
         cursor: str | None = None,
         repo: str | None = None,
         dir: str | None = None,
-        drop: str | None = Query(None, max_length=4000),
     ):
-        # `drop`: comma-separated ids of cards the client holds but the reader has not seen.
-        # The client asks with it after a 👎: learn from the events now, then rank those cards
-        # again with the rest (feed.page).
         cfg = get_config()
-        dropped = [d for d in (drop or "").split(",") if d][:MAX_DROP]
         try:
             with conn() as c:
                 now = datetime.now(UTC)
-                if dropped:
-                    learning.process_events(c, cfg, now)
                 seed = random.randrange(2**31)
                 cards, next_cursor, resume = feedmod.page(
-                    c, cfg, limit, cursor, seed, now, repo, dir, dropped
+                    c, cfg, limit, cursor, seed, now, repo, dir
                 )
                 generating = supply.run_open(c, cfg, now)  # for the end-of-feed message
         except InvalidCursor:
@@ -994,7 +889,7 @@ def create_app(
             "next_cursor": next_cursor,
             # Always set: at the end of the feed the client asks with it again for new cards.
             "cursor": next_cursor
-            or feedmod.sent_cursor(cursor, [c["id"] for c in cards], seed, dropped),
+            or feedmod.sent_cursor(cursor, [c["id"] for c in cards], seed),
             "resume_card_id": resume,
             "generating": generating,
         }

@@ -55,7 +55,7 @@ New story types and their server-side truth checks:
 
 ## 3. Reward (per impression)
 
-An impression window is the events for a card from one `impression` until the next `impression` of any card in the same client session, capped at 30 minutes. (The client sends a `session` string in every event's `data`; events without one are grouped by card and 30-minute gaps.) An event at the same ms as the next impression belongs to the window with the lower event id. A 👎 that is still on (its last toggle) closes its window at once: the next feed refresh (section 5) already knows it.
+An impression window is the events for a card from one `impression` until the next `impression` of any card in the same client session, capped at 30 minutes. (The client sends a `session` string in every event's `data`; events without one are grouped by card and 30-minute gaps.) An event at the same ms as the next impression belongs to the window with the lower event id. A 👎 closes its window like any other event: it teaches the learner what to make next (sections 7 and 12) and does not change the cards the reader already has.
 
 A 👎 that the reader takes back is unlearned: on the next pass its reward is deleted, the story's `disliked` mark is cleared, the model is rebuilt from the other rewards (`relearn`), and the impression is scored again with its 👎 events left out. The `dislike` events of a card whose last toggle is off never count.
 
@@ -93,7 +93,7 @@ Rewards are written to `rewards` (one row per impression, idempotent on `impress
 
 ## 4. The learner: one additive model (Thompson sampling, SPEC §12.3)
 
-One model ranks the feed (section 5) and decides what to make (sections 7 and 12). It is a Bayesian logistic regression with one Gaussian weight per (feature, value) in `model_weights` (`mean`, `precision`, decayed evidence `n`), updated online one reward at a time (Chapelle and Li 2011, "An Empirical Evaluation of Thompson Sampling"). The log-odds of the reward is the sum of the weights of the active features. So the weights are learned together: when memes get 👎 in many dirs, the `format meme` weight takes the blame and the dirs stay near neutral.
+One model decides what to make (sections 7 and 12). It never orders the cards that exist: the feed serves them oldest first (section 5). It is a Bayesian logistic regression with one Gaussian weight per (feature, value) in `model_weights` (`mean`, `precision`, decayed evidence `n`), updated online one reward at a time (Chapelle and Li 2011, "An Empirical Evaluation of Thompson Sampling"). The log-odds of the reward is the sum of the weights of the active features. So the weights are learned together: when memes get 👎 in many dirs, the `format meme` weight takes the blame and the dirs stay near neutral.
 
 Features of a card (`card_features`, written by `store`):
 
@@ -126,7 +126,6 @@ class Model:                                                # Model.load(conn, c
     def mean_logit(self, feats) -> float; def predict(self, feats) -> float
     def update(self, feats, y, c, now) -> None; def save(self, conn) -> int
 def relearn(conn, cfg) -> int                               # rebuild model_weights from rewards
-def score_cards(conn, cfg, card_ids, rng) -> dict[str, float]   # one draw per call
 def posterior_means(conn, cfg, feature) -> dict[str, tuple[float, float]]  # value -> (expected reward of an average card, evidence)
 def value_factors(conn, cfg, feature) -> dict[str, float]  # value -> factor for the brief
 def category_shares(conn, cfg) -> dict[str, float]          # learned share per default-mix category
@@ -134,21 +133,21 @@ def reset_weights(conn, feature: str | None = None) -> int
 ```
 `process_events` runs in the serve worker every 30 s, via `gittok learn`, and before a feed refresh (section 5).
 
-## 5. Slotting (SPEC §12.4) — `src/gittok/slotter.py`
+## 5. Serving the feed (SPEC §12.4) — `src/gittok/slotter.py`
+
+Cards are expensive to make, there are never many, and they are made as the reader scrolls. So the feed has no ranking: it serves every card the reader has not seen, in the order the cards were made. What the reader likes shapes the mix of the cards that get made next (sections 7 and 12), not the order of the ones that exist.
 
 `GET /api/feed?limit=20&cursor=...` builds the next batch. A first page (no cursor) starts with the card of the newest impression, if it is still `ready`, so a reload resumes there (`resume_card_id`); the slots below fill the rest.
-1. Candidates: `ready` cards not impressed in the last `repeat_days` (7), not already served this feed session (the cursor carries served ids), plus due SRS cards.
-2. Rules from the `rules` table: `ban` removes, `boost`/`prefer` multiply the score, `focus` reserves `slots` per batch for matching cards, `limit` caps the matching share of the batch. `dir` rules use path-prefix matching (`src` covers `src` and `src/api`, not `lib/src`; a leading `repo/` is accepted).
-3. Exploration: `exploration_share` (0.18) of slots are filled uniformly at random from candidates outside the top half.
-4. Learning boost: 10% of slots go to cards whose dirs have the fewest impressions (coverage).
-5. Rhythm: never more than 2 of the same format in a row; alternate fast formats (meme, text_meme, fun_fact, chart, hot_take) with slow ones (thread, comic, code_card, quiz, iceberg, day_in_life) when both are available.
-6. One story, one slot: variants of one story (same `story_key`, section 13) are never served within `repeat_days` of each other. A card is a candidate only if no card of its story had an impression in that window. A batch holds at most one card per `story_key`, the best scored.
-7. Series: parts of a series stay in order and at least 3 cards apart (`series` is `{key, part, of}`; SERIES_GAP positions apart, and a part waits for unseen earlier parts).
-8. SRS: at most 2 due cards per batch, placed at positions ≥ 3.
+
+1. Candidates: `ready` cards that were never shown (no impression), not already served this feed session (the cursor carries served ids), and not of a repo that is no longer configured. A card once seen comes back only as a due quiz review (step 5).
+2. No steering rule applies here: rules shape generation only (section 10).
+3. Order: oldest first (`created_at`, then id).
+4. Stories and series: variants of one story (same `story_key`, section 13) are never served within `repeat_days` (7) of each other, and a batch holds at most one card per `story_key`, the oldest. Parts of a series stay in order and at least `SERIES_GAP` (3) cards apart, and a part waits for unseen earlier parts.
+5. Quiz reviews (SRS): at most `max_srs_per_batch` (2) due cards per batch, placed at positions ≥ 3.
 
 The cursor is an opaque base64 of `{"served": [short ids], "seed": int}`; a malformed cursor is a 400. `seed` makes a batch reproducible for tests.
 
-Refresh after a 👎: the web app waits 1.2 s (a 👎 taken back in that time does nothing), sends its queued events, and asks `GET /api/feed?cursor=...&drop=<ids>` with the ids of the cards it holds ahead of the disliked one. The server runs `process_events` first (the 👎 closed its window, section 3), takes the dropped ids out of the served list, and ranks them again with the rest. The app keeps the cards up to the disliked one and replaces the ones after it.
+No refresh after a 👍 or 👎: the cards that the app already holds stay as they are. The thumbs reach the model through the normal learning pass (section 3).
 
 ## 6. Spaced repetition (SPEC §12.5)
 
@@ -160,7 +159,7 @@ On a wrong answer (`POST /api/answer`), upsert `srs(card_id)` with interval 1 da
 
 How many cards a run makes (`src/gittok/supply.py`): `get_brief` without `count` uses `want`.
 
-- `backlog` = ready cards not shown in the last `repeat_days`.
+- `backlog` = ready cards never shown.
 - `burn` = max(distinct cards shown per day, 7-day mean; `agent.min_burn_per_day`).
 - `short` = `ceil(agent.target_runway_days * burn) - backlog`.
 - `want` = 0 when `short` is 0 or less. Otherwise `want` is `short`, but at least `agent.min_run_count` (8) and at most `agent.max_count`. A run has a fixed start-up cost, so a small shortfall still gets a full run.
@@ -172,12 +171,12 @@ When `want` is 0, `get_brief` returns `nothing_to_do` and opens no run. An expli
 `learning.value_factors(feature)` gives a factor per value with evidence: exp(effect − mean effect over those values), clamped to [0.25, 4], where effect is how far the evidence moved the weight from its prior. A value without evidence has no factor (1). `mix_inputs` passes them to `build_brief`:
 
 - `format_weights`: `_pick_format` multiplies the factor into the rule boost.
-- `tone_weights`: scale the default tone mix (after bans and boosts).
+- `tone_weights`: scale the default tone mix (after limits and boosts).
 - `persona_weights`: each persona's share of the cards (replaces the plain persona cycle).
 - `repo_weights`: scale each repo's share of a category, clamped to [0.25, 4] so no repo starves.
 - `angle_weights`: scale the story types of each angle (with the story type's own rule boost), so a reader who likes `why` cards gets more archaeology, rip and commit drama. Each card slot proposes an angle: its story type's default (`brief.ANGLE_OF`), or for an open story type (quiz, this_or_that) the next angle of a pool weighted by the factors. The packet lists them ("angles, one per card"); the writer sets the card's real `angle`, which is what the model learns.
 
-Rules still win: bans, caps and boosts work as before. With no evidence nothing changes.
+Rules still win: caps and boosts work as before. With no evidence nothing changes.
 
 ### Image share target
 
@@ -193,26 +192,19 @@ Saved state lives in the `saved_cards` table (`card_id`, `saved_at`, `saved_ts`)
 
 `gittok reset-weights [--feature F]` and `learning.reset_weights`. The MCP tool `reset_defaults` calls the same function. Each reset is noted in `model_resets`, so a later `gittok relearn` (section 4) does not bring the weights back.
 
-## 10. Which rules change generation (brief) and which only rank (slotter)
+## 10. What rules change
 
-`brief.build_brief` and `slotter.build_batch` read the same rules. Boost and prefer use the stored `factor` as is (the steering layer stores the defaults, so `None` counts as 1.0). `dir` rules use path-prefix matching in both.
+Rules steer what gets made: `brief.build_brief` reads them for each run. They never change the feed, which serves every unseen card oldest first (section 5). Types: `limit`, `boost`, `prefer`, `focus`. There is no ban: "never X" is a limit with share 0, and anything a rule cannot say goes in the reader's `local/guidance.md`. Boost and prefer use the stored `factor` as is (the steering layer stores the defaults, so `None` counts as 1.0). `dir` rules use path-prefix matching (`src` covers `src` and `src/api`, not `lib/src`; a leading `repo/` is accepted).
 
-| (type, feature) | brief (generation) | slotter (ranking) |
-|---|---|---|
-| ban `format`, `story_type`, `tone`, `persona`, `repo` | never assigned | cards removed |
-| ban `group` | repos of the group are left out | cards removed |
-| ban `dir` | leads under the dir are dropped | cards removed |
-| ban `visual_kind`, `template` | formats that can only produce them are not assigned (`meme` kind: `meme`; template `X`: format `X`) | cards removed |
-| ban `interactive` (value = story type) | that story type is not assigned | cards removed |
-| ban `angle` | the story types of that angle are not assigned, and the angle is never proposed | cards removed |
-| limit `format`, `story_type`, `repo`, `tone` | share ceiling on matching slots (best effort when no alternative remains; share 0 acts as a ban) | share ceiling on the batch |
-| limit on other features | no effect | share ceiling on the batch |
-| boost, prefer `format`, `story_type`, `repo`, `group`, `tone` | slot weight times the factor | score times the factor |
-| boost, prefer `dir` | matching leads come first | score times the factor |
-| boost, prefer `angle` | the story types of that angle get more slots, and open story types get that angle more | score times the factor |
-| focus `repo`, `dir` | slot weight (1 + slots) / leads first, plus a focus line | reserved slots |
-| focus `format`, `story_type`, `group`, `tone` | like boost with factor 1 + slots | reserved slots |
-| any rule on `recency`, `has_comments`, `persona` (except ban), `template` or `visual_kind` (except ban), `file`, `language`, `kind`, `tag`, `familiarity`, `angle` (limit, focus) | no effect | ranking only |
+| (type, feature) | brief (generation) |
+|---|---|
+| limit `format`, `story_type`, `repo`, `tone` | share ceiling on matching slots (best effort when no alternative remains); share 0: never assigned, and a repo limited to 0 is left out |
+| boost, prefer `format`, `story_type`, `repo`, `group`, `tone` | slot weight times the factor |
+| boost, prefer `dir` | matching leads come first |
+| boost, prefer `angle` | the story types of that angle get more slots, and open story types get that angle more |
+| focus `repo`, `dir` | slot weight (1 + slots) / leads first, plus a focus line |
+| focus `format`, `story_type`, `group`, `tone` | like boost with factor 1 + slots |
+| any other rule | no effect |
 
 ## 11. Garbage collection
 
@@ -283,7 +275,7 @@ What a row holds:
 - `first_seen_at`, `last_seen_at`, `head_sha`: set again on each refresh.
 - `times_covered`, `last_covered_at`: see below. (`mean_reward` and `rewards_n` are no longer written: the model learns from the lead's features instead.)
 
-`get_brief` draws leads from the ledger. A row is a candidate when it was seen in the latest refresh of its repo (it still exists at HEAD) and its `last_covered_at` is not within `agent.lead_cooldown_days` (30). Candidates are sorted by one score from the same model that ranks the feed (section 4):
+`get_brief` draws leads from the ledger. A row is a candidate when it was seen in the latest refresh of its repo (it still exists at HEAD) and its `last_covered_at` is not within `agent.lead_cooldown_days` (30). Candidates are sorted by one score from the learned model (section 4):
 
 ```
 score = model log-odds of the lead's features
@@ -293,7 +285,7 @@ score = model log-odds of the lead's features
       - lead_score.rejected x rejects
 ```
 
-The lead's features (`ledger.lead_features`) are the ones its card would have before it is written: repo, group, story type, the dir prefixes and `file` of its path, `language`, `kind`, the detector `tag`, and `familiarity`. So what the reader likes decides what gets made, not only what is shown. `get_brief` makes one Thompson draw for all its leads (it explores); other callers use the posterior means. Strength is how teachable the lead is (signal rank, scout rating, rule factor). Novelty stays a fixed term so the feed keeps teaching new code; the learned part of "new or familiar" is the `familiarity` feature. Defaults (reward.yaml `lead_score`): strength 1.0, novelty 1.5, covered 0.7, rejected 0.7. Ties go to the lower row id. `focus` and `ban` dir rules still filter the leads by text. If the repo has no ledger rows for a story type, the brief computes the leads from signals as before. If all rows of a type are in cooldown, the type has no leads.
+The lead's features (`ledger.lead_features`) are the ones its card would have before it is written: repo, group, story type, the dir prefixes and `file` of its path, `language`, `kind`, the detector `tag`, and `familiarity`. So what the reader likes decides what gets made, not only what is shown. `get_brief` makes one Thompson draw for all its leads (it explores); other callers use the posterior means. Strength is how teachable the lead is (signal rank, scout rating, rule factor). Novelty stays a fixed term so the feed keeps teaching new code; the learned part of "new or familiar" is the `familiarity` feature. A lead in the dir of a file the reader follows (`POST /api/follows`) gets `lead_score.followed` added. Defaults (reward.yaml `lead_score`): strength 1.0, novelty 1.5, covered 0.7, rejected 0.7, followed 1.0. Ties go to the lower row id. `focus` dir rules still put matching leads first by text. If the repo has no ledger rows for a story type, the brief computes the leads from signals as before. If all rows of a type are in cooldown, the type has no leads.
 
 Dedup (`ledger.ranked`, `ledger.offerable`):
 
@@ -302,7 +294,7 @@ Dedup (`ledger.ranked`, `ledger.offerable`):
 - Packets: `build_brief` deals the leads of a (repo, story type) round robin over the packets that hold that type. An intro lead is only in its own packet. A commit or path is offered to one packet of a repo. So two packets of one repo never share a lead.
 - Cross-repo leads (recap, drift, ripple) have no ledger row, so they have no cooldown. A card cannot be tied to one of them (it cites commits of several repos and carries no lead id), so coverage would be a guess.
 
-Spot the Bug minimum: `agent.min_spot_the_bug_per_run` (0.125, one card per 8) of a brief's cards are `spot_the_bug` slots, reserved before the category quotas, when some repo has a lead for it. The interactive quota grows to hold them. The slotter places one unseen quiz card in each window of 8 cards of a batch, if one exists.
+Spot the Bug minimum: `agent.min_spot_the_bug_per_run` (0.125, one card per 8) of a brief's cards are `spot_the_bug` slots, reserved before the category quotas, when some repo has a lead for it. The interactive quota grows to hold them.
 
 Coverage marking: `submit_cards(packet_id)` finds the packet lead each accepted card used. The first lead whose commit is cited by the card (sources, visual, or depth panels) wins. Else the first lead whose path is cited. The card gets `cards.lead_id`. The lead gets `times_covered + 1` and `last_covered_at`. Cards submitted without a packet mark nothing.
 

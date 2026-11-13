@@ -245,15 +245,15 @@ def _dislike_state(conn) -> dict[str, tuple[bool, int]]:
     return out
 
 
-def _closed_impressions(conn, now_ms: int, dislikes: dict | None = None):
+def _closed_impressions(conn, now_ms: int):
     """Unprocessed impressions whose window is closed, oldest first, each as (impression row,
     window end ts, id of the impression that ends it or None).
 
     A window ends at the next impression of the session, or after CAP_MS. An event at the
-    same ms as the next impression belongs to the window with the lower id. A 👎 that is
-    still on ends the window at once (at `now_ms`): the reader said what they think, and the
-    next cards should know. Only impressions of cards that exist and that have no reward yet
-    are read, so a pass costs what is new, not the whole history."""
+    same ms as the next impression belongs to the window with the lower id. A 👎 closes no
+    window early: it teaches what to make next and changes nothing ahead. Only impressions
+    of cards that exist and that have no reward yet are read, so a pass costs what is new,
+    not the whole history."""
     pending = conn.execute(
         "SELECT e.id, e.card_id, e.ts, e.data FROM events e WHERE e.type = 'impression' "
         "AND e.card_id IS NOT NULL AND EXISTS (SELECT 1 FROM cards c WHERE c.id = e.card_id) "
@@ -268,8 +268,6 @@ def _closed_impressions(conn, now_ms: int, dislikes: dict | None = None):
         "AND e.card_id IS NOT NULL AND e.ts >= ? ORDER BY e.ts, e.id",
         (pending[0]["ts"],),
     ).fetchall()
-    if dislikes is None:
-        dislikes = _dislike_state(conn)
     groups: dict[tuple, list] = {}
     for r in rows:
         data = db.loads(r["data"])
@@ -283,9 +281,6 @@ def _closed_impressions(conn, now_ms: int, dislikes: dict | None = None):
                 continue
             nxt = items[i + 1] if i + 1 < len(items) else None
             if nxt is None and now_ms < r["ts"] + CAP_MS:
-                on, ts = dislikes.get(r["card_id"], (False, -1))
-                if on and ts >= r["ts"]:
-                    out.append((r, now_ms, None))
                 continue
             if nxt is not None and nxt["ts"] <= r["ts"] + CAP_MS:
                 out.append((r, nxt["ts"], nxt["id"]))
@@ -383,7 +378,7 @@ def process_events(conn, cfg, now: datetime | None = None) -> dict:
         nmaps: dict[str, dict] = {}
         _stamp_familiarity(conn, cfg, nmaps)
         undone = {cid for cid, (on, _) in dislikes.items() if not on}
-        for imp, end, end_id in _closed_impressions(conn, int(now.timestamp() * 1000), dislikes):
+        for imp, end, end_id in _closed_impressions(conn, int(now.timestamp() * 1000)):
             row = conn.execute("SELECT spec FROM cards WHERE id = ?", (imp["card_id"],)).fetchone()
             if row is None:
                 continue
@@ -765,21 +760,6 @@ def relearn(conn, cfg, now: datetime | None = None) -> int:
     rc = load_reward_config(cfg)
     with db.immediate(conn):
         return _relearn_in_tx(conn, cfg, rc, _now(now))[1]
-
-
-def score_cards(
-    conn, cfg, card_ids: list[str], rng, now: datetime | None = None, feats=None
-) -> dict[str, float]:
-    """One Thompson draw per call, shared by all cards: id -> sampled expected reward.
-
-    `feats` (card id -> features, as `slotter.features_for` gives them) saves the reads per
-    card when the caller already has them. Reads only.
-    """
-    now = _now(now)
-    if feats is None:
-        feats = {cid: set(card_features(conn, cfg, cid, now=now)) for cid in card_ids}
-    draw = Model.load(conn, cfg, now).draw(rng)
-    return {cid: draw.score(f) for cid in card_ids if (f := feats.get(cid))}
 
 
 def posterior_means(

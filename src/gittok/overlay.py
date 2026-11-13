@@ -279,9 +279,6 @@ def _check_defaults(d: dict) -> None:
     for key in ("categories", "tones", "visual_mix"):
         for k, v in _map(d.get(key) or {}, key).items():
             _number(v, f"{key}.{k}")
-    for key in ("exploration_share",):
-        if d.get(key) is not None:
-            _number(d[key], key)
 
 
 REWARD_MAPS = ("weights", "format_base_ms", "prior_sd", "lead_score", "slotting")
@@ -408,7 +405,7 @@ FILES: dict[str, FileSpec] = {
             "defaults",
             "The starting mix of categories and tones, the image share, exploration",
             {
-                "": {"categories", "tones", "visual_mix", "exploration_share"},
+                "": {"categories", "tones", "visual_mix"},
                 "categories": None,
                 "tones": None,
                 "visual_mix": None,

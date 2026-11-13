@@ -1,6 +1,6 @@
 # Developing GitTok
 
-This file is for people who change and test GitTok. To use GitTok, read [README.md](README.md).
+This file is for people who change and test GitTok. To use GitTok, read the docs site: <https://nvoxland.github.io/gittok/> (its source is `docs/`, see "Documentation site" below).
 
 - [AGENTS.md](AGENTS.md): the architecture, the conventions, and the rules for coding agents.
 - [SPEC.md](SPEC.md): the design. What a card is, and how the parts fit.
@@ -38,7 +38,7 @@ The project `.mcp.json` makes Claude Code start `uv run gittok mcp --ui`. Approv
 
 A clone is its own GitTok directory: your repo list and settings are in `local/`, the database is in `data/`, and clones of repos added by URL are in `repos/`. All three are in `.gitignore`. `GITTOK_ROOT=<dir>` makes a `gittok` command in any directory use that clone or GitTok directory. It is the only such variable.
 
-Then use GitTok as the README says: ask Claude to add a repo, profile it, make cards, and pair a phone. The project `.claude/settings.json` has the two SessionStart hooks (`docs/scheduling.md`).
+Then use GitTok as the docs site says: ask Claude to add a repo, profile it, make cards, and pair a phone. The project `.claude/settings.json` has the two SessionStart hooks (`docs/scheduling.md`).
 
 Commands that help during development (`uv run gittok --help` lists all):
 
@@ -65,6 +65,7 @@ uv run pytest -n auto         # the same, on all cores
 uv run ruff check             # lint
 npm --prefix web test         # vitest component tests
 npm --prefix web run build    # the static build
+uv run --only-group docs mkdocs build --strict   # the docs site
 ```
 
 Rules:
@@ -74,9 +75,24 @@ Rules:
 - Some structure tests are skipped until the grammars are in the local cache (`uv run gittok structure --prefetch`).
 - No logic for one programming language in the shipped Python. Language data lives in `config/` (`tests/test_no_language_logic.py`).
 - The shipped `config/` goes to every user. It holds defaults for any repo: nothing about one project, one stack or one computer. A user changes a default in `local/` of the GitTok directory (`docs/config.md`). Read a config file through `overlay.py`, which merges the local file over the shipped one; a new config file needs an entry in `overlay.FILES`, an example in `src/gittok/prompts/config_examples.yaml`, and a section in `docs/config.md` (tests check all three).
-- Run all four gates before you commit.
+- Run all the gates before you commit (the docs build when you changed `docs/` or `mkdocs.yml`).
 
 CI (`.github/workflows/ci.yml`) runs the same gates on macOS for each push to `main` and each pull request, and builds the wheel.
+
+## Documentation site
+
+The user docs are a MkDocs Material site, built the same way as the bundlebase and oxplow sites. The source is `docs/` with `mkdocs.yml`; `.github/workflows/docs.yml` builds it with `--strict` and deploys it to GitHub Pages (<https://nvoxland.github.io/gittok/>) on each push to `main` that changes it.
+
+```bash
+uv run --only-group docs mkdocs serve            # live preview at http://localhost:8000
+uv run --only-group docs mkdocs build --strict   # one-shot build into site/ (gitignored)
+```
+
+- `docs/getting-started/` and `docs/guide/` are the user pages. The other pages in `docs/` (config, install, formats, learning, scheduling, social, api) are the in-depth pages; the nav puts them at the end of the Guide section. Code, tests and `AGENTS.md` cite them by path, so they stay where they are.
+- `docs/overrides/home.html` and `docs/stylesheets/extra.css` are the home page and the theme.
+- The README is the PyPI page too: every link in it is absolute, to the site or to GitHub (`tests/test_one_directory_model.py`).
+- **Release notes are blog posts** in `docs/blog/posts/`, one per release. There is no CHANGELOG file. A post with `draft: true` is not built: set it to false (or remove it) when the release ships.
+- One-time setup: in the repository settings, Pages → Source: **GitHub Actions**.
 
 ## Build the wheel by hand
 
@@ -113,7 +129,7 @@ The `publish-pypi` job has `id-token: write`, which trusted publishing uses to l
 For each release:
 
 1. Set the new version in **both** places: `version` in `pyproject.toml` and `__version__` in `src/gittok/__init__.py`. Run `uv lock` so `uv.lock` has the new version.
-2. Update `CHANGELOG.md`.
+2. Write the blog post for the release in `docs/blog/posts/` (or take `draft: true` off the post you wrote), with the release date.
 3. Run the gates (see "Test and lint"). Commit.
 4. Tag and push:
 

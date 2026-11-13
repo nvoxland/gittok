@@ -1,0 +1,77 @@
+{% extends "main.html" %}
+
+{% block tabs %}
+  {{ super() }}
+
+  <section class="gt-hero">
+    <div class="gt-hero__inner">
+      <div class="gt-hero__left">
+        <div class="gt-hero__brand">
+          <img class="gt-hero__logo" src="assets/logo.png" alt="GitTok logo">
+          <span>GitTok</span>
+        </div>
+        <h1 class="gt-hero__title">
+          Doomscrolling <em>your code</em>.
+        </h1>
+        <p class="gt-hero__sub">
+          GitTok turns your git repos into a TikTok-style feed. Swipe through short posts
+          about the code you work in every day: the function everything depends on, the
+          commit that got reverted twice, the TODO that has waited six years, the two files
+          that always change together.
+        </p>
+        <div class="gt-hero__cta">
+          <a href="getting-started/install/" class="primary">Install &nbsp;→</a>
+          <a href="getting-started/first-feed/" class="ghost">Your first feed</a>
+          <a href="https://github.com/nvoxland/gittok" class="ghost">GitHub</a>
+        </div>
+      </div>
+      <div class="gt-hero__right">
+        <img class="gt-hero__shot" src="images/feed-swipe.webp"
+             alt="A GitTok feed on a phone, swiping up through five posts: a comic about garbage collection, a meme about a file deleted the day it was born, a group chat between two files, a spot-the-bug quiz, and a tier list of load-bearing files.">
+      </div>
+    </div>
+  </section>
+
+  <section class="gt-section">
+    <h2>What you get</h2>
+    <div class="gt-grid">
+      <div class="gt-card">
+        <h3>Posts about your own code</h3>
+        <p>Explainers, code cards, charts and diagrams. Memes, comics, tier lists, group chats and horoscopes. All about the repos you add, never about code in general.</p>
+      </div>
+      <div class="gt-card">
+        <h3>Checked against git</h3>
+        <p>Your coding agent writes the posts. GitTok checks every cited commit, file and line before a post reaches your feed.</p>
+      </div>
+      <div class="gt-card">
+        <h3>Swipe sideways to go deeper</h3>
+        <p>Each post starts with a hook. Swipe sideways to get the explanation, the real code and the real diff.</p>
+      </div>
+      <div class="gt-card">
+        <h3>Quizzes that come back</h3>
+        <p>Spot the bug, guess who wrote it, guess when. A quiz you got wrong comes back a day later, then after three days, then a week.</p>
+      </div>
+      <div class="gt-card">
+        <h3>It learns what you like</h3>
+        <p>What you read, like, 👎 and skip shapes the posts that get made next. Or just say it: "less memes, more of the sync engine."</p>
+      </div>
+      <div class="gt-card">
+        <h3>A cast in the comments</h3>
+        <p>Greybeard, Penny, the Archivist, Paranoid Sec and friends argue about your code under every post.</p>
+      </div>
+      <div class="gt-card">
+        <h3>Made for your phone</h3>
+        <p>Pair your phone once with a short code, add it to your home screen, and scroll on the couch.</p>
+      </div>
+      <div class="gt-card">
+        <h3>Private</h3>
+        <p>Everything runs on your machine. GitTok never writes to your repos and calls no model API of its own.</p>
+      </div>
+    </div>
+  </section>
+{% endblock %}
+
+{% block content %}{% endblock %}
+{% block footer %}
+  {{ super() }}
+{% endblock %}

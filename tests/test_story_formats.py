@@ -2,7 +2,7 @@
 
 import pytest
 
-from gittok import brief, learning, slotter, validator
+from gittok import brief, validator
 from gittok.config import Repo
 from tests import cards as C
 from tests.test_brief import (
@@ -53,15 +53,15 @@ def test_rip_and_hot_spot_never_list_chart_as_the_only_option():
 
 
 @pytest.mark.parametrize("banned", ["meme", "chart", "text_post", "code_card", "breaking_news"])
-def test_banned_format_never_appears_in_any_allowed_list(banned):
-    b = build(count=30, packet_size=5, rules=[rule("ban", "format", banned)])
+def test_a_format_limited_to_zero_never_appears_in_any_allowed_list(banned):
+    b = build(count=30, packet_size=5, rules=[rule("limit", "format", banned, max_share=0)])
     assert banned not in [f for _, a in slots(b) for f in a]
     assert banned not in all_formats(b)
 
 
 def test_empty_allowed_list_falls_back_to_a_category_format():
     gone = brief.STORY_FORMATS["rip"]
-    rules = [rule("ban", "format", f, id=i) for i, f in enumerate(gone)]
+    rules = [rule("limit", "format", f, max_share=0, id=i) for i, f in enumerate(gone)]
     b = build(count=30, packet_size=5, defaults=GIT_DRAMA, rules=rules)
     rips = [a for s, a in slots(b) if s == "rip"]
     assert rips
@@ -100,12 +100,6 @@ def test_packet_says_how_many_cards_should_use_an_image_format():
     d0 = {**GIT_DRAMA, "visual_mix": {"image_min_share": 0}}
     assert sum(p.images for p in build(count=8, packet_size=8, defaults=d0).packets) == 0
     assert "image format" not in build(count=8, packet_size=8, defaults=d0).to_markdown()
-
-
-def test_every_format_has_a_rhythm_speed():
-    knobs = learning.default_reward_config().slotting
-    for f in validator.FORMAT_KIND:
-        assert slotter.format_speed(f, knobs) in ("fast", "slow"), f
 
 
 # --- validator ---------------------------------------------------------------------------

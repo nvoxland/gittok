@@ -139,7 +139,7 @@ _is_loopback_host = social.is_loopback_host
 
 def _banner(port: int, host: str, out) -> str | None:
     """Print the feed URLs to `out`. A bind that other machines can reach is token-protected:
-    this also prints the pairing URLs and returns the LAN token."""
+    this also says how a device pairs (by code) and returns the LAN token."""
     everywhere = host in _ALL_INTERFACES
     shown = "127.0.0.1" if everywhere else host
     print(f"feed: http://{shown}:{port}", file=out)
@@ -150,10 +150,12 @@ def _banner(port: int, host: str, out) -> str | None:
         for url in social.lan_urls(port, addresses):
             print(f"lan:  {url}", file=out)
     lan_token = social.ensure_lan_token(load_config().settings.data_dir)
-    for link in social.pair_links(port, lan_token, addresses):
-        print(f"pair: {link['url']}", file=out)
-    print("The feed is token-protected: open a pairing URL once on each device.", file=out)
-    print(f"QR codes: http://127.0.0.1:{port}{social.PAIRING_PAGE} (this computer only).", file=out)
+    print(
+        "The feed is token-protected. Pair each device once: open the feed address on it, "
+        "tap 'Pair with a code', then ask Claude to pair that code, or run "
+        "`gittok pair <code>`.",
+        file=out,
+    )
     print(
         "The feed is served to your local network over plain HTTP. Use it on a network you "
         "trust. To serve this computer only: --no-lan, or `server.lan: false`.",
@@ -161,7 +163,7 @@ def _banner(port: int, host: str, out) -> str | None:
     )
     print("PWA install and offline mode need HTTPS: service workers do not register", file=out)
     print("on plain-HTTP LAN origins. The feed still works in the browser over HTTP.", file=out)
-    print('For HTTPS, see docs/install.md, "HTTPS on a LAN".', file=out)
+    print('For HTTPS, see "HTTPS on a LAN" at https://nvoxland.github.io/gittok/install/', file=out)
     return lan_token
 
 
@@ -755,7 +757,7 @@ def _avatars(args) -> int:
         print(
             "error: mflux is not installed. In a clone, run `uv sync --group images`. "
             "For an installed tool, install the wheel again with the `images` extra "
-            "(docs/install.md). Then retry.",
+            "(https://nvoxland.github.io/gittok/install/). Then retry.",
             file=sys.stderr,
         )
         return 1
@@ -1019,7 +1021,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--lan",
         action="store_true",
-        help="serve the local network: bind 0.0.0.0 and print pairing URLs (the default, "
+        help="serve the local network: bind 0.0.0.0, devices pair by code (the default, "
         "from server.lan in the settings)",
     )
     p.add_argument("--no-lan", action="store_true", help="serve this computer only (127.0.0.1)")

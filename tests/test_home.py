@@ -97,7 +97,8 @@ def test_init_agents_md_is_short_and_says_what_the_directory_is(tmp_path):
     home.init(tmp_path / "g", "1.2.3")
     text = (tmp_path / "g" / "AGENTS.md").read_text()
     assert len(text.splitlines()) <= 60
-    for fact in ("GitTok directory", "add_repo", "pairing_link", "plain HTTP", "local/",
+    for fact in ("GitTok directory", "add_repo", "feed_address", "pair_device", "plain HTTP",
+                 "local/",
                  "data/", "repos/", "gittok update", "get_brief", "get_packet",
                  "submit_cards", "finish_run", "scout_status"):  # fmt: skip
         assert fact in text, fact

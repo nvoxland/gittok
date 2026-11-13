@@ -43,7 +43,7 @@
 	let cards = $state<Card[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
-	// HTTP 401: this device has no pairing cookie (a LAN device that never opened the pairing link).
+	// HTTP 401: this device has no pairing cookie (a LAN device that never paired by code).
 	let unpaired = $state(false);
 	// A failed next page or a failed "check for new cards": shown with a retry, never hidden.
 	let moreError = $state<string | null>(null);
@@ -122,7 +122,6 @@
 		void loadStories();
 		return () => {
 			document.removeEventListener('visibilitychange', onVis);
-			clearTimeout(refreshTimer);
 			batcher.stop();
 		};
 	});
@@ -219,44 +218,9 @@
 		}
 	}
 
-	// After a 👎 the feed reacts at once: send the events, then let the server rank the cards
-	// ahead of the disliked one again with what it just learned. A short wait lets a 👎 that
-	// was a slip be taken back first.
-	const REFRESH_AFTER_DISLIKE_MS = 1200;
-	let refreshTimer: ReturnType<typeof setTimeout> | undefined;
-
+	// A 👍 or 👎 only teaches the learner what to make next: it does not change the cards ahead.
 	function onFeedEvent(e: FeedEvent) {
 		batcher.push(e);
-		if (e.type !== 'dislike' && e.type !== 'like') return;
-		clearTimeout(refreshTimer);
-		refreshTimer = undefined;
-		if (e.type === 'dislike' && e.data?.on) {
-			refreshTimer = setTimeout(() => void refreshAhead(e.card_id), REFRESH_AFTER_DISLIKE_MS);
-		}
-	}
-
-	async function refreshAhead(cardId: string) {
-		const at = cards.findIndex((c) => c.id === cardId);
-		const cursor = nextCursor ?? sentCursor;
-		if (at < 0 || !cursor || loadingMore) return;
-		loadingMore = true;
-		try {
-			await batcher.flush();
-			const kept = cards.slice(0, at + 1);
-			const ahead = cards.slice(at + 1).map((c) => c.id);
-			const feed = await fetchFeed(cursor, 20, filter, ahead);
-			const have = new Set(kept.map((c) => c.id));
-			const fresh = feed.cards.filter((c) => !have.has(c.id));
-			clearAnswers(fresh.map((c) => c.id).filter((id) => !ahead.includes(id)));
-			cards = [...kept, ...fresh];
-			nextCursor = feed.next_cursor;
-			sentCursor = feed.cursor ?? feed.next_cursor ?? sentCursor;
-			atEnd = nextCursor === null;
-		} catch {
-			// Keep the cards the page has: the feed still works without the refresh.
-		} finally {
-			loadingMore = false;
-		}
 	}
 
 	// While a run is making cards, the end card asks for them by itself.
@@ -332,9 +296,12 @@
 		<div class="status" role="alert">
 			<h2>This device is not paired</h2>
 			<p>
-				On the computer that runs GitTok, ask Claude for the pairing QR code ("pair my phone"), and
-				scan it with this device. You do this once for each device.
+				Get a short code, then tell Claude the code ("pair code ...") on the computer that runs
+				GitTok. You do this once for each device.
 			</p>
+			<form method="post" action="/pair/code">
+				<button type="submit">Pair with a code</button>
+			</form>
 			<button type="button" onclick={load}>Try again</button>
 		</div>
 	{:else if error}

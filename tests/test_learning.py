@@ -447,36 +447,11 @@ def put_weight(conn, cfg, feature, value, good, bad, when=NOW):
     conn.commit()
 
 
-def test_score_cards_is_seeded_bounded_and_does_not_write(conn, cfg):
-    a, b = add_card(conn, cfg), add_card(conn, cfg, persona="greybeard")
-    s1 = learning.score_cards(conn, cfg, [a, b], random.Random(7), now=NOW)
-    s2 = learning.score_cards(conn, cfg, [a, b], random.Random(7), now=NOW)
-    assert s1 == s2 and set(s1) == {a, b} and all(0 < v < 1 for v in s1.values())
-    assert learning.score_cards(conn, cfg, [a, b], random.Random(8), now=NOW) != s1
-    assert weights(conn) == {}
-
-
 def test_a_draw_scores_the_same_in_any_order(conn, cfg):
     feats = [{("format", "meme"), ("tone", "roast")}, {("format", "chart"), ("tone", "roast")}]
     m = model(conn, cfg)
     one, two = m.draw(random.Random(5)), m.draw(random.Random(5))
     assert [one.logit(f) for f in feats] == [two.logit(f) for f in reversed(feats)][::-1]
-
-
-def test_score_cards_prefers_features_with_good_evidence(conn, cfg):
-    good = add_card(conn, cfg, persona="archivist")
-    bad = add_card(conn, cfg, persona="greybeard")
-    put_weight(conn, cfg, "persona", "archivist", good=40, bad=2)
-    put_weight(conn, cfg, "persona", "greybeard", good=2, bad=40)
-    wins = 0
-    for seed in range(30):
-        s = learning.score_cards(conn, cfg, [good, bad], random.Random(seed), now=NOW)
-        wins += s[good] > s[bad]
-    assert wins >= 28
-
-
-def test_score_cards_ignores_unknown_card_ids(conn, cfg):
-    assert learning.score_cards(conn, cfg, ["nope"], random.Random(1), now=NOW) == {}
 
 
 def test_reset_weights_all_or_one_feature(conn, cfg):
@@ -799,12 +774,16 @@ def test_a_learned_factor_is_clamped(conn, cfg):
     assert f["meme"] == learning.FACTOR_MAX and f["chart"] == 1 / learning.FACTOR_MAX
 
 
-def test_a_dislike_closes_its_impression_window_at_once(conn, cfg):
-    a = add_card(conn, cfg)
+def test_a_dislike_closes_its_window_like_any_other_impression(conn, cfg):
+    """A 👎 changes nothing ahead in the feed, so it needs no early reward: its window
+    closes at the next impression (or after 30 minutes), like every window."""
+    a, b = add_card(conn, cfg), add_card(conn, cfg)
     ev(conn, a, "impression", T0)
     ev(conn, a, "dislike", T0 + 500, {"on": True})
-    # No next impression and far under 30 minutes: the 👎 still counts now.
     learning.process_events(conn, cfg, now=at(1))
+    assert reward_rows(conn) == {}
+    ev(conn, b, "impression", T0 + 2000)
+    learning.process_events(conn, cfg, now=at(2))
     assert reward_rows(conn)[a] == (0.0, learning.default_reward_config().dislike_weight)
 
 
@@ -865,13 +844,12 @@ def test_a_dislike_taken_back_at_once_does_not_close_the_window(conn, cfg):
 def test_a_dislike_taken_back_later_is_unlearned(conn, cfg):
     a, b = add_card(conn, cfg), add_card(conn, cfg)
     ev(conn, a, "impression", T0)
-    ev(conn, a, "dwell", T0 + 400, {"ms": 400})
-    ev(conn, a, "dislike", T0 + 500, {"on": True})
+    ev(conn, a, "dwell", T0 + 30_000, {"ms": 30_000})
+    ev(conn, a, "dislike", T0 + 30_100, {"on": True})
+    ev(conn, b, "impression", T0 + 31_000)
     learning.process_events(conn, cfg, now=at(1))
     assert reward_rows(conn)[a][1] == learning.default_reward_config().dislike_weight
-    ev(conn, a, "dislike", T0 + 60_000, {"on": False})
-    ev(conn, a, "dwell", T0 + 61_000, {"ms": 30_000})
-    ev(conn, b, "impression", T0 + 120_000)
+    ev(conn, a, "dislike", T0 + 60_000, {"on": False})  # later, from the saved page
     learning.process_events(conn, cfg, now=at(3))
     row = conn.execute("SELECT * FROM rewards WHERE card_id = ?", (a,)).fetchone()
     assert row["signal"] is None and row["weight"] == 1 and row["reward"] > 0

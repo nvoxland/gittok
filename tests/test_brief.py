@@ -686,32 +686,35 @@ def all_formats(b):
     return [f for p in b.packets for f in p.formats]
 
 
-def test_ban_format_excludes_it_from_every_slot():
-    b = build(count=20, rules=[rule("ban", "format", "code_card")])
+def zero(feature, value, **kw):
+    """`never X`: a limit rule with share 0."""
+    return rule("limit", feature, value, max_share=0, **kw)
+
+
+def test_a_zero_limit_on_a_format_excludes_it_from_every_slot():
+    b = build(count=20, rules=[zero("format", "code_card")])
     assert "code_card" not in all_formats(b)
     assert sum(p.count for p in b.packets) == 20
 
 
-def test_ban_story_type_excludes_it_and_falls_back_in_category():
-    b = build(count=20, rules=[rule("ban", "story_type", "commit_drama")])
+def test_a_zero_limit_on_a_story_type_excludes_it_and_falls_back_in_category():
+    b = build(count=20, rules=[zero("story_type", "commit_drama")])
     assert "commit_drama" not in {t for p in b.packets for t in p.story_types}
     assert sum(p.count for p in b.packets) == 20
 
 
-def test_ban_every_format_of_a_category_drops_it_and_renormalizes():
-    rules = [rule("ban", "format", "meme"), rule("ban", "format", "text_meme")]
+def test_zero_limits_on_every_format_of_a_category_drop_it_and_renormalize():
+    rules = [zero("format", "meme"), zero("format", "text_meme", id=2)]
     b = build(count=10, rules=rules)
     assert "memes" not in b.quotas
     assert sum(b.quotas.values()) == 10
     assert sum(p.count for p in b.packets) == 10
 
 
-def test_ban_tone_and_persona_are_not_assigned():
-    rules = [rule("ban", "tone", "roast"), rule("ban", "persona", "greybeard")]
-    b = build(count=20, rules=rules)
+def test_a_zero_limit_on_a_tone_is_never_assigned():
+    b = build(count=20, rules=[zero("tone", "roast")])
     assert "roast" not in {t for p in b.packets for t in p.tones}
     assert "roast" not in b.tone_quotas
-    assert "greybeard" not in {x for p in b.packets for x in p.personas}
 
 
 def test_boost_format_biases_rotation_toward_it():
@@ -1041,11 +1044,8 @@ def test_explicit_groups_argument_overrides_analysis_group():
     assert cross_packets(build_cross(members, count=20, groups={"g": ["api", "web"]}))
 
 
-def test_banned_cross_story_types_are_not_assigned():
-    rules = [
-        {"type": "ban", "feature": "story_type", "value": t, "reason": "x"}
-        for t in brief.CROSS_STORIES
-    ]
+def test_cross_story_types_limited_to_zero_are_not_assigned():
+    rules = [zero("story_type", t, id=i) for i, t in enumerate(brief.CROSS_STORIES)]
     assert cross_packets(build_cross(count=20, rules=rules)) == []
 
 
@@ -1059,7 +1059,7 @@ def test_cross_slots_fall_back_when_no_cross_lead_exists():
     assert sum(p.count for p in b.packets) == 20
 
 
-# ---- rule semantics shared with the slotter (docs/learning.md section 10)
+# ---- rule semantics (docs/learning.md section 10)
 
 
 def two(sig=None, groups=("dev", "ops")):
@@ -1082,26 +1082,11 @@ def build2(count=20, rs=None, **kw):
     )
 
 
-def test_ban_repo_and_group_remove_the_repo():
-    b = build2(rules=[rule("ban", "repo", "a")])
+def test_a_zero_limit_on_a_repo_removes_it():
+    b = build2(rules=[zero("repo", "a")])
     assert {p.repo for p in b.packets} == {"b"}
-    b = build2(rules=[rule("ban", "group", "ops")])
-    assert {r for p in b.packets for r in p.repos} == {"a"}
     with pytest.raises(ValueError):
-        build2(rules=[rule("ban", "repo", "a"), rule("ban", "repo", "b")])
-
-
-def test_ban_dir_uses_path_prefix_semantics():
-    sig = signals()
-    sig["churn"]["files"]["90"] = [
-        {"path": "src/app.py", "commits": 5, "lines": 40},
-        {"path": "lib/src/x.py", "commits": 4, "lines": 30},
-    ]
-    b = build(count=20, sig=sig, rules=[rule("ban", "dir", "src/")])
-    leads = [x for p in b.packets for x in p.leads]
-    assert not any("src/app.py" in x.split("lib/src")[0] and "lib/src" not in x for x in leads)
-    assert not any(x.startswith("[hot_spot] src/app.py") for x in leads)
-    assert any("lib/src/x.py" in x for x in leads)
+        build2(rules=[zero("repo", "a"), zero("repo", "b", id=2)])
 
 
 def test_focus_dir_matches_nested_dirs_not_lookalikes():
@@ -1115,15 +1100,6 @@ def test_focus_dir_matches_nested_dirs_not_lookalikes():
         hot = [x for x in pk.leads if x.startswith("[hot_spot]")]
         if hot:
             assert "src/api/app.py" in hot[0]
-
-
-def test_ban_visual_kind_and_template_map_to_formats():
-    fmts = all_formats(build(count=30, rules=[rule("ban", "visual_kind", "meme")]))
-    assert "meme" not in fmts and "text_meme" in fmts
-    fmts = all_formats(build(count=30, rules=[rule("ban", "visual_kind", "template")]))
-    assert not set(fmts) & {"iceberg", "hot_take", "group_chat", "breaking_news", "thread"}
-    fmts = all_formats(build(count=30, rules=[rule("ban", "template", "iceberg")]))
-    assert "iceberg" not in fmts and "hot_take" in fmts
 
 
 def angles(b):
@@ -1146,7 +1122,7 @@ def test_open_story_types_take_their_angle_from_what_the_reader_likes():
 
     # Only the open interactive types stay, so both briefs have open slots to compare.
     only_open = [
-        rule("ban", "interactive", t, id=i)
+        zero("story_type", t, id=i)
         for i, t in enumerate(("spot_the_bug", "guess_who", "guess_when"))
     ]
     plain = open_angles(build(count=60, rules=only_open))
@@ -1162,11 +1138,6 @@ def test_learned_angle_weights_shift_the_story_types():
     assert why_slots(build(count=40, angle_weights={"why": 4.0})) > why_slots(build(count=40))
     boosted = build(count=40, rules=[rule("boost", "angle", "why", factor=4.0)])
     assert why_slots(boosted) > why_slots(build(count=40))
-
-
-def test_a_banned_angle_is_never_proposed():
-    b = build(count=40, rules=[rule("ban", "angle", "why")])
-    assert "why" not in {a for _, a in angles(b)} and len(angles(b)) == 40
 
 
 def test_learned_tone_weights_shift_the_tone_quotas():
@@ -1186,11 +1157,11 @@ def test_learned_persona_weights_give_a_liked_persona_more_cards():
     assert liked["greybeard"] > plain.get("greybeard", 0)
 
 
-def test_ban_one_interactive_story_type_keeps_the_others():
-    b = build(count=40, rules=[rule("ban", "interactive", "guess_who")])
+def test_a_zero_limit_on_one_interactive_story_type_keeps_the_others():
+    b = build(count=40, rules=[zero("story_type", "guess_who")])
     types = {t for p in b.packets for t in p.story_types}
     assert "guess_who" not in types and "quiz" in types
-    b = build(count=40, rules=[rule("ban", "interactive", "quiz")])
+    b = build(count=40, rules=[zero("story_type", "quiz")])
     assert "quiz" not in {t for p in b.packets for t in p.story_types}
 
 
@@ -1414,16 +1385,16 @@ def test_image_share_target_is_soft_and_stated_in_the_packet():
     assert sum(p.images for p in build(count=8, defaults=_explainers()).packets) == 0
 
 
-def test_allowed_lists_respect_budget_bans_unavailable_and_caps():
+def test_allowed_lists_respect_budget_zero_limits_unavailable_and_caps():
     # Budget 0: no illustration format is offered while another one fits.
     b = build(count=8, defaults=_explainers(0.9), max_illustrations=0)
     assert _illustration_cost(b) == 0
     assert not {f for a in _allowed(b) for f in a} & {"mascot_scene", "comic"}
-    # Banned and unavailable formats are never offered.
+    # Formats limited to zero and unavailable formats are never offered.
     b = build(
         count=8,
         defaults=_explainers(0.9),
-        rules=[rule("ban", "format", "diagram")],
+        rules=[zero("format", "diagram")],
         unavailable_formats={"comic"},
     )
     assert not {f for a in _allowed(b) for f in a} & {"diagram", "comic"}
@@ -1493,21 +1464,6 @@ def test_ledger_leads_replace_computed_leads_and_keep_ids():
         for p in b.packets
         for r in p.lead_refs
     )
-
-
-def test_ledger_leads_still_honor_ban_dir_rules():
-    keep = brief.Lead("hot_spot", "fixture", "path", path="lib/ok.py", text="lib/ok.py: x", id=1)
-    drop = brief.Lead("hot_spot", "fixture", "path", path="src/no.py", text="src/no.py: x", id=2)
-    d = {"categories": {"git_drama": 1.0}, "tones": DEFAULTS["tones"]}
-    b = build(
-        count=10,
-        packet_size=5,
-        defaults=d,
-        ledger={("fixture", "hot_spot"): [drop, keep]},
-        rules=[rule("ban", "dir", "src")],
-    )
-    ids = {r["id"] for p in b.packets for r in p.lead_refs if r["story_type"] == "hot_spot"}
-    assert ids == {1}
 
 
 def tpls(*ids, fits=None):

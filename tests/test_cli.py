@@ -288,7 +288,10 @@ def test_rules_add_list_remove_round_trip(cfg, capsys):
 
 
 def test_rules_errors_print_message_and_exit_1(cfg, capsys):
-    code = cli.main(["rules", "add", "--type", "ban", "--feature", "format", "--value", "memee"])
+    code = cli.main(
+        ["rules", "add", "--type", "limit", "--feature", "format", "--value", "memee",
+         "--max-share", "0"]
+    )  # fmt: skip
     assert code == 1
     assert "Did you mean 'meme'" in capsys.readouterr().err
     assert cli.main(["rules", "remove", "99"]) == 1
@@ -372,7 +375,9 @@ def test_brief_matches_get_brief_inputs_rules_and_unavailable_formats(cfg, capsy
 
     monkeypatch.setattr(mcp_server, "unavailable_formats", lambda c: frozenset({"meme"}))
     with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
-        steering.add_rule(conn, cfg, type="ban", feature="format", value="horoscope", reason="no")
+        steering.add_rule(
+            conn, cfg, type="limit", feature="format", value="horoscope", max_share=0, reason="no"
+        )
     assert cli.main(["brief", "--count", "10"]) == 0
     out = capsys.readouterr().out
     assert "Skipping meme" in out
@@ -393,7 +398,7 @@ def test_serve_lan_binds_all_interfaces_and_warns(cfg, monkeypatch, capsys):
     assert "this computer only" in out and "MCP" not in out
     assert "HTTPS" in out
     tok = (cfg.settings.data_dir / "lan_token").read_text().strip()
-    assert f"http://192.168.1.5:9123/pair?t={tok}" in out
+    assert "Pair with a code" in out and tok not in out and "pair?t=" not in out
 
 
 def test_serve_serves_the_lan_by_default(cfg, monkeypatch, capsys):
@@ -404,7 +409,8 @@ def test_serve_serves_the_lan_by_default(cfg, monkeypatch, capsys):
     assert calls == [{"host": "0.0.0.0", "port": 7313}]
     out = capsys.readouterr().out
     tok = (cfg.settings.data_dir / "lan_token").read_text().strip()
-    assert f"pair: http://192.168.1.5:7313/pair?t={tok}" in out
+    assert "lan:  http://192.168.1.5:7313" in out and "Pair with a code" in out
+    assert tok not in out
     assert "plain HTTP" in out and "network you trust" in out
 
 
@@ -413,7 +419,7 @@ def test_serve_no_lan_binds_loopback_and_makes_no_token(cfg, monkeypatch, capsys
     monkeypatch.setattr(cli.uvicorn, "run", lambda app, **kw: calls.append(kw))
     assert cli.main(["serve", "--no-lan"]) == 0
     assert calls == [{"host": "127.0.0.1", "port": 7313}]
-    assert "pair:" not in capsys.readouterr().out
+    assert "Pair with a code" not in capsys.readouterr().out
     assert not (cfg.settings.data_dir / "lan_token").exists()
 
 
@@ -423,7 +429,7 @@ def test_server_lan_false_setting_turns_lan_serving_off(cfg, monkeypatch, capsys
     monkeypatch.setattr(cli.uvicorn, "run", lambda app, **kw: calls.append(kw))
     assert cli.main(["serve"]) == 0
     assert calls == [{"host": "127.0.0.1", "port": 7313}]
-    assert "pair:" not in capsys.readouterr().out
+    assert "Pair with a code" not in capsys.readouterr().out
     seen = _mcp_ui(cfg, monkeypatch)
     assert cli.main(["mcp", "--ui"]) == 0
     assert seen["order"][0][1][-4:] == ["--host", "127.0.0.1", "--port", "7313"]
@@ -623,7 +629,7 @@ def test_serve_reload_runs_the_app_factory_with_reload(cfg, monkeypatch, capsys)
     assert kw["host"] == "0.0.0.0"
     tok = (cfg.settings.data_dir / "lan_token").read_text().strip()
     assert os.environ["GITTOK_LAN_TOKEN"] == tok  # the reloaded worker reads it
-    assert "pair:" in capsys.readouterr().out
+    assert "Pair with a code" in capsys.readouterr().out
 
 
 def test_reload_app_builds_the_feed_app_from_the_environment(cfg, monkeypatch):
@@ -1054,7 +1060,7 @@ def test_serve_on_a_non_loopback_host_needs_pairing_even_without_lan(
     tok = (cfg.settings.data_dir / "lan_token").read_text().strip()
     assert seen["token"] == tok
     out = capsys.readouterr().out
-    assert f"/pair?t={tok}" in out and "token-protected" in out
+    assert "Pair with a code" in out and "token-protected" in out and tok not in out
 
 
 @pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1", "127.0.0.2"])
@@ -1064,7 +1070,7 @@ def test_serve_on_loopback_has_no_token(cfg, monkeypatch, capsys, host):
     monkeypatch.setattr(cli, "_feed_app", lambda token: seen.update(token=token) or "app")
     assert cli.main(["serve", "--host", host]) == 0
     assert seen["token"] is None and seen["host"] == host
-    assert "pair:" not in capsys.readouterr().out
+    assert "Pair with a code" not in capsys.readouterr().out
     assert not (cfg.settings.data_dir / "lan_token").exists()
 
 
@@ -1085,7 +1091,8 @@ def test_server_lan_setting_makes_serve_act_as_with_lan(cfg, monkeypatch, capsys
     assert cli.main(["serve"]) == 0
     assert calls == [{"host": "0.0.0.0", "port": 7313}]
     tok = (cfg.settings.data_dir / "lan_token").read_text().strip()
-    assert f"http://192.168.1.5:7313/pair?t={tok}" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "lan:  http://192.168.1.5:7313" in out and tok not in out
 
 
 def test_server_lan_setting_makes_mcp_ui_start_a_lan_child(cfg, monkeypatch):

@@ -47,7 +47,7 @@ class SteeringError(Exception):
     """A problem the caller can fix; the message is shown to an agent."""
 
 
-RULE_TYPES = ("boost", "ban", "focus", "limit", "prefer")
+RULE_TYPES = ("boost", "focus", "limit", "prefer")
 FEATURES = (
     "story_type",
     "format",
@@ -232,7 +232,14 @@ def add_rule(
     reason="",
     now=None,
 ) -> dict:
-    """Store a steering rule. The slotter reads the `rules` table on every feed batch."""
+    """Store a steering rule. The brief reads the `rules` table for each run: rules shape the
+    mix of the cards that get made, not the order of the feed."""
+    if type == "ban":
+        raise SteeringError(
+            "There is no ban rule. For 'never make X' use type='limit' with max_share=0 (on "
+            "format, story_type, repo or tone). For anything else (a subject, a style, a dir "
+            "to leave alone), write it in local/guidance.md: every card writer reads it."
+        )
     if type not in RULE_TYPES:
         raise SteeringError(f"Unknown type '{type}'. Use one of: {', '.join(RULE_TYPES)}.")
     if feature not in FEATURES:
@@ -1335,7 +1342,8 @@ def set_lan(cfg, enabled: bool, created_by: str = "agent") -> dict:
     _edit_files(cfg, {"settings.yaml": lambda lines: _set_key(lines, "server", "lan", enabled)})
     _audit(cfg, "set_lan", {"enabled": enabled}, created_by)
     after = (
-        "After the restart, call pairing_link to give the user the pairing QR code."
+        "After the restart, call feed_address to give the user the phone address and the "
+        "pairing steps."
         if enabled
         else "After the restart, the feed answers this computer only."
     )

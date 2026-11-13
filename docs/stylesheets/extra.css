@@ -1,0 +1,177 @@
+/* ── Brand palette: the fireball of the app icon on deep purple ── */
+:root,
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color:        #f97316;
+  --md-primary-fg-color--light: #fb923c;
+  --md-primary-fg-color--dark:  #c2410c;
+  --md-accent-fg-color:         #facc15;
+  --md-default-bg-color:        #140a1c;
+  --md-typeset-a-color:         #fb923c;
+}
+
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color:        #c2410c;
+  --md-primary-fg-color--light: #f97316;
+  --md-primary-fg-color--dark:  #9a3412;
+  --md-accent-fg-color:         #7c3aed;
+  --md-typeset-a-color:         #c2410c;
+}
+
+/* Header and tabs: the purple of the icon */
+.md-header,
+.md-tabs {
+  background-color: #2a0f3a;
+  border-bottom: 1px solid rgba(249, 115, 22, 0.25);
+}
+
+.md-source__facts { display: none; }
+
+/* Page titles: full contrast (the theme default is faint on the dark purple) */
+.md-typeset h1 {
+  color: var(--md-default-fg-color);
+  font-weight: 700;
+}
+
+.md-typeset h2 {
+  border-bottom: 1px solid rgba(249, 115, 22, 0.35);
+  padding-bottom: 0.25em;
+  font-weight: 700;
+}
+
+/* ── Hero (home page) ─────────────────────────────── */
+.gt-hero {
+  background:
+    radial-gradient(circle at 80% 10%, rgba(249, 115, 22, 0.18), transparent 50%),
+    radial-gradient(circle at 10% 90%, rgba(250, 204, 21, 0.08), transparent 45%),
+    #1a0b24;
+  border-bottom: 1px solid rgba(249, 115, 22, 0.25);
+  padding: 4rem 1.5rem 3.5rem;
+  color: #f5ecff;
+}
+
+.gt-hero__inner {
+  max-width: 72rem;
+  margin: 0 auto;
+  display: flex;
+  gap: 3rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.gt-hero__left { flex: 1 1 min(26rem, 100%); min-width: 0; }
+.gt-hero__right { flex: 0 1 min(18rem, 100%); min-width: 0; margin: 0 auto; }
+
+.gt-hero__brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: #fbbf24;
+  margin-bottom: 1.25rem;
+}
+
+.gt-hero__logo {
+  width: 3rem;
+  height: 3rem;
+  border-radius: 0.75rem;
+}
+
+.gt-hero__title {
+  font-size: 3rem;
+  line-height: 1.1;
+  font-weight: 800;
+  margin: 0 0 1.25rem;
+  color: #fff;
+}
+
+.gt-hero__title em {
+  font-style: normal;
+  background: linear-gradient(90deg, #f97316, #facc15);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.gt-hero__sub {
+  font-size: 1.1rem;
+  line-height: 1.6;
+  max-width: 38rem;
+  color: #e4d6f0;
+  margin: 0 0 2rem;
+}
+
+.gt-hero__cta {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.gt-hero__cta a {
+  padding: 0.65rem 1.25rem;
+  font-size: 0.95rem;
+  border-radius: 999px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: transform 0.1s ease, background 0.15s ease;
+}
+
+.gt-hero__cta a:hover { transform: translateY(-1px); }
+
+.gt-hero__cta a.primary {
+  background: linear-gradient(90deg, #f97316, #fb923c);
+  color: #1a0b24;
+}
+
+.gt-hero__cta a.ghost {
+  border: 1px solid rgba(251, 146, 60, 0.6);
+  color: #fdba74;
+}
+
+.gt-hero__shot {
+  width: 100%;
+  max-width: 18rem;
+  filter: drop-shadow(0 20px 40px rgba(0, 0, 0, 0.5));
+}
+
+/* ── Feature grid ──────────────────────────────────── */
+.gt-section {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 3rem 1.5rem 4rem;
+}
+
+.gt-section h2 {
+  font-size: 1.6rem;
+  margin: 0 0 1.5rem;
+}
+
+.gt-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: 1rem;
+}
+
+.gt-card {
+  border: 1px solid rgba(249, 115, 22, 0.25);
+  border-radius: 0.9rem;
+  padding: 1.1rem 1.25rem;
+  background: rgba(249, 115, 22, 0.04);
+}
+
+.gt-card h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+  color: var(--md-primary-fg-color);
+}
+
+.gt-card p {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+@media (max-width: 40rem) {
+  .gt-hero__title { font-size: 2.2rem; }
+  .gt-hero { padding: 2.5rem 1rem; }
+}

@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 from gittok import (
     brief,
     candidate_leads,
+    characters,
     db,
     knowledge,
     learning,
@@ -327,6 +328,7 @@ def ranked(
     files=None,
     current: list | None = None,
     symbols: knowledge.SymbolContext | None = None,
+    followed: list[str] | None = None,
 ) -> list[brief.Lead]:
     """Current leads for one story type, best first, without leads still in their cooldown
     or whose story is blocked.
@@ -374,6 +376,8 @@ def ranked(
         nmap = knowledge.novelty_map(conn, repo, cfg.settings.user.git_identities)
 
     symbols = symbols or knowledge.SymbolContext(conn, repo)
+    if followed is None:
+        followed = [d for r, d in characters.followed_dirs(conn) if r == repo]
     weights = learning.load_reward_config(cfg).lead_score
     fileset = files if files is not None or repo not in cfg.repos else cfg.fileset(repo)
 
@@ -387,11 +391,21 @@ def ranked(
             + weights.get("novelty", 0.0) * nov
             - weights.get("covered", 0.0) * r["times_covered"]
             - weights.get("rejected", 0.0) * rejects
+            + weights.get("followed", 0.0) * _in_followed(r["path"], followed)
         )
 
     # Server-made leads go first: they answer something that just happened.
     rows.sort(key=lambda r: (not _pinned(r), -score(r), r["id"]))
     return [_lead(r) for r in rows[:limit]]
+
+
+def _in_followed(path: str | None, followed: list[str]) -> int:
+    """1 when the lead's path is in the dir of a followed file (or a followed dir), else 0."""
+    from gittok.slotter import dir_matches
+
+    if not path or not followed:
+        return 0
+    return int(any(dir_matches(path, d) for d in followed))
 
 
 def for_brief(
@@ -431,6 +445,7 @@ def for_brief(
     for repo in repos:
         fs = (filesets or {}).get(repo) or cfg.fileset(repo)
         symbols = knowledge.SymbolContext(conn, repo)
+        followed = [d for r, d in characters.followed_dirs(conn) if r == repo]
         for t in types:
             if current := _current(conn, repo, t, fs):
                 out[(repo, t)] = ranked(
@@ -447,6 +462,7 @@ def for_brief(
                     fs,
                     current=current,
                     symbols=symbols,
+                    followed=followed,
                 )
     return out
 

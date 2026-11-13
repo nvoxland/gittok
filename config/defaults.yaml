@@ -22,4 +22,3 @@ visual_mix:
   # chart, diagram). A soft target: it counts only formats that can be drawn, so with no
   # image renderer it asks for charts and diagrams, which the client draws.
   image_min_share: 0.5
-exploration_share: 0.18

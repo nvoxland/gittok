@@ -946,7 +946,7 @@ def _rule_line(r: dict) -> str:
 
 
 def _factors(rules, feature: str) -> dict[str, float]:
-    """Combined bias per value of a feature, as the slotter multiplies scores.
+    """Combined bias per value of a feature: the product of its boost and prefer factors.
 
     boost/prefer use the stored factor (None counts as 1.0: the steering layer stores the
     defaults). focus on a feature without a slot meaning here biases like a boost of 1 + slots.
@@ -981,12 +981,8 @@ ANGLE_OF = {
 REPO_WEIGHT_MIN, REPO_WEIGHT_MAX = 0.25, 4.0
 
 
-def _banned(rules, feature: str) -> set[str]:
-    return {r["value"] for r in rules if r["type"] == "ban" and r["feature"] == feature}
-
-
 def _caps(rules, feature: str, count: int) -> dict[str, int]:
-    """Slot ceilings from `limit` rules, computed like the slotter (share 0 means none)."""
+    """Slot ceilings from `limit` rules (share 0 means none of them)."""
     out: dict[str, int] = {}
     for r in rules:
         if r["type"] == "limit" and r["feature"] == feature and r.get("max_share") is not None:
@@ -1025,22 +1021,6 @@ def _line_in_dirs(line: str, dirs: list[str]) -> bool:
             if tok == d or tok.startswith(d + "/"):
                 return True
     return False
-
-
-def _banned_formats(rules) -> set[str]:
-    """Formats that can only produce a banned visual kind or template."""
-    from gittok.validator import FORMAT_KIND, TEMPLATE_FORMATS
-
-    kinds, templates = _banned(rules, "visual_kind"), _banned(rules, "template")
-    gone = {f for f, k in FORMAT_KIND.items() if set((k,) if isinstance(k, str) else k) <= kinds}
-    return gone | (templates & TEMPLATE_FORMATS)
-
-
-def _banned_stories(rules) -> set[str]:
-    """Banned story types, and the story types whose angle is banned ("no history cards")."""
-    angles = _banned(rules, "angle")
-    gone = set(_banned(rules, "story_type")) | set(_banned(rules, "interactive"))
-    return gone | {t for t, a in ANGLE_OF.items() if a in angles}
 
 
 def _interleave(quotas: dict[str, int]) -> list[str]:
@@ -1353,23 +1333,12 @@ class _BriefBuilder:
             for f in ("repo", "format", "story_type", "tone")
         }
         self.zero = zero
-        gone_repos = _banned(rules, "repo") | zero["repo"]
-        gone_groups = _banned(rules, "group")
-        self.repo_signals = {
-            r: v
-            for r, v in self.repo_signals.items()
-            if r not in gone_repos and self.group_of.get(r) not in gone_groups
-        }
+        self.repo_signals = {r: v for r, v in self.repo_signals.items() if r not in zero["repo"]}
         if not self.repo_signals:
-            raise ValueError("active rules ban every repo")
+            raise ValueError("active rules limit every repo to 0")
         self.groups = {g: [r for r in rs if r in self.repo_signals] for g, rs in groups.items()}
-        self.gone_formats = (
-            set(self.unavailable_formats)
-            | _banned(rules, "format")
-            | _banned_formats(rules)
-            | zero["format"]
-        )
-        self.gone_stories = _banned_stories(rules) | zero["story_type"]
+        self.gone_formats = set(self.unavailable_formats) | zero["format"]
+        self.gone_stories = set(zero["story_type"])
         self.stories_in = {
             c: tuple(t for t in ts if t not in self.gone_stories)
             for c, ts in CATEGORY_STORIES.items()
@@ -1409,7 +1378,6 @@ class _BriefBuilder:
             for r in rules
             if r["feature"] == "dir" and (r["type"] in ("focus", "boost", "prefer"))
         ]
-        self.ban_dirs = [r["value"] for r in rules if r["type"] == "ban" and r["feature"] == "dir"]
         self.all_repos = list(self.repo_signals)
 
     def allowed_for(self, story, category, used, spent, fallback=(), repo=None):
@@ -1448,9 +1416,6 @@ class _BriefBuilder:
         )
 
     def focused_first(self, lines: list[str]) -> list[str]:
-        if self.ban_dirs:
-            bad = [d for v in self.ban_dirs for d in _dir_candidates(v, self.all_repos)]
-            lines = [x for x in lines if not _line_in_dirs(x, bad)]
         want = [d for v in self.prefer_dirs for d in _dir_candidates(v, self.all_repos)]
         return sorted(lines, key=lambda x: not _line_in_dirs(x, want))
 
@@ -1466,7 +1431,7 @@ class _BriefBuilder:
                 t,
                 sig,
                 self.repo_signals[repo].get("t0"),
-                limit=1000 if self.prefer_dirs or self.ban_dirs else MAX_LEADS_PER_TYPE,
+                limit=1000 if self.prefer_dirs else MAX_LEADS_PER_TYPE,
                 repo=repo,
                 files=(self.filesets or {}).get(repo),
             )
@@ -1534,7 +1499,7 @@ class _BriefBuilder:
 
     def _tones_and_personas(self) -> None:
         rules, defaults, count = self.rules, self.defaults, self.count
-        banned_tones = _banned(rules, "tone") | self.zero["tone"]
+        banned_tones = self.zero["tone"]
         tone_boost = _factors(rules, "tone")
         tones_in = {
             k: w * tone_boost.get(k, 1.0) * self.tone_weights.get(k, 1.0)
@@ -1547,18 +1512,13 @@ class _BriefBuilder:
         self.tone_pool = _interleave(tone_quotas)
         self.repo_names = sorted(self.repo_signals)
         persona_cycle = list(self.personas) or list(DEFAULT_PERSONAS)
-        persona_cycle = [
-            p for p in persona_cycle if p not in _banned(rules, "persona")
-        ] or persona_cycle
         # Each persona's share follows what the reader liked from it (1 = neutral).
         persona_quotas = largest_remainder(
             {p: self.persona_weights.get(p, 1.0) for p in persona_cycle}, count
         )
         self.persona_pool = _interleave(persona_quotas) or persona_cycle
         # The angles for open story types (quiz, this_or_that), by what the reader likes.
-        open_angles = {
-            a: self.angle_factor[a] for a in ANGLES if a not in _banned(rules, "angle")
-        } or dict.fromkeys(ANGLES, 1.0)
+        open_angles = {a: self.angle_factor[a] for a in ANGLES} or dict.fromkeys(ANGLES, 1.0)
         self.angle_pool = _interleave(largest_remainder(open_angles, count)) or list(ANGLES)
         self.cross_groups = {
             g: [r for r in rs if r in self.repo_signals]

@@ -65,12 +65,12 @@ def test_small_shortfall_still_makes_a_full_run(conn, cfg):
     assert supply.feed_health(conn, cfg, NOW)["want"] == cfg.settings.agent.min_run_count == 8
 
 
-def test_unseen_ready_excludes_recent_impressions(conn, cfg):
+def test_unseen_ready_is_the_cards_never_shown(conn, cfg):
     seen, old, fresh = fill(conn, cfg, 3)
     impress(conn, seen, NOW - timedelta(days=1))
-    impress(conn, old, NOW - timedelta(days=30))
+    impress(conn, old, NOW - timedelta(days=30))  # long ago still counts as seen
     rc = learning.load_reward_config(cfg)
-    assert supply.unseen_ready(conn, rc, NOW) == sorted([old, fresh])
+    assert supply.unseen_ready(conn, rc, NOW) == [fresh]
 
 
 def test_image_share_and_pending(conn, cfg):

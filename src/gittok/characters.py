@@ -2,8 +2,9 @@
 
 - `persona_page` and `file_page` feed /api/personas/{handle} and /api/files/{repo}/{path}.
 - Follows are a JSON list in the `prefs` table under `followed_paths` (kept out of
-  steering.PREF_DEFAULTS so /api/prefs keeps its shape). The slotter multiplies the score of a
-  card by FOLLOW_BOOST when one of its dirs holds a followed path (docs/social.md).
+  steering.PREF_DEFAULTS so /api/prefs keeps its shape). The brief ranks the leads in the dir
+  of a followed path higher (reward.yaml `lead_score.followed`), so more cards about it get
+  made; the feed does not reorder cards that exist (docs/social.md).
 - `cast_notes` is the "recent posts" text that get_packet gives writers for running jokes.
 """
 
@@ -17,7 +18,6 @@ from posixpath import dirname
 from gittok import db, gitq
 
 FOLLOW_KEY = "followed_paths"
-FOLLOW_BOOST = 1.5
 CAST_MAX_BYTES = 800
 CAST_LINES = 3
 CAST_TRIM = 60

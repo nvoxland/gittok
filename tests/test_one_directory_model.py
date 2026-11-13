@@ -52,23 +52,33 @@ def test_no_text_names_the_old_install_model():
     assert not hits, "\n".join(hits)
 
 
-def test_the_readme_gives_the_three_steps_and_says_when_gittok_runs():
+SITE = "https://nvoxland.github.io/gittok/"
+
+
+def test_the_site_gives_the_steps_and_says_when_gittok_runs():
+    """The user docs are the docs site (mkdocs.yml, docs/). Install and upgrade live there."""
+    install = (ROOT / "docs" / "getting-started" / "install.md").read_text()
+    upgrade = (ROOT / "docs" / "guide" / "upgrade.md").read_text()
+    for fact in ("uv tool install 'gittok[images]'", "gittok init .\n", "cd ~/gittok"):
+        assert fact in install, fact
+    assert install.index("uv tool install 'gittok[images]'") < install.index("gittok init .\n")
+    assert "runs only while a session is open" in install
+    assert "Nothing is installed outside" in install
+    for fact in ("uv tool upgrade gittok", "gittok update", "uv tool uninstall gittok"):
+        assert fact in upgrade, fact
+
+
+def test_the_readme_points_to_the_site_and_its_links_work_on_pypi():
+    """PyPI shows the README without the repo around it: every link and image is absolute."""
+    import re
+
     text = (ROOT / "README.md").read_text()
-    for fact in (
-        "uv tool install 'gittok[images]'",
-        "gittok init .\n",
-        "cd ~/gittok",
-        "uv tool upgrade gittok",
-        "gittok update",
-        "uv tool uninstall gittok",
-        "<!-- screenshot -->",
-        "only while a Claude Code session is open",
-        "Nothing is installed outside",
-    ):
-        assert fact in text, fact
-    # The main command has the illustrated cards, and it comes before init.
-    assert text.index("uv tool install 'gittok[images]'") < text.index("gittok init .\n")
-    assert "Optional: illustrated cards" not in text
+    assert SITE in text
+    assert "uv tool install 'gittok[images]'" in text and "gittok init ." in text
+    relative = re.findall(r"\]\((?!https?://)[^)]*\)", text)
+    relative += re.findall(r'src="(?!https?://)[^"]*"', text)
+    assert relative == [], relative
+    assert "site_url: " + SITE in (ROOT / "mkdocs.yml").read_text()
 
 
 def test_skills_say_where_the_mcp_server_comes_from():

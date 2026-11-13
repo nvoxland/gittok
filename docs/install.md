@@ -126,21 +126,25 @@ repos:
 
 GitTok is made for a phone, so LAN serving is on by default (`server.lan: true`). While a session is open, the feed server binds all interfaces, and a device that is not this computer must pair once.
 
-To pair a phone, ask Claude: "Pair my phone." Claude calls the `pairing_link` tool. It opens `http://127.0.0.1:7313/pairing` in the browser of this computer. That page shows one QR code for each LAN address of the computer, with the link as text. Scan the code with the phone camera. Both devices must be on the same network. The page answers this computer only. A server that you start by hand with `gittok serve` also prints the pairing links (lines that begin with `pair:`).
+A device pairs by code:
 
-If the QR code does not suit, for example for an app on the phone's home screen (it keeps its own cookies, apart from the browser), open GitTok on the device and tap "Pair with a code". The device shows a code such as `K7QM-2D`. Tell Claude: "pair code K7QM-2D" (or run `gittok pair K7QM-2D`). The device opens the feed a few seconds later. A code lasts 10 minutes and works once.
+1. Get the feed address. Claude gives it at the start of each session (the SessionStart line `gittok url --hint`), and you can ask at any time: "What is the feed address?" Claude calls the `feed_address` tool. In a terminal, `gittok url` prints it.
+2. On the device, open the address (both devices on the same network) and tap "Pair with a code". The device shows a code such as `K7QM-2D`.
+3. Tell Claude: "pair code K7QM-2D" (or run `gittok pair K7QM-2D`). The device opens the feed a few seconds later. A code lasts 10 minutes and works once.
+
+An app on the phone's home screen keeps its own cookies, apart from the browser: pair it inside the app the same way. A server that you start by hand with `gittok serve` prints the addresses (lines that begin with `lan:`).
 
 What this means for your network:
 
 - The feed goes over plain HTTP, not HTTPS.
-- Any device on the same network can reach the port. It gets nothing until it opens the pairing link or QR code once, or until you tell Claude the code that it shows. The MCP server speaks stdio only; the feed server has no MCP endpoint.
-- Someone who can watch traffic on that network could read the pairing token and the cards. Cards hold excerpts of your code.
+- Any device on the same network can reach the port. It gets nothing until you tell Claude the code that it shows. A device can ask for codes, but only you can approve one, in your Claude Code session. The MCP server speaks stdio only; the feed server has no MCP endpoint.
+- Someone who can watch traffic on that network could read the pairing cookie and the cards. Cards hold excerpts of your code.
 - So use it on a network you trust, such as your home network. Take care on shared or public Wi-Fi.
 - "HTTPS on a LAN" below has an optional recipe.
 
 To turn it off, ask Claude: "Turn off phone access." Claude calls `set_lan(enabled=false)`, which writes `server.lan: false` to `local/settings.yaml`. You can also write that yourself, or start the server with `--no-lan`. The server then answers this computer only. The setting is read when the server starts, so restart it: run `/mcp`, pick gittok, and Reconnect, or start a new session. "Turn on phone access" does the reverse.
 
-The pairing link holds a secret token. Do not put it in a file, a commit or a chat with other people. To make a new token, delete `<data_dir>/lan_token` and restart the server; every device must then pair again.
+A paired device holds a cookie with the secret token from `<data_dir>/lan_token`. To make a new token (for example after you lost a phone), delete that file and restart the server; every device must then pair again.
 
 ## Upgrade
 
@@ -289,7 +293,7 @@ Until mflux is importable, the brief skips `mascot_scene` and `comic` and those 
 
 ## The feed server by hand
 
-`gittok serve`, run inside a GitTok directory, starts the feed server without a Claude Code session. It prints the feed address and the pairing links, and it runs until you stop it. It is for a look at the feed when no session is open, and for development. It does not make cards: only a Claude Code session does. A session that starts while it runs finds the port in use and does not start a second server.
+`gittok serve`, run inside a GitTok directory, starts the feed server without a Claude Code session. It prints the feed addresses and how a device pairs, and it runs until you stop it. It is for a look at the feed when no session is open, and for development. It does not make cards: only a Claude Code session does. A session that starts while it runs finds the port in use and does not start a second server.
 
 ## Other MCP clients
 
@@ -311,7 +315,7 @@ Fetch updates remote-tracking refs only. It never changes the working tree, the 
 
 ## LAN notes
 
-LAN serving is on by default (`server.lan: true`): the feed server (started by `gittok mcp --ui`, or by hand with `gittok serve`) binds all interfaces. "Phone access" above says what that means and how to pair a device. To turn it off, set `server.lan: false` in `local/settings.yaml`, or pass `--no-lan`; the server then binds `127.0.0.1`. An explicit `--host` is used as given, and `--lan` forces LAN serving. A bind to any non-loopback address is token-protected in the same way. The feed and `/api/*` need a pairing cookie from non-loopback peers: scan the QR code from the pairing page, or open a `pair:` link, once on each device. The token lives in `<data_dir>/lan_token` (mode 0600). The pairing page (`/pairing`) is loopback-only and refuses LAN peers. The feed server has no MCP endpoint. PWA install and offline mode need HTTPS, because service workers do not register on plain-HTTP LAN origins. See `docs/social.md`.
+LAN serving is on by default (`server.lan: true`): the feed server (started by `gittok mcp --ui`, or by hand with `gittok serve`) binds all interfaces. "Phone access" above says what that means and how to pair a device. To turn it off, set `server.lan: false` in `local/settings.yaml`, or pass `--no-lan`; the server then binds `127.0.0.1`. An explicit `--host` is used as given, and `--lan` forces LAN serving. A bind to any non-loopback address is token-protected in the same way. The feed and `/api/*` need a pairing cookie from non-loopback peers: pair each device once by code ("Phone access" above). The token lives in `<data_dir>/lan_token` (mode 0600). The feed server has no MCP endpoint. PWA install and offline mode need HTTPS, because service workers do not register on plain-HTTP LAN origins. See `docs/social.md`.
 
 ## HTTPS on a LAN (optional, for PWA install)
 
@@ -319,11 +323,11 @@ You do not need this to use the feed. Plain HTTP on the LAN works in a browser t
 
 **The project does not test these recipes.** GitTok itself serves plain HTTP only. The recipes use a second program on the same computer that holds the certificate and forwards to `http://127.0.0.1:7313`. Read the two warnings first.
 
-**Warning 1: a proxy needs LAN serving on (the default), and each device must pair.** A proxy on the same computer connects from `127.0.0.1`. GitTok does not treat such a request as local when it has one of the headers `X-Forwarded-For`, `Forwarded`, `X-Forwarded-Host`, `X-Forwarded-Proto` or `X-Real-IP`. A request with one of these headers never gets the pairing page (HTTP 403), and it needs the pairing cookie, the same as a LAN device. Know these limits:
+**Warning 1: a proxy needs LAN serving on (the default), and each device must pair.** A proxy on the same computer connects from `127.0.0.1`. GitTok does not treat such a request as local when it has one of the headers `X-Forwarded-For`, `Forwarded`, `X-Forwarded-Host`, `X-Forwarded-Proto` or `X-Real-IP`. A request with one of these headers needs the pairing cookie, the same as a LAN device. Know these limits:
 
 - The server has a pairing token when LAN serving is on (the default) or when `--host` is not a loopback address. If you turned LAN serving off (`server.lan: false`, or `--no-lan`) there is no token, so nothing can pair: GitTok refuses every request that has one of these headers with HTTP 403 (`proxy_needs_pairing`). Set `server.lan: true` again and restart before you use a proxy.
-- A proxy that sends none of these headers still looks local, so it skips pairing and can open the pairing page. Tailscale Serve and Caddy send the headers by default. nginx sends them only when its config has `proxy_set_header X-Forwarded-For ...`. Do not remove these headers in the proxy config.
-- Pair each device on the address that it uses. Open `https://<the proxy's name>/pair?t=<token>` on the device: the token is the last part of the pairing link (ask Claude for the pairing link, or read it on the pairing page). A cookie from the plain `http://<LAN address>:7313` address does not count for the proxy's name.
+- A proxy that sends none of these headers still looks local, so it skips pairing. Tailscale Serve and Caddy send the headers by default. nginx sends them only when its config has `proxy_set_header X-Forwarded-For ...`. Do not remove these headers in the proxy config.
+- Pair each device on the address that it uses: open `https://<the proxy's name>` on the device, tap "Pair with a code", and tell Claude the code. A cookie from the plain `http://<LAN address>:7313` address does not count for the proxy's name.
 
 Also limit who can reach the proxy.
 
@@ -343,7 +347,7 @@ tailscale serve --bg 7313        # serves https://<machine>.<tailnet>.ts.net to 
 tailscale serve status           # shows the URL
 ```
 
-Put `<machine>.<tailnet>.ts.net` in `server.allowed_hosts`. Tailscale connects to `127.0.0.1` and adds `X-Forwarded-For`, so GitTok asks these requests to pair (warning 1). If you turned `server.lan` off, GitTok refuses every request from the tailnet (HTTP 403, `proxy_needs_pairing`). Keep `server.lan` on (the server also answers paired devices on your LAN) and open `https://<machine>.<tailnet>.ts.net/pair?t=<token>` once on each device. Do not use `tailscale funnel`: it opens the server to the internet.
+Put `<machine>.<tailnet>.ts.net` in `server.allowed_hosts`. Tailscale connects to `127.0.0.1` and adds `X-Forwarded-For`, so GitTok asks these requests to pair (warning 1). If you turned `server.lan` off, GitTok refuses every request from the tailnet (HTTP 403, `proxy_needs_pairing`). Keep `server.lan` on (the server also answers paired devices on your LAN), open `https://<machine>.<tailnet>.ts.net` once on each device, and pair it by code. Do not use `tailscale funnel`: it opens the server to the internet.
 
 ### Recipe B: mkcert and a local reverse proxy
 
@@ -357,13 +361,11 @@ mkcert -CAROOT                   # the folder with rootCA.pem: install this file
 
 On iOS, open `rootCA.pem` to install the profile, then turn it on in Settings, General, About, Certificate Trust Settings. On Android, install it as a CA certificate in the security settings. Never share `rootCA-key.pem`.
 
-A [Caddy](https://caddyserver.com) config that forwards to GitTok. Caddy adds `X-Forwarded-For`, so GitTok refuses the pairing page itself; the config blocks it a second time:
+A [Caddy](https://caddyserver.com) config that forwards to GitTok. Caddy adds `X-Forwarded-For`, so each device must pair (warning 1):
 
 ```
 mymac.local:8443 {
 	tls /path/to/mymac.local.pem /path/to/mymac.local-key.pem
-	@pairing path /pairing
-	respond @pairing 403
 	reverse_proxy 127.0.0.1:7313
 }
 ```
@@ -374,6 +376,6 @@ Open `https://mymac.local:8443` on the phone. If the name is this computer's own
 
 - HTTP 421 `unknown Host`: the name in the address bar is not in `server.allowed_hosts`.
 - HTTP 403 `proxy_needs_pairing`: LAN serving was turned off, so there is no pairing token. Set `server.lan: true`, restart, and pair the device.
-- HTTP 401 `pair this device`: open `https://<the proxy's name>/pair?t=<token>` on the device.
+- HTTP 401 `pair this device`: tap "Pair with a code" on the device and tell Claude the code.
 - HTTP 403 `cross-origin request` on taps (like, save, answer): the same cause; the check uses the same list.
 - The page loads but there is no install prompt or offline mode: the certificate is not trusted on that device. A page with a certificate warning does not register a service worker.

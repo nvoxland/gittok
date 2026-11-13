@@ -21,7 +21,7 @@ STEERING_TOOLS = {
     "add_repo",
     "remove_repo",
     "set_lan",
-    "pairing_link",
+    "feed_address",
     "set_group",
     "set_mascot",
     "edit_persona",
@@ -53,7 +53,13 @@ async def test_add_rule_is_listed_and_created_by_agent(server):
         rule = data(
             await client.call_tool(
                 "add_rule",
-                {"type": "ban", "feature": "format", "value": "meme", "reason": "no memes"},
+                {
+                    "type": "limit",
+                    "feature": "format",
+                    "value": "meme",
+                    "max_share": 0,
+                    "reason": "no memes",
+                },
             )
         )
         assert rule["created_by"] == "agent"
@@ -65,7 +71,7 @@ async def test_add_rule_is_listed_and_created_by_agent(server):
 async def test_bad_rule_value_becomes_tool_error(server):
     async with Client(server) as client:
         res = await client.call_tool(
-            "add_rule", {"type": "ban", "feature": "format", "value": "nope"}
+            "add_rule", {"type": "limit", "feature": "format", "value": "nope", "max_share": 0}
         )
     assert res.is_error
     assert "Unknown format" in res.content[0].text
@@ -132,11 +138,17 @@ async def test_add_repo_is_seen_by_the_next_list_repos(fixture_repo, tmp_path):
         assert repos["delta"]["mascot"] == "owl"
 
 
-async def test_get_brief_lists_active_rules_and_honors_bans(server):
+async def test_get_brief_lists_active_rules_and_honors_a_zero_limit(server):
     async with Client(server) as client:
         await client.call_tool(
             "add_rule",
-            {"type": "ban", "feature": "format", "value": "code_card", "reason": "less code"},
+            {
+                "type": "limit",
+                "feature": "format",
+                "value": "code_card",
+                "max_share": 0,
+                "reason": "less code",
+            },
         )
         brief = data(await client.call_tool("get_brief", {"count": 10}))
     assert "Rules:" in brief["summary_markdown"]
@@ -152,7 +164,13 @@ async def test_expired_rules_are_not_in_the_brief(fixture_repo, tmp_path):
     async with Client(server) as client:
         await client.call_tool(
             "add_rule",
-            {"type": "ban", "feature": "format", "value": "code_card", "expires": "1h"},
+            {
+                "type": "limit",
+                "feature": "format",
+                "value": "code_card",
+                "max_share": 0,
+                "expires": "1h",
+            },
         )
         with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
             conn.execute("UPDATE rules SET expires_at = '2020-01-01T00:00:00Z'")

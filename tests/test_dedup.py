@@ -127,3 +127,14 @@ def test_only_rejects_inside_the_window_lower_the_rank(conn, cfg):
         ledger.mark_rejected(conn, a, NOW - timedelta(days=days + 10), window_days=days)
     ledger.mark_rejected(conn, a, NOW - timedelta(days=1), window_days=days)
     assert conn.execute("SELECT times_rejected FROM leads WHERE id = ?", (a,)).fetchone()[0] == 1
+
+
+def test_a_followed_file_ranks_its_leads_higher_so_more_cards_get_made(conn, cfg):
+    """Following a file shapes generation: its dir's leads go first. (The feed itself serves
+    the cards that exist oldest first; following does not reorder them.)"""
+    from gittok import characters
+
+    refresh(conn, sig("src/a.py", "lib/b.py"))
+    assert [x.path for x in hot(conn, cfg)] == ["src/a.py", "lib/b.py"]
+    characters.set_follow(conn, "r", "lib/b.py", True)
+    assert [x.path for x in hot(conn, cfg)] == ["lib/b.py", "src/a.py"]

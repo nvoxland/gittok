@@ -43,7 +43,7 @@ def test_add_boost_rule_defaults_factor_and_persists(conn, cfg):
 def test_add_rule_rejects_bad_type_feature_and_numbers(conn, cfg):
     cases = [
         (dict(type="nuke", feature="format", value="meme"), "type"),
-        (dict(type="ban", feature="colour", value="red"), "feature"),
+        (dict(type="limit", feature="colour", value="red", max_share=0), "feature"),
         (dict(type="boost", feature="format", value="meme", factor=0), "factor"),
         (dict(type="prefer", feature="persona", value="greybeard", factor=-1), "factor"),
         (dict(type="focus", feature="repo", value="fixture"), "slots"),
@@ -57,11 +57,17 @@ def test_add_rule_rejects_bad_type_feature_and_numbers(conn, cfg):
     assert conn.execute("SELECT COUNT(*) FROM rules").fetchone()[0] == 0
 
 
+def test_there_is_no_ban_rule_the_answer_says_what_to_use(conn, cfg):
+    """ "Never X" is a limit with share 0, or the reader's own words in local/guidance.md."""
+    with pytest.raises(steering.SteeringError) as e:
+        steering.add_rule(conn, cfg, type="ban", feature="tone", value="roast")
+    assert "max_share=0" in str(e.value) and "local/guidance.md" in str(e.value)
+    assert "ban" not in steering.RULE_TYPES
+
+
 def test_add_rule_defaults_per_type(conn, cfg):
     prefer = steering.add_rule(conn, cfg, type="prefer", feature="persona", value="greybeard")
     assert prefer["factor"] == 1.5
-    ban = steering.add_rule(conn, cfg, type="ban", feature="format", value="horoscope")
-    assert (ban["factor"], ban["slots"], ban["max_share"]) == (None, None, None)
     focus = steering.add_rule(conn, cfg, type="focus", feature="repo", value="fixture", slots=5)
     assert focus["slots"] == 5 and focus["factor"] is None
     limit = steering.add_rule(conn, cfg, type="limit", feature="tone", value="roast", max_share=0)
@@ -70,7 +76,7 @@ def test_add_rule_defaults_per_type(conn, cfg):
 
 def test_add_rule_checks_values_against_known_ones(conn, cfg):
     with pytest.raises(steering.SteeringError, match="Did you mean 'meme'"):
-        steering.add_rule(conn, cfg, type="ban", feature="format", value="memee")
+        steering.add_rule(conn, cfg, type="limit", feature="format", value="memee", max_share=0)
     for feature, value in [
         ("story_type", "gossip"),
         ("tone", "angry"),
@@ -86,7 +92,7 @@ def test_add_rule_checks_values_against_known_ones(conn, cfg):
         ("angle", "deep"),
     ]:
         with pytest.raises(steering.SteeringError, match=feature):
-            steering.add_rule(conn, cfg, type="ban", feature=feature, value=value)
+            steering.add_rule(conn, cfg, type="limit", feature=feature, value=value, max_share=0)
     ok = [
         ("story_type", "rip"),
         ("format", "meme"),
@@ -101,7 +107,10 @@ def test_add_rule_checks_values_against_known_ones(conn, cfg):
     ]
     for feature, value in ok:
         assert (
-            steering.add_rule(conn, cfg, type="ban", feature=feature, value=value)["value"] == value
+            steering.add_rule(conn, cfg, type="limit", feature=feature, value=value, max_share=0)[
+                "value"
+            ]
+            == value
         )
 
 
@@ -117,15 +126,22 @@ def test_add_rule_group_and_has_comments_values(conn, cfg):
     from gittok.config import Group
 
     cfg = replace(cfg, groups={"dev": Group("dev", ("fixture",))})
-    assert steering.add_rule(conn, cfg, type="ban", feature="group", value="dev")
-    r = steering.add_rule(conn, cfg, type="ban", feature="has_comments", value="yes")
+    assert steering.add_rule(conn, cfg, type="limit", feature="group", value="dev", max_share=0)
+    r = steering.add_rule(conn, cfg, type="limit", feature="has_comments", value="yes", max_share=0)
     assert r["value"] == "1"
 
 
 def test_add_rule_expiry_forms(conn, cfg):
     def add(expires):
         return steering.add_rule(
-            conn, cfg, type="ban", feature="format", value="meme", expires=expires, now=NOW
+            conn,
+            cfg,
+            type="limit",
+            feature="format",
+            value="meme",
+            max_share=0,
+            expires=expires,
+            now=NOW,
         )["expires_at"]
 
     assert add("7d") == "2026-06-08T12:00:00Z"
@@ -142,19 +158,19 @@ def test_add_rule_expiry_forms(conn, cfg):
 
 def test_add_rule_keeps_creator_and_reason(conn, cfg):
     r = steering.add_rule(
-        conn, cfg, type="ban", feature="format", value="meme",
+        conn, cfg, type="limit", feature="format", value="meme", max_share=0,
         created_by="user", reason="less memes please",
     )  # fmt: skip
     assert (r["created_by"], r["reason"]) == ("user", "less memes please")
 
 
 def test_list_rules_hides_expired_unless_asked(conn, cfg):
-    keep = steering.add_rule(conn, cfg, type="ban", feature="format", value="meme")
+    keep = steering.add_rule(conn, cfg, type="limit", feature="format", value="meme", max_share=0)
     soon = steering.add_rule(
-        conn, cfg, type="ban", feature="tone", value="roast", expires="7d", now=NOW
+        conn, cfg, type="limit", feature="tone", value="roast", max_share=0, expires="7d", now=NOW
     )
     old = steering.add_rule(
-        conn, cfg, type="ban", feature="tone", value="hype", expires="1d", now=NOW
+        conn, cfg, type="limit", feature="tone", value="hype", max_share=0, expires="1d", now=NOW
     )
     later = NOW + timedelta(days=3)
     assert [r["id"] for r in steering.list_rules(conn, now=later)] == [keep["id"], soon["id"]]
@@ -168,7 +184,7 @@ def test_list_rules_hides_expired_unless_asked(conn, cfg):
 
 
 def test_remove_rule_deletes_and_rejects_unknown(conn, cfg):
-    rule = steering.add_rule(conn, cfg, type="ban", feature="format", value="meme")
+    rule = steering.add_rule(conn, cfg, type="limit", feature="format", value="meme", max_share=0)
     out = steering.remove_rule(conn, rule["id"])
     assert out["removed"] is True and out["rule"]["id"] == rule["id"]
     assert steering.list_rules(conn) == []
@@ -256,7 +272,9 @@ def test_explain_weights_all_features_sorted_and_rejects_unknown(conn, cfg, tast
 
 
 def test_get_profile_writes_plain_claims_from_evidence(conn, cfg, taste):
-    steering.add_rule(conn, cfg, type="ban", feature="format", value="horoscope", now=NOW)
+    steering.add_rule(
+        conn, cfg, type="limit", feature="format", value="horoscope", max_share=0, now=NOW
+    )
     p = steering.get_profile(conn, cfg, now=NOW)
     assert p["evidence"] == 20
     import re
@@ -974,10 +992,10 @@ def test_coverage_rows_count_current_leads_and_covered_leads(conn, cfg):
 
 
 def test_add_rule_verdict(conn, cfg):
-    r = steering.add_rule(conn, cfg, type="ban", feature="verdict", value="cursed")
+    r = steering.add_rule(conn, cfg, type="limit", feature="verdict", value="cursed", max_share=0)
     assert (r["feature"], r["value"]) == ("verdict", "cursed")
     with pytest.raises(steering.SteeringError, match="verdict"):
-        steering.add_rule(conn, cfg, type="ban", feature="verdict", value="meh")
+        steering.add_rule(conn, cfg, type="limit", feature="verdict", value="meh", max_share=0)
     steering.explain_weights(conn, cfg, feature="verdict")
 
 

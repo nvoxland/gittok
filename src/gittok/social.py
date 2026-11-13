@@ -10,8 +10,6 @@ import secrets
 import socket
 import threading
 import time
-import webbrowser
-from collections.abc import Callable
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -537,20 +535,13 @@ def ensure_lan_token(data_dir) -> str:
 # What the user must know about phone access. The agent relays it; the docs repeat it.
 LAN_NOTICE = (
     "GitTok serves the feed to your local network over plain HTTP, not HTTPS. Any device on "
-    "the network can reach the port, but it gets nothing until it opens the pairing link or "
-    "QR code once, or until you tell Claude the code that it shows. Someone who can watch "
-    "traffic on that network could read the pairing token and the cards, and cards hold "
+    "the network can reach the port, but it gets nothing until it pairs: on the device, tap "
+    "'Pair with a code' and tell Claude the code that it shows. Someone who can watch "
+    "traffic on that network could read the pairing cookie and the cards, and cards hold "
     "excerpts of your code. Use it on a network you trust, such as your home network, and "
     "take care on shared or public Wi-Fi. To turn it off, ask Claude to turn off phone access "
-    "(`server.lan: false` in local/settings.yaml). docs/install.md has an optional HTTPS "
-    "recipe."
-)
-# The short form: under the QR code and in the server's start-up lines.
-LAN_NOTE = (
-    "This link works over plain HTTP on your local network. Use it on a network you trust. "
-    "Someone who can watch the traffic on that network could read the link and your cards, "
-    "and cards hold excerpts of your code. To stop serving the network, ask Claude to turn "
-    "off phone access."
+    "(`server.lan: false` in local/settings.yaml). "
+    "https://nvoxland.github.io/gittok/install/ has an optional HTTPS recipe."
 )
 LAN_RESTART = (
     "The server reads this setting when it starts, so it must start again. The Claude Code "
@@ -559,7 +550,6 @@ LAN_RESTART = (
     "it and starts `gittok serve` again."
 )
 ALL_INTERFACES = ("0.0.0.0", "::")
-PAIRING_PAGE = "/pairing"  # loopback-only page with the QR codes; its URL holds no token
 
 
 def is_loopback_host(host: str) -> bool:
@@ -571,11 +561,6 @@ def is_loopback_host(host: str) -> bool:
         return False
 
 
-def pair_links(port: int, token: str, addresses: list[str]) -> list[dict]:
-    """One pairing link per address, in the order given (the primary address is first)."""
-    return [{"address": a, "url": f"http://{a}:{port}/pair?t={token}"} for a in addresses]
-
-
 def _accepts(host: str, port: int) -> bool:
     """True when something accepts a TCP connection on host:port."""
     try:
@@ -585,44 +570,42 @@ def _accepts(host: str, port: int) -> bool:
         return False
 
 
-def _open(open_url: Callable[[str], Any], url: str) -> bool:
-    try:
-        return open_url(url) is not False
-    except Exception:
-        log.warning("could not open %s in a browser", url, exc_info=True)
-        return False
+PAIR_STEPS = (
+    "To pair a phone (once per device, on the same network as this computer): the user opens "
+    "a phone address on the phone, taps 'Pair with a code', and tells you the code that it "
+    "shows; call pair_device with it. The device opens the feed a few seconds later. For an "
+    "app on the phone's home screen, the user pairs inside the app the same way: it keeps its "
+    "own cookies, apart from the browser. Give the user the phone address, these steps, and "
+    "the notice."
+)
 
 
-def pairing_link(
-    cfg: Config, open_browser: bool = True, open_url: Callable[[str], Any] = webbrowser.open
-) -> dict:
-    """The pairing links of the running feed server, for the agent to show to the user.
-
-    The answer comes from what the server serves now (a TCP connect to each address), not
-    only from the settings: a server started with `--lan` or `--no-lan` is seen as it is.
-    With `open_browser`, the QR page is opened in the default browser of this computer."""
+def feed_address(cfg: Config) -> dict:
+    """Where the running feed server answers: this computer, and each LAN address a phone can
+    open. The answer comes from what the server serves now (a TCP connect to each address),
+    not only from the settings: a server started with `--lan` or `--no-lan` is seen as it is.
+    No address holds a secret: a device pairs by the code that it shows (`pair_device`)."""
     server = cfg.settings.server
     port = server.port
     wide = server.lan or server.host in ALL_INTERFACES or is_loopback_host(server.host)
     local = "127.0.0.1" if wide else server.host
-    out: dict = {"lan": False, "links": [], "qr_page": None, "opened": False}
+    out: dict = {"lan": False, "computer": None, "phone": []}
     if not _accepts(local, port):
         out["message"] = (
-            f"The feed server does not answer on {local}:{port}, so there is nothing to pair "
-            "with. The Claude Code session starts it: ask the user to run /mcp, pick gittok, "
-            "and Reconnect. Then call pairing_link again. If the port is in use by another "
-            "program, the user sets another `server.port` in local/settings.yaml."
+            f"The feed server does not answer on {local}:{port}. The Claude Code session "
+            "starts it: ask the user to run /mcp, pick gittok, and Reconnect. Then call "
+            "feed_address again. If the port is in use by another program, the user sets "
+            "another `server.port` in local/settings.yaml."
         )
         return out
-    if wide:
-        out["qr_page"] = f"http://127.0.0.1:{port}{PAIRING_PAGE}"
+    out["computer"] = f"http://{local}:{port}"
     addresses = lan_addresses() if wide else [server.host]
-    serving = [a for a in addresses if _accepts(a, port)]
+    serving = [a for a in addresses if a != local and _accepts(a, port)]
     if not serving:
-        if not addresses:
+        if wide and not addresses:
             out["message"] = (
-                "This computer has no LAN address now. Connect it to a network, then call "
-                "pairing_link again."
+                "This computer has no LAN address now, so a phone cannot reach the feed. "
+                "Connect it to a network, then call feed_address again."
             )
         elif server.lan:
             out["message"] = (
@@ -636,22 +619,7 @@ def pairing_link(
             )
         return out
     out["lan"] = True
-    out["links"] = pair_links(port, ensure_lan_token(cfg.settings.data_dir), serving)
-    if open_browser and out["qr_page"]:
-        out["opened"] = _open(open_url, out["qr_page"])
-    where = (
-        "The QR page is open in the browser of this computer. "
-        if out["opened"]
-        else "Give the user the qr_page address to open on this computer, or a link. "
-    )
-    out["message"] = (
-        f"{where}The user scans a QR code with the phone camera, or opens a link on the "
-        "phone, once per device. Both devices must be on the same network. A link holds a "
-        "secret token: show it only to the user, and never put it in a card, a file or a "
-        "commit. For an app on the phone's home screen (it keeps its own cookies, apart from "
-        "the browser), or when the camera does not suit: the user taps 'Pair with a code' on "
-        "the device and tells you the code; call pair_device with it. Say this to the user "
-        "together with the QR code."
-    )
+    out["phone"] = [f"http://{a}:{port}" for a in serving]
+    out["message"] = PAIR_STEPS
     out["notice"] = LAN_NOTICE
     return out

@@ -1,11 +1,13 @@
+"""Serving the feed: every card the reader has not seen, oldest first. What the learner learned
+shapes which cards get made (the brief), never the order of the cards that exist."""
+
 import random
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
-import yaml
 
-from gittok import db, learning, slotter, store
+from gittok import db, slotter, store
 from tests.cards import text_card
 from tests.conftest import make_config
 
@@ -14,17 +16,7 @@ NOW = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
 
 @pytest.fixture
 def cfg(fixture_repo, tmp_path):
-    """Pure ranking by default: no exploration and no learning boost."""
-    c = make_config(fixture_repo, tmp_path)
-    c.defaults["exploration_share"] = 0.0
-    set_slotting(c, learning_boost_share=0.0)
-    return c
-
-
-def set_slotting(cfg, **knobs):
-    path = cfg.root / "config" / "reward.yaml"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump({"slotting": knobs}))
+    return make_config(fixture_repo, tmp_path)
 
 
 @pytest.fixture
@@ -64,17 +56,15 @@ def impress(conn, card_id, when):
     conn.commit()
 
 
-def fix_scores(monkeypatch, scores: dict[str, float]):
-    """Make Thompson scores deterministic; unlisted cards get 0.5."""
-
-    def fake(conn, cfg, ids, rng, now=None, feats=None):
-        return {i: scores.get(i, 0.5) for i in ids}
-
-    monkeypatch.setattr(learning, "score_cards", fake)
-
-
 def batch(conn, cfg, limit=10, served=(), seed=1):
     return slotter.build_batch(conn, cfg, limit, set(served), seed, NOW)
+
+
+def day(n: int) -> str:
+    return f"2026-05-{n:02d}T00:00:00Z"
+
+
+# ---------------------------------------------------------------- what is served, in what order
 
 
 def test_batch_has_ready_cards_and_skips_served(conn, cfg):
@@ -84,11 +74,57 @@ def test_batch_has_ready_cards_and_skips_served(conn, cfg):
     assert sorted(out) == sorted(ids[2:])
 
 
-def test_recently_impressed_cards_are_excluded_for_repeat_days(conn, cfg):
-    old, recent, fresh = (add_card(conn, cfg) for _ in range(3))
-    impress(conn, old, NOW - timedelta(days=8))
-    impress(conn, recent, NOW - timedelta(days=6))
-    assert sorted(batch(conn, cfg)) == sorted([old, fresh])
+def test_unseen_cards_go_out_oldest_first(conn, cfg):
+    newest = add_card(conn, cfg, created_at=day(20))
+    oldest = add_card(conn, cfg, created_at=day(2))
+    middle = add_card(conn, cfg, created_at=day(10))
+    assert batch(conn, cfg) == [oldest, middle, newest]
+    assert batch(conn, cfg, limit=2) == [oldest, middle]
+    assert batch(conn, cfg, served={oldest, middle}) == [newest]
+
+
+def test_a_seen_card_never_comes_back(conn, cfg):
+    long_ago, recent, fresh = (add_card(conn, cfg) for _ in range(3))
+    impress(conn, long_ago, NOW - timedelta(days=60))
+    impress(conn, recent, NOW - timedelta(days=1))
+    assert batch(conn, cfg) == [fresh]
+
+
+def test_what_the_learner_learned_does_not_change_the_order(conn, cfg):
+    """Strong evidence for one card's features changes nothing: the order is the age."""
+    old = add_card(conn, cfg, created_at=day(1), format="chart")
+    new = add_card(conn, cfg, created_at=day(20), format="meme")
+    conn.execute(
+        "INSERT INTO model_weights(feature, value, mean, precision, n, updated_at) "
+        "VALUES ('format', 'meme', 5.0, 100.0, 100.0, ?), ('format', 'chart', -5.0, 100.0, "
+        "100.0, ?)",
+        ("2026-06-01T00:00:00Z", "2026-06-01T00:00:00Z"),
+    )
+    conn.commit()
+    for seed in range(5):
+        assert batch(conn, cfg, seed=seed) == [old, new]
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        ("boost", {"factor": 5.0}),
+        ("prefer", {"factor": 5.0}),
+        ("limit", {"max_share": 0.0}),
+        ("focus", {"slots": 2}),
+    ],
+)
+def test_mix_rules_shape_generation_not_serving(conn, cfg, rule):
+    """`less memes` and the like change what gets made (the brief). A card that was made is
+    served in its turn."""
+    kind, kw = rule
+    chart = add_card(conn, cfg, created_at=day(1), format="chart")
+    meme = add_card(conn, cfg, created_at=day(2), format="meme")
+    add_rule(conn, kind, "format", "meme", **kw)
+    assert batch(conn, cfg) == [chart, meme]
+
+
+# ---------------------------------------------------------------- stories
 
 
 def _same_story(conn, *ids, key="story-1"):
@@ -101,117 +137,21 @@ def test_variants_of_one_story_not_served_within_repeat_window(conn, cfg):
     first, variant, other = (add_card(conn, cfg) for _ in range(3))
     _same_story(conn, first, variant)
     impress(conn, first, NOW - timedelta(days=3))
-    assert sorted(batch(conn, cfg)) == sorted([other])
+    assert batch(conn, cfg) == [other]
     conn.execute("DELETE FROM events")  # the impression is now outside the window
     impress(conn, first, NOW - timedelta(days=8))
-    out = batch(conn, cfg)  # both are eligible again, but still only one per batch
-    assert len(out) == 2 and other in out and (first in out) != (variant in out)
+    assert sorted(batch(conn, cfg)) == sorted([variant, other])  # `first` was seen
 
 
-def test_one_card_per_story_key_per_batch(conn, cfg, monkeypatch):
-    a, b, c = (add_card(conn, cfg) for _ in range(3))
+def test_one_card_per_story_key_per_batch_the_oldest(conn, cfg):
+    a = add_card(conn, cfg, created_at=day(5))
+    b = add_card(conn, cfg, created_at=day(3))
+    c = add_card(conn, cfg, created_at=day(4))
     _same_story(conn, a, b)
-    fix_scores(monkeypatch, {a: 0.2, b: 0.9, c: 0.5})
-    assert sorted(batch(conn, cfg)) == sorted([b, c])
+    assert batch(conn, cfg) == [b, c]
 
 
-def test_ban_rule_removes_matching_cards(conn, cfg):
-    a = add_card(conn, cfg, format="chart")
-    b = add_card(conn, cfg, format="meme")
-    add_rule(conn, "ban", "format", "chart")
-    assert batch(conn, cfg) == [b]
-    assert a not in batch(conn, cfg)
-
-
-def test_expired_rule_is_ignored(conn, cfg):
-    a = add_card(conn, cfg, format="chart")
-    add_rule(conn, "ban", "format", "chart", expires_at="2026-05-31T00:00:00Z")
-    assert batch(conn, cfg) == [a]
-
-
-@pytest.mark.parametrize("kind", ["boost", "prefer"])
-def test_boost_and_prefer_multiply_score(conn, cfg, monkeypatch, kind):
-    a = add_card(conn, cfg, format="chart")
-    b = add_card(conn, cfg, format="meme")
-    fix_scores(monkeypatch, {a: 0.2, b: 0.5})
-    assert batch(conn, cfg, limit=1) == [b]
-    add_rule(conn, kind, "format", "chart", factor=3.0)
-    assert batch(conn, cfg, limit=1) == [a]
-
-
-def test_focus_reserves_slots_for_matching_cards(conn, cfg, monkeypatch):
-    charts = [add_card(conn, cfg, format="chart") for _ in range(3)]
-    others = [add_card(conn, cfg, format="meme", dirs=[f"d{i}"]) for i in range(6)]
-    fix_scores(monkeypatch, {**{c: 0.01 for c in charts}, **{o: 0.9 for o in others}})
-    assert not set(batch(conn, cfg, limit=4)) & set(charts)
-    add_rule(conn, "focus", "format", "chart", slots=2)
-    out = batch(conn, cfg, limit=4)
-    assert len(set(out) & set(charts)) == 2
-    assert len(out) == 4
-
-
-def test_limit_rule_caps_matching_share(conn, cfg, monkeypatch):
-    charts = [add_card(conn, cfg, format="chart") for _ in range(5)]
-    others = [add_card(conn, cfg, format="meme") for _ in range(8)]
-    fix_scores(monkeypatch, {**{c: 0.9 for c in charts}, **{o: 0.1 for o in others}})
-    assert len(set(batch(conn, cfg, limit=8)) & set(charts)) == 5
-    add_rule(conn, "limit", "format", "chart", max_share=0.25)
-    out = batch(conn, cfg, limit=8)
-    assert len(set(out) & set(charts)) == 2
-    assert len(out) == 8
-
-
-def test_exploration_share_fills_from_lower_half(conn, cfg, monkeypatch):
-    ids = [add_card(conn, cfg) for _ in range(20)]
-    ranked = {c: 1 - n / 100 for n, c in enumerate(ids)}  # ids[0] is the best
-    fix_scores(monkeypatch, ranked)
-    assert set(batch(conn, cfg, limit=10)) == set(ids[:10])
-    cfg.defaults["exploration_share"] = 0.2
-    out = batch(conn, cfg, limit=10, seed=3)
-    assert len(out) == 10
-    assert len(set(out) & set(ids[10:])) == 2
-    assert set(ids[:8]) <= set(out)
-    # reproducible for one seed, different for another
-    assert batch(conn, cfg, limit=10, seed=3) == out
-    assert any(set(batch(conn, cfg, limit=10, seed=s)) != set(out) for s in range(4, 12))
-
-
-def test_learning_boost_picks_cards_from_least_covered_dirs(conn, cfg, monkeypatch):
-    a_cards = [add_card(conn, cfg, dirs=["a"]) for _ in range(6)]
-    b_card = add_card(conn, cfg, dirs=["b"])
-    c_card = add_card(conn, cfg, dirs=["c"])
-    for cid in (*a_cards, b_card):
-        impress(conn, cid, NOW - timedelta(days=9))
-    fix_scores(monkeypatch, {**{a: 0.9 for a in a_cards}, b_card: 0.3, c_card: 0.1})
-    assert c_card not in batch(conn, cfg, limit=5)
-    set_slotting(cfg, learning_boost_share=0.2)
-    out = batch(conn, cfg, limit=5)
-    assert c_card in out
-    assert b_card not in out
-    assert len(out) == 5
-
-
-def fmt(conn, ids):
-    return [conn.execute("SELECT format FROM cards WHERE id = ?", (i,)).fetchone()[0] for i in ids]
-
-
-def test_rhythm_never_three_same_formats_in_a_row_when_avoidable(conn, cfg, monkeypatch):
-    posts = [add_card(conn, cfg, format="text_post") for _ in range(4)]
-    pics = [add_card(conn, cfg, format="illustration") for _ in range(2)]
-    fix_scores(monkeypatch, {**{p: 0.9 for p in posts}, **{p: 0.1 for p in pics}})
-    formats = fmt(conn, batch(conn, cfg, limit=6))
-    assert len(formats) == 6
-    assert not any(formats[i] == formats[i + 1] == formats[i + 2] for i in range(4))
-
-
-def test_rhythm_alternates_fast_and_slow_formats(conn, cfg, monkeypatch):
-    fast = [add_card(conn, cfg, format=f) for f in ("meme", "chart", "fun_fact")]
-    slow = [add_card(conn, cfg, format=f) for f in ("thread", "comic", "code_card")]
-    fix_scores(monkeypatch, {**{c: 0.9 for c in fast}, **{c: 0.1 for c in slow}})
-    classes = ["fast" if f in ("meme", "chart", "fun_fact") else "slow"
-               for f in fmt(conn, batch(conn, cfg, limit=6))]  # fmt: skip
-    assert len(classes) == 6
-    assert all(classes[i] != classes[i + 1] for i in range(5))
+# ---------------------------------------------------------------- quiz reviews
 
 
 def due_quiz(conn, cfg, n):
@@ -219,7 +159,7 @@ def due_quiz(conn, cfg, n):
 
     ids = [add_card_spec(conn, cfg, quiz_card(SimpleNamespace(shas={}))) for _ in range(n)]
     for cid in ids:
-        impress(conn, cid, NOW - timedelta(days=1))  # recent, so only SRS can bring it back
+        impress(conn, cid, NOW - timedelta(days=1))  # seen, so only a review brings it back
         conn.execute(
             "INSERT INTO srs(card_id, interval_days, due_at, streak, mastered) "
             "VALUES (?, 1, ?, 0, 0)",
@@ -236,15 +176,14 @@ def add_card_spec(conn, cfg, spec):
     return cid
 
 
-def test_due_srs_cards_at_most_two_and_at_position_three_or_later(conn, cfg, monkeypatch):
+def test_due_srs_cards_at_most_two_and_at_position_three_or_later(conn, cfg):
     plain = [add_card(conn, cfg, format=f"f{i}") for i in range(8)]
     due = due_quiz(conn, cfg, 4)
-    fix_scores(monkeypatch, {**{p: 0.5 for p in plain}, **{d: 0.99 for d in due}})
     out = batch(conn, cfg, limit=8)
     positions = [n for n, i in enumerate(out) if i in due]
     assert len(positions) == 2
     assert all(p >= 3 for p in positions)
-    assert len(out) == 8
+    assert len(out) == 8 and set(out) - set(due) <= set(plain)
 
 
 def test_served_due_cards_do_not_come_back(conn, cfg):
@@ -269,141 +208,35 @@ def test_srs_past_batch_end_does_not_shorten_batch(conn, cfg):
     assert len(set(out)) == 5
 
 
-def test_limit_rule_with_small_limit_caps_at_least_one(conn, cfg, monkeypatch):
-    charts = [add_card(conn, cfg, format="chart") for _ in range(3)]
-    others = [add_card(conn, cfg, format="meme") for _ in range(6)]
-    fix_scores(monkeypatch, {**{c: 0.9 for c in charts}, **{o: 0.1 for o in others}})
-    add_rule(conn, "limit", "format", "chart", max_share=0.1)
-    out = batch(conn, cfg, limit=4)
-    assert len(set(out) & set(charts)) == 1
-    assert len(out) == 4
-
-
-def test_limit_rule_zero_share_bans_and_null_share_is_no_cap(conn, cfg, monkeypatch):
-    charts = [add_card(conn, cfg, format="chart") for _ in range(3)]
-    others = [add_card(conn, cfg, format="meme") for _ in range(6)]
-    fix_scores(monkeypatch, {**{c: 0.9 for c in charts}, **{o: 0.1 for o in others}})
-    add_rule(conn, "limit", "format", "chart", max_share=0.0)
-    assert not set(batch(conn, cfg, limit=4)) & set(charts)
-    conn.execute("DELETE FROM rules")
-    add_rule(conn, "limit", "format", "chart")
-    assert len(set(batch(conn, cfg, limit=3)) & set(charts)) == 3
-
-
-def test_exploration_uses_probabilistic_rounding_for_small_limits(conn, cfg, monkeypatch):
-    ids = [add_card(conn, cfg) for _ in range(20)]
-    fix_scores(monkeypatch, {c: 1 - n / 100 for n, c in enumerate(ids)})
-    cfg.defaults["exploration_share"] = 0.15  # 0.15 * 4 = 0.6 explored cards per batch
-    top = set(ids[:10])
-    seeds = range(300)
-    explored = sum(len(set(batch(conn, cfg, limit=4, seed=s)) - top) for s in seeds)
-    assert 0.45 * len(seeds) < explored < 0.75 * len(seeds)
-
-
-def test_dir_rules_match_by_path_prefix(conn, cfg, monkeypatch):
-    nested = add_card(conn, cfg, format="meme", dirs=["src/api"])
-    other = add_card(conn, cfg, format="meme", dirs=["lib/src"])
-    fix_scores(monkeypatch, {nested: 0.1, other: 0.9})
-    add_rule(conn, "focus", "dir", "src", slots=1)
-    assert batch(conn, cfg, limit=1) == [nested]
-    add_rule(conn, "ban", "dir", "src/")
-    assert batch(conn, cfg) == [other]
-
-
-def test_dir_rule_accepts_repo_prefix(conn, cfg):
-    a = add_card(conn, cfg, format="meme", dirs=["src/api"])
-    repo = conn.execute(
-        "SELECT value FROM card_features WHERE card_id = ? AND feature = 'repo'", (a,)
-    ).fetchone()[0]
-    add_rule(conn, "ban", "dir", f"{repo}/src")
-    assert batch(conn, cfg) == []
+# ---------------------------------------------------------------- series
 
 
 def series(key, part, of=3):
     return {"key": key, "part": part, "of": of}
 
 
-def test_series_parts_stay_in_order_with_a_gap(conn, cfg, monkeypatch):
-    p2 = add_card(conn, cfg, series=series("saga", 2), hook="part two")
-    p1 = add_card(conn, cfg, series=series("saga", 1), hook="part one")
-    others = [add_card(conn, cfg, hook=f"other {i}") for i in range(4)]
-    fix_scores(monkeypatch, {p2: 9.0, p1: 5.0, **{o: 1.0 for o in others}})
+def test_series_parts_stay_in_order_with_a_gap(conn, cfg):
+    p2 = add_card(conn, cfg, created_at=day(1), series=series("saga", 2), hook="part two")
+    p1 = add_card(conn, cfg, created_at=day(2), series=series("saga", 1), hook="part one")
+    for i in range(4):
+        add_card(conn, cfg, created_at=day(3 + i), hook=f"other {i}")
     out = batch(conn, cfg, 6)
     assert out.index(p1) < out.index(p2)
     assert out.index(p2) - out.index(p1) >= slotter.SERIES_GAP
 
 
 def test_series_part_waits_for_an_unseen_earlier_part(conn, cfg):
-    p1 = add_card(conn, cfg, series=series("saga", 1), dirs=["hidden"], hook="part one")
+    p1 = add_card(conn, cfg, series=series("saga", 1), hook="part one")
     p2 = add_card(conn, cfg, series=series("saga", 2), hook="part two")
     other = add_card(conn, cfg, hook="other")
-    add_rule(conn, "ban", "dir", "hidden")  # part 1 cannot go out, so part 2 waits
+    retold = add_card(conn, cfg, hook="part one, told before")
+    _same_story(conn, p1, retold)
+    impress(conn, retold, NOW - timedelta(days=3))  # its story was shown: part 1 must wait
     out = batch(conn, cfg, 5)
-    assert p2 not in out and other in out
-    conn.execute("DELETE FROM rules")
-    impress(conn, p1, NOW - timedelta(hours=1))  # now part 1 is seen
-    assert p2 in batch(conn, cfg, 5)
+    assert p1 not in out and p2 not in out and other in out
+    conn.execute("DELETE FROM events")
+    conn.commit()
+    out = batch(conn, cfg, 5)
+    assert out.index(p1) < out.index(p2)
     # A part served on an earlier page counts as seen, even before its impression lands.
     assert p2 in batch(conn, cfg, 5, served={p1})
-
-
-def test_followed_path_dir_boosts_its_cards(conn, cfg, monkeypatch):
-    from gittok import characters
-
-    a = add_card(conn, cfg, dirs=["billing"], hook="billing card")
-    b = add_card(conn, cfg, dirs=["other"], hook="other card")
-    fix_scores(monkeypatch, {a: 1.0, b: 1.05})
-    assert batch(conn, cfg, 2)[0] == b
-    characters.set_follow(conn, "fixture", "billing/invoice.py", True)
-    assert batch(conn, cfg, 2)[0] == a
-    characters.set_follow(conn, "fixture", "billing/invoice.py", False)
-    assert batch(conn, cfg, 2)[0] == b
-
-
-def test_unseen_quiz_is_placed_in_the_first_eight(conn, cfg, monkeypatch):
-    from tests.cards import quiz_card
-
-    posts = [add_card(conn, cfg, format=f"f{i}") for i in range(12)]
-    quiz = add_card_spec(conn, cfg, quiz_card(SimpleNamespace(shas={})))
-    fix_scores(monkeypatch, {**{p: 0.9 for p in posts}, quiz: 0.01})
-    out = batch(conn, cfg, limit=10)
-    assert len(out) == 10
-    assert quiz in out[:8]
-
-
-def test_no_quiz_slot_when_no_quiz_exists_or_batch_is_short(conn, cfg, monkeypatch):
-    from tests.cards import quiz_card
-
-    posts = [add_card(conn, cfg, format=f"f{i}") for i in range(6)]
-    quiz = add_card_spec(conn, cfg, quiz_card(SimpleNamespace(shas={})))
-    fix_scores(monkeypatch, {**{p: 0.9 for p in posts}, quiz: 0.01})
-    assert quiz not in batch(conn, cfg, limit=6)  # under 8 cards: no quiz guarantee
-
-
-def test_features_for_matches_the_impression_features_of_each_card(tmp_path, fixture_repo):
-    from dataclasses import replace
-    from types import SimpleNamespace
-
-    from gittok import db, learning, slotter, store
-    from tests.cards import quiz_card, text_card
-    from tests.conftest import make_config
-
-    cfg = make_config(fixture_repo, tmp_path)
-    cfg = replace(cfg, repos={"fixture": replace(cfg.repos["fixture"], group="core")})
-    conn = db.open_db(":memory:")
-    conn.execute("INSERT INTO runs(id, status, started_at) VALUES ('r1', 'finished', 'x')")
-    fx = SimpleNamespace(shas={"delete_legacy": "abc"})
-    ids = []
-    for n, spec in enumerate([text_card(fx), quiz_card(fx), text_card(fx)]):
-        acc = SimpleNamespace(card=spec, resolved={}, story_key=f"k{n}")
-        created = "2026-05-31T00:00:00Z" if n else "2025-01-01T00:00:00Z"
-        ids.append(store.insert_card(conn, cfg, "r1", acc, now=created))
-    now = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
-    got = slotter.features_for(conn, cfg, [*ids, "missing"], now)
-    assert got["missing"] == set()
-    for i in ids:
-        want = learning.impression_features(conn, cfg, i, now, {})
-        assert got[i] == want and ("group", "core") in want
-        assert ("familiarity", "new") in want  # the reader has seen nothing yet
-    assert ("recency", "old") in got[ids[0]] and ("recency", "new") in got[ids[1]]
-    conn.close()

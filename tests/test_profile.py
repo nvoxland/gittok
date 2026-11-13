@@ -28,7 +28,14 @@ def test_write_profile_writes_markdown_sections(conn, cfg):
         reward(conn, cfg, meme, 0.9, 2)
         reward(conn, cfg, chart, 0.2, 2)
     steering.add_rule(
-        conn, cfg, type="ban", feature="format", value="horoscope", reason="no stars", now=NOW
+        conn,
+        cfg,
+        type="limit",
+        feature="format",
+        value="horoscope",
+        max_share=0,
+        reason="no stars",
+        now=NOW,
     )
     path = profile.write_profile(conn, cfg, now=NOW)
     assert path == cfg.settings.data_dir / "profile.md"
@@ -39,7 +46,7 @@ def test_write_profile_writes_markdown_sections(conn, cfg):
     claim = r"You engaged with meme cards: average score 0\.\d+, and 100% scored well, over 6 views"
     assert re.search(claim, md)
     assert "## Active rules" in md
-    assert "ban format=horoscope" in md and "no stars" in md
+    assert "limit format=horoscope" in md and "no stars" in md
     assert "## Coverage gaps" in md
     assert "fixture/data" in md  # a dir with no cards at all
     assert not list(path.parent.glob("*.tmp"))

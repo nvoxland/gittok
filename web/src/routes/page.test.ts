@@ -93,21 +93,9 @@ describe('feed page', () => {
 		expect(fetchMock.mock.calls.some(([u]) => String(u).includes('cursor=cur1'))).toBe(true);
 	});
 
-	it('a thumbs-down sends the events, then ranks the unseen cards ahead again', async () => {
+	it('a thumbs-down or a like does not change the cards ahead', async () => {
 		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-		class FakeIO {
-			constructor(public cb: (e: Partial<IntersectionObserverEntry>[]) => void) {}
-			observe(target: Element) {
-				if (target.getAttribute('data-card-id') === 'c_1')
-					this.cb([{ target, isIntersecting: true, intersectionRatio: 0.9 }]);
-			}
-			unobserve() {}
-			disconnect() {}
-		}
-		vi.stubGlobal('IntersectionObserver', FakeIO);
 		const card = (n: number) => fakeCard({ id: `c_${n}`, hook: `Hook ${n}` });
-		const first = { cards: [card(1), card(2), card(3)], next_cursor: 'cur1' };
-		const fresh = { cards: [card(4), card(2)], next_cursor: 'cur2' };
 		const urls: string[] = [];
 		fetchMock.mockImplementation(async (url: string) => {
 			urls.push(String(url));
@@ -116,53 +104,19 @@ describe('feed page', () => {
 				headers: { get: () => null },
 				json: async () =>
 					url.startsWith('/api/feed')
-						? structuredClone(url.includes('drop=') ? fresh : first)
+						? { cards: [card(1), card(2), card(3)], next_cursor: 'cur1' }
 						: { notifications: [], unread: 0, stories: [] }
 			};
 		});
 		try {
 			render(Page);
 			await screen.findByText('Hook 1');
-			const less = screen.getAllByRole('button', { name: 'Show less like this' })[0];
-			await fireEvent.click(less);
-			await vi.advanceTimersByTimeAsync(2000);
-			expect(await screen.findByText('Hook 4')).toBeInTheDocument();
-			const hooks = screen.getAllByRole('article').map((a) => a.textContent ?? '');
-			expect(hooks.findIndex((t) => t.includes('Hook 4'))).toBe(1);
-			expect(hooks.some((t) => t.includes('Hook 3'))).toBe(false);
-			const refresh = urls.findIndex((u) => u.includes('drop=c_2%2Cc_3'));
-			const events = urls.findIndex((u) => u === '/api/events');
-			expect(refresh).toBeGreaterThan(-1);
-			expect(urls[refresh]).toContain('cursor=cur1');
-			expect(events).toBeGreaterThan(-1);
-			expect(events).toBeLessThan(refresh);
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	it('a thumbs-down taken back at once does not refresh the feed', async () => {
-		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-		const urls: string[] = [];
-		fetchMock.mockImplementation(async (url: string) => {
-			urls.push(String(url));
-			return {
-				ok: true,
-				headers: { get: () => null },
-				json: async () =>
-					url.startsWith('/api/feed')
-						? { cards: [fakeCard({ id: 'c_1', hook: 'Hook 1' })], next_cursor: 'cur1' }
-						: { notifications: [], unread: 0, stories: [] }
-			};
-		});
-		try {
-			render(Page);
-			await screen.findByText('Hook 1');
-			const less = screen.getByRole('button', { name: 'Show less like this' });
-			await fireEvent.click(less);
-			await fireEvent.click(less);
-			await vi.advanceTimersByTimeAsync(2000);
-			expect(urls.some((u) => u.includes('drop='))).toBe(false);
+			const before = screen.getAllByRole('article').map((a) => a.textContent);
+			await fireEvent.click(screen.getAllByRole('button', { name: 'Like' })[1]);
+			await fireEvent.click(screen.getAllByRole('button', { name: 'Show less like this' })[0]);
+			await vi.advanceTimersByTimeAsync(5000);
+			expect(screen.getAllByRole('article').map((a) => a.textContent)).toEqual(before);
+			expect(urls.filter((u) => u.startsWith('/api/feed'))).toHaveLength(1);
 		} finally {
 			vi.useRealTimers();
 		}
@@ -586,9 +540,12 @@ describe('feed page', () => {
 			render(Page);
 			const alert = await screen.findByRole('alert');
 			expect(alert).toHaveTextContent(/this device is not paired/i);
-			expect(alert).toHaveTextContent(/ask Claude for the pairing QR code/i);
-			expect(alert).toHaveTextContent(/scan it with this device/i);
-			expect(alert).toHaveTextContent(/on the computer that runs GitTok/i);
+			expect(alert).toHaveTextContent(/tell Claude the code/i);
+			expect(alert).not.toHaveTextContent(/QR/i);
+			const pairButton = screen.getByRole('button', { name: 'Pair with a code' });
+			const form = pairButton.closest('form')!;
+			expect(form.getAttribute('method')).toBe('post');
+			expect(form.getAttribute('action')).toBe('/pair/code');
 			expect(alert).not.toHaveTextContent('pair:');
 			expect(alert).not.toHaveTextContent(/failed to load feed/i);
 			paired = true;

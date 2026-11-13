@@ -52,24 +52,16 @@ def test_feed_pages_with_cursor_without_repeats(cfg, client, fixture_repo):
     assert third == {"cards": [], "next_cursor": None, "resume_card_id": None}
 
 
-def test_feed_refresh_learns_first_and_ranks_the_dropped_cards_again(cfg, client, fixture_repo):
-    import time
-
-    ids = seed(cfg, fixture_repo, [example_card(fixture_repo), text_card(fixture_repo)])
+def test_a_thumbs_down_does_not_send_the_cards_ahead_again(cfg, client, fixture_repo):
+    """Thumbs teach the learner what to make next. They do not reorder cards already sent:
+    the feed has no `drop` parameter, and a served card stays served."""
+    seed(cfg, fixture_repo, [example_card(fixture_repo), text_card(fixture_repo)])
     first = client.get("/api/feed", params={"limit": 2}).json()
-    on, ahead = first["cards"][0]["id"], first["cards"][1]["id"]
-    now = int(time.time() * 1000)
-    events = [
-        {"card_id": on, "type": "impression", "ts": now - 2000, "data": {"session": "s"}},
-        {"card_id": on, "type": "dislike", "ts": now - 1000, "data": {"on": True, "session": "s"}},
-    ]
-    client.post("/api/events", json={"events": events})
+    ahead = first["cards"][1]["id"]
     again = client.get(
         "/api/feed", params={"limit": 2, "cursor": first["next_cursor"], "drop": ahead}
     ).json()
-    assert [c["id"] for c in again["cards"]] == [ahead] and set(ids) == {on, ahead}
-    with db.session(cfg.settings.data_dir / "gittok.db") as conn:
-        assert conn.execute("SELECT signal FROM rewards").fetchone()[0] == "dislike"
+    assert again["cards"] == []
 
 
 def test_feed_cursor_is_base64_json_with_served_and_seed(cfg, client, fixture_repo):
