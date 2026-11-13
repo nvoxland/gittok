@@ -21,7 +21,7 @@ Claude profiles a new repo without asking. For a repo that has a profile, it onl
 
 ## Mascots
 
-When the image renderer works, each repo gets a mascot: a small character that its illustration and comic posts draw. Claude picks one that fits the repo when you add it.
+When the image renderer is installed, each repo gets a mascot: a small character that its illustration and comic posts draw. Claude picks one that fits the repo when you add it.
 
 > Give myapp an owl mascot.
 

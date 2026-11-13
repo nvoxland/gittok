@@ -246,12 +246,15 @@ The values below are the shipped ones.
 |---|---|---|
 | `meme_source` | `https://raw.githubusercontent.com/jacebrowning/memegen/main` | Where `gittok memes --prefetch` downloads meme templates and fonts |
 | `mflux_model` | `z-image-turbo` | The mflux model family |
-| `mflux_path` | `~/.cache/mflux/z-image-turbo-q4` | The folder that `mflux-save` wrote (`docs/install.md`). Until it exists, GitTok makes no illustration cards and no mascot. Empty: quantize `mflux_model` on every run |
-| `mflux_steps` | `8` | Steps per image |
+| `mflux_repo` | `filipstrand/Z-Image-Turbo-mflux-4bit` | The pre-quantized model that GitTok downloads (about 6 GB) |
+| `mflux_revision` | `b3a8f311...` | The revision of `mflux_repo` to download |
+| `mflux_auto_download` | `true` | The feed server downloads the model by itself when the renderer is installed. `false`: only `gittok images --download` does |
+| `mflux_path` | `""` | A model folder of your own (for example from `mflux-save`). Empty: `data/models/<repo name>`, where the download goes |
+| `mflux_steps` | `9` | Steps per image |
 | `mflux_low_ram` | `true` | Bound temporary MLX caches and enable tiled decoding where supported, retaining model components for reuse during a batch |
-| `mflux_timeout_s` | `120` | Maximum seconds per image, including initial model loading; timeout kills the batch and its child processes |
+| `mflux_timeout_s` | `120` | Maximum seconds per image once the model is loaded; a timeout kills the batch and its child processes |
+| `mflux_load_timeout_s` | `600` | Extra seconds for the first image of a batch, which also loads the model |
 | `mflux_batch_idle_s` | `10` | Seconds to keep a loaded batch for late image requests; must be finite and greater than zero |
-| `mflux_quantize` | `8` | The quantization when `mflux_path` is empty |
 | `image_width`, `image_height` | `768`, `960` | The image size in pixels |
 | `max_illustrations_per_run` | `6` | The most illustration and comic cards one run asks for |
 | `worker_interval_s` | `5.0` | Seconds between two passes of the render worker |
@@ -326,8 +329,8 @@ Fields: `style` (required; the text put before every illustration prompt), `seed
 How a repo gets one:
 
 - **When you add a repo**, Claude profiles it and then picks a character and a style that fit it, saves it with `set_mascot`, and tells you in one line. Say "make the mascot a fox" to change it.
-- This happens only when the image renderer works (the `status` tool: `renderers.illustration`). Without it nobody can draw the mascot, so none is made.
-- **A repo with no mascot** gets no `mascot_scene` and no `comic` cards. All other formats work, and no card is rejected for a missing mascot. For a repo that you added earlier, the SessionStart hint offers a mascot once the renderer works; Claude makes it when you say yes.
+- This happens only when the image renderer is installed (the `status` tool: `renderer_setup.illustration.installed`), also while its model still downloads. Without the renderer nobody can draw the mascot, so none is made.
+- **A repo with no mascot** gets no `mascot_scene` and no `comic` cards. All other formats work, and no card is rejected for a missing mascot. For a repo that you added earlier, the SessionStart hint offers a mascot once the renderer is installed; Claude makes it when you say yes.
 
 ## Writing guidance
 

@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from gittok import avatars, db, profile, render, steering
-from tests.test_render import FakeRunner, render_cfg
+from gittok import avatars, db, profile, steering
+from tests.test_render import illustrator, render_cfg
 
 
 @pytest.fixture
@@ -22,10 +22,10 @@ def mode(path: Path) -> int:
     return stat.S_IMODE(path.stat().st_mode)
 
 
-def test_avatars_make_a_private_data_dir(fixture_repo, tmp_path, umask_022):
+def test_avatars_make_a_private_data_dir(fixture_repo, tmp_path, umask_022, batch):
     cfg = render_cfg(fixture_repo, tmp_path)
     assert not cfg.settings.data_dir.exists()
-    avatars.generate_avatars(cfg, render.IllustrationRenderer(runner=FakeRunner(), command=["x"]))
+    avatars.generate_avatars(cfg, illustrator(tmp_path))
     data = cfg.settings.data_dir
     assert [mode(d) for d in (data, data / "assets", data / "assets" / "avatars")] == [0o700] * 3
 

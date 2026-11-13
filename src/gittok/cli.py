@@ -324,10 +324,11 @@ def _health(args) -> int:
 
 
 def _renderers(cfg) -> dict:
-    """Which image renderers can run. Only `illustration` matters to the callers here."""
+    """Which image renderers are installed. Only `illustration` matters to the callers here:
+    a mascot is worth making once the renderer is installed, while its model downloads."""
     from . import render
 
-    return {"illustration": render.default_renderers(cfg)["illustration"].available()}
+    return {"illustration": render.worker_check(cfg.settings.render.mflux_model) is None}
 
 
 def _config_roots():
@@ -502,6 +503,29 @@ def _memes(args) -> int:
     return 0 if res["downloaded"] or not res["failed"] else 1
 
 
+def _images(args) -> int:
+    from . import image_model
+
+    cfg = load_config()
+    if not args.download:
+        print(json.dumps(image_model.status(cfg), indent=2))
+        return 0
+    r = cfg.settings.render
+    print(f"Downloading {r.mflux_repo} (about {image_model.APPROX_GB} GB) into "
+          f"{image_model.model_dir(cfg)}. It resumes if it is stopped.")
+
+    def progress(done: int, total: int) -> None:
+        print(f"  {done / 1e9:.1f} of {total / 1e9:.1f} GB", flush=True)
+
+    try:
+        path = image_model.download(cfg, on_progress=progress)
+    except image_model.DownloadError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(f"The image model is ready: {path}")
+    return 0
+
+
 def _url(args) -> int:
     from . import social
 
@@ -513,6 +537,10 @@ def _url(args) -> int:
     owner = _server_dir(cfg.settings.server.port)
     if owner is not None and Path(owner) != cfg.root:
         return 0  # another directory has the port: `health --hint` says so
+    if not cfg.settings.server.lan:
+        print(f"GitTok feed: phone access is off, so open {urls[0]} on this computer. Give "
+              "the user that address in your first reply of this session.")
+        return 0
     if not urls[1:]:
         print("GitTok feed: no phone address is available. Call feed_address for the cause; "
               "do not offer a computer-only address.")
@@ -751,9 +779,7 @@ def _render(args) -> int:
 
 def _avatars(args) -> int:
     cfg = load_config()
-    renderer = render.IllustrationRenderer(
-        model=cfg.settings.render.mflux_model, path=cfg.settings.render.mflux_path
-    )
+    renderer = render.illustration_renderer(cfg)
     try:
         res = avatars.generate_avatars(
             cfg,
@@ -767,8 +793,7 @@ def _avatars(args) -> int:
         renderer.stop()
     print(f"generated={res['generated']} skipped={res['skipped']}")
     if res["waiting"]:
-        setup = renderer.setup()
-        why = setup["reason"] or "illustration renderer is busy; retry when it finishes"
+        why = renderer.why_unavailable() or "illustration renderer is busy; retry when it finishes"
         print(f"error: {why}", file=sys.stderr)
         return 1
     return 0
@@ -1082,6 +1107,12 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("url", help="print the addresses of the feed (this computer, then the LAN)")
     p.add_argument("--hint", action="store_true", help="the SessionStart line for the agent")
     p.set_defaults(fn=_url)
+    p = sub.add_parser(
+        "images", help="the illustration model: status, and --download to download it now"
+    )
+    p.add_argument("--download", action="store_true",
+                   help="download the model (about 6 GB) in the foreground, with progress")
+    p.set_defaults(fn=_images)
     p = sub.add_parser("memes", help="meme templates: status, and --prefetch to download them")
     p.add_argument(
         "--prefetch",

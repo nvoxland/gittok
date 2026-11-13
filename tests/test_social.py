@@ -487,3 +487,21 @@ def test_commit_url_when_repo_has_github_url(cfg):
         story = social.stories(c, cfg, NOW)[0]
     first = story["commits"][0]
     assert first["url"] == f"https://github.com/o/r/commit/{first['sha']}"
+
+
+def test_share_urls_are_the_phone_addresses_or_this_computer_when_phone_access_is_off(
+    fixture_repo, tmp_path, monkeypatch
+):
+    import dataclasses
+
+    from gittok import social
+    from tests.conftest import make_config
+
+    cfg = make_config(fixture_repo, tmp_path)
+    monkeypatch.setattr(social, "lan_addresses", lambda: ["192.168.1.5"])
+    on = dataclasses.replace(cfg, settings=dataclasses.replace(
+        cfg.settings, server=dataclasses.replace(cfg.settings.server, lan=True, port=9123)))
+    off = dataclasses.replace(on, settings=dataclasses.replace(
+        on.settings, server=dataclasses.replace(on.settings.server, lan=False)))
+    assert social.share_urls(on) == ["http://192.168.1.5:9123"]
+    assert social.share_urls(off) == ["http://127.0.0.1:9123"]

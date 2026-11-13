@@ -4,3 +4,14 @@ hooks = true
 [mcp_servers.gittok]
 command = "gittok"
 args = ["mcp", "--ui"]
+
+# Codex subagents get every MCP tool. Ask the user before the tools that text in an analyzed
+# repo could misuse: pairing a device, removing a repo, opening the feed to the network.
+[mcp_servers.gittok.tools.pair_device]
+approval_mode = "prompt"
+
+[mcp_servers.gittok.tools.remove_repo]
+approval_mode = "prompt"
+
+[mcp_servers.gittok.tools.set_lan]
+approval_mode = "prompt"

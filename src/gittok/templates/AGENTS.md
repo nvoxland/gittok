@@ -14,10 +14,10 @@ First run, when no repo is configured:
 
 1. Ask the user which repo to add (a local path or a git URL). Call `add_repo`.
 2. Do what its `next` says, without a question: profile the repo (the rules that find the code worth teaching); if `status`
-   shows `renderers.illustration` true, give it a mascot that fits it (`set_mascot`); then make the first cards (see below).
-   Before the first cards, read `status.renderer_setup`: prepare an installed renderer
-   with its setup command, recheck status, and run `check_command`. If setup fails, stop
-   and report it; proceed without illustrations only if the user chooses. Say each in one line. With no profile instructions (last section), skip the profile: GitTok uses its default rules.
+   shows `renderer_setup.illustration.installed` true, give it a mascot that fits it (`set_mascot`); then make the first cards (see below).
+   Image setup is automatic (memes are bundled; the feed server downloads the illustration
+   model by itself): read `status.renderer_setup.illustration` and say its state in one line;
+   never wait for it. Say each in one line. With no profile instructions (last section), skip the profile: GitTok uses its default rules.
 3. For the phone, call `feed_address` and give the user only its `phone` address, never the computer address. On the phone the user opens it, taps
    "Pair with a code", and tells you the code: call `pair_device(code)`. Tell the user what the `notice` says: the feed is
    served to the local network over plain HTTP, and a device must pair once. `set_lan` turns phone access off or on.

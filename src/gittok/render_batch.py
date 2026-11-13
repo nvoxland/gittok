@@ -22,6 +22,9 @@ class RenderBatchSession:
         self._lock = threading.RLock()
         self._closed = False
         self._cancel = cancel
+        # The first image also waits for the model to load (once per batch).
+        self._load_s = cfg.settings.render.mflux_load_timeout_s
+        self._loaded = False
         self._slot = _illustration_slot(cfg)
         self._slot.__enter__()
         self._errors = tempfile.TemporaryFile(mode="w+b")
@@ -75,7 +78,8 @@ class RenderBatchSession:
                 if self._cancel.is_set():
                     raise RendererUnavailable("rendering stopped")
                 self.process.stdin.write((json.dumps(request) + "\n").encode())
-                deadline = time.monotonic() + timeout
+                limit = timeout if self._loaded else timeout + self._load_s
+                deadline = time.monotonic() + limit
                 response = b""
                 with selectors.DefaultSelector() as ready:
                     ready.register(self.process.stdout, selectors.EVENT_READ)
@@ -84,7 +88,7 @@ class RenderBatchSession:
                             raise RendererUnavailable("rendering stopped")
                         remaining = deadline - time.monotonic()
                         if remaining <= 0:
-                            raise RenderError(f"mflux timed out after {timeout}s")
+                            raise RenderError(f"mflux timed out after {limit:g}s")
                         if not ready.select(min(0.2, remaining)):
                             continue
                         chunk = os.read(self.process.stdout.fileno(), 8192)
@@ -99,6 +103,7 @@ class RenderBatchSession:
                 result = json.loads(response)
                 if not result.get("ok"):
                     raise RenderError(f"mflux failed: {result.get('error', 'unknown error')}")
+                self._loaded = True
             except BrokenPipeError as exc:
                 self.close()
                 raise BatchExpired() from exc

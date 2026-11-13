@@ -107,12 +107,16 @@ class RenderSettings:
     max_illustrations_per_run: int = 6
     # Where `gittok memes --prefetch` downloads meme templates and fonts from (memes.py).
     meme_source: str = "https://raw.githubusercontent.com/jacebrowning/memegen/main"
-    mflux_model: str = "z-image-turbo"
-    mflux_path: str = ""  # folder from `mflux-save -q N`; empty = quantize mflux_model per run
-    mflux_steps: int = 8
-    mflux_quantize: int = 8
+    mflux_model: str = "z-image-turbo"  # the model family (mflux's base model name)
+    # The pre-quantized model GitTok downloads, pinned to one revision (image_model.py).
+    mflux_repo: str = "filipstrand/Z-Image-Turbo-mflux-4bit"
+    mflux_revision: str = "b3a8f31115a11f2f9e2fa0bfbc8d78dcc3e6568b"
+    mflux_auto_download: bool = True  # the feed server downloads it when the renderer is installed
+    mflux_path: str = ""  # a saved model folder; empty = <data_dir>/models/<repo name>
+    mflux_steps: int = 9
     mflux_low_ram: bool = True
-    mflux_timeout_s: float = 120.0
+    mflux_timeout_s: float = 120.0  # one image, once the model is loaded
+    mflux_load_timeout_s: float = 600.0  # loading the model, once per batch
     mflux_batch_idle_s: float = 10.0
     image_width: int = 768
     image_height: int = 960
@@ -366,13 +370,16 @@ def _section(cls: type, data: Any, what: str, file: Path) -> Any:
         if isinstance(t, bool) or not isinstance(t, int | float) or t <= 0:
             raise ConfigError(f"{what}.git_timeout_s must be a number of seconds above 0 ({file})")
     if cls is RenderSettings:
-        for name, default in (("mflux_timeout_s", 120), ("mflux_batch_idle_s", 10)):
+        for name, default in (
+            ("mflux_timeout_s", 120), ("mflux_load_timeout_s", 600), ("mflux_batch_idle_s", 10)
+        ):
             seconds = kwargs.get(name, default)
             if (isinstance(seconds, bool) or not isinstance(seconds, int | float)
                     or not math.isfinite(seconds) or seconds <= 0):
                 raise ConfigError(f"{what}.{name} must be finite seconds above 0 ({file})")
-        if not isinstance(kwargs.get("mflux_low_ram", True), bool):
-            raise ConfigError(f"{what}.mflux_low_ram must be true or false ({file})")
+        for name in ("mflux_low_ram", "mflux_auto_download"):
+            if not isinstance(kwargs.get(name, True), bool):
+                raise ConfigError(f"{what}.{name} must be true or false ({file})")
     if cls is ServerSettings:
         if not isinstance(kwargs.get("lan", True), bool):
             raise ConfigError(f"{what}.lan must be true or false ({file})")

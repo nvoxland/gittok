@@ -234,3 +234,22 @@ def test_local_template_overrides_bundled_template(cfg, monkeypatch):
     renderer = render.MemeRenderer(memes.store(cfg))
     (image,) = renderer.render({"template": "drake", "lines": ["one", "two"]}, cfg, {})
     assert (image.width, image.height) == (600, 1200)
+
+
+def test_prefetch_does_not_download_fonts_that_ship_with_gittok(cfg, monkeypatch, tmp_path):
+    bundled = tmp_path / "bundled"
+    (bundled / "fonts").mkdir(parents=True)
+    for name in memes.FONT_FILES.values():
+        (bundled / "fonts" / name).write_bytes(b"font")
+    monkeypatch.setattr(memes, "BUNDLED", bundled)
+    layout = yaml.safe_dump(LAYOUT).encode()
+    files = {"/m/templates/drake/config.yml": layout, "/m/templates/drake/default.jpg": jpg()}
+    transport, seen = source(files)
+    out = memes.prefetch(cfg, ["drake"], base="http://src.test/m", transport=transport)
+    assert out["downloaded"] == ["drake"] and out["failed"] == {}
+    assert not any("/fonts/" in path for path in seen)
+
+
+def test_the_hint_estimates_the_size_of_what_is_missing(cfg, monkeypatch, tmp_path):
+    monkeypatch.setattr(memes, "BUNDLED", tmp_path / "none")
+    assert "about 1 MB" in memes.hint(cfg)  # three small templates, not the whole set

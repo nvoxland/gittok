@@ -17,7 +17,7 @@ uv tool install --python 3.13 'gittok[images]'
 
 Default meme templates and fonts are included and work offline.
 
-The `images` extra adds [mflux](https://github.com/filipstrand/mflux), which draws the illustration and comic posts. It works on Apple silicon only, and it is a large download: about 1 GB now, and a model that the agent prepares before the first cards when you add a repo (see [Advanced setup](../install.md#illustration-renderer-mflux)). On a Mac that is not Apple silicon, the extra adds nothing. Without it, all the other posts still work.
+The `images` extra adds [mflux](https://github.com/filipstrand/mflux), which draws the illustration and comic posts. It works on Apple silicon only, and it is a large download: about 1 GB now, plus a 6 GB model that GitTok downloads by itself in the background (see [Advanced setup](../install.md#illustration-renderer-mflux)). On a Mac that is not Apple silicon, the extra adds nothing. Without it, all the other posts still work.
 
 ## Make a GitTok directory
 
@@ -75,5 +75,6 @@ Claude offers these when they are useful. You can also run them yourself:
 |---|---|---|
 | Additional custom meme templates | `gittok memes --prefetch` | varies; defaults are included |
 | Grammars, so GitTok reads code structure better | `gittok structure --prefetch` | about 26 MB |
+| The illustration model, now (GitTok downloads it by itself otherwise) | `gittok images --download` | about 6 GB |
 
 Next: [your first feed](first-feed.md).

@@ -48,8 +48,9 @@ the failed or empty packets in notes. Never abandon an opened run silently.
 `.codex/hooks.json` supplies the same SessionStart hints as Claude Code. Review
 and trust these local hooks with `/hooks`. If hooks did not print hints, run
 `gittok url --hint`, `gittok health --hint`, and `gittok feed-watch --hint` once
-at the first turn (prefix each with `uv run --quiet` in a clone). Give only the phone
-address in the first reply; never give a loopback/computer address and follow health hints, using the Codex skills.
+at the first turn (prefix each with `uv run --quiet` in a clone). Give the feed
+address from the url hint in the first reply (the phone address; the computer address
+only when phone access is off). Follow the health hints, using the Codex skills.
 
 For the feed-watch hint, use the shell tool's background/yield mechanism in
 place of Bash `run_in_background`. Keep its process handle; do not detach it

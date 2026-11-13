@@ -152,15 +152,12 @@ def test_render_retry_failed_resets_then_renders(cfg, fixture_repo, monkeypatch,
     assert "rendered=3" in capsys.readouterr().out
 
 
-def test_avatars_command_generates_and_skips(cfg, monkeypatch, capsys):
-    from gittok import render
-    from tests.test_render import FakeRunner
+def test_avatars_command_generates_and_skips(cfg, monkeypatch, capsys, batch):
+    from gittok import image_model, render
+    from tests.test_image_model import write_model
 
-    runner = FakeRunner()
-    real = render.IllustrationRenderer
-    monkeypatch.setattr(
-        render, "IllustrationRenderer", lambda **kw: real(runner=runner, command=["x"])
-    )
+    monkeypatch.setattr(render, "worker_check", lambda model: None)
+    write_model(image_model.model_dir(cfg))
     assert cli.main(["avatars"]) == 0
     n = len(cfg.personas)
     assert f"generated={n} skipped=0" in capsys.readouterr().out
@@ -170,12 +167,8 @@ def test_avatars_command_generates_and_skips(cfg, monkeypatch, capsys):
     assert f"generated={n} skipped=0" in capsys.readouterr().out
 
 
-def test_avatars_command_explains_missing_mflux(cfg, monkeypatch, capsys):
-    from gittok import render
-
-    monkeypatch.setattr(render.sys, "executable", str(cfg.root / "python"))
-    monkeypatch.setattr(render.shutil, "which", lambda name: None)
-    monkeypatch.setattr(render.importlib.util, "find_spec", lambda name: None)
+def test_avatars_command_explains_missing_mflux(cfg, capsys):
+    # In unit tests the installed check says "not installed".
     assert cli.main(["avatars"]) == 1
     assert "uv sync --group images" in capsys.readouterr().err
 
@@ -1308,15 +1301,27 @@ def test_url_hint_is_silent_when_another_directory_has_the_port(cfg, monkeypatch
     assert capsys.readouterr().out == ""  # the health hint says so instead
 
 
-@pytest.mark.parametrize("lan,addresses", [(False, ["192.168.1.5"]), (True, [])])
-def test_url_hint_does_not_offer_loopback_when_phone_access_is_unavailable(
-    cfg, monkeypatch, capsys, lan, addresses
+def test_url_hint_does_not_offer_loopback_when_phone_access_is_on_but_has_no_address(
+    cfg, monkeypatch, capsys
 ):
     from gittok import social
 
-    monkeypatch.setattr(social, "lan_addresses", lambda: addresses)
-    _with_server(cfg, monkeypatch, port=9123, lan=lan)
+    monkeypatch.setattr(social, "lan_addresses", lambda: [])
+    _with_server(cfg, monkeypatch, port=9123, lan=True)
     assert cli.main(["url", "--hint"]) == 0
     out = capsys.readouterr().out
     assert "http://" not in out and "127.0.0.1" not in out
     assert "phone" in out.lower()
+
+
+def test_url_hint_gives_the_computer_address_when_phone_access_is_off(cfg, monkeypatch, capsys):
+    """Then this computer is the only place the feed opens, so that is the address to give."""
+    from gittok import social
+
+    monkeypatch.setattr(social, "lan_addresses", lambda: ["192.168.1.5"])
+    monkeypatch.setattr(cli, "_server_dir", lambda port: None)
+    _with_server(cfg, monkeypatch, port=9123, lan=False)
+    assert cli.main(["url", "--hint"]) == 0
+    out = capsys.readouterr().out
+    assert "http://127.0.0.1:9123" in out and "phone access is off" in out.lower()
+    assert "192.168.1.5" not in out

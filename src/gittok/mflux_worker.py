@@ -21,6 +21,26 @@ MODELS = (
 )
 
 
+def _module_of(name):
+    _, module, cls = next(item for item in MODELS if name.startswith(item[0]))
+    return module, cls
+
+
+def check(name):
+    """None when everything `load_backend` imports for model `name` imports, else why not.
+    No weights are loaded."""
+    try:
+        for module, attr in (
+            _module_of(name),
+            ("mflux.callbacks.instances.memory_saver", "MemorySaver"),
+            ("mflux.models.common.config", "ModelConfig"),
+        ):
+            getattr(importlib.import_module(module), attr)
+    except Exception as exc:  # noqa: BLE001 - any failure means the renderer cannot run
+        return f"{type(exc).__name__}: {exc}"
+    return None
+
+
 def load_backend(request):
     import mlx.core as mx
     from mflux.callbacks.instances.memory_saver import MemorySaver
@@ -28,13 +48,12 @@ def load_backend(request):
 
     mx.clear_cache()
     name, path = request["model"], request["path"]
-    _, module, cls = next(item for item in MODELS if name.startswith(item[0]))
-    model_class = getattr(importlib.import_module(module), cls)
+    model_class = getattr(importlib.import_module(_module_of(name)[0]), _module_of(name)[1])
+    # `path` is a saved, pre-quantized model folder (image_model.py): no quantizing here.
     model = model_class(
-        model_config=ModelConfig.from_name(model_name=path or name,
-                                          base_model=name if path else None),
-        model_path=path or None,
-        quantize=None if path else request["quantize"],
+        model_config=ModelConfig.from_name(model_name=path, base_model=name),
+        model_path=path,
+        quantize=None,
     )
     # The single-image CLI evicts the encoder and transformer. A batch needs both
     # for different later prompts; retain weights while bounding temporary caches.
@@ -66,7 +85,7 @@ def serve(read_request, reply, *, load=load_backend):
     engine, key = None, None
     while (request := read_request()) is not None:
         try:
-            new_key = tuple(request.get(k) for k in ("model", "path", "quantize", "low_ram"))
+            new_key = tuple(request.get(k) for k in ("model", "path", "low_ram"))
             if engine is None or new_key != key:
                 engine = None
                 gc.collect()  # release the previous model before loading another one
@@ -81,6 +100,10 @@ def serve(read_request, reply, *, load=load_backend):
 
 
 def main(*, load=load_backend):
+    if sys.argv[1:2] == ["--check"]:
+        why = check(sys.argv[2])
+        print(why or "ok", file=sys.stderr if why else sys.stdout)
+        return 1 if why else 0
     idle = float(sys.argv[1])
     # Reserve stdout's pipe for protocol responses. Redirect even native-library
     # stdout writes to stderr so logging cannot corrupt the JSON stream.

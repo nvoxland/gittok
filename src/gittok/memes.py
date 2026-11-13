@@ -34,7 +34,7 @@ DEFAULT_FONT = "thick"
 IMAGE_EXTS = ("png", "jpg", "gif")  # a gif is drawn from its first frame
 DEFAULT_HEIGHT = 600  # memegen's default size: 600 px on the short side, the image's ratio
 MIN_FONT_SIZE = 7
-APPROX_MB = 20  # the download for the shipped templates
+MB_PER_TEMPLATE = 0.2  # a template's image and layout, on average
 
 
 # ---------------------------------------------------------------- where templates live
@@ -93,7 +93,8 @@ def hint(cfg) -> str | None:
     return (
         f"GitTok: {len(gone)} of {total} meme templates are not downloaded, so the feed makes "
         f"no meme cards with them. Default templates are bundled; these are additional or "
-        f"missing assets. Offer to download them (about {APPROX_MB} MB from the "
+        f"missing assets. Offer to download them (about "
+        f"{max(1, round(len(gone) * MB_PER_TEMPLATE))} MB from the "
         "memegen GitHub repo, needs network; no card text is sent); if the user agrees, run "
         "`gittok memes --prefetch` with Bash (in a clone: `uv run gittok memes --prefetch`)."
     )
@@ -130,7 +131,7 @@ def prefetch(cfg, ids, base: str | None = None, transport=None) -> dict:
 
         for name in FONT_FILES.values():
             dest = root / "fonts" / name
-            if dest.exists():
+            if dest.exists() or (BUNDLED / "fonts" / name).exists():  # shipped with GitTok
                 continue
             data = get(f"fonts/{name}")
             if data is None:

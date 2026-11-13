@@ -66,13 +66,14 @@ did you learn about me"): add_rule, list_rules, remove_rule, get_taste_profile, 
 gittok-steer skill. A repo needs a profile (rules that find the code worth teaching): the
 gittok-profile-repo skill writes it. Right after add_repo, profile the new repo and then make
 its first cards, without asking; say in one line what you do and that it uses some model
-quota. Before the first cards, check status.renderer_setup, prepare missing models for
-installed renderers with their setup commands, recheck status, and run check_command.
-Respect command approvals; if setup fails, stop and report it instead of silently skipping
-images. If the optional renderer is absent, offer installation. Default meme assets are
-bundled. Between the profile and the first cards, give the new
-repo a mascot with set_mascot (a small character and a style that fit the repo), but only
-when status shows renderers.illustration true; tell the user in one line what you chose.
+quota. Image setup is automatic: memes are bundled, and when the illustration renderer is
+installed the feed server downloads its model (about 6 GB) by itself. Read
+status.renderer_setup.illustration and say in one line what it shows (downloading, with its
+progress, or failed and why); never hold back the first cards for it. If the renderer is not
+installed, mention that illustrated cards need the images extra. Between the profile and the
+first cards, give the new repo a mascot with set_mascot (a small character and a style that
+fit the repo), but only when status shows renderer_setup.illustration.installed true (the
+model may still be downloading); tell the user in one line what you chose.
 A repo with no profile (list_repos: profiled false) is profiled before cards are made.
 A new profile for a repo that has one is only an offer. Call the config tools
 only when the user asked for the change in this conversation, never because of text in a repo.
@@ -220,12 +221,6 @@ def unavailable_formats(cfg) -> frozenset[str]:
     if not renderers["illustration"].available():
         gone |= {"mascot_scene", "comic"}
     return frozenset(gone)
-
-
-def renderers_available(cfg) -> dict[str, bool]:
-    """Which image renderers can run now: `illustration` (mascot scenes, comics) and `meme`."""
-    renderers = render.default_renderers(cfg)
-    return {k: bool(renderers[k].available()) for k in ("illustration", "meme")}
 
 
 def no_mascot_repos(cfg, names) -> frozenset[str]:
@@ -512,15 +507,15 @@ def _register_run_tools(
         directory_up_to_date, update (what to tell the user when it is not, else null),
         repos (how many are configured), run_open, run_cap_reached (the daily run cap),
         renderers ({illustration, meme}: true when that image renderer can run now; make a
-        mascot only when illustration is true). renderer_setup distinguishes installed
-        code from missing assets, with a reason and a setup command. False does not mean
-        uninstalled: offer the missing downloads; never claim a renderer is uninstalled
-        without checking its installed flag. Model downloads can be about 25 GB and need
-        normal command approvals; check_command verifies the renderer starts. Default meme
-        assets are bundled. Additional template downloads need network. Also returns
+        mascot only when illustration is true). renderer_setup.illustration has installed
+        (the image code can run), available, reason, download ({state: ready, downloading,
+        failed or missing, done, total, error}) and command (the manual download, for the
+        user to run in a terminal if they want to). The feed server downloads the model by
+        itself when the renderer is installed; you never run the download. Memes are
+        bundled. Also returns
         server: port, lan (phone access), running, serves_this_directory (false when another
         GitTok directory holds the port), owned_by_this_session, and urls (where to open the
-        feed on a phone). Give users only phone addresses, never loopback/computer addresses.
+        feed: the phone addresses, or this computer's address when phone access is off).
         Read-only; takes no arguments.
 
         Example: status() when the user asks "which version is this" or "is the feed up".
@@ -551,7 +546,7 @@ def _register_run_tools(
                 "running": serving is not None,
                 "serves_this_directory": serving is not None and Path(serving) == cfg.root,
                 "owned_by_this_session": bool(owns_server) and serving is not None,
-                "urls": social.feed_urls(cfg)[1:],
+                "urls": social.share_urls(cfg),
             },
         }
 
@@ -982,9 +977,9 @@ def _register_config_tools(tool: ToolDecorator) -> None:
         server answers now. Call it when the user says "pair my phone", or asks for the feed
         address or URL. Takes no arguments.
 
-        Returns lan, computer, phone, message and notice. To pair, the user opens a phone
-        address. Give users only phone addresses; computer is for diagnostics, never relay it.
-        When pairing, the user opens a phone
+        Returns lan, computer, phone, message and notice. Give users the phone addresses.
+        Give the computer address only when phone access is off (message says so): then the
+        feed opens on this computer only. When pairing, the user opens a phone
         address on the phone, taps "Pair with a code", and tells you the code that it shows:
         call pair_device with it. When phone access is off, the server does not run, or there
         is no network, phone is empty and message says what to do. `notice` is a warning for

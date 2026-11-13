@@ -23,6 +23,7 @@ All your files are in the GitTok directory that you made with `gittok init`. You
 │   ├── gittok.db              cards, what you did, what the feed learned
 │   ├── assets/                card images, avatars, mascots
 │   ├── memes/                 meme templates and fonts
+│   ├── models/                the illustration model (about 6 GB), downloaded by itself
 │   ├── runs/                  the brief and submissions of each run
 │   ├── logs/
 │   └── profile.md             your taste profile in plain words, rewritten daily

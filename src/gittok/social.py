@@ -514,6 +514,13 @@ def feed_urls(cfg) -> list[str]:
     return out + (lan_urls(port) if cfg.settings.server.lan else [])
 
 
+def share_urls(cfg) -> list[str]:
+    """The addresses to give the user: the phone (LAN) addresses when phone access is on;
+    this computer's address when it is off, because then the feed opens only there."""
+    urls = feed_urls(cfg)
+    return urls[1:] if cfg.settings.server.lan else urls[:1]
+
+
 def ensure_lan_token(data_dir) -> str:
     """The LAN pairing token in `<data_dir>/lan_token` (mode 0600); created when missing."""
     path = data_dir / "lan_token"
@@ -616,7 +623,8 @@ def feed_address(cfg: Config) -> dict:
         else:
             out["message"] = (
                 "Phone access is off (`server.lan: false`, or the server was started with "
-                "--no-lan). Ask the user. If they want it on, call set_lan(enabled=true)."
+                f"--no-lan), so the feed opens on this computer only: give the user "
+                f"{out['computer']}. If they want it on a phone, call set_lan(enabled=true)."
             )
         return out
     out["lan"] = True

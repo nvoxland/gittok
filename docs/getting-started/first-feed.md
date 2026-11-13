@@ -17,7 +17,7 @@ Then Claude does two things without asking:
 1. **It profiles the repo.** It reads the repo and writes the rules that find the code worth teaching. This takes a few minutes and some of your model quota. Claude may ask your permission to run a code analyzer, and it may offer to download grammars.
 2. **It makes the first posts.** A run of writers each take a small packet of leads, research them in your repo, and submit posts. GitTok checks each post against git before it stores it.
 
-If the image renderer works, Claude also gives the repo a **mascot**: a small character that the illustration and comic posts draw. It tells you which one it picked. Say "make the mascot a fox" to change it.
+If the image renderer is installed, Claude also gives the repo a **mascot**: a small character that the illustration and comic posts draw. It tells you which one it picked. Say "make the mascot a fox" to change it.
 
 ## 2. Pair your phone
 

@@ -50,17 +50,20 @@ research:
   max_read_lines: 300
   redact_secrets: true         # mask secrets in repo text sent out (JWTs, keys, ...); false is UNSAFE
 render:
-  # Illustrations need mflux (uv sync --group images). Save a quantized copy once with
-  # `mflux-save --model z-image-turbo --quantize 4 --path ~/.cache/mflux/z-image-turbo-q4`
-  # and name that folder here; without it every render loads 25 GB and swaps (docs/install.md).
-  mflux_path: ~/.cache/mflux/z-image-turbo-q4
+  # Illustrations need mflux (the images extra; in a clone: uv sync --group images). With it
+  # installed, the feed server downloads the pre-quantized model below (about 6 GB) into
+  # data/models/ by itself; `gittok images --download` does the same by hand (docs/install.md).
   mflux_model: z-image-turbo
+  mflux_repo: filipstrand/Z-Image-Turbo-mflux-4bit
+  mflux_revision: b3a8f31115a11f2f9e2fa0bfbc8d78dcc3e6568b
+  mflux_auto_download: true    # false: download only with `gittok images --download`
+  mflux_path: ""               # a saved model folder of your own; empty = data/models/<repo name>
   max_illustrations_per_run: 6
-  mflux_steps: 8               # inference steps per illustration
+  mflux_steps: 9               # inference steps per illustration (the model card says 9)
   mflux_low_ram: true          # bound temporary MLX caches; retain model weights for the batch
-  mflux_timeout_s: 120         # kill a stuck render and its children after this many seconds
+  mflux_timeout_s: 120         # one image, once the model is loaded; a stuck render is killed
+  mflux_load_timeout_s: 600    # loading the model, once per batch
   mflux_batch_idle_s: 10       # reuse the loaded model until no more images arrive for this long
-  mflux_quantize: 8            # quantization bits when mflux_path is empty (the model is quantized on each run)
   image_width: 768             # illustration size in pixels
   image_height: 960
   meme_source: https://raw.githubusercontent.com/jacebrowning/memegen/main  # where `gittok memes --prefetch` gets meme templates

@@ -79,6 +79,8 @@ def test_feed_address_when_phone_access_is_off(cfg, net):
     assert out["lan"] is False and out["phone"] == []
     assert out["computer"] == "http://127.0.0.1:7313"
     assert "Phone access is off" in out["message"] and "set_lan" in out["message"]
+    # The feed opens on this computer only, so that address is the one to give.
+    assert "http://127.0.0.1:7313" in out["message"] and "give" in out["message"].lower()
     assert not (cfg.settings.data_dir / "lan_token").exists()  # no token is made for nothing
 
 

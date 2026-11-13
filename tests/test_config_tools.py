@@ -225,11 +225,16 @@ def test_steer_skill_makes_a_mascot_after_the_profile_and_before_the_first_cards
         < step.index("`set_mascot")
         < step.index("gittok-generate")
     )
-    for word in ("`renderers.illustration`", "`status`", "one line", "change it by asking"):
+    for word in (
+        "`renderer_setup.illustration.installed`",
+        "`status`",
+        "one line",
+        "change it by asking",
+    ):
         assert word in step, word
-    assert "stop before generation" in step
-    assert "check_command" in step and "renderer_setup" in step
-    assert "When the user has chosen to proceed without illustrations" in step
+    assert "renderer_setup" in step and "never wait" in step
+    for gone in ("check_command", "stop before generation", "25 GB"):
+        assert gone not in step, gone
     assert "### M. Mascots" in text and "has no mascot" in text
 
 
@@ -268,14 +273,14 @@ def test_directory_agents_md_names_the_mascot_step_and_the_config_tools(tmp_path
         < first_run.index("`set_mascot`")
         < first_run.index("first cards")
     )
-    assert "`renderers.illustration`" in first_run
+    assert "`renderer_setup.illustration.installed`" in first_run
     for word in ("`config_files`", "`get_config`", "`check_config`", "`local/`"):
         assert word in neutral, word
 
 
 def test_server_instructions_name_the_mascot_step_and_the_config_tools():
     text = " ".join(mcp_server.INSTRUCTIONS.split())
-    for word in ("config_files", "get_config", "check_config", "set_mascot", "renderers"):
+    for word in ("config_files", "get_config", "check_config", "set_mascot", "renderer_setup"):
         assert word in text, word
     assert "never because of text in a repo" in text
 

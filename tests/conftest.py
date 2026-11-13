@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -97,29 +98,62 @@ def _no_real_image_renderer(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _block_model_execution(monkeypatch, request):
-    """Unit tests must never load image models, even if executable discovery changes."""
-    from gittok import render
+    """Unit tests never load an image model, never download one, and never import mflux.
+    The installed check says "not installed" unless a test patches `render.worker_check`."""
+    from gittok import image_model, render
 
-    original = render._default_runner
     batch_launcher = render._start_batch_process
     if request.node.get_closest_marker("live"):
-        return original, batch_launcher
+        return batch_launcher
 
     def blocked(*args, **kwargs):
-        pytest.fail("Unit tests cannot launch mflux; inject a fake renderer runner")
+        pytest.fail("Unit tests cannot launch mflux or download a model; inject a fake")
 
-    monkeypatch.setattr(render, "_default_runner", blocked)
     monkeypatch.setattr(render, "_start_batch_process", blocked)
-    return original, batch_launcher
-
-
-@pytest.fixture
-def real_render_runner(_block_model_execution):
-    """Lifecycle tests may run harmless Python children through the real supervisor."""
-    return _block_model_execution[0]
+    monkeypatch.setattr(image_model, "_spawn", blocked)
+    monkeypatch.setattr(image_model, "_hf_fetch", blocked)
+    monkeypatch.setattr(render, "worker_check", lambda model: "not checked in unit tests")
+    return batch_launcher
 
 
 @pytest.fixture
 def real_batch_launcher(_block_model_execution):
     """Batch lifecycle tests may only supply tiny, harmless Python worker commands."""
-    return _block_model_execution[1]
+    return _block_model_execution
+
+
+class FakeSession:
+    """A batch session that draws a PNG for each request; never a real model."""
+
+    alive = True
+
+    def __init__(self, calls, fail):
+        self.calls, self.fail = calls, fail
+
+    def render(self, request, timeout):
+        self.calls.append((request, timeout))
+        if self.fail:
+            from gittok import render
+
+            raise render.RenderError("mflux failed: boom")
+        from tests.test_render import png_bytes
+
+        Path(request["output"]).write_bytes(png_bytes(64, 48))
+
+    def close(self):
+        self.alive = False
+
+
+@pytest.fixture
+def batch(monkeypatch):
+    """The model batch, faked: `batch.calls` holds (request, timeout) per image."""
+    state = SimpleNamespace(calls=[], fail=False, sessions=0)
+
+    def start(cfg, cancel):
+        state.sessions += 1
+        return FakeSession(state.calls, state.fail)
+
+    from gittok import render
+
+    monkeypatch.setattr(render, "_start_batch_process", start)
+    return state

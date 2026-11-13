@@ -4,7 +4,7 @@ import pytest
 
 from gittok import avatars
 from gittok.config import Persona
-from tests.test_render import FakeRunner, render_cfg
+from tests.test_render import illustrator, render_cfg
 
 
 def test_initials_from_persona_name_or_handle():
@@ -33,39 +33,31 @@ def test_avatar_prompt_uses_persona_name_and_voice():
     assert "flat vector" in p and "no text" in p
 
 
-def test_generate_avatars_writes_pngs_and_skips_existing(fixture_repo, tmp_path):
-    from gittok import render
-
+def test_generate_avatars_writes_pngs_and_skips_existing(fixture_repo, tmp_path, batch):
     cfg = render_cfg(fixture_repo, tmp_path)
-    runner = FakeRunner()
-    r = render.IllustrationRenderer(runner=runner, command=["x"])
+    r = illustrator(tmp_path)
     res = avatars.generate_avatars(cfg, r)
     n = len(cfg.personas)
     assert res == {"generated": n, "skipped": 0, "waiting": False}
     out = cfg.settings.data_dir / "assets" / "avatars"
     assert sorted(p.stem for p in out.glob("*.png")) == sorted(cfg.personas)
-    assert len(runner.calls) == n
+    assert len(batch.calls) == n
     res = avatars.generate_avatars(cfg, r)
     assert res == {"generated": 0, "skipped": n, "waiting": False}
-    assert len(runner.calls) == n
+    assert len(batch.calls) == n
     assert avatars.generate_avatars(cfg, r, force=True)["generated"] == n
 
 
-def test_generate_avatars_reports_waiting_without_mflux(fixture_repo, tmp_path, monkeypatch):
-    from gittok import render
-
-    monkeypatch.setattr(render.sys, "executable", str(tmp_path / "python"))
-    monkeypatch.setattr(render.shutil, "which", lambda name: None)
-    monkeypatch.setattr(render.importlib.util, "find_spec", lambda name: None)
+def test_generate_avatars_reports_waiting_without_mflux(fixture_repo, tmp_path):
     cfg = render_cfg(fixture_repo, tmp_path)
-    res = avatars.generate_avatars(cfg, render.IllustrationRenderer())
+    res = avatars.generate_avatars(cfg, illustrator(tmp_path, check=lambda: "no mflux"))
     assert res == {"generated": 0, "skipped": 0, "waiting": True}
 
 
-def test_generate_avatars_propagates_render_errors(fixture_repo, tmp_path):
+def test_generate_avatars_propagates_render_errors(fixture_repo, tmp_path, batch):
     from gittok import render
 
     cfg = render_cfg(fixture_repo, tmp_path)
-    r = render.IllustrationRenderer(runner=FakeRunner(fail=True), command=["x"])
+    batch.fail = True
     with pytest.raises(render.RenderError):
-        avatars.generate_avatars(cfg, r)
+        avatars.generate_avatars(cfg, illustrator(tmp_path))

@@ -3,21 +3,16 @@
 from __future__ import annotations
 
 import fcntl
-import importlib.util
-import json
+import functools
 import logging
-import os
-import shlex
 import shutil
-import signal
 import struct
 import subprocess
 import sys
 import tempfile
 import threading
-import time
 from collections.abc import Callable
-from contextlib import closing, contextmanager, nullcontext
+from contextlib import closing, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -25,7 +20,7 @@ from typing import Any, Protocol
 
 import yaml
 
-from gittok import db, memes, private
+from gittok import db, image_model, memes, private
 
 log = logging.getLogger("gittok.render")
 
@@ -96,49 +91,6 @@ class MemeRenderer:
         return [RenderedImage(data, w, h, meta)]
 
 
-def _default_runner(
-    cmd: list[str], timeout: float, *, cancel: threading.Event | None = None
-) -> None:
-    """Bound the render's lifetime and reap its entire process group on every exit.
-
-    The small supervisor also handles this Python process being killed abruptly.
-    Logs go to disk rather than growing a second in-memory buffer in the feed server.
-    """
-    if cancel is not None and cancel.is_set():
-        raise RendererUnavailable("rendering stopped")
-    with tempfile.TemporaryFile(mode="w+b") as errors:
-        process = subprocess.Popen(
-            [sys.executable, "-m", "gittok.render_process", str(os.getpid()), *cmd],
-            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=errors,
-            start_new_session=True,
-        )
-        deadline = time.monotonic() + timeout
-        try:
-            while True:
-                if cancel is not None and cancel.is_set():
-                    raise RendererUnavailable("rendering stopped")
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise subprocess.TimeoutExpired(cmd, timeout)
-                try:
-                    code = process.wait(timeout=min(0.2, remaining))
-                    break
-                except subprocess.TimeoutExpired:
-                    continue
-            if code:
-                errors.seek(0, os.SEEK_END)
-                errors.seek(max(0, errors.tell() - 4096))
-                raise subprocess.CalledProcessError(
-                    code, cmd, stderr=errors.read().decode("utf-8", errors="replace")
-                )
-        finally:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            process.wait()
-
-
 @contextmanager
 def _illustration_slot(cfg):
     """UI, CLI, avatars and other sessions of this home share one model-loading slot."""
@@ -154,57 +106,33 @@ def _illustration_slot(cfg):
             fcntl.flock(lock, fcntl.LOCK_UN)
 
 
-# mflux ships one CLI per model family; the generic one cannot load every model.
-_MFLUX_FAMILIES = (
-    ("z-image", "mflux-generate-z-image"),
-    ("flux2", "mflux-generate-flux2"),
-    ("flux3", "mflux-generate-flux3"),
-    ("qwen", "mflux-generate-qwen"),
-)
-
-
-def _mflux_command(model: str = "") -> list[str] | None:
-    name = next(
-        (cli for prefix, cli in _MFLUX_FAMILIES if model.startswith(prefix)), "mflux-generate"
-    )
-    exe = _environment_command(name)
-    if exe:
-        return [exe]
-    if name == "mflux-generate" and importlib.util.find_spec("mflux") is not None:
-        return [sys.executable, "-m", "mflux.generate"]
-    return None
-
-
-def _environment_command(name: str) -> str | None:
-    """uv tools expose gittok, but dependency scripts stay beside the venv's Python.
-
-    Do not resolve Python's symlink: its target is outside the tool environment.
-    Prefer this environment's mflux over an unrelated version on PATH.
-    """
-    sibling = Path(sys.executable).parent / name
-    if sibling.is_file() and os.access(sibling, os.X_OK):
-        return str(sibling)
-    return shutil.which(name)
-
-
-def _saved_model_ready(path: Path) -> bool:
-    """Reject empty/interrupted exports without loading gigabytes of model weights."""
-    if not path.is_dir():
-        return False
+def check_worker(model: str) -> str | None:
+    """None when the batch worker can import what it needs for `model` (mflux, its model
+    class, MemorySaver, ModelConfig), else why not. Runs in a child process: importing mflux
+    loads MLX, which the feed server does not need."""
     try:
-        weights = list(path.rglob("*.safetensors"))
-        if not weights or any(p.stat().st_size == 0 for p in weights):
-            return False
-        for index in path.rglob("*.safetensors.index.json"):
-            refs = json.loads(index.read_text())["weight_map"]
-            if not isinstance(refs, dict) or not refs:
-                return False
-            if any(not (index.parent / name).is_file()
-                   or (index.parent / name).stat().st_size == 0 for name in set(refs.values())):
-                return False
-    except (OSError, ValueError, KeyError, TypeError):
-        return False
-    return True
+        done = subprocess.run(
+            [sys.executable, "-m", "gittok.mflux_worker", "--check", model],
+            capture_output=True, text=True, timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"could not check the image renderer: {e}"
+    if done.returncode == 0:
+        return None
+    lines = (done.stderr or done.stdout or "").strip().splitlines()
+    return lines[-1] if lines else f"the image renderer check exited with {done.returncode}"
+
+
+@functools.cache
+def worker_check(model: str) -> str | None:
+    """`check_worker`, once per process and model."""
+    return check_worker(model)
+
+
+NOT_INSTALLED = (
+    "the image renderer (mflux) is not installed in this GitTok environment "
+    "(tool: install with the images extra; clone: uv sync --group images)"
+)
 
 
 def mascots_for(visual: dict, cfg, spec: dict) -> list:
@@ -226,46 +154,31 @@ def _start_batch_process(cfg, cancel, **kwargs):
 
 
 class IllustrationRenderer:
-    """Mascot art through a reusable subprocess batch, including comic panels."""
+    """Mascot art and comic panels, drawn by a reusable model batch (render_batch.py).
 
-    def __init__(
-        self,
-        runner: Callable[[list[str], float], None] | None = None,
-        command: list[str] | None = None,
-        model: str = "",
-        path: str = "",
-    ):
-        self._runner = runner
+    `path` is the model folder (image_model.model_dir). Until it holds a complete model the
+    renderer is unavailable, so illustration cards wait as pending_render instead of failing.
+    `check` says why the model code cannot run (None when it can); by default the batch
+    worker's own imports are checked once per process."""
+
+    def __init__(self, model: str = "z-image-turbo", path=None, check=None):
+        self._model = model
+        self._path = Path(path).expanduser() if path else None
+        self._check = check or (lambda: worker_check(model))
         self._cancel = threading.Event()
         self._batch = None
         self._batch_lock = threading.Lock()
-        self._command = command
-        self._model = model
-        # settings.render.mflux_path: a folder from mflux-save. Until it exists the renderer
-        # is unavailable, so illustration cards wait as pending_render instead of failing.
-        self._path = Path(path).expanduser() if path else None
 
-    def _cmd(self) -> list[str] | None:
-        return self._command or _mflux_command(self._model)
-
-    def _installed(self) -> bool:
-        # The batch imports the Python API. A CLI in an unrelated uv environment
-        # cannot provide those imports; injected commands are used by test runners.
-        return self._cmd() is not None and (
-            self._command is not None or importlib.util.find_spec("mflux") is not None
-        )
-
-    def _why_unavailable(self) -> str | None:
-        if not self._installed():
-            return ("mflux is not installed in this GitTok environment "
-                    "(clone: uv sync --group images; tool: the images extra)")
-        if self._path is not None and not _saved_model_ready(self._path):
-            return (f"saved model {self._path} is missing or incomplete: "
-                    "run mflux-save (docs/install.md)")
+    def why_unavailable(self) -> str | None:
+        if reason := self._check():
+            return f"{NOT_INSTALLED}: {reason}"
+        if self._path is None or not image_model.ready(self._path):
+            return (f"the image model is not downloaded yet ({self._path}); the feed server "
+                    "downloads it, or run `gittok images --download`")
         return None
 
     def available(self) -> bool:
-        return self._why_unavailable() is None
+        return self.why_unavailable() is None
 
     def stop(self) -> None:
         self._cancel.set()
@@ -278,92 +191,36 @@ class IllustrationRenderer:
         if batch is not None:
             batch.close()
 
-    def setup(self) -> dict:
-        installed = self._installed()
-        reason = self._why_unavailable()
-        command = None
-        if reason and installed and self._path is not None:
-            save = _environment_command("mflux-save") or "mflux-save"
-            command = shlex.join([
-                save, "--model", self._model, "--quantize", "4", "--path", str(self._path)
-            ])
-        return {
-            "installed": installed,
-            "available": reason is None,
-            "reason": reason,
-            "command": command,
-            "check_command": shlex.join([*self._cmd(), "--help"]) if installed else None,
-        }
-
     def render(self, visual: dict, cfg, spec: dict) -> list[RenderedImage]:
-        base = self._cmd()
-        why = self._why_unavailable()
-        if base is None or why:
+        if why := self.why_unavailable():
             raise RendererUnavailable(why)
         scenes = visual["panels"] if visual.get("kind") == "comic" else [visual]
         mascots = mascots_for(visual, cfg, spec)
         seed0 = visual.get("seed", mascots[0].seed if mascots else 0)
         style = ", ".join(m.style for m in mascots)
-        # A real batch owns the slot for its whole warm lifetime. Test/CLI runners
-        # are one-shot and retain the existing per-card slot.
-        slot = _illustration_slot(cfg) if self._runner is not None else nullcontext()
-        with slot:
-            return [
-                self.generate(base, cfg, style, scene["prompt"], seed0 + i)
-                for i, scene in enumerate(scenes)
-            ]
+        return [
+            self.generate(cfg, style, scene["prompt"], seed0 + i)
+            for i, scene in enumerate(scenes)
+        ]
 
-    def generate(self, base: list[str], cfg, style: str, scene: str, seed: int) -> RenderedImage:
+    def generate(self, cfg, style: str, scene: str, seed: int) -> RenderedImage:
         r = cfg.settings.render
         prompt = ", ".join(p for p in (style, scene) if p) + ", no text, no letters"
-        # A saved folder is already quantized: name it as the model and skip -q. Loading the
-        # bf16 weights and quantizing on every run swaps a 36 GB Mac (docs/install.md).
-        saved = str(Path(r.mflux_path).expanduser()) if r.mflux_path else ""
-        model = saved or r.mflux_model
-        model_args = (
-            ["--model", saved, "--base-model", r.mflux_model]
-            if saved
-            else ["--model", r.mflux_model, "-q", str(r.mflux_quantize)]
-        )
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "out.png"
-            cmd = [
-                *base,
-                *model_args,
-                "--prompt", prompt,
-                "--seed", str(seed),
-                "--steps", str(r.mflux_steps),
-                "--width", str(r.image_width),
-                "--height", str(r.image_height),
-                "--output", str(out),
-            ]  # fmt: skip
-            if r.mflux_low_ram:
-                cmd.append("--low-ram")
-            try:
-                if self._cancel.is_set():
-                    raise RendererUnavailable("rendering stopped")
-                if self._runner is None:
-                    self._generate_in_batch(cfg, {
-                        "model": r.mflux_model, "path": saved, "quantize": r.mflux_quantize,
-                        "low_ram": r.mflux_low_ram, "prompt": prompt, "seed": seed,
-                        "width": r.image_width, "height": r.image_height,
-                        "steps": r.mflux_steps, "output": str(out),
-                    })
-                else:
-                    self._runner(cmd, r.mflux_timeout_s)
-            except subprocess.CalledProcessError as e:
-                raise RenderError(f"mflux failed: {(e.stderr or str(e)).strip()[-500:]}") from e
-            except subprocess.TimeoutExpired as e:
-                raise RenderError(f"mflux timed out after {r.mflux_timeout_s}s") from e
-            except FileNotFoundError as e:
-                raise RendererUnavailable(f"mflux not runnable: {e}") from e
+            if self._cancel.is_set():
+                raise RendererUnavailable("rendering stopped")
+            self._generate_in_batch(cfg, {
+                "model": self._model, "path": str(self._path), "low_ram": r.mflux_low_ram,
+                "prompt": prompt, "seed": seed, "width": r.image_width,
+                "height": r.image_height, "steps": r.mflux_steps, "output": str(out),
+            })
             if not out.is_file():
                 raise RenderError("mflux produced no image")
             data = out.read_bytes()
         w, h = png_size(data)
-        meta = {"width": w, "height": h, "model": model, "seed": seed, "prompt": prompt}
+        meta = {"width": w, "height": h, "model": self._model, "seed": seed, "prompt": prompt}
         return RenderedImage(data, w, h, meta)
-
 
     def _generate_in_batch(self, cfg, request):
         from .render_batch import BatchExpired
@@ -392,18 +249,43 @@ class IllustrationRenderer:
 RENDERER_KEY = {"meme": "meme", "illustration": "illustration", "comic": "illustration"}
 
 
+def illustration_renderer(cfg) -> IllustrationRenderer:
+    return IllustrationRenderer(
+        model=cfg.settings.render.mflux_model, path=image_model.model_dir(cfg)
+    )
+
+
 def default_renderers(cfg) -> dict[str, Renderer]:
-    return {
-        "meme": MemeRenderer(memes.store(cfg)),
-        "illustration": IllustrationRenderer(
-            model=cfg.settings.render.mflux_model, path=cfg.settings.render.mflux_path
-        ),
-    }
+    return {"meme": MemeRenderer(memes.store(cfg)), "illustration": illustration_renderer(cfg)}
 
 
 def renderer_setup(cfg) -> dict:
-    """Separate installed renderer code from assets still needed on a fresh install."""
-    return {name: renderer.setup() for name, renderer in default_renderers(cfg).items()}
+    """For each renderer: installed (its code can run), available (it can draw now), reason,
+    and for illustrations the model `download` status and the command that downloads it."""
+    model = cfg.settings.render.mflux_model
+    not_installed = worker_check(model)
+    download = image_model.status(cfg)
+    ready = download["state"] == "ready"
+    reason = None
+    if not_installed:
+        reason = f"{NOT_INSTALLED}: {not_installed}"
+    elif not ready:
+        reason = {
+            "downloading": "the image model is being downloaded (about "
+                           f"{image_model.APPROX_GB} GB) by the feed server",
+            "failed": f"the image model download failed: {download['error']}",
+        }.get(download["state"], f"the image model is not downloaded yet (about "
+                                 f"{image_model.APPROX_GB} GB)")
+    return {
+        "meme": MemeRenderer(memes.store(cfg)).setup(),
+        "illustration": {
+            "installed": not not_installed,
+            "available": not not_installed and ready,
+            "reason": reason,
+            "download": download,
+            "command": None if not_installed or ready else "gittok images --download",
+        },
+    }
 
 
 def retry_failed(conn) -> int:
@@ -604,7 +486,7 @@ class RenderWorker:
                 with self._active_lock:
                     if self._stop.is_set():
                         break
-                    key = (cfg.root, cfg.settings.render)
+                    key = (cfg.root, cfg.settings.data_dir, cfg.settings.render)
                     if self._renderers is not None:
                         self._active = self._renderers
                     elif key != self._active_key:
@@ -614,6 +496,10 @@ class RenderWorker:
                         self._active = default_renderers(cfg)
                         self._active_key = key
                     renderers = self._active
+                if self._renderers is None:  # the server's own worker, not a test's
+                    image_model.maybe_start(
+                        cfg, installed=worker_check(cfg.settings.render.mflux_model) is None
+                    )
                 with closing(db.open_db(cfg.settings.data_dir / "gittok.db")) as conn:
                     counts = render_pending(conn, cfg, renderers)
                 if counts["rendered"]:

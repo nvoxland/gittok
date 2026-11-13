@@ -724,7 +724,12 @@ def test_add_repo_next_step_makes_a_mascot_between_the_profile_and_the_cards():
     assert (
         text.index("gittok-profile-repo") < text.index("set_mascot") < text.index("gittok-generate")
     )
-    for word in ("renderers.illustration", "status", "one line", "change it by asking"):
+    for word in (
+        "renderer_setup.illustration.installed",
+        "status",
+        "one line",
+        "change it by asking",
+    ):
         assert word in text, word
     assert 'set_mascot(name, style, repo="gamma")' in text
 
@@ -1230,8 +1235,11 @@ def test_set_lan_refuses_an_inline_section_and_restores_the_file(ycfg):
     assert file.read_text() == "server: {port: 8010}\n"
 
 
-def test_add_repo_requires_image_readiness_before_mascots_and_cards():
+def test_add_repo_reports_image_setup_without_holding_back_the_first_cards():
+    """The feed server downloads the image model by itself: the agent reports it and goes on."""
     text = steering.next_step("gamma")
     assert text.index("renderer_setup") < text.index("set_mascot") < text.index("gittok-generate")
-    for word in ("installed", "setup command", "25 GB", "status again", "fails", "stop"):
-        assert word in text
+    for word in ("downloads", "one line", "never wait", "images extra"):
+        assert word in text, word
+    for gone in ("setup command", "25 GB", "check_command", "stop before"):
+        assert gone not in text, gone

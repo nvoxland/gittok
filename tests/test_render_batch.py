@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from gittok import render
-from tests.test_render import png_bytes, render_cfg
+from tests.test_render import illustrator, png_bytes, render_cfg
 
 
 def test_renderer_reuses_model_session_for_cards_and_comic_panels(fixture_repo, tmp_path,
@@ -34,7 +34,7 @@ def test_renderer_reuses_model_session_for_cards_and_comic_panels(fixture_repo, 
         return session
 
     monkeypatch.setattr(render, "_start_batch_process", start)
-    renderer = render.IllustrationRenderer(command=["not-an-image-program"])
+    renderer = illustrator(tmp_path)
     renderer.render({"kind": "comic", "panels": [{"prompt": "one"}, {"prompt": "two"}]}, cfg, {})
     renderer.render({"kind": "illustration", "prompt": "three"}, cfg, {})
     assert len(sessions) == 1
@@ -79,7 +79,7 @@ def test_batch_model_failure_ends_batch_without_loading_another_model():
 
 def test_default_batch_launcher_is_blocked_in_unit_tests(fixture_repo, tmp_path):
     cfg = render_cfg(fixture_repo, tmp_path)
-    renderer = render.IllustrationRenderer(command=["not-an-image-program"])
+    renderer = illustrator(tmp_path)
     with pytest.raises(pytest.fail.Exception, match="cannot launch mflux"):
         renderer.render({"kind": "illustration", "prompt": "never loaded"}, cfg, {})
 
@@ -108,7 +108,7 @@ def test_batch_session_idle_exit_releases_the_home_slot(
 
 def test_batch_session_timeout_closes_process_and_releases_slot(fixture_repo, tmp_path,
                                                                real_batch_launcher):
-    cfg = render_cfg(fixture_repo, tmp_path)
+    cfg = render_cfg(fixture_repo, tmp_path, mflux_load_timeout_s=0.1)
     sleeper = [render.sys.executable, "-u", "-c", "import time; time.sleep(30)"]
     session = real_batch_launcher(cfg, threading.Event(), worker_command=sleeper)
     with pytest.raises(render.RenderError, match="timed out"):
@@ -153,8 +153,11 @@ def test_render_worker_reuses_session_across_queue_passes(fixture_repo, tmp_path
         return session
 
     monkeypatch.setattr(render, "_start_batch_process", start)
-    monkeypatch.setattr(render, "_mflux_command", lambda model="": ["not-an-image-program"])
-    monkeypatch.setattr(render.IllustrationRenderer, "_installed", lambda self: True)
+    monkeypatch.setattr(render, "worker_check", lambda model: None)
+    from gittok import image_model
+    from tests.test_image_model import write_model
+
+    write_model(image_model.model_dir(cfg))
     worker = render.RenderWorker(lambda: cfg)
     visual = {"kind": "illustration", "prompt": "one"}
     (first,) = seed_pending(cfg, fixture_repo, visual)
@@ -303,11 +306,42 @@ def test_cancelling_inflight_batch_kills_process(fixture_repo, tmp_path, real_ba
             session.close()
 
 
-def test_batch_readiness_requires_mflux_in_the_gittok_environment(monkeypatch):
-    # A CLI from a different uv tool environment cannot supply imports to this worker.
-    monkeypatch.setattr(render, "_mflux_command", lambda model="": ["/other/tool/mflux-generate"])
-    monkeypatch.setattr(render.importlib.util, "find_spec", lambda name: None)
-    renderer = render.IllustrationRenderer()
+def test_batch_readiness_requires_the_worker_imports(tmp_path):
+    # A CLI from another uv tool environment cannot supply this worker's imports.
+    renderer = illustrator(tmp_path, check=lambda: "No module named 'mflux'")
     assert not renderer.available()
-    assert renderer.setup()["installed"] is False
-    assert "images extra" in renderer.setup()["reason"]
+    assert "images extra" in renderer.why_unavailable()
+
+
+def test_the_worker_check_imports_the_model_class_and_helpers(monkeypatch):
+    from gittok import mflux_worker
+
+    imported = []
+
+    def fake_import(name):
+        imported.append(name)
+        if name == "mflux.callbacks.instances.memory_saver":
+            raise ModuleNotFoundError("No module named 'mflux.callbacks'")
+        return type("M", (), {"ZImage": object, "MemorySaver": object, "ModelConfig": object})
+
+    monkeypatch.setattr(mflux_worker.importlib, "import_module", fake_import)
+    assert "mflux.callbacks" in mflux_worker.check("z-image-turbo")
+    assert "mflux.models.z_image" in imported
+
+
+def test_the_first_image_of_a_batch_gets_the_load_time_too(fixture_repo, tmp_path,
+                                                         real_batch_launcher):
+    """Loading the model counts against mflux_load_timeout_s, not the per-image limit."""
+    cfg = render_cfg(fixture_repo, tmp_path, mflux_load_timeout_s=5)
+    slow = [render.sys.executable, "-u", "-c",
+            "import sys,json,time\n"
+            "for line in sys.stdin:\n"
+            "    time.sleep(0.6)\n"
+            "    print(json.dumps({'ok':True}),flush=True)\n"]
+    session = real_batch_launcher(cfg, threading.Event(), worker_command=slow)
+    try:
+        session.render({"prompt": "one"}, 0.3)  # 0.6 s: inside the load limit
+        with pytest.raises(render.RenderError, match="timed out"):
+            session.render({"prompt": "two"}, 0.3)  # loaded now: 0.3 s is the limit
+    finally:
+        session.close()

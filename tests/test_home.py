@@ -410,7 +410,8 @@ def test_codex_init_registers_the_same_stdio_server_and_startup_hints(tmp_path):
     g = tmp_path / "g"
     home.init(g, "1.2.3")
     cfg = tomllib.loads((g / ".codex/config.toml").read_text())
-    assert cfg["mcp_servers"]["gittok"] == {"command": "gittok", "args": ["mcp", "--ui"]}
+    server = cfg["mcp_servers"]["gittok"]
+    assert (server["command"], server["args"]) == ("gittok", ["mcp", "--ui"])
     hooks = json.loads((g / ".codex/hooks.json").read_text())["hooks"]
     claude = json.loads((g / ".claude/settings.json").read_text())["hooks"]
     assert hooks == claude
@@ -454,11 +455,35 @@ def test_clone_codex_adapters_match_init_and_use_uv():
     for rel, data in files.items():
         if rel == ".codex/config.toml":
             cfg = tomllib.loads((REAL / rel).read_text())
-            assert cfg["mcp_servers"]["gittok"] == {
-                "command": "uv", "args": ["run", "gittok", "mcp", "--ui"]}
+            server = cfg["mcp_servers"]["gittok"]
+            assert (server["command"], server["args"]) == (
+                "uv", ["run", "gittok", "mcp", "--ui"])
         elif rel == ".codex/hooks.json":
             clone = json.loads((REAL / rel).read_text())["hooks"]
             claude = json.loads((REAL / ".claude/settings.json").read_text())["hooks"]
             assert clone == claude
         else:
             assert (REAL / rel).read_bytes() == data, rel
+
+
+ASK_FIRST = ("pair_device", "remove_repo", "set_lan")
+
+
+@pytest.mark.parametrize("path", ["src/gittok/templates/codex.toml", ".codex/config.toml"])
+def test_codex_asks_before_tools_that_repo_text_could_misuse(path):
+    """Codex subagents get every MCP tool. A writer that reads a hostile repo must not pair a
+    device, remove a repo or open the feed to the network without the user approving it."""
+    import tomllib
+
+    root = Path(__file__).parents[1]
+    tools = tomllib.loads((root / path).read_text())["mcp_servers"]["gittok"]["tools"]
+    for name in ASK_FIRST:
+        assert tools[name]["approval_mode"] == "prompt", (path, name)
+
+
+def test_codex_startup_text_does_not_tie_health_hints_to_a_never():
+    root = Path(__file__).parents[1]
+    for path in ("src/gittok/templates/codex.md", ".agents/GITTOK.md"):
+        text = " ".join((root / path).read_text().split())
+        assert "never give a loopback/computer address and follow" not in text, path
+        assert "Follow the health hints" in text, path

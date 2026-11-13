@@ -15,7 +15,7 @@ claude                        # approve the MCP server `gittok` when Claude Code
 
 The wheel is also attached to each GitHub release of the repository: `uv tool install --python 3.13 ./gittok-<version>-py3-none-any.whl` installs such a file. A git URL install (`uv tool install git+<url>`) does not work, because the web build is not committed. `DEV.md` says how to build the wheel in a clone.
 
-The `images` extra adds mflux, which draws the illustration and comic cards and the persona avatars. It works on Apple silicon only, and it is large (torch and mlx, about 1 GB, plus the model it downloads later; see "Illustration renderer"). On a Mac that is not Apple silicon the extra adds nothing. For a smaller install without illustrated cards, leave the extra out:
+The `images` extra adds mflux, which draws the illustration and comic cards and the persona avatars. It works on Apple silicon only, and it is large (torch and mlx, about 1 GB, plus a 6 GB model that GitTok downloads by itself; see "Illustration renderer"). On a Mac that is not Apple silicon the extra adds nothing. For a smaller install without illustrated cards, leave the extra out:
 
 ```bash
 uv tool install --python 3.13 gittok
@@ -202,7 +202,7 @@ Start a new session after the update, so Claude Code loads the new files. Do the
 Two things are outside the directory, and neither comes from `gittok init`:
 
 - The grammar cache of the tree-sitter pack: `rm -rf ~/Library/Caches/tree-sitter-language-pack`.
-- The optional illustration renderer: delete the folder that `mflux-save` wrote. (The meme templates are in `data/memes/`, inside the directory.) An older install may have a memegen Docker container: `docker rm -f memegen`, `docker rmi memegen`.
+- The illustration model is in `data/models/`, inside the directory. (So are the extra meme templates, in `data/memes/`.) An older install may have a memegen Docker container: `docker rm -f memegen`, `docker rmi memegen`.
 
 ## A clone of the source
 
@@ -220,7 +220,7 @@ Your own settings live in `local/` of the GitTok directory. `docs/config.md` des
 
 - `local/repos.yaml`: the repos and groups to analyze.
 - `local/profiles/<repo>.yaml`: the profile of each repo.
-- `local/mascots.yaml`: the mascot of each repo. GitTok ships none; Claude makes one when you add a repo, if the image renderer works.
+- `local/mascots.yaml`: the mascot of each repo. GitTok ships none; Claude makes one when you add a repo, if the image renderer is installed.
 - `local/settings.yaml`: merged over `config/settings.yaml`, key by key inside each section.
 - `local/personas.yaml`: merged over the shipped file, per name and field by field. The edit tools write only here.
 - One optional file for each other shipped file (`local/scan_defaults.yaml`, `local/languages.yaml`, `local/queries/`, `local/file_types.yaml`, `local/secrets.yaml`, `local/claims.yaml`, `local/meme_templates.yaml`, `local/defaults.yaml`, `local/reward.yaml`): merged over the shipped one. Maps merge key by key and lists add. Ask Claude for the change, or write the file yourself; `gittok config check` validates it.
@@ -285,50 +285,42 @@ The default assets stay read-only in the installed package. Extra downloads go t
 
 ## Illustration renderer (mflux)
 
-Without this renderer GitTok makes no illustration cards and no mascot; everything else works. When it works, Claude gives each new repo a mascot (`docs/config.md`, "Mascots").
+Without this renderer GitTok makes no illustration cards and no mascot; everything else works. When it is installed, Claude gives each new repo a mascot (`docs/config.md`, "Mascots").
 
-Illustration and comic cards, and the persona avatars, are drawn by [mflux](https://github.com/filipstrand/mflux) on Apple Silicon. It is a large download (torch and mlx, plus the model).
+Illustration and comic cards, and the persona avatars, are drawn by [mflux](https://github.com/filipstrand/mflux) on Apple Silicon. Install it with the `images` extra:
 
 ```bash
 uv sync --group images                                                   # in a clone
-uv tool install --force --python 3.13 'gittok[images]'                                 # installed tool
+uv tool install --force --python 3.13 'gittok[images]'                   # installed tool
 ```
 
-The commands below are for a clone. For an installed tool, write `gittok` in place of `uv run gittok`. GitTok finds mflux in its own tool environment even when it is not on your PATH.
-The batch uses mflux’s Python API, so the package must be installed in GitTok’s
-environment via the `images` extra; a separate mflux CLI on PATH is not sufficient. For manual model preparation, `mflux-save` is in that environment: run `"$(uv tool dir)/gittok/bin/mflux-save"` in place of `uv run mflux-save`.
+The batch uses mflux's Python API, so mflux must be installed in GitTok's own environment through the `images` extra; an mflux command on your PATH from somewhere else is not enough.
 
-**Save a quantized copy of the model first.** The default model, `z-image-turbo`, is 25 GB of bf16 weights. Without a saved copy, every render reads all 25 GB and quantizes it in memory, which swaps a 36 GB Mac and times out after 300 s. Save it once (this downloads the weights on the first run; close memory-hungry apps while it runs):
+**The model downloads by itself.** When the renderer is installed, the feed server downloads a pre-quantized 4-bit model, [filipstrand/Z-Image-Turbo-mflux-4bit](https://huggingface.co/filipstrand/Z-Image-Turbo-mflux-4bit) (about 6 GB, pinned to one revision), in the background, into `data/models/` of the GitTok directory. Nothing else is written outside the directory. A stopped download resumes the next time the server runs. Until the model is there, illustration cards wait (`pending_render`) and the brief makes no `mascot_scene` or `comic` cards; everything else goes on. A failed download is not retried by itself for an hour.
+
+To download it by hand, with progress (it does the same thing):
 
 ```bash
-uv run mflux-save --model z-image-turbo --quantize 4 --path ~/.cache/mflux/z-image-turbo-q4
+gittok images --download     # in a clone: uv run gittok images --download
+gittok images                # the state: ready, downloading (with progress), failed, missing
 ```
 
-Then point the renderer at the folder in `local/settings.yaml`:
+`status` reports it too: `renderer_setup.illustration` has `installed`, `available`, `download` (state and progress) and `reason`. To keep a model of your own, such as a folder from `mflux-save`, set `render.mflux_path` to it; `render.mflux_auto_download: false` turns the automatic download off.
 
-```yaml
-render:
-  mflux_path: ~/.cache/mflux/z-image-turbo-q4   # what mflux-save wrote
-  mflux_model: z-image-turbo                    # the family it is based on
-```
-
-With `mflux_path` set, a render loads about 7 GB (q4) or 14 GB (q8) and takes 10 to 20 s per image at 8 steps. Use `--quantize 6` or `8` if the flat-vector mascots look rough at 4. Restart the feed server (`/mcp` → gittok → Reconnect) after installing. Then ask Claude to draw the persona avatars, or run:
+A model folder counts as ready only when it is complete: the `transformer`, `text_encoder` and `vae` parts, each with every shard its index names (none empty), and the tokenizer. A render takes about 10 to 20 s per image at 9 steps, after the model loads once per batch. Then ask Claude to draw the persona avatars, or run:
 
 ```bash
 uv run gittok avatars      # draws the persona avatars; the first image also warms the Metal cache
 ```
 
-`status` reports both `renderers` (ready to draw) and `renderer_setup` (whether code is installed, the missing asset or dependency, and a setup command). Installing `[images]` installs mflux on Apple silicon; it does not download the model. A missing saved model therefore means installed but not ready. When you add a repo, the agent prepares a missing model for an installed renderer before generating its first cards, explains the roughly 25 GB download, and uses normal command approvals. It rechecks readiness and verifies that the renderer starts. An empty model folder or missing weight shards is not ready. Setup failure stops first-card generation; you can choose to continue without illustrations. If the optional code is absent, the agent offers installation. It should not tell you to reinstall an installed mflux. Until the command and saved model are available, the brief skips `mascot_scene` and `comic`.
-
 ### Memory use and renderer lifetime
 
-GitTok uses the saved 4-bit model described above and enables mflux's
+GitTok uses the 4-bit model described above and enables mflux's
 [`--low-ram` mode](https://github.com/mflux-community/mflux/blob/main/src/mflux/models/common/README.md#resource-and-inspection-options)
 by default. The batch keeps its encoder and transformer for later prompts, bounds temporary
 MLX caches, and uses tiled decoding where mflux supports it. This differs from the
 single-image CLI, which can discard model components after one image. It is not a hard limit on total
-RAM. Model weights and inference still require several GB. One-time model
-preparation can still need much more memory than rendering the saved model.
+RAM. Model weights and inference still require several GB.
 
 Only one model batch runs at a time per GitTok directory, including cards,
 comics, avatars and manual CLI runs. Other card requests stay pending instead
@@ -346,12 +338,14 @@ A batch follows the rendering queue, not the lifetime of the agent or the
 card-generation run. GitTok does not hold a loaded model while writers research
 repos. On timeout, cancellation, server shutdown, or loss of the parent process,
 GitTok kills the batch process group, including its children. The default timeout is 120
-seconds per image; slower machines can raise it in `local/settings.yaml`:
+seconds per image, plus 600 seconds for the first image of a batch, which also loads the
+model. Slower machines can raise them in `local/settings.yaml`:
 
 ```yaml
 render:
   mflux_low_ram: true
   mflux_timeout_s: 180
+  mflux_load_timeout_s: 900
   mflux_batch_idle_s: 10
 ```
 
