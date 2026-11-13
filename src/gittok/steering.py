@@ -903,7 +903,7 @@ def set_group(cfg, repo: str, group: str | None, created_by: str = "agent") -> d
 
 # For a person at a terminal (CLI output and errors).
 NO_REPOS = (
-    'No repos yet. Ask Claude to add one ("add the repo at ~/src/myapp"), '
+    'No repos yet. Ask your coding agent to add one ("add the repo at ~/src/myapp"), '
     "or run: gittok repos add <name> <path-or-url>"
 )
 # For the agent (the SessionStart hint and tool results).

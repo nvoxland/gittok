@@ -3,13 +3,14 @@
 A GitTok directory holds everything: the user's `local/`, `data/` and `repos/`, and the
 files that tell an agent program how to run GitTok. Those files are in two kinds of unit.
 `core_files` is for every agent program (`AGENTS.md`). Each entry of `HARNESSES` is for one
-program (now only Claude Code: the MCP entry, the skills and agents, the session hooks).
+program (Claude Code or Codex: MCP configuration, skill discovery, session hooks).
 Nothing here writes outside the directory.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 import yaml
@@ -96,8 +97,31 @@ def claude_code_files(shared: Path | None = None) -> dict[str, bytes]:
     return out
 
 
+def codex_files(shared: Path | None = None) -> dict[str, bytes]:
+    """Codex discovers thin adapters; the workflows and workers have one shared source.
+
+    The historical `.claude/` paths remain the source for both harnesses. Adapters read
+    those files in the home, so updates never leave a second workflow to keep in sync.
+    """
+    src = claude_dir(shared or shipped_root())
+    settings = json.loads((TEMPLATES / "settings.json").read_text())
+    out = {
+        ".codex/config.toml": (TEMPLATES / "codex.toml").read_bytes(),
+        ".codex/hooks.json": (json.dumps({"hooks": settings["hooks"]}, indent=2) + "\n").encode(),
+        ".agents/GITTOK.md": (TEMPLATES / "codex.md").read_bytes(),
+    }
+    template = (TEMPLATES / "codex-skill.md").read_text()
+    for name in SKILL_NAMES:
+        text = (src / "skills" / name / "SKILL.md").read_text()
+        metadata = yaml.safe_load(text.split("---", 2)[1])
+        header = yaml.safe_dump({"name": name, "description": metadata["description"]})
+        adapter = "---\n" + header + "---\n\n" + template.replace("{name}", name)
+        out[f".agents/skills/{name}/SKILL.md"] = adapter.encode()
+    return out
+
+
 # One unit of files for each agent program. Files for another program go in a new unit here.
-HARNESSES = {"Claude Code": claude_code_files}
+HARNESSES = {"Claude Code": claude_code_files, "Codex": codex_files}
 
 
 def owned_files(shared: Path | None = None) -> dict[str, bytes]:
@@ -184,6 +208,10 @@ def init(target: Path, version: str, shared: Path | None = None) -> list[str]:
         "  .claude/skills/     " + ", ".join(SKILL_NAMES),
         "  .claude/agents/     " + ", ".join(n.removesuffix(".md") for n in AGENT_FILES),
         "  .claude/settings.json   the session hooks that keep the feed full",
+        "For Codex:",
+        "  .codex/config.toml  starts the same MCP server (stdio)",
+        "  .codex/hooks.json   the same session hints (review with /hooks)",
+        "  .agents/skills/     adapters for the shared workflows in .claude/",
         "Your cards and settings will be in this directory (data/, local/, repos/). "
         "Nothing is written outside it.",
         "",
@@ -192,6 +220,8 @@ def init(target: Path, version: str, shared: Path | None = None) -> list[str]:
         "  claude",
         "Claude Code asks one time to approve the MCP server `gittok` of this directory. "
         "Approve it. Then ask the agent to add a repo.",
+        "Or run `codex` here, trust the project configuration and review /hooks. "
+        "Ask Codex to add a repo; $gittok-generate makes cards on demand.",
         "GitTok runs only while an agent session is open in this directory.",
         "",
         *LAN_LINES,

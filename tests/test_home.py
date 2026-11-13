@@ -6,6 +6,7 @@ Nothing here writes outside `tmp_path`.
 from __future__ import annotations
 
 import json
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -75,7 +76,7 @@ def test_init_marker_records_the_version(tmp_path):
     home.init(tmp_path / "g", "1.2.3")
     marker = yaml.safe_load((tmp_path / "g" / config.MARKER).read_text())
     assert marker["version"] == "1.2.3"
-    assert set(marker["files"]) == set(OWNED)
+    assert set(marker["files"]) == set(home.owned_files())
     assert home.recorded_version(tmp_path / "g") == "1.2.3"
 
 
@@ -96,7 +97,7 @@ def test_the_starter_repos_file_loads_as_no_repos(tmp_path):
 def test_init_agents_md_is_short_and_says_what_the_directory_is(tmp_path):
     home.init(tmp_path / "g", "1.2.3")
     text = (tmp_path / "g" / "AGENTS.md").read_text()
-    assert len(text.splitlines()) <= 60
+    assert len(text.splitlines()) <= 70
     for fact in ("GitTok directory", "add_repo", "feed_address", "pair_device", "plain HTTP",
                  "local/",
                  "data/", "repos/", "gittok update", "get_brief", "get_packet",
@@ -108,7 +109,8 @@ def test_agents_md_keeps_claude_code_things_in_one_section(tmp_path):
     home.init(tmp_path / "g", "1.2.3")
     text = (tmp_path / "g" / "AGENTS.md").read_text()
     neutral, claude = text.split("## Claude Code\n")
-    assert "## " not in claude  # it is the last section
+    claude, codex = claude.split("## Codex\n")
+    assert ".codex/config.toml" in codex and ".agents/skills/" in codex
     for word in ("Claude", "/gittok-", "/mcp", "subagent", "SessionStart", "skill"):
         assert word not in neutral, word
     for word in ("/gittok-generate", "/gittok-profile-repo", "/mcp", "Reconnect"):
@@ -125,8 +127,9 @@ def test_harness_neutral_files_and_claude_code_files_are_separate_units():
     claude = set(home.claude_code_files())
     assert {".mcp.json", "CLAUDE.md", ".claude/settings.json"} <= claude
     assert all(rel in (".mcp.json", "CLAUDE.md") or rel.startswith(".claude/") for rel in claude)
-    assert set(home.owned_files()) == set(home.core_files()) | claude
-    assert list(home.HARNESSES) == ["Claude Code"]
+    codex = set(home.codex_files())
+    assert set(home.owned_files()) == set(home.core_files()) | claude | codex
+    assert list(home.HARNESSES) == ["Claude Code", "Codex"]
 
 
 def test_init_accepts_an_empty_dir_and_ignores_ds_store(tmp_path):
@@ -400,3 +403,62 @@ def test_nothing_in_the_package_names_the_user_home_or_a_launch_agent():
             text = p.read_text()
             for bad in ("LaunchAgent", "launchctl", "plistlib", "~/.claude", ".gittok"):
                 assert bad not in text, (p.name, bad)
+
+
+# Codex shares the workflows and worker instructions; only the runtime adapter differs.
+def test_codex_init_registers_the_same_stdio_server_and_startup_hints(tmp_path):
+    g = tmp_path / "g"
+    home.init(g, "1.2.3")
+    cfg = tomllib.loads((g / ".codex/config.toml").read_text())
+    assert cfg["mcp_servers"]["gittok"] == {"command": "gittok", "args": ["mcp", "--ui"]}
+    hooks = json.loads((g / ".codex/hooks.json").read_text())["hooks"]
+    claude = json.loads((g / ".claude/settings.json").read_text())["hooks"]
+    assert hooks == claude
+    assert cfg["features"]["hooks"] is True
+
+
+def test_codex_skills_are_thin_adapters_for_the_shared_workflows(tmp_path):
+    g = tmp_path / "g"
+    home.init(g, "1.2.3")
+    for name in home.SKILL_NAMES:
+        skill = (g / f".agents/skills/{name}/SKILL.md").read_text()
+        metadata = yaml.safe_load(skill.split("---")[1])
+        shared = (g / f".claude/skills/{name}/SKILL.md").read_text()
+        assert metadata["name"] == name
+        assert metadata["description"] == yaml.safe_load(shared.split("---")[1])["description"]
+        assert "model" not in metadata
+        assert f".claude/skills/{name}/SKILL.md" in skill
+        assert ".agents/GITTOK.md" in skill
+        assert len(skill.split("---", 2)[2].splitlines()) < 12
+    runtime = (g / ".agents/GITTOK.md").read_text()
+    for word in ("spawn_agent", "finish_run", "suggested_model", "get_brief",
+                 "gittok-writer.md", "gittok-scout.md", "local/", "config/"):
+        assert word in runtime
+
+
+def test_update_adds_codex_to_an_existing_claude_only_home(tmp_path):
+    g = tmp_path / "g"
+    home.init(g, "1.2.3")
+    marker = home.read_marker(g)
+    for rel in home.codex_files():
+        (g / rel).unlink()
+        marker["files"].pop(rel)
+    (g / config.MARKER).write_text(yaml.safe_dump(marker))
+    home.update(g, "1.3.0")
+    assert all((g / rel).is_file() for rel in home.codex_files())
+    assert not list(g.rglob("*.bak"))
+
+
+def test_clone_codex_adapters_match_init_and_use_uv():
+    files = home.codex_files()
+    for rel, data in files.items():
+        if rel == ".codex/config.toml":
+            cfg = tomllib.loads((REAL / rel).read_text())
+            assert cfg["mcp_servers"]["gittok"] == {
+                "command": "uv", "args": ["run", "gittok", "mcp", "--ui"]}
+        elif rel == ".codex/hooks.json":
+            clone = json.loads((REAL / rel).read_text())["hooks"]
+            claude = json.loads((REAL / ".claude/settings.json").read_text())["hooks"]
+            assert clone == claude
+        else:
+            assert (REAL / rel).read_bytes() == data, rel

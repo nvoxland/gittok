@@ -152,7 +152,7 @@ def _banner(port: int, host: str, out) -> str | None:
     lan_token = social.ensure_lan_token(load_config().settings.data_dir)
     print(
         "The feed is token-protected. Pair each device once: open the feed address on it, "
-        "tap 'Pair with a code', then ask Claude to pair that code, or run "
+        "tap 'Pair with a code', then ask your coding agent to pair that code, or run "
         "`gittok pair <code>`.",
         file=out,
     )
@@ -380,7 +380,8 @@ def feed_watch_hint(clone: bool) -> str:
     return (
         f"GitTok feed watch: start `{home.feed_watch_command(clone)}` with Bash "
         "run_in_background now (once per session). When it exits, run /gittok-generate, "
-        "then start the watch again."
+        "then start the watch again. In Codex, follow .agents/GITTOK.md for the "
+        "shell background process and skill equivalents."
     )
 
 
@@ -801,10 +802,10 @@ def _port_note(cfg, port: int, owner: str | None) -> str:
         )
     if Path(owner) == cfg.root:
         return (
-            f"The feed server of this session did not start: another Claude Code session in "
+            f"The feed server of this session did not start: another agent session in "
             f"this directory ({owner}) already serves the feed on port {port}. The MCP tools "
             "and the feed work. The feed stops when that session ends; then run /mcp, pick "
-            "gittok, and Reconnect here to start it again."
+            "gittok, and Reconnect in Claude Code, or restart Codex to start it again."
         )
     return (
         f"The feed server of this session did not start: port {port} is in use by the feed "
@@ -931,7 +932,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="gittok",
         description="GitTok runs in a GitTok directory. Make one with `gittok init <dir>`, "
-        "then start Claude Code there. The other commands work only inside such a directory.",
+        "then start Claude Code or Codex there. "
+        "The other commands work only inside such a directory.",
     )
     parser.add_argument("--version", action="version", version=f"gittok {home.installed_version()}")
     sub = parser.add_subparsers(dest="command", required=True)

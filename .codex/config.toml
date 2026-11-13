@@ -1,0 +1,6 @@
+[features]
+hooks = true
+
+[mcp_servers.gittok]
+command = "uv"
+args = ["run", "gittok", "mcp", "--ui"]

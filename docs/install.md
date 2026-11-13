@@ -2,7 +2,7 @@
 
 ## Install
 
-You need macOS, `uv`, `git`, and a coding agent. GitTok is made for and tested with Claude Code. You do not need a clone.
+You need macOS, `uv`, `git`, and a coding agent. GitTok supports Claude Code and Codex. You do not need a clone.
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh        # if you do not have uv yet
@@ -23,7 +23,7 @@ uv tool install gittok
 
 GitTok then does not ask for the illustration and comic formats. The tree-sitter structure layer and ast-grep rules come with every install.
 
-The tool alone does nothing. GitTok works in a **GitTok directory**, and only while a Claude Code session is open in it. Nothing is installed outside the directory: no user-wide MCP entry, no files in your home folder, and no background service.
+The tool alone does nothing. GitTok works in a **GitTok directory**, and only while a Claude Code or Codex session is open in it. Nothing is installed outside the directory: no user-wide MCP entry, no files in your home folder, and no background service.
 
 ## The GitTok directory
 
@@ -52,7 +52,32 @@ And these files for Claude Code:
 | `.claude/agents/` | The agents `gittok-writer` and `gittok-scout` |
 | `.claude/settings.json` | The two session hooks and one permission ("Session hooks" below) |
 
-`AGENTS.md` is written for any coding agent. GitTok is tested with Claude Code only, and `gittok init` writes the MCP entry, skills and hooks for Claude Code only ("Other MCP clients" below).
+And these files for Codex:
+
+| File | What it is |
+|---|---|
+| `.codex/config.toml` | Starts the same stdio MCP server, `gittok mcp --ui` |
+| `.codex/hooks.json` | The same SessionStart hints; review and trust them with `/hooks` |
+| `.agents/skills/` | Thin adapters for the three shared workflows |
+| `.agents/GITTOK.md` | Codex startup, delegation, model and process instructions |
+
+Start `codex` in this directory and trust the project configuration. Use
+`$gittok-generate`, `$gittok-profile-repo <repo>` and `$gittok-steer`, or ask in plain
+language. Check `/mcp` if GitTok tools are missing. Restart Codex after MCP/server
+changes. Existing directories gain support with `gittok update`.
+
+The workflow bodies and worker instructions have one source, at the historical
+`.claude/skills/` and `.claude/agents/` paths. Codex adapters read these files with
+runtime adaptations; keep `.claude/` even if you only use Codex. Generation uses
+Codex subagents and inherits the session model. Claude model names are cost hints
+only. No Claude installation or Claude subprocess is needed.
+
+Codex uses [project configuration](https://developers.openai.com/codex/config-reference/),
+[local skills](https://developers.openai.com/codex/skills/), and
+[trusted hooks](https://learn.chatgpt.com/docs/hooks).
+Startup instructions provide a fallback when hooks do not run. Idle refill depends
+on the client's background completion support; otherwise health is checked on the
+next user turn. See [Keeping the feed full](scheduling.md).
 
 GitTok makes the rest when it needs it:
 
@@ -160,7 +185,7 @@ The tool is new now, but the skills, agents, settings and `AGENTS.md` in your Gi
 gittok update              # or: gittok update ~/gittok
 ```
 
-`gittok update` writes again the files that `gittok init` made: `AGENTS.md`, `CLAUDE.md`, `.mcp.json`, the three skills, the two agents, `.claude/settings.json`, and the version in `gittok.yaml`. It prints each file that it changed. It never touches `local/`, `data/`, `repos/` or `.gitignore`.
+`gittok update` writes again the files that `gittok init` made: `AGENTS.md`, `CLAUDE.md`, `.mcp.json`, the shared skills and agents, both clients’ configuration and adapters, and the version in `gittok.yaml`. It prints each file that it changed. It never touches `local/`, `data/`, `repos/` or `.gitignore`.
 
 - A file that you did not edit is replaced.
 - A file that you edited is replaced too, but your copy is saved next to it first as `<name>.bak` (for example `.claude/settings.json.bak`). The output names it. Copy your changes back by hand if you still want them.
@@ -203,7 +228,7 @@ Your own settings live in `local/` of the GitTok directory. `docs/config.md` des
 
 ## Session hooks
 
-Two SessionStart hooks tell a Claude Code session when the feed wants cards (`docs/scheduling.md`). `gittok init` writes them to `.claude/settings.json` of the GitTok directory, so they run only for sessions in that directory:
+Three SessionStart hints tell a Claude Code session when the feed wants cards (`docs/scheduling.md`). `gittok init` writes them to `.claude/settings.json` of the GitTok directory, so they run only for sessions in that directory:
 
 ```json
 {
@@ -297,7 +322,7 @@ Until mflux is importable, the brief skips `mascot_scene` and `comic` and those 
 
 ## Other MCP clients
 
-The MCP server speaks stdio only. A client that can start a stdio MCP server can run `gittok mcp` with a GitTok directory as the working directory (`gittok mcp --ui` to also start the feed server). `gittok init` writes no config for such a client: you add the server to it yourself. `AGENTS.md` in the directory tells an agent how to manage GitTok and how to make cards with the tools alone. The project tests GitTok with Claude Code only. The skills, agents and session hooks are Claude Code files, and they pin Claude models; another client does not get them.
+The MCP server speaks stdio only. A client that can start a stdio MCP server can run `gittok mcp` with a GitTok directory as the working directory (`gittok mcp --ui` to also start the feed server). `gittok init` writes no config for such a client: you add the server to it yourself. `AGENTS.md` in the directory tells an agent how to manage GitTok and how to make cards with the tools alone. Claude Code and Codex have built-in adapters as described above. Other clients need their own configuration and runtime adaptation.
 
 ## Keeping "today" fresh (optional fetch)
 

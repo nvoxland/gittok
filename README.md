@@ -6,7 +6,7 @@ GitTok turns your git repos into a TikTok-style feed. Swipe through short posts 
 
 Some posts teach. Some are quizzes: spot the bug, guess who wrote it, guess when. Some are memes, comics, tier lists, group chats and horoscopes about your own code, with a cast of regulars arguing in the comments. Swipe up for the next post. Swipe sideways to go deeper, from the hook down to the real code and the real diff.
 
-- **Every post is checked against git.** Your coding agent (for example Claude Code) writes the posts, and GitTok verifies each cited commit, file and line before a post reaches your feed.
+- **Every post is checked against git.** Your coding agent (Claude Code or Codex) writes the posts, and GitTok verifies each cited commit, file and line before a post reaches your feed.
 - **It learns what you like.** What you read, like and skip shapes the posts that get made next. You can also just say it: "less memes, more of the sync engine."
 - **It helps things stick.** A quiz you got wrong comes back a day later, then after three days, then a week, until you have it.
 - **It is private.** Everything runs on your own machine. GitTok never writes to your repos and calls no model API of its own.
@@ -15,7 +15,7 @@ Some posts teach. Some are quizzes: spot the bug, guess who wrote it, guess when
 
 ## Quick start
 
-macOS, [uv](https://docs.astral.sh/uv/), git and [Claude Code](https://claude.com/claude-code):
+macOS, [uv](https://docs.astral.sh/uv/), git and [Claude Code](https://claude.com/claude-code) or [Codex](https://developers.openai.com/codex/):
 
 ```bash
 uv tool install 'gittok[images]'
@@ -25,6 +25,8 @@ claude
 ```
 
 Approve the `gittok` MCP server, then ask Claude: "Add the repo at ~/src/myapp to GitTok." When the first posts are made, open the feed address that Claude gives you on your phone (or ask "what is the feed address?"), tap "Pair with a code", tell Claude the code, and start scrolling.
+
+For Codex, run `codex` in the same directory, trust the project configuration and review `/hooks`. Ask Codex to add a repo, or use `$gittok-generate` to make cards. Both agents share the same workflows and MCP server.
 
 ## Documentation
 

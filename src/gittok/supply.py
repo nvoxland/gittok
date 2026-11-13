@@ -139,7 +139,10 @@ def notify_low_runway(conn, cfg, now: datetime) -> int:
     h = feed_health(conn, cfg, now)
     if h["runway_days"] >= 1:
         return 0
-    text = f"Feed is running low: {h['backlog']} unseen cards. Ask Claude to /gittok-generate."
+    text = (
+        f"Feed is running low: {h['backlog']} unseen cards. "
+        "Ask your coding agent to generate GitTok cards."
+    )
     made = social._add(conn, "low_runway", text, f"low_runway:{now.date()}", now)
     conn.commit()
     return made

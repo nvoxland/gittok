@@ -1,6 +1,6 @@
 # Keeping the feed full
 
-Cards are written by a Claude Code session. GitTok does not start a model by itself, and it does not run `claude -p`. So generation needs a session that is open. All other work (analysis, rendering, learning, notifications, garbage collection) is local Python and needs no session.
+Cards are written by a Claude Code or Codex session. GitTok does not start a model by itself, and it does not run `claude -p`. So generation needs a session that is open. All other work (analysis, rendering, learning, notifications, garbage collection) is local Python and needs no session.
 
 ## What runs without Claude
 
@@ -21,6 +21,21 @@ Cards are written by a Claude Code session. GitTok does not start a model by its
 | `/loop 4h /gittok-generate` in a session you leave open | Most ticks end at `nothing_to_do` and cost one MCP call |
 
 `gittok init` writes both hooks to `.claude/settings.json` of the GitTok directory (`docs/install.md`, "Session hooks"). A clone has them in its own project file.
+
+## Codex sessions
+
+`gittok init` also writes `.codex/config.toml`, `.codex/hooks.json` and
+`.agents/skills/`. Codex connects to the same stdio server and reads the same
+workflow and worker instructions. Trust the project configuration and review the
+hooks with `/hooks`. The startup instructions run the same hints if hooks did not.
+Use `$gittok-generate` in place of `/gittok-generate`; generation uses Codex
+subagents and inherits your session model, rather than selecting Claude models.
+
+The Codex runtime adapter starts the feed watch with its shell process tools.
+When the client delivers background completion, it generates and restarts the
+watch. A client that does not wake while idle checks health on the next user turn;
+it cannot promise automatic idle refill. Claude's `/loop` is specific to Claude.
+The limits below still apply to both clients.
 
 ## How the feed watch works
 

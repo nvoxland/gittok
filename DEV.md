@@ -7,7 +7,7 @@ This file is for people who change and test GitTok. To use GitTok, read the docs
 
 ## Set up a clone
 
-You need macOS, [uv](https://docs.astral.sh/uv/), git, Node 22, and Claude Code.
+You need macOS, [uv](https://docs.astral.sh/uv/), git, Node 22, and Claude Code or Codex.
 
 ```bash
 git clone <this-repo-url> gittok
@@ -35,6 +35,14 @@ claude
 ```
 
 The project `.mcp.json` makes Claude Code start `uv run gittok mcp --ui`. Approve the `gittok` MCP server when Claude Code asks. That process is the MCP server (stdio). It also starts a child `gittok serve --reload` that serves the feed on port 7313 while the session runs (an installed tool starts the child without `--reload`). The child restarts when a file in `src/gittok/` changes. A change to the MCP tools themselves needs `/mcp`, gittok, Reconnect.
+
+For Codex, run `codex` in the clone and trust the project configuration. Its
+`.codex/config.toml` starts the same `uv run gittok mcp --ui` command. Review
+`.codex/hooks.json` with `/hooks`; use `$gittok-generate`, `$gittok-profile-repo`
+and `$gittok-steer`. Restart Codex after MCP changes. `.agents/skills/` contains
+only adapters; workflow and worker changes belong in the shared `.claude/` files.
+The adapter templates live in `src/gittok/templates/`; tests check that the clone
+and `init` outputs agree.
 
 A clone is its own GitTok directory: your repo list and settings are in `local/`, the database is in `data/`, and clones of repos added by URL are in `repos/`. All three are in `.gitignore`. `GITTOK_ROOT=<dir>` makes a `gittok` command in any directory use that clone or GitTok directory. It is the only such variable.
 

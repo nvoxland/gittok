@@ -258,7 +258,7 @@ def test_profile_skill_says_what_belongs_in_the_profile_and_what_in_local():
 def test_directory_agents_md_names_the_mascot_step_and_the_config_tools(tmp_path):
     home.init(tmp_path / "g", "1.2.3")
     text = (tmp_path / "g" / "AGENTS.md").read_text()
-    assert len(text.splitlines()) <= 60
+    assert len(text.splitlines()) <= 70
     neutral = text.split("## Claude Code\n")[0]
     first_run = neutral[neutral.index("First run") : neutral.index("Other requests")]
     assert (

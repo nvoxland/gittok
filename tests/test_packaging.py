@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -61,7 +62,8 @@ def test_wheel_has_shared_files(wheel_names):
 
 
 def test_wheel_has_everything_that_init_writes(wheel_names):
-    for name in ("mcp.json", "settings.json", "AGENTS.md", "CLAUDE.md", "gitignore", "repos.yaml"):
+    for name in ("mcp.json", "settings.json", "AGENTS.md", "CLAUDE.md", "gitignore", "repos.yaml",
+                 "codex.toml", "codex.md", "codex-skill.md"):
         assert f"gittok/templates/{name}" in wheel_names, name
     assert "gittok/home.py" in wheel_names and "gittok/install.py" not in wheel_names
     # The clone's own session settings (`uv run ...` commands) are not shipped.
@@ -70,6 +72,28 @@ def test_wheel_has_everything_that_init_writes(wheel_names):
 
 def test_wheel_has_no_local_or_data(wheel_names):
     assert not any("/local/" in n or n.startswith("data/") for n in wheel_names)
+
+
+def test_wheel_initializes_both_harnesses_without_the_checkout(wheel, tmp_path):
+    import os
+
+    installed = tmp_path / "installed"
+    with zipfile.ZipFile(wheel) as archive:
+        archive.extractall(installed)
+    subprocess.run(
+        [sys.executable, "-c", "from pathlib import Path; from gittok.home import init; "
+         "init(Path('home'), 'test')"],
+        cwd=tmp_path,
+        env={**os.environ, "PYTHONPATH": str(installed), "GITTOK_ROOT": ""},
+        check=True, capture_output=True, text=True,
+    )
+    home = tmp_path / "home"
+    assert (home / ".codex/config.toml").is_file()
+    assert (home / ".codex/hooks.json").is_file()
+    assert (home / ".agents/GITTOK.md").is_file()
+    for name in ("gittok-generate", "gittok-steer", "gittok-profile-repo"):
+        assert (home / f".agents/skills/{name}/SKILL.md").is_file()
+        assert (home / f".claude/skills/{name}/SKILL.md").is_file()
 
 
 def test_structure_and_ast_grep_are_core_dependencies(requires):

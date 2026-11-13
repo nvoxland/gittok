@@ -58,3 +58,9 @@ suggested model for each packet; it is a hint. A repo with no profile still gets
   that `list_repos` shows with `profiled` false; for a repo that has a profile, only offer it.
 - Follow the lines that the SessionStart hooks print (`.claude/settings.json`): the feed is
   low, start the feed watch, a repo has no profile, the directory needs `gittok update`.
+
+## Codex
+
+- `.codex/config.toml` starts MCP; trust this project's configuration and review `/hooks`.
+- Read `.agents/GITTOK.md` at the first turn for startup hints and feed watching.
+- Use `.agents/skills/`: `$gittok-steer`, `$gittok-profile-repo`, `$gittok-generate`.

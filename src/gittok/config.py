@@ -266,7 +266,7 @@ def claude_dir(shared: Path) -> Path:
 MARKER = "gittok.yaml"  # written by `gittok init`; a directory that has it is a GitTok directory
 NO_ROOT = (
     "not inside a GitTok directory. Make one with `gittok init <dir>` and start Claude Code "
-    "there."
+    "there, or start Codex there."
 )
 
 

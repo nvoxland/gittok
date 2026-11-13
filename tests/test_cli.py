@@ -549,7 +549,7 @@ def test_mcp_ui_when_a_session_of_the_same_directory_has_the_port(cfg, monkeypat
     assert cli.main(["mcp", "--ui"]) == 0
     assert seen["order"] == ["mcp"]
     note = seen["note"]
-    assert "another Claude Code session" in note and "this directory" in note
+    assert "another agent session" in note and "this directory" in note
     assert "stops when that session ends" in note
 
 
@@ -1133,8 +1133,9 @@ def _one_line(text):
 def test_repos_with_no_repos_says_how_to_add_one(no_repos, capsys):
     assert cli.main(["repos"]) == 0
     line = _one_line(capsys.readouterr().out)
-    assert "Ask Claude to add one" in line and "gittok repos add <name> <path-or-url>" in line
-    assert line.index("Ask Claude") < line.index("gittok repos add")
+    assert "Ask your coding agent to add one" in line
+    assert "gittok repos add <name> <path-or-url>" in line
+    assert line.index("Ask your coding agent") < line.index("gittok repos add")
 
 
 def test_brief_with_no_repos_is_one_clean_error_line(no_repos, capsys):

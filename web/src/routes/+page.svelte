@@ -296,7 +296,7 @@
 		<div class="status" role="alert">
 			<h2>This device is not paired</h2>
 			<p>
-				Get a short code, then tell Claude the code ("pair code ...") on the computer that runs
+				Get a short code, then tell your coding agent the code ("pair code ...") on the computer that runs
 				GitTok. You do this once for each device.
 			</p>
 			<form method="post" action="/pair/code">
@@ -314,8 +314,8 @@
 			<h2>No repos yet</h2>
 			<p>No repos are configured, so there is nothing to make cards from.</p>
 			<p>
-				On the computer that runs GitTok, ask Claude to add one, for example: "add the repo at
-				~/src/myapp". Claude then makes the first cards.
+				On the computer that runs GitTok, ask your coding agent to add one, for example: "add the repo at
+				~/src/myapp". Your agent then makes the first cards.
 			</p>
 			<p class="muted">
 				Or in a terminal: <code>gittok repos add &lt;name&gt; &lt;path-or-url&gt;</code>
