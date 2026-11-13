@@ -227,7 +227,9 @@ def test_steer_skill_makes_a_mascot_after_the_profile_and_before_the_first_cards
     )
     for word in ("`renderers.illustration`", "`status`", "one line", "change it by asking"):
         assert word in step, word
-    assert "gets no mascot" in step  # the renderer is missing: skip, and why that is fine
+    assert "stop before generation" in step
+    assert "check_command" in step and "renderer_setup" in step
+    assert "When the user has chosen to proceed without illustrations" in step
     assert "### M. Mascots" in text and "has no mascot" in text
 
 

@@ -31,9 +31,10 @@ def jpg(w=200, h=100, color=(40, 90, 160)) -> bytes:
 
 
 @pytest.fixture
-def cfg(fixture_repo, tmp_path):
+def cfg(fixture_repo, tmp_path, monkeypatch):
     from gittok.config import MemeTemplate
 
+    monkeypatch.setattr(memes, "BUNDLED", tmp_path / "no-bundled-assets")
     shipped = {t: MemeTemplate(t, 2, "", ()) for t in ("drake", "db", "fine")}
     return dataclasses.replace(make_config(fixture_repo, tmp_path), meme_templates=shipped)
 
@@ -200,3 +201,36 @@ def test_every_shipped_template_fits_the_card_limits():
     for tid, t in shipped.items():
         assert 1 <= t["lines"] <= 4, tid  # the card schema allows 1 to 4 meme lines
         assert t["hint"] and t["fits"], tid
+
+
+def test_fresh_home_can_draw_all_default_memes_without_downloads(fixture_repo, tmp_path):
+    from gittok import config, overlay
+
+    shipped = overlay.shipped("meme_templates")["templates"]
+    cfg = dataclasses.replace(make_config(fixture_repo, tmp_path), meme_templates={
+        name: config.MemeTemplate(name, item["lines"], item["hint"], tuple(item["fits"]))
+        for name, item in shipped.items()
+    })
+    assert not memes.store(cfg).exists()
+    assert memes.missing(cfg) == []
+    assert set(memes.usable_templates(cfg)) == set(shipped)
+    assert memes.hint(cfg) is None
+    renderer = render.default_renderers(cfg)["meme"]
+    assert renderer.available()
+    for name in ("drake", "fine", "gb"):
+        (image,) = renderer.render({"template": name, "lines": ["code"] * shipped[name]["lines"]},
+                                   cfg, {})
+        assert image.data.startswith(b"\x89PNG")
+    assert not memes.store(cfg).exists()  # bundled assets stay read-only in the package
+
+
+def test_local_template_overrides_bundled_template(cfg, monkeypatch):
+    bundled = cfg.settings.data_dir / "bundle"
+    (bundled / "templates" / "drake").mkdir(parents=True)
+    (bundled / "templates" / "drake" / "config.yml").write_text(yaml.safe_dump(LAYOUT))
+    (bundled / "templates" / "drake" / "default.jpg").write_bytes(jpg())
+    monkeypatch.setattr(memes, "BUNDLED", bundled)
+    put_template(cfg, "drake", image=jpg(w=100, h=200))
+    renderer = render.MemeRenderer(memes.store(cfg))
+    (image,) = renderer.render({"template": "drake", "lines": ["one", "two"]}, cfg, {})
+    assert (image.width, image.height) == (600, 1200)

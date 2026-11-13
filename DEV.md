@@ -115,8 +115,8 @@ The build stops with an error if `web/build/index.html` is missing. The wheel bu
 Until the first release is on PyPI, `uv tool install gittok` does not work. Install a wheel that you built:
 
 ```bash
-uv tool install ./dist/gittok-<version>-py3-none-any.whl
-uv tool install 'gittok[images] @ ./dist/gittok-<version>-py3-none-any.whl'   # with mflux
+uv tool install --python 3.13 ./dist/gittok-<version>-py3-none-any.whl
+uv tool install --python 3.13 'gittok[images] @ ./dist/gittok-<version>-py3-none-any.whl'   # with mflux
 gittok init ~/gittok
 cd ~/gittok && claude
 ```
@@ -158,3 +158,26 @@ What the workflow does:
 | `create-release` | After PyPI: makes the GitHub release `Release vX.Y.Z` with generated notes and attaches the sdist and the wheel |
 
 If a job fails before `publish-pypi`, fix the cause, delete the tag (`git tag -d vX.Y.Z`, `git push origin :refs/tags/vX.Y.Z`), and tag again. PyPI does not accept the same version twice: after a publish, a fix needs a new version.
+
+## Bundled meme assets
+
+The package carries all default meme images/layouts and four free fonts in
+`src/gittok/assets/memes/`. Runtime rendering reads them without network access;
+user downloads in `data/memes/` override them. To refresh assets after changing
+`config/meme_templates.yaml`, run `uv run python scripts/vendor_memes.py` (network
+required). The script pins the memegen revision, preserves upstream/font notices,
+and records source hashes in `SOURCES.json`. Test the built wheel from a fresh
+GitTok directory; default meme rendering must work without downloads.
+
+Unit tests block both the default model runner and batch launcher, regardless of whether mflux is installed.
+Rendering tests inject `FakeRunner`; lifecycle tests use `real_render_runner`
+only with small Python child processes. Never use a real model to test
+executable discovery, missing dependencies, timeouts, or process cleanup.
+
+Batch rendering uses `render_batch.py` for process/lock lifetime and the isolated
+`mflux_worker.py` for model reuse. A batch retains its text encoder and transformer,
+clears temporary caches after each image, and exits after the configured idle gap.
+The feed worker reuses its renderer between queue passes; CLI commands stop theirs
+on completion. Model/low-RAM setting changes retire the old renderer before a new
+one is created. Test reuse with fake models and late queue submissions; use
+`real_batch_launcher` only with harmless Python workers for process lifecycle tests.

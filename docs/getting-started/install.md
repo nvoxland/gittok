@@ -5,17 +5,19 @@ GitTok is a Python tool that you install once. It then works in a **GitTok direc
 ## What you need
 
 - **macOS.** Other platforms are not supported yet.
-- **[uv](https://docs.astral.sh/uv/).** uv downloads Python 3.13 for you.
+- **[uv](https://docs.astral.sh/uv/).** GitTok needs Python 3.13. With `--python 3.13`, uv downloads it for you if you do not have it.
 - **git.**
 - **A coding agent.** Use [Claude Code](https://claude.com/claude-code) or [Codex](https://developers.openai.com/codex/). These docs use Claude in examples; the same requests work in Codex. The agent writes the posts, and you manage GitTok by asking it. GitTok does not call a model API itself.
 
 ## Install GitTok
 
 ```bash
-uv tool install 'gittok[images]'
+uv tool install --python 3.13 'gittok[images]'
 ```
 
-The `images` extra adds [mflux](https://github.com/filipstrand/mflux), which draws the illustration and comic posts. It works on Apple silicon only, and it is a large download: about 1 GB now, and a model later (see [Advanced setup](../install.md#illustration-renderer-mflux)). On a Mac that is not Apple silicon, the extra adds nothing. Without it, all the other posts still work.
+Default meme templates and fonts are included and work offline.
+
+The `images` extra adds [mflux](https://github.com/filipstrand/mflux), which draws the illustration and comic posts. It works on Apple silicon only, and it is a large download: about 1 GB now, and a model that the agent prepares before the first cards when you add a repo (see [Advanced setup](../install.md#illustration-renderer-mflux)). On a Mac that is not Apple silicon, the extra adds nothing. Without it, all the other posts still work.
 
 ## Make a GitTok directory
 
@@ -71,7 +73,7 @@ Claude offers these when they are useful. You can also run them yourself:
 
 | What | Command | Size |
 |---|---|---|
-| Meme templates and fonts | `gittok memes --prefetch` | about 20 MB |
+| Additional custom meme templates | `gittok memes --prefetch` | varies; defaults are included |
 | Grammars, so GitTok reads code structure better | `gittok structure --prefetch` | about 26 MB |
 
 Next: [your first feed](first-feed.md).

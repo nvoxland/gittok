@@ -166,9 +166,9 @@ async def test_status_says_version_directory_and_server(ycfg):
         "running": True,
         "serves_this_directory": True,
         "owned_by_this_session": True,
-        "urls": social.feed_urls(ycfg),
+        "urls": social.feed_urls(ycfg)[1:],
     }
-    assert s["server"]["urls"][0] == f"http://127.0.0.1:{port}"
+    assert all("127.0.0.1" not in url for url in s["server"]["urls"])
     assert s["run_open"] is False and s["repos"] == 2
     # Can a mascot be drawn, can a meme: the agent makes no mascot that nobody can draw.
     assert set(s["renderers"]) == {"illustration", "meme"}
@@ -206,6 +206,9 @@ async def test_status_renderers_follow_what_can_run(ycfg, monkeypatch):
 
         def available(self):
             return self.ok
+
+        def setup(self):
+            return {"available": self.ok, "installed": True, "reason": None, "command": None}
 
     fake = {"meme": R(False), "illustration": R(True)}
     monkeypatch.setattr(mcp_server.render, "default_renderers", lambda cfg: fake)

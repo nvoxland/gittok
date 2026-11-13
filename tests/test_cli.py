@@ -173,6 +173,7 @@ def test_avatars_command_generates_and_skips(cfg, monkeypatch, capsys):
 def test_avatars_command_explains_missing_mflux(cfg, monkeypatch, capsys):
     from gittok import render
 
+    monkeypatch.setattr(render.sys, "executable", str(cfg.root / "python"))
     monkeypatch.setattr(render.shutil, "which", lambda name: None)
     monkeypatch.setattr(render.importlib.util, "find_spec", lambda name: None)
     assert cli.main(["avatars"]) == 1
@@ -1297,7 +1298,7 @@ def test_url_hint_tells_the_agent_to_give_the_user_the_address(cfg, monkeypatch,
     _with_server(cfg, monkeypatch, port=9123, lan=True)
     assert cli.main(["url", "--hint"]) == 0
     (line,) = capsys.readouterr().out.strip().splitlines()
-    assert "http://127.0.0.1:9123" in line and "http://192.168.1.5:9123" in line
+    assert "127.0.0.1" not in line and "http://192.168.1.5:9123" in line
     assert "first reply" in line
 
 
@@ -1305,3 +1306,17 @@ def test_url_hint_is_silent_when_another_directory_has_the_port(cfg, monkeypatch
     monkeypatch.setattr(cli, "_server_dir", lambda port: "/somewhere/other-gittok")
     assert cli.main(["url", "--hint"]) == 0
     assert capsys.readouterr().out == ""  # the health hint says so instead
+
+
+@pytest.mark.parametrize("lan,addresses", [(False, ["192.168.1.5"]), (True, [])])
+def test_url_hint_does_not_offer_loopback_when_phone_access_is_unavailable(
+    cfg, monkeypatch, capsys, lan, addresses
+):
+    from gittok import social
+
+    monkeypatch.setattr(social, "lan_addresses", lambda: addresses)
+    _with_server(cfg, monkeypatch, port=9123, lan=lan)
+    assert cli.main(["url", "--hint"]) == 0
+    out = capsys.readouterr().out
+    assert "http://" not in out and "127.0.0.1" not in out
+    assert "phone" in out.lower()

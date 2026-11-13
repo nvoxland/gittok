@@ -59,9 +59,14 @@ def test_the_site_gives_the_steps_and_says_when_gittok_runs():
     """The user docs are the docs site (mkdocs.yml, docs/). Install and upgrade live there."""
     install = (ROOT / "docs" / "getting-started" / "install.md").read_text()
     upgrade = (ROOT / "docs" / "guide" / "upgrade.md").read_text()
-    for fact in ("uv tool install 'gittok[images]'", "gittok init .\n", "cd ~/gittok"):
+    for fact in (
+        "uv tool install --python 3.13 'gittok[images]'", "gittok init .\n", "cd ~/gittok"
+    ):
         assert fact in install, fact
-    assert install.index("uv tool install 'gittok[images]'") < install.index("gittok init .\n")
+    assert (
+        install.index("uv tool install --python 3.13 'gittok[images]'")
+        < install.index("gittok init .\n")
+    )
     assert "runs only while a session is open" in install
     assert "Nothing is installed outside" in install
     for fact in ("uv tool upgrade gittok", "gittok update", "uv tool uninstall gittok"):
@@ -74,7 +79,7 @@ def test_the_readme_points_to_the_site_and_its_links_work_on_pypi():
 
     text = (ROOT / "README.md").read_text()
     assert SITE in text
-    assert "uv tool install 'gittok[images]'" in text and "gittok init ." in text
+    assert "uv tool install --python 3.13 'gittok[images]'" in text and "gittok init ." in text
     relative = re.findall(r"\]\((?!https?://)[^)]*\)", text)
     relative += re.findall(r'src="(?!https?://)[^"]*"', text)
     assert relative == [], relative

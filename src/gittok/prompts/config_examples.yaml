@@ -7,6 +7,10 @@ settings: |
     port: 8010
   agent:
     per_day_runs: 4
+  render:
+    mflux_low_ram: true
+    mflux_timeout_s: 120
+    mflux_batch_idle_s: 10
 
 personas: |
   personas:

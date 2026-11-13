@@ -93,3 +93,33 @@ def _no_real_image_renderer(monkeypatch):
     from gittok import cli
 
     monkeypatch.setattr(cli, "_renderers", lambda cfg: {"illustration": False})
+
+
+@pytest.fixture(autouse=True)
+def _block_model_execution(monkeypatch, request):
+    """Unit tests must never load image models, even if executable discovery changes."""
+    from gittok import render
+
+    original = render._default_runner
+    batch_launcher = render._start_batch_process
+    if request.node.get_closest_marker("live"):
+        return original, batch_launcher
+
+    def blocked(*args, **kwargs):
+        pytest.fail("Unit tests cannot launch mflux; inject a fake renderer runner")
+
+    monkeypatch.setattr(render, "_default_runner", blocked)
+    monkeypatch.setattr(render, "_start_batch_process", blocked)
+    return original, batch_launcher
+
+
+@pytest.fixture
+def real_render_runner(_block_model_execution):
+    """Lifecycle tests may run harmless Python children through the real supervisor."""
+    return _block_model_execution[0]
+
+
+@pytest.fixture
+def real_batch_launcher(_block_model_execution):
+    """Batch lifecycle tests may only supply tiny, harmless Python worker commands."""
+    return _block_model_execution[1]

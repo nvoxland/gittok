@@ -13,7 +13,7 @@ GitTok 1.0 is out. It turns your git repos into a TikTok-style feed of short pos
 <!-- more -->
 
 ```bash
-uv tool install 'gittok[images]'
+uv tool install --python 3.13 'gittok[images]'
 mkdir ~/gittok && cd ~/gittok
 gittok init .
 claude

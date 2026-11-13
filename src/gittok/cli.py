@@ -513,10 +513,13 @@ def _url(args) -> int:
     owner = _server_dir(cfg.settings.server.port)
     if owner is not None and Path(owner) != cfg.root:
         return 0  # another directory has the port: `health --hint` says so
-    phone = f", and on a phone or tablet {' or '.join(urls[1:])} (pair it once)" if urls[1:] else ""
+    if not urls[1:]:
+        print("GitTok feed: no phone address is available. Call feed_address for the cause; "
+              "do not offer a computer-only address.")
+        return 0
     print(
-        f"GitTok feed: open {urls[0]} on this computer{phone}. "
-        "Give the user these addresses in your first reply of this session."
+        f"GitTok feed: open {' or '.join(urls[1:])} on a phone or tablet (pair it once). "
+        "Give the user only the phone address in your first reply of this session."
     )
     return 0
 
@@ -732,35 +735,41 @@ def _persona_edit(args) -> int:
 
 def _render(args) -> int:
     cfg = load_config()
-    with closing(db.open_db(_db_path(cfg))) as conn:
-        if args.retry_failed:
-            print(f"reset {render.retry_failed(conn)} failed cards")
-        counts = render.render_pending(conn, cfg, render.default_renderers(cfg), limit=args.limit)
+    renderers = render.default_renderers(cfg)
+    try:
+        with closing(db.open_db(_db_path(cfg))) as conn:
+            if args.retry_failed:
+                print(f"reset {render.retry_failed(conn)} failed cards")
+            counts = render.render_pending(conn, cfg, renderers, limit=args.limit)
+    finally:
+        for renderer in renderers.values():
+            if isinstance(renderer, render.IllustrationRenderer):
+                renderer.stop()
     print("rendered={rendered} failed={failed} waiting={waiting}".format(**counts))
     return 0
 
 
 def _avatars(args) -> int:
     cfg = load_config()
+    renderer = render.IllustrationRenderer(
+        model=cfg.settings.render.mflux_model, path=cfg.settings.render.mflux_path
+    )
     try:
         res = avatars.generate_avatars(
             cfg,
-            render.IllustrationRenderer(
-                model=cfg.settings.render.mflux_model, path=cfg.settings.render.mflux_path
-            ),
+            renderer,
             force=args.force,
         )
     except render.RenderError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
+    finally:
+        renderer.stop()
     print(f"generated={res['generated']} skipped={res['skipped']}")
     if res["waiting"]:
-        print(
-            "error: mflux is not installed. In a clone, run `uv sync --group images`. "
-            "For an installed tool, install the wheel again with the `images` extra "
-            "(https://nvoxland.github.io/gittok/install/). Then retry.",
-            file=sys.stderr,
-        )
+        setup = renderer.setup()
+        why = setup["reason"] or "illustration renderer is busy; retry when it finishes"
+        print(f"error: {why}", file=sys.stderr)
         return 1
     return 0
 

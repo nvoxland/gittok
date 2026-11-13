@@ -66,6 +66,8 @@ def test_wheel_has_everything_that_init_writes(wheel_names):
                  "codex.toml", "codex.md", "codex-skill.md"):
         assert f"gittok/templates/{name}" in wheel_names, name
     assert "gittok/home.py" in wheel_names and "gittok/install.py" not in wheel_names
+    for name in ("render_batch.py", "mflux_worker.py", "render_process.py"):
+        assert f"gittok/{name}" in wheel_names
     # The clone's own session settings (`uv run ...` commands) are not shipped.
     assert not any(n.endswith("claude/settings.json") for n in wheel_names)
 
@@ -82,7 +84,14 @@ def test_wheel_initializes_both_harnesses_without_the_checkout(wheel, tmp_path):
         archive.extractall(installed)
     subprocess.run(
         [sys.executable, "-c", "from pathlib import Path; from gittok.home import init; "
-         "init(Path('home'), 'test')"],
+         "init(Path('home'), 'test'); "
+         "from gittok.config import load_config; from gittok import memes, render; "
+         "cfg = load_config(Path('home').resolve()); "
+         "assert memes.missing(cfg) == []; "
+         "r = render.default_renderers(cfg)['meme']; assert r.available(); "
+         "image, = r.render({'template': 'drake', 'lines': ['before', 'after']}, cfg, {}); "
+         "assert image.data.startswith(bytes([137, 80, 78, 71])); "
+         "assert not memes.store(cfg).exists()"],
         cwd=tmp_path,
         env={**os.environ, "PYTHONPATH": str(installed), "GITTOK_ROOT": ""},
         check=True, capture_output=True, text=True,
@@ -101,3 +110,13 @@ def test_structure_and_ast_grep_are_core_dependencies(requires):
     for pkg in ("tree-sitter-language-pack", "ast-grep-py"):
         hits = [r for r in requires if r.startswith(pkg)]
         assert hits and not any("extra ==" in r for r in hits), (pkg, requires)
+
+
+def test_wheel_includes_meme_fonts_and_upstream_notices(wheel_names):
+    from gittok import memes
+
+    root = "gittok/assets/memes/"
+    for name in ("SOURCES.json", "LICENSE.txt", "README.md", "fonts/titilliumweb-OFL.txt",
+                 "fonts/kalam-OFL.txt", "fonts/notosans-OFL.txt",
+                 *(f"fonts/{font}" for font in memes.FONT_FILES.values())):
+        assert root + name in wheel_names

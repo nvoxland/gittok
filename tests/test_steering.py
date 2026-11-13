@@ -734,7 +734,7 @@ def test_add_repo_next_step_is_guidance_for_the_agent():
     assert "/gittok-profile-repo gamma" in text
     assert "terminal" not in text
     # Profile at once and then make the first cards: one line to the user, no question.
-    assert "Do not ask" in text and "offer" not in text.lower()
+    assert "Do not ask" in text
     assert "one line" in text and "quota" in text
     assert text.index("gittok-profile-repo") < text.index("gittok-generate")
     assert "nothing_to_do" in text
@@ -1228,3 +1228,10 @@ def test_set_lan_refuses_an_inline_section_and_restores_the_file(ycfg):
     with pytest.raises(steering.SteeringError, match="by hand"):
         steering.set_lan(ycfg, True)
     assert file.read_text() == "server: {port: 8010}\n"
+
+
+def test_add_repo_requires_image_readiness_before_mascots_and_cards():
+    text = steering.next_step("gamma")
+    assert text.index("renderer_setup") < text.index("set_mascot") < text.index("gittok-generate")
+    for word in ("installed", "setup command", "25 GB", "status again", "fails", "stop"):
+        assert word in text

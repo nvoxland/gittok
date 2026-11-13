@@ -248,6 +248,9 @@ The values below are the shipped ones.
 | `mflux_model` | `z-image-turbo` | The mflux model family |
 | `mflux_path` | `~/.cache/mflux/z-image-turbo-q4` | The folder that `mflux-save` wrote (`docs/install.md`). Until it exists, GitTok makes no illustration cards and no mascot. Empty: quantize `mflux_model` on every run |
 | `mflux_steps` | `8` | Steps per image |
+| `mflux_low_ram` | `true` | Bound temporary MLX caches and enable tiled decoding where supported, retaining model components for reuse during a batch |
+| `mflux_timeout_s` | `120` | Maximum seconds per image, including initial model loading; timeout kills the batch and its child processes |
+| `mflux_batch_idle_s` | `10` | Seconds to keep a loaded batch for late image requests; must be finite and greater than zero |
 | `mflux_quantize` | `8` | The quantization when `mflux_path` is empty |
 | `image_width`, `image_height` | `768`, `960` | The image size in pixels |
 | `max_illustrations_per_run` | `6` | The most illustration and comic cards one run asks for |

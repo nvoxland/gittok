@@ -18,7 +18,7 @@ Some posts teach. Some are quizzes: spot the bug, guess who wrote it, guess when
 macOS, [uv](https://docs.astral.sh/uv/), git and [Claude Code](https://claude.com/claude-code) or [Codex](https://developers.openai.com/codex/):
 
 ```bash
-uv tool install 'gittok[images]'
+uv tool install --python 3.13 'gittok[images]'
 mkdir ~/gittok && cd ~/gittok
 gittok init .
 claude

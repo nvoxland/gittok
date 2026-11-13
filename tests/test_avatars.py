@@ -54,6 +54,7 @@ def test_generate_avatars_writes_pngs_and_skips_existing(fixture_repo, tmp_path)
 def test_generate_avatars_reports_waiting_without_mflux(fixture_repo, tmp_path, monkeypatch):
     from gittok import render
 
+    monkeypatch.setattr(render.sys, "executable", str(tmp_path / "python"))
     monkeypatch.setattr(render.shutil, "which", lambda name: None)
     monkeypatch.setattr(render.importlib.util, "find_spec", lambda name: None)
     cfg = render_cfg(fixture_repo, tmp_path)

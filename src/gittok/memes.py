@@ -1,13 +1,8 @@
-"""Meme cards, drawn in process.
+"""Draw meme cards locally, using bundled defaults and optional downloaded templates.
 
-memegen (https://github.com/jacebrowning/memegen, MIT) keeps each template as a folder: an
-image (`default.png` or `.jpg`) and `config.yml`, whose `text` list says where each line of
-text goes (anchor, box size, angle, font, color, style). `gittok memes --prefetch` downloads
-those files for the configured templates (config/meme_templates.yaml), and the fonts they
-use, into `<data_dir>/memes/`. `draw` puts the text on the image the way memegen does. No
-server runs, and no card text leaves the machine: only template files are downloaded, and
-only when the user runs the command. The template images belong to their owners, so GitTok
-does not ship them.
+Default images, layouts and free fonts from memegen ship in the package. A user's
+download in `<data_dir>/memes/` takes precedence. Runtime rendering needs no network.
+See assets/memes/SOURCES.json and the accompanying upstream notices.
 """
 
 from __future__ import annotations
@@ -26,6 +21,7 @@ from PIL import Image, ImageDraw, ImageFont
 from gittok import private
 
 SOURCE = "https://raw.githubusercontent.com/jacebrowning/memegen/main"
+BUNDLED = Path(__file__).parent / "assets" / "memes"
 # memegen's font aliases -> the free fonts (SIL OFL) GitTok downloads with the templates. A
 # template that names another font (Impact is not free) gets the thick one.
 FONT_FILES = {
@@ -60,7 +56,17 @@ def downloaded_in(root: Path) -> set[str]:
 
 
 def downloaded(cfg) -> set[str]:
-    return downloaded_in(store(cfg))
+    return available_in(store(cfg))
+
+
+def available_in(root: Path) -> set[str]:
+    """Bundled templates plus the user's downloads, without copying into their home."""
+    return downloaded_in(BUNDLED) | downloaded_in(root)
+
+
+def template_dir(root: Path, tid: str) -> Path:
+    base = root if tid in downloaded_in(root) else BUNDLED
+    return base / "templates" / tid
 
 
 def configured(cfg) -> list[str]:
@@ -73,7 +79,7 @@ def missing(cfg) -> list[str]:
 
 
 def usable_templates(cfg) -> dict:
-    """The configured templates that are downloaded: the brief offers only these."""
+    """The configured templates that can be drawn, bundled or downloaded."""
     have = downloaded(cfg)
     return {k: v for k, v in cfg.meme_templates.items() if k in have}
 
@@ -86,7 +92,8 @@ def hint(cfg) -> str | None:
     total = len(configured(cfg))
     return (
         f"GitTok: {len(gone)} of {total} meme templates are not downloaded, so the feed makes "
-        f"no meme cards with them. Offer to download them (about {APPROX_MB} MB from the "
+        f"no meme cards with them. Default templates are bundled; these are additional or "
+        f"missing assets. Offer to download them (about {APPROX_MB} MB from the "
         "memegen GitHub repo, needs network; no card text is sent); if the user agrees, run "
         "`gittok memes --prefetch` with Bash (in a clone: `uv run gittok memes --prefetch`)."
     )
@@ -131,7 +138,7 @@ def prefetch(cfg, ids, base: str | None = None, transport=None) -> dict:
                 continue
             dest.write_bytes(data)
             size += len(data)
-        have = downloaded_in(root)
+        have = available_in(root)
         for tid in ids:
             if tid in have:
                 continue
@@ -318,7 +325,10 @@ def draw(template_dir: Path, fonts_dir: Path, lines: list[str]) -> bytes:
             max(1, int(height * float(box.get("scale_y", 0.2)))),
         )
         font_file = FONT_FILES.get(str(box.get("font") or DEFAULT_FONT), FONT_FILES["thick"])
-        font_path = str(fonts_dir / font_file)
+        font_path = fonts_dir / font_file
+        if not font_path.is_file():
+            font_path = BUNDLED / "fonts" / font_file
+        font_path = str(font_path)
         biggest = int(height / (4 if angle else 9))
         text = stylize(wrap(font_path, line, area, biggest), style, raw)
         font = _fit(font_path, text, area, biggest)

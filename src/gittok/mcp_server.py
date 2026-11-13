@@ -66,7 +66,11 @@ did you learn about me"): add_rule, list_rules, remove_rule, get_taste_profile, 
 gittok-steer skill. A repo needs a profile (rules that find the code worth teaching): the
 gittok-profile-repo skill writes it. Right after add_repo, profile the new repo and then make
 its first cards, without asking; say in one line what you do and that it uses some model
-quota. Between the profile and the first cards, give the new
+quota. Before the first cards, check status.renderer_setup, prepare missing models for
+installed renderers with their setup commands, recheck status, and run check_command.
+Respect command approvals; if setup fails, stop and report it instead of silently skipping
+images. If the optional renderer is absent, offer installation. Default meme assets are
+bundled. Between the profile and the first cards, give the new
 repo a mascot with set_mascot (a small character and a style that fit the repo), but only
 when status shows renderers.illustration true; tell the user in one line what you chose.
 A repo with no profile (list_repos: profiled false) is profiled before cards are made.
@@ -508,10 +512,16 @@ def _register_run_tools(
         directory_up_to_date, update (what to tell the user when it is not, else null),
         repos (how many are configured), run_open, run_cap_reached (the daily run cap),
         renderers ({illustration, meme}: true when that image renderer can run now; make a
-        mascot only when illustration is true), and
+        mascot only when illustration is true). renderer_setup distinguishes installed
+        code from missing assets, with a reason and a setup command. False does not mean
+        uninstalled: offer the missing downloads; never claim a renderer is uninstalled
+        without checking its installed flag. Model downloads can be about 25 GB and need
+        normal command approvals; check_command verifies the renderer starts. Default meme
+        assets are bundled. Additional template downloads need network. Also returns
         server: port, lan (phone access), running, serves_this_directory (false when another
         GitTok directory holds the port), owned_by_this_session, and urls (where to open the
-        feed: this computer first, then the LAN addresses). Read-only; takes no arguments.
+        feed on a phone). Give users only phone addresses, never loopback/computer addresses.
+        Read-only; takes no arguments.
 
         Example: status() when the user asks "which version is this" or "is the feed up".
         """
@@ -519,6 +529,7 @@ def _register_run_tools(
         recorded = home.recorded_version(cfg.root)
         port = cfg.settings.server.port
         serving = server_dir(port)
+        renderer_setup = render.renderer_setup(cfg)
         now = datetime.now(UTC)
         with _db(cfg) as conn:
             run_open = supply.run_open(conn, cfg, now)
@@ -532,14 +543,15 @@ def _register_run_tools(
             "repos": len(cfg.repos),
             "run_open": run_open,
             "run_cap_reached": capped,
-            "renderers": renderers_available(cfg),
+            "renderers": {name: info["available"] for name, info in renderer_setup.items()},
+            "renderer_setup": renderer_setup,
             "server": {
                 "port": port,
                 "lan": cfg.settings.server.lan,
                 "running": serving is not None,
                 "serves_this_directory": serving is not None and Path(serving) == cfg.root,
                 "owned_by_this_session": bool(owns_server) and serving is not None,
-                "urls": social.feed_urls(cfg),
+                "urls": social.feed_urls(cfg)[1:],
             },
         }
 
@@ -971,6 +983,8 @@ def _register_config_tools(tool: ToolDecorator) -> None:
         address or URL. Takes no arguments.
 
         Returns lan, computer, phone, message and notice. To pair, the user opens a phone
+        address. Give users only phone addresses; computer is for diagnostics, never relay it.
+        When pairing, the user opens a phone
         address on the phone, taps "Pair with a code", and tells you the code that it shows:
         call pair_device with it. When phone access is off, the server does not run, or there
         is no network, phone is empty and message says what to do. `notice` is a warning for

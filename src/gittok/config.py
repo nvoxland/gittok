@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 from dataclasses import dataclass, field, fields
 from pathlib import Path
@@ -110,6 +111,9 @@ class RenderSettings:
     mflux_path: str = ""  # folder from `mflux-save -q N`; empty = quantize mflux_model per run
     mflux_steps: int = 8
     mflux_quantize: int = 8
+    mflux_low_ram: bool = True
+    mflux_timeout_s: float = 120.0
+    mflux_batch_idle_s: float = 10.0
     image_width: int = 768
     image_height: int = 960
     worker_interval_s: float = 5.0
@@ -361,6 +365,14 @@ def _section(cls: type, data: Any, what: str, file: Path) -> Any:
         t = kwargs["git_timeout_s"]
         if isinstance(t, bool) or not isinstance(t, int | float) or t <= 0:
             raise ConfigError(f"{what}.git_timeout_s must be a number of seconds above 0 ({file})")
+    if cls is RenderSettings:
+        for name, default in (("mflux_timeout_s", 120), ("mflux_batch_idle_s", 10)):
+            seconds = kwargs.get(name, default)
+            if (isinstance(seconds, bool) or not isinstance(seconds, int | float)
+                    or not math.isfinite(seconds) or seconds <= 0):
+                raise ConfigError(f"{what}.{name} must be finite seconds above 0 ({file})")
+        if not isinstance(kwargs.get("mflux_low_ram", True), bool):
+            raise ConfigError(f"{what}.mflux_low_ram must be true or false ({file})")
     if cls is ServerSettings:
         if not isinstance(kwargs.get("lan", True), bool):
             raise ConfigError(f"{what}.lan must be true or false ({file})")

@@ -57,6 +57,9 @@ render:
   mflux_model: z-image-turbo
   max_illustrations_per_run: 6
   mflux_steps: 8               # inference steps per illustration
+  mflux_low_ram: true          # bound temporary MLX caches; retain model weights for the batch
+  mflux_timeout_s: 120         # kill a stuck render and its children after this many seconds
+  mflux_batch_idle_s: 10       # reuse the loaded model until no more images arrive for this long
   mflux_quantize: 8            # quantization bits when mflux_path is empty (the model is quantized on each run)
   image_width: 768             # illustration size in pixels
   image_height: 960

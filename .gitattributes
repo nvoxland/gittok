@@ -1,0 +1,3 @@
+# Preserve vendored upstream assets byte-for-byte so SOURCES.json hashes stay valid.
+# Upstream text includes its original line endings and whitespace.
+src/gittok/assets/memes/** -text -whitespace

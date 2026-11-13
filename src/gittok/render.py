@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+import fcntl
 import importlib.util
+import json
 import logging
+import os
+import shlex
 import shutil
+import signal
 import struct
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 from collections.abc import Callable
-from contextlib import closing
+from contextlib import closing, contextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -23,7 +29,6 @@ from gittok import db, memes, private
 
 log = logging.getLogger("gittok.render")
 
-MFLUX_TIMEOUT_S = 300
 STALE_RENDERING = timedelta(minutes=30)
 RENDERING_SINCE = "rendering_since"  # key in cards.resolved while status is `rendering`
 
@@ -64,16 +69,26 @@ class MemeRenderer:
         self.store = Path(store)
 
     def available(self) -> bool:
-        return bool(memes.downloaded_in(self.store))
+        return bool(memes.available_in(self.store))
+
+    def setup(self) -> dict:
+        ready = self.available()
+        return {
+            "installed": True,
+            "available": ready,
+            "reason": None if ready else "Meme templates and fonts have not been downloaded.",
+            "command": None if ready else "gittok memes --prefetch",
+        }
 
     def render(self, visual: dict, cfg, spec: dict) -> list[RenderedImage]:
         tid = visual["template"]
-        if tid not in memes.downloaded_in(self.store):
+        if tid not in memes.available_in(self.store):
             raise RendererUnavailable(
                 f"meme template {tid} is not downloaded: run `gittok memes --prefetch`"
             )
         try:
-            data = memes.draw(self.store / "templates" / tid, self.store / "fonts", visual["lines"])
+            data = memes.draw(memes.template_dir(self.store, tid), self.store / "fonts",
+                              visual["lines"])
         except (OSError, ValueError, yaml.YAMLError) as e:
             raise RenderError(f"could not draw meme {tid}: {e}") from e
         w, h = png_size(data)
@@ -81,8 +96,62 @@ class MemeRenderer:
         return [RenderedImage(data, w, h, meta)]
 
 
-def _default_runner(cmd: list[str], timeout: float) -> None:
-    subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=timeout)
+def _default_runner(
+    cmd: list[str], timeout: float, *, cancel: threading.Event | None = None
+) -> None:
+    """Bound the render's lifetime and reap its entire process group on every exit.
+
+    The small supervisor also handles this Python process being killed abruptly.
+    Logs go to disk rather than growing a second in-memory buffer in the feed server.
+    """
+    if cancel is not None and cancel.is_set():
+        raise RendererUnavailable("rendering stopped")
+    with tempfile.TemporaryFile(mode="w+b") as errors:
+        process = subprocess.Popen(
+            [sys.executable, "-m", "gittok.render_process", str(os.getpid()), *cmd],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=errors,
+            start_new_session=True,
+        )
+        deadline = time.monotonic() + timeout
+        try:
+            while True:
+                if cancel is not None and cancel.is_set():
+                    raise RendererUnavailable("rendering stopped")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(cmd, timeout)
+                try:
+                    code = process.wait(timeout=min(0.2, remaining))
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+            if code:
+                errors.seek(0, os.SEEK_END)
+                errors.seek(max(0, errors.tell() - 4096))
+                raise subprocess.CalledProcessError(
+                    code, cmd, stderr=errors.read().decode("utf-8", errors="replace")
+                )
+        finally:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
+
+
+@contextmanager
+def _illustration_slot(cfg):
+    """UI, CLI, avatars and other sessions of this home share one model-loading slot."""
+    private.make_dir(cfg.settings.data_dir)
+    with open(cfg.settings.data_dir / "mflux.lock", "a", opener=private.opener) as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as e:
+            raise RendererUnavailable("illustration renderer is busy") from e
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
 
 
 # mflux ships one CLI per model family; the generic one cannot load every model.
@@ -98,12 +167,44 @@ def _mflux_command(model: str = "") -> list[str] | None:
     name = next(
         (cli for prefix, cli in _MFLUX_FAMILIES if model.startswith(prefix)), "mflux-generate"
     )
-    exe = shutil.which(name)
+    exe = _environment_command(name)
     if exe:
         return [exe]
     if name == "mflux-generate" and importlib.util.find_spec("mflux") is not None:
         return [sys.executable, "-m", "mflux.generate"]
     return None
+
+
+def _environment_command(name: str) -> str | None:
+    """uv tools expose gittok, but dependency scripts stay beside the venv's Python.
+
+    Do not resolve Python's symlink: its target is outside the tool environment.
+    Prefer this environment's mflux over an unrelated version on PATH.
+    """
+    sibling = Path(sys.executable).parent / name
+    if sibling.is_file() and os.access(sibling, os.X_OK):
+        return str(sibling)
+    return shutil.which(name)
+
+
+def _saved_model_ready(path: Path) -> bool:
+    """Reject empty/interrupted exports without loading gigabytes of model weights."""
+    if not path.is_dir():
+        return False
+    try:
+        weights = list(path.rglob("*.safetensors"))
+        if not weights or any(p.stat().st_size == 0 for p in weights):
+            return False
+        for index in path.rglob("*.safetensors.index.json"):
+            refs = json.loads(index.read_text())["weight_map"]
+            if not isinstance(refs, dict) or not refs:
+                return False
+            if any(not (index.parent / name).is_file()
+                   or (index.parent / name).stat().st_size == 0 for name in set(refs.values())):
+                return False
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    return True
 
 
 def mascots_for(visual: dict, cfg, spec: dict) -> list:
@@ -118,17 +219,26 @@ def mascots_for(visual: dict, cfg, spec: dict) -> list:
     return [cfg.mascots[n] for n in names if n in cfg.mascots]
 
 
+def _start_batch_process(cfg, cancel, **kwargs):
+    from .render_batch import RenderBatchSession
+
+    return RenderBatchSession(cfg, cancel, **kwargs)
+
+
 class IllustrationRenderer:
-    """Mascot art through mflux, run as a subprocess. Comics call it once per panel."""
+    """Mascot art through a reusable subprocess batch, including comic panels."""
 
     def __init__(
         self,
-        runner: Callable[[list[str], float], None] = _default_runner,
+        runner: Callable[[list[str], float], None] | None = None,
         command: list[str] | None = None,
         model: str = "",
         path: str = "",
     ):
         self._runner = runner
+        self._cancel = threading.Event()
+        self._batch = None
+        self._batch_lock = threading.Lock()
         self._command = command
         self._model = model
         # settings.render.mflux_path: a folder from mflux-save. Until it exists the renderer
@@ -138,15 +248,52 @@ class IllustrationRenderer:
     def _cmd(self) -> list[str] | None:
         return self._command or _mflux_command(self._model)
 
+    def _installed(self) -> bool:
+        # The batch imports the Python API. A CLI in an unrelated uv environment
+        # cannot provide those imports; injected commands are used by test runners.
+        return self._cmd() is not None and (
+            self._command is not None or importlib.util.find_spec("mflux") is not None
+        )
+
     def _why_unavailable(self) -> str | None:
-        if self._cmd() is None:
-            return "mflux is not installed (clone: uv sync --group images; tool: the images extra)"
-        if self._path is not None and not self._path.is_dir():
-            return f"saved model {self._path} is missing: run mflux-save (docs/install.md)"
+        if not self._installed():
+            return ("mflux is not installed in this GitTok environment "
+                    "(clone: uv sync --group images; tool: the images extra)")
+        if self._path is not None and not _saved_model_ready(self._path):
+            return (f"saved model {self._path} is missing or incomplete: "
+                    "run mflux-save (docs/install.md)")
         return None
 
     def available(self) -> bool:
         return self._why_unavailable() is None
+
+    def stop(self) -> None:
+        self._cancel.set()
+        self.finish_batch()
+
+    def finish_batch(self) -> None:
+        with self._batch_lock:
+            batch = self._batch
+            self._batch = None
+        if batch is not None:
+            batch.close()
+
+    def setup(self) -> dict:
+        installed = self._installed()
+        reason = self._why_unavailable()
+        command = None
+        if reason and installed and self._path is not None:
+            save = _environment_command("mflux-save") or "mflux-save"
+            command = shlex.join([
+                save, "--model", self._model, "--quantize", "4", "--path", str(self._path)
+            ])
+        return {
+            "installed": installed,
+            "available": reason is None,
+            "reason": reason,
+            "command": command,
+            "check_command": shlex.join([*self._cmd(), "--help"]) if installed else None,
+        }
 
     def render(self, visual: dict, cfg, spec: dict) -> list[RenderedImage]:
         base = self._cmd()
@@ -157,10 +304,14 @@ class IllustrationRenderer:
         mascots = mascots_for(visual, cfg, spec)
         seed0 = visual.get("seed", mascots[0].seed if mascots else 0)
         style = ", ".join(m.style for m in mascots)
-        return [
-            self.generate(base, cfg, style, scene["prompt"], seed0 + i)
-            for i, scene in enumerate(scenes)
-        ]
+        # A real batch owns the slot for its whole warm lifetime. Test/CLI runners
+        # are one-shot and retain the existing per-card slot.
+        slot = _illustration_slot(cfg) if self._runner is not None else nullcontext()
+        with slot:
+            return [
+                self.generate(base, cfg, style, scene["prompt"], seed0 + i)
+                for i, scene in enumerate(scenes)
+            ]
 
     def generate(self, base: list[str], cfg, style: str, scene: str, seed: int) -> RenderedImage:
         r = cfg.settings.render
@@ -186,12 +337,24 @@ class IllustrationRenderer:
                 "--height", str(r.image_height),
                 "--output", str(out),
             ]  # fmt: skip
+            if r.mflux_low_ram:
+                cmd.append("--low-ram")
             try:
-                self._runner(cmd, MFLUX_TIMEOUT_S)
+                if self._cancel.is_set():
+                    raise RendererUnavailable("rendering stopped")
+                if self._runner is None:
+                    self._generate_in_batch(cfg, {
+                        "model": r.mflux_model, "path": saved, "quantize": r.mflux_quantize,
+                        "low_ram": r.mflux_low_ram, "prompt": prompt, "seed": seed,
+                        "width": r.image_width, "height": r.image_height,
+                        "steps": r.mflux_steps, "output": str(out),
+                    })
+                else:
+                    self._runner(cmd, r.mflux_timeout_s)
             except subprocess.CalledProcessError as e:
                 raise RenderError(f"mflux failed: {(e.stderr or str(e)).strip()[-500:]}") from e
             except subprocess.TimeoutExpired as e:
-                raise RenderError(f"mflux timed out after {MFLUX_TIMEOUT_S}s") from e
+                raise RenderError(f"mflux timed out after {r.mflux_timeout_s}s") from e
             except FileNotFoundError as e:
                 raise RendererUnavailable(f"mflux not runnable: {e}") from e
             if not out.is_file():
@@ -200,6 +363,30 @@ class IllustrationRenderer:
         w, h = png_size(data)
         meta = {"width": w, "height": h, "model": model, "seed": seed, "prompt": prompt}
         return RenderedImage(data, w, h, meta)
+
+
+    def _generate_in_batch(self, cfg, request):
+        from .render_batch import BatchExpired
+
+        for attempt in range(2):
+            with self._batch_lock:
+                if self._cancel.is_set():
+                    raise RendererUnavailable("rendering stopped")
+                if self._batch is None or not self._batch.alive:
+                    if self._batch is not None:
+                        self._batch.close()
+                    self._batch = _start_batch_process(cfg, self._cancel)
+                batch = self._batch
+            try:
+                batch.render(request, cfg.settings.render.mflux_timeout_s)
+                return
+            except BatchExpired:
+                batch.close()
+                with self._batch_lock:
+                    if self._batch is batch:
+                        self._batch = None
+                if attempt:
+                    raise RenderError("mflux batch repeatedly exited before rendering") from None
 
 
 RENDERER_KEY = {"meme": "meme", "illustration": "illustration", "comic": "illustration"}
@@ -212,6 +399,11 @@ def default_renderers(cfg) -> dict[str, Renderer]:
             model=cfg.settings.render.mflux_model, path=cfg.settings.render.mflux_path
         ),
     }
+
+
+def renderer_setup(cfg) -> dict:
+    """Separate installed renderer code from assets still needed on a fresh install."""
+    return {name: renderer.setup() for name, renderer in default_renderers(cfg).items()}
 
 
 def retry_failed(conn) -> int:
@@ -383,6 +575,9 @@ class RenderWorker:
         self._get_config = get_config
         self._renderers = renderers
         self._stop = threading.Event()
+        self._active_lock = threading.Lock()
+        self._active: dict[str, Renderer] = {}
+        self._active_key = None
         self._thread = threading.Thread(target=self._run, name="render-worker", daemon=True)
 
     def start(self) -> None:
@@ -390,6 +585,10 @@ class RenderWorker:
 
     def stop(self, timeout: float = 5.0) -> None:
         self._stop.set()
+        with self._active_lock:
+            for renderer in self._active.values():
+                if isinstance(renderer, IllustrationRenderer):
+                    renderer.stop()
         if self._thread.is_alive():
             self._thread.join(timeout)
 
@@ -402,9 +601,23 @@ class RenderWorker:
             try:
                 cfg = self._get_config()
                 interval = cfg.settings.render.worker_interval_s
-                renderers = default_renderers(cfg) if self._renderers is None else self._renderers
+                with self._active_lock:
+                    if self._stop.is_set():
+                        break
+                    key = (cfg.root, cfg.settings.render)
+                    if self._renderers is not None:
+                        self._active = self._renderers
+                    elif key != self._active_key:
+                        for old in self._active.values():
+                            if isinstance(old, IllustrationRenderer):
+                                old.stop()
+                        self._active = default_renderers(cfg)
+                        self._active_key = key
+                    renderers = self._active
                 with closing(db.open_db(cfg.settings.data_dir / "gittok.db")) as conn:
-                    render_pending(conn, cfg, renderers)
+                    counts = render_pending(conn, cfg, renderers)
+                if counts["rendered"]:
+                    continue  # drain the queue before sleeping between passes
             except Exception:
                 log.exception("render pass failed")
             self._stop.wait(interval)

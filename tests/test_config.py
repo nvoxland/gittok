@@ -425,3 +425,23 @@ def test_shipped_settings_file_lists_every_setting():
             names = [s.name for s in dataclasses.fields(section)]
             missing += [f"{f.name}.{n}" for n in names if n not in have]
     assert not missing, f"config/settings.yaml does not list: {', '.join(missing)}"
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "true", ".inf", ".nan", "oops"])
+def test_render_timeout_must_be_finite_positive_seconds(tmp_path, value):
+    write(tmp_path, "settings.yaml", f"render:\n  mflux_timeout_s: {value}\n")
+    with pytest.raises(ConfigError, match="mflux_timeout_s"):
+        load_config(tmp_path)
+
+
+def test_render_low_ram_must_be_boolean(tmp_path):
+    write(tmp_path, "settings.yaml", 'render:\n  mflux_low_ram: "false"\n')
+    with pytest.raises(ConfigError, match="mflux_low_ram"):
+        load_config(tmp_path)
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "true", ".inf", ".nan", "oops"])
+def test_batch_idle_grace_requires_finite_positive_seconds(tmp_path, value):
+    write(tmp_path, "settings.yaml", f"render:\n  mflux_batch_idle_s: {value}\n")
+    with pytest.raises(ConfigError, match="mflux_batch_idle_s"):
+        load_config(tmp_path)

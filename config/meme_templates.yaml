@@ -1,7 +1,7 @@
 # memegen template ids the agent may use (SPEC §10.7). Your own go in local/meme_templates.yaml
 # (merged per id; `$remove: [id]` drops one). Each entry: lines = how many text
-# lines the template takes, and a hint for the agent. `gittok memes --prefetch` downloads each
-# template from the memegen repo; the brief offers only downloaded ones.
+# lines the template takes, and a hint for the agent. Default images and fonts are bundled.
+# `gittok memes --prefetch` downloads additional configured templates from memegen.
 templates:
   drake:      {lines: 2, hint: "top = rejected option, bottom = preferred option", fits: [hot_spot, before_after, cursed_clever_line]}
   db:         {lines: 3, hint: "distracted boyfriend: new shiny thing, the one looking, the ignored one", fits: [secret_couples, new_arrival, whose_code]}

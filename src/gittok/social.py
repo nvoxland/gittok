@@ -575,7 +575,8 @@ PAIR_STEPS = (
     "a phone address on the phone, taps 'Pair with a code', and tells you the code that it "
     "shows; call pair_device with it. The device opens the feed a few seconds later. For an "
     "app on the phone's home screen, the user pairs inside the app the same way: it keeps its "
-    "own cookies, apart from the browser. Give the user the phone address, these steps, and "
+    "own cookies, apart from the browser. Give the user only the phone address "
+    "(never the computer address), these steps, and "
     "the notice."
 )
 

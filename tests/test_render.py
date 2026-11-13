@@ -70,7 +70,8 @@ def test_illustration_renderer_builds_mflux_command(fixture_repo, tmp_path):
     visual = {"kind": "illustration", "prompt": "stacking crates", "mascots": ["otter", "crow"]}
     (img,) = r.render(visual, cfg, {"repos": ["fixture"]})
     cmd, timeout = runner.calls[0]
-    assert timeout == 300
+    assert timeout == 120
+    assert "--low-ram" in cmd
     assert cmd[0] == "mflux-generate"
     assert arg(cmd, "--prompt") == (
         "flat vector otter, ink crow, stacking crates, no text, no letters"
@@ -124,7 +125,8 @@ def test_illustration_subprocess_failure_is_render_error(fixture_repo, tmp_path)
         r.render({"kind": "illustration", "prompt": "p"}, cfg, {"repos": ["fixture"]})
 
 
-def test_illustration_unavailable_without_mflux(monkeypatch):
+def test_illustration_unavailable_without_mflux(monkeypatch, tmp_path):
+    monkeypatch.setattr(render.sys, "executable", str(tmp_path / "python"))
     monkeypatch.setattr(render.shutil, "which", lambda name: None)
     monkeypatch.setattr(render.importlib.util, "find_spec", lambda name: None)
     r = render.IllustrationRenderer()
@@ -141,6 +143,8 @@ def test_illustration_unavailable_until_saved_model_exists(tmp_path):
     with pytest.raises(render.RendererUnavailable, match="mflux-save"):
         r.render({"kind": "illustration", "prompt": "p"}, None, {"repos": []})
     missing.mkdir()
+    assert r.available() is False  # an empty or interrupted export is not ready
+    (missing / "0.safetensors").write_bytes(b"weights")
     assert r.available() is True
 
 
@@ -428,8 +432,8 @@ def test_mark_failed_tolerates_deleted_card(fixture_repo, tmp_path):
         render._mark_failed(conn, "c_gone", "boom")
 
 
-def test_mflux_command_matches_model_family(monkeypatch):
-    from gittok import render
+def test_mflux_command_matches_model_family(monkeypatch, tmp_path):
+    monkeypatch.setattr(render.sys, "executable", str(tmp_path / "python"))
 
     found = {
         "mflux-generate-z-image": "/bin/zi",
@@ -452,3 +456,191 @@ def test_illustration_with_no_mascot_draws_the_scene_alone(fixture_repo, tmp_pat
     r.render({"kind": "illustration", "prompt": "stacking crates"}, cfg, {"repos": ["fixture"]})
     assert arg(runner.calls[0][0], "--prompt").startswith("stacking crates, no text")
     assert arg(runner.calls[0][0], "--seed") == "0"
+
+
+@pytest.mark.parametrize("model,name", [
+    ("z-image-turbo", "mflux-generate-z-image"),
+    ("flux2-klein-4b", "mflux-generate-flux2"),
+    ("schnell", "mflux-generate"),
+])
+def test_mflux_command_finds_entrypoint_in_uv_tool_environment(tmp_path, monkeypatch, model, name):
+    # uv exposes only gittok on PATH; mflux scripts sit beside the environment's Python.
+    bindir = tmp_path / "tool" / "bin"
+    bindir.mkdir(parents=True)
+    python = bindir / "python"
+    python.symlink_to(render.sys.executable)
+    script = bindir / name
+    script.write_text("#!/bin/sh\nexit 0\n")
+    script.chmod(0o755)
+    monkeypatch.setattr(render.sys, "executable", str(python))
+    monkeypatch.setattr(render.shutil, "which", lambda name: None)
+    monkeypatch.setattr(render.importlib.util, "find_spec", lambda name: None)
+    assert render._mflux_command(model) == [str(script)]
+
+
+def test_renderer_setup_distinguishes_installed_code_from_missing_assets(fixture_repo, tmp_path,
+                                                                         monkeypatch):
+    from gittok import memes
+
+    monkeypatch.setattr(memes, "BUNDLED", tmp_path / "no-assets")
+    cfg = render_cfg(fixture_repo, tmp_path, mflux_path=str(tmp_path / "saved-model"))
+    monkeypatch.setattr(render, "_mflux_command",
+                        lambda model="": ["/tool/bin/mflux-generate-z-image"])
+    monkeypatch.setattr(render.IllustrationRenderer, "_installed", lambda self: True)
+    details = render.renderer_setup(cfg)
+    assert details["illustration"]["installed"] is True
+    assert details["illustration"]["available"] is False
+    assert "saved model" in details["illustration"]["reason"]
+    assert "mflux-save" in details["illustration"]["command"]
+    assert details["meme"]["installed"] is True
+    assert details["meme"]["available"] is False
+    assert "templates" in details["meme"]["reason"]
+    assert "memes --prefetch" in details["meme"]["command"]
+
+
+def test_saved_model_with_missing_shard_is_not_ready(tmp_path):
+    import json
+
+    model = tmp_path / "saved"
+    model.mkdir()
+    (model / "0.safetensors").write_bytes(b"weights")
+    (model / "model.safetensors.index.json").write_text(json.dumps({
+        "weight_map": {"a": "0.safetensors", "b": "1.safetensors"}
+    }))
+    renderer = render.IllustrationRenderer(command=["x"], path=str(model))
+    assert not renderer.available()
+    (model / "1.safetensors").write_bytes(b"more weights")
+    assert renderer.available()
+
+
+def test_default_illustration_runner_is_blocked_in_unit_tests(fixture_repo, tmp_path):
+    cfg = render_cfg(fixture_repo, tmp_path)
+    renderer = render.IllustrationRenderer(
+        command=[render.sys.executable, "-c", "raise SystemExit(9)"])
+    with pytest.raises(pytest.fail.Exception, match="cannot launch mflux"):
+        renderer.render({"kind": "illustration", "prompt": "never actually drawn"}, cfg, {})
+
+
+def test_low_ram_mode_and_timeout_can_be_overridden(fixture_repo, tmp_path):
+    cfg = render_cfg(fixture_repo, tmp_path, mflux_low_ram=False, mflux_timeout_s=45)
+    runner = FakeRunner()
+    renderer = render.IllustrationRenderer(runner=runner, command=["x"])
+    renderer.render({"kind": "illustration", "prompt": "scene"}, cfg, {})
+    cmd, timeout = runner.calls[0]
+    assert "--low-ram" not in cmd and timeout == 45
+
+
+def test_only_one_illustration_per_home_runs_at_once(fixture_repo, tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    cfg = render_cfg(fixture_repo, tmp_path)
+    entered, release = threading.Event(), threading.Event()
+    fake = FakeRunner()
+
+    def slow(cmd, timeout):
+        entered.set()
+        assert release.wait(5)
+        fake(cmd, timeout)
+
+    first = render.IllustrationRenderer(runner=slow, command=["x"])
+    second = render.IllustrationRenderer(runner=fake, command=["x"])
+    visual = {"kind": "illustration", "prompt": "scene"}
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(first.render, visual, cfg, {})
+        try:
+            assert entered.wait(5)
+            with pytest.raises(render.RendererUnavailable, match="busy"):
+                second.render(visual, cfg, {})
+        finally:
+            release.set()
+        pending.result(timeout=5)
+    assert second.render(visual, cfg, {})  # the slot is released after completion
+
+
+def test_renderer_runner_cancels_a_running_process(real_render_runner):
+    from concurrent.futures import ThreadPoolExecutor
+
+    cancel = threading.Event()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(real_render_runner,
+                              [render.sys.executable, "-c", "import time; time.sleep(30)"],
+                              30, cancel=cancel)
+        cancel.set()
+        with pytest.raises(render.RendererUnavailable, match="stopped"):
+            pending.result(timeout=5)
+
+
+def test_renderer_runner_propagates_exit_and_times_out(real_render_runner):
+    with pytest.raises(subprocess.CalledProcessError) as failed:
+        real_render_runner([render.sys.executable, "-c",
+                            "import sys; sys.stderr.write('test failure'); sys.exit(3)"], 5)
+    assert failed.value.returncode == 3 and "test failure" in failed.value.stderr
+    with pytest.raises(subprocess.TimeoutExpired):
+        real_render_runner([render.sys.executable, "-c", "import time; time.sleep(30)"], 0.2)
+
+
+def test_render_worker_stop_cancels_the_active_illustration(fixture_repo, tmp_path):
+    cfg = render_cfg(fixture_repo, tmp_path, worker_interval_s=0.01)
+    entered = threading.Event()
+    renderer = render.IllustrationRenderer(command=["x"])
+
+    def wait_for_stop(cmd, timeout):
+        entered.set()
+        assert renderer._cancel.wait(5)
+        raise render.RendererUnavailable("rendering stopped")
+
+    renderer._runner = wait_for_stop
+    (cid,) = seed_pending(cfg, fixture_repo, {"kind": "illustration", "prompt": "scene"})
+    worker = render.RenderWorker(lambda: cfg, {"illustration": renderer})
+    worker.start()
+    try:
+        assert entered.wait(5)
+    finally:
+        worker.stop()
+    assert not worker.is_alive()
+    assert card_row(cfg, cid)["status"] == "pending_render"
+
+
+def test_render_supervisor_stops_children_after_parent_is_killed(tmp_path):
+    """Exercise crash cleanup with tiny Python sleepers, never an image model."""
+    import json
+    import os
+    import signal
+
+    heartbeat, pids = tmp_path / "heartbeat", tmp_path / "pids.json"
+    pulse = (
+        "import sys,time; from pathlib import Path; p=Path(sys.argv[1]); "
+        "exec('while True:\\n p.write_text(str(time.monotonic()))\\n time.sleep(0.05)')"
+    )
+    child = (
+        "import os,sys,subprocess,json,time; from pathlib import Path; "
+        f"p=subprocess.Popen([sys.executable,'-c',{pulse!r},sys.argv[1]]); "
+        "Path(sys.argv[2]).write_text(json.dumps({'supervisor':os.getppid(),'child':p.pid})); "
+        "time.sleep(30)"
+    )
+    outer = (
+        "import sys; from gittok.render import _default_runner; "
+        f"_default_runner([sys.executable,'-c',{child!r},{str(heartbeat)!r},{str(pids)!r}],30)"
+    )
+    parent = subprocess.Popen([render.sys.executable, "-c", outer], start_new_session=True)
+    try:
+        deadline = time.monotonic() + 5
+        while not heartbeat.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert heartbeat.exists(), "supervised child never started"
+        parent.kill()
+        parent.wait(timeout=5)
+        time.sleep(0.6)  # the orphaned supervisor checks its parent every 0.2 seconds
+        stamp = heartbeat.read_text()
+        time.sleep(0.2)
+        assert heartbeat.read_text() == stamp  # the grandchild was stopped too
+    finally:
+        if parent.poll() is None:
+            parent.kill()
+        parent.wait(timeout=5)
+        if pids.exists():
+            group = json.loads(pids.read_text())["supervisor"]
+            try:
+                os.killpg(group, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
