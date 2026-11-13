@@ -2,7 +2,8 @@
 
 Kept for good: `stories` (duplicate checks), `rewards` and `weights` (learning), `runs` rows,
 covered `leads`, and saved cards (`saved_cards`). A repo that is no longer configured is the
-exception: `purge_repo` deletes all that GitTok holds for it, except the weights.
+exception: `purge_repo` deletes all that GitTok holds for it, except the weights and the
+rewards behind them (unlinked from the cards).
 `delete_cards` is the one place that knows how to delete a card.
 See docs/learning.md, "Garbage collection".
 """
@@ -58,7 +59,7 @@ _BY_REPO_ID = (
     "fact_imports", "fact_touched", "fact_analyzers", "fact_schema",
 )  # fmt: skip
 REPO_TABLES = frozenset({*_BY_NAME, *_BY_REPO_ID, "stories", "runs", "cards"})
-_FORGET = ("events", "rewards", "knowledge_events", "saved_cards", "replies")
+_FORGET = ("events", "knowledge_events", "saved_cards", "replies")
 KEPT_KEY = "kept_repos"  # prefs: repos removed with keep_data, which gc must leave
 _CHUNK = 500
 
@@ -70,7 +71,8 @@ def delete_cards(conn, ids: list[str], forget: bool = False) -> None:
     Always: the card, its features, its asset rows and its review schedule (`srs`). Without
     `forget` (a card that got old) what the reader did stays: events, rewards, replies,
     and a notification loses only its link. With `forget` (the repo is gone) all of
-    that goes too, and so does a saved mark."""
+    that goes too, and so does a saved mark, except the rewards: they lose the card link
+    and keep their feature snapshot, because the learned weights stay."""
     for i in range(0, len(ids), _CHUNK):
         chunk = ids[i : i + _CHUNK]
         marks = ",".join("?" * len(chunk))
@@ -78,6 +80,13 @@ def delete_cards(conn, ids: list[str], forget: bool = False) -> None:
         if forget:
             for table in _FORGET:
                 conn.execute(f"DELETE FROM {table} WHERE card_id IN ({marks})", chunk)
+            # The weights keep what these cards taught, so their rewards stay as the evidence
+            # (with the feature snapshot) for `relearn`, without a link to the card.
+            conn.execute(
+                "UPDATE rewards SET card_id = NULL, impression_event_id = NULL "
+                f"WHERE card_id IN ({marks})",
+                chunk,
+            )
             conn.execute(f"DELETE FROM notifications WHERE card_id IN ({marks})", chunk)
             conn.execute(
                 f"UPDATE replies SET answered_card_id = NULL WHERE answered_card_id IN ({marks})",

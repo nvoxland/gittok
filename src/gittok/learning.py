@@ -167,14 +167,42 @@ class Outcome:
     signal: str | None = None
 
 
+# What the reader did with a card beyond looking at it. Any of these means the window is not
+# a skip. A scroll back is not one: a quick pass on the way back is still a skip.
+ENGAGED = frozenset(
+    {"depth_open", "lightbox_open", "explain_more", "source_tap", "beats_done", "replay", "answer"}
+)
+
+
+def _visits_skipped(events: list[tuple[str, dict]]) -> list[bool]:
+    """One entry per visit of the window: was it a skip? The client sends a dwell for each
+    visit and a skip right after the dwell of a visit it calls a skip. A skip with no dwell
+    before it (an old client) is a visit of its own."""
+    visits: list[bool] = []
+    for t, _ in events:
+        if t == "dwell":
+            visits.append(False)
+        elif t == "skip":
+            if visits and not visits[-1]:
+                visits[-1] = True
+            else:
+                visits.append(True)
+    return visits
+
+
 def _reward(rc: RewardConfig, spec: dict, events: list[tuple[str, dict]]) -> float:
-    """The implicit reward: watch time and engagement, with a like or save on top."""
+    """The implicit reward: watch time and engagement, with a like or save on top.
+
+    The window is a skip when nothing in ENGAGED happened and every visit was a skip, or all
+    the visits together were shorter than `skip_ms`. One short look after a long read is
+    not a skip."""
     w = rc.weights
     dwell_events = [d for t, d in events if t == "dwell"]
     dwell_ms = sum(_ms(d.get("ms", 0)) for d in dwell_events)
     types = {t for t, _ in events}
-    skipped = "skip" in types or (
-        bool(dwell_events) and dwell_ms < rc.skip_ms and not types - {"dwell", "skip"}
+    visits = _visits_skipped(events)
+    skipped = not types & ENGAGED and (
+        (bool(visits) and all(visits)) or (bool(dwell_events) and dwell_ms < rc.skip_ms)
     )
     if skipped and not (_toggled_on(events, "like") or _toggled_on(events, "save")):
         return 0.0
@@ -205,39 +233,64 @@ def outcome(rc: RewardConfig, spec: dict, events: list[tuple[str, dict]]) -> Out
     return Outcome(r)
 
 
-def _closed_impressions(conn, now_ms: int):
-    """Unprocessed impressions whose window is closed, with their window end, oldest first.
+def _dislike_state(conn) -> dict[str, tuple[bool, int]]:
+    """card id -> (is the last 👎 toggle on, its ts) for every card with a 👎 event."""
+    out: dict[str, tuple[bool, int]] = {}
+    for r in conn.execute(
+        "SELECT card_id, ts, data FROM events WHERE type = 'dislike' AND card_id IS NOT NULL "
+        "ORDER BY ts, id"
+    ):
+        d = db.loads(r["data"])
+        out[r["card_id"]] = (bool(d.get("on", True)) if isinstance(d, dict) else True, r["ts"])
+    return out
 
-    A window ends at the next impression of the session, or after CAP_MS. A 👎 ends it at
-    once (at `now_ms`): the reader said what they think, and the next cards should know."""
-    rows = conn.execute(
+
+def _closed_impressions(conn, now_ms: int, dislikes: dict | None = None):
+    """Unprocessed impressions whose window is closed, oldest first, each as (impression row,
+    window end ts, id of the impression that ends it or None).
+
+    A window ends at the next impression of the session, or after CAP_MS. An event at the
+    same ms as the next impression belongs to the window with the lower id. A 👎 that is
+    still on ends the window at once (at `now_ms`): the reader said what they think, and the
+    next cards should know. Only impressions of cards that exist and that have no reward yet
+    are read, so a pass costs what is new, not the whole history."""
+    pending = conn.execute(
         "SELECT e.id, e.card_id, e.ts, e.data FROM events e WHERE e.type = 'impression' "
-        "AND e.card_id IS NOT NULL ORDER BY e.ts, e.id"
+        "AND e.card_id IS NOT NULL AND EXISTS (SELECT 1 FROM cards c WHERE c.id = e.card_id) "
+        "AND NOT EXISTS (SELECT 1 FROM rewards r WHERE r.impression_event_id = e.id) "
+        "ORDER BY e.ts, e.id"
     ).fetchall()
-    done = {r[0] for r in conn.execute("SELECT impression_event_id FROM rewards")}
-    disliked = {
-        r["card_id"]: r["ts"]
-        for r in conn.execute(
-            "SELECT card_id, MAX(ts) AS ts FROM events WHERE type = 'dislike' GROUP BY card_id"
-        )
-    }
+    if not pending:
+        return []
+    todo = {r["id"] for r in pending}
+    rows = conn.execute(  # the pending ones and every later impression that may end a window
+        "SELECT e.id, e.card_id, e.ts, e.data FROM events e WHERE e.type = 'impression' "
+        "AND e.card_id IS NOT NULL AND e.ts >= ? ORDER BY e.ts, e.id",
+        (pending[0]["ts"],),
+    ).fetchall()
+    if dislikes is None:
+        dislikes = _dislike_state(conn)
     groups: dict[tuple, list] = {}
     for r in rows:
-        session = (db.loads(r["data"]) or {}).get("session")
+        data = db.loads(r["data"])
+        session = data.get("session") if isinstance(data, dict) else None
         key = ("s", session) if session else ("c", r["card_id"])
         groups.setdefault(key, []).append(r)
     out = []
     for items in groups.values():
         for i, r in enumerate(items):
-            if r["id"] in done:
+            if r["id"] not in todo:
                 continue
             nxt = items[i + 1] if i + 1 < len(items) else None
             if nxt is None and now_ms < r["ts"] + CAP_MS:
-                if disliked.get(r["card_id"], -1) >= r["ts"]:
-                    out.append((r, now_ms))
+                on, ts = dislikes.get(r["card_id"], (False, -1))
+                if on and ts >= r["ts"]:
+                    out.append((r, now_ms, None))
                 continue
-            end = min(nxt["ts"], r["ts"] + CAP_MS) if nxt else r["ts"] + CAP_MS
-            out.append((r, end))
+            if nxt is not None and nxt["ts"] <= r["ts"] + CAP_MS:
+                out.append((r, nxt["ts"], nxt["id"]))
+            else:
+                out.append((r, r["ts"] + CAP_MS, None))
     out.sort(key=lambda x: (x[0]["ts"], x[0]["id"]))
     return out
 
@@ -249,33 +302,108 @@ def _last_toggle(events: list[tuple[str, dict]], name: str) -> int | None:
     return int(_toggled_on(events, name))
 
 
+def _window_events(conn, imp, end: int, end_id: int | None) -> list[tuple[str, dict]]:
+    return [
+        (e["type"], d if isinstance(d := db.loads(e["data"]), dict) else {})
+        for e in conn.execute(
+            "SELECT type, data FROM events WHERE card_id = ? AND type != 'impression' "
+            "AND (ts > ? OR (ts = ? AND id > ?)) "
+            "AND (ts < ? OR (ts = ? AND (? IS NULL OR id < ?))) ORDER BY ts, id",
+            (imp["card_id"], imp["ts"], imp["ts"], imp["id"], end, end, end_id, end_id),
+        )
+    ]
+
+
+def _retract_dislikes(conn, dislikes: dict) -> int:
+    """Take back the 👎 rewards of cards whose last 👎 toggle is off: delete the reward (the
+    impression is scored again, without the 👎) and clear the story's mark. Returns how many."""
+    off = [cid for cid, (on, _) in dislikes.items() if not on]
+    n = 0
+    for i in range(0, len(off), 500):
+        chunk = off[i : i + 500]
+        marks = ",".join("?" * len(chunk))
+        rows = conn.execute(
+            f"SELECT id, card_id FROM rewards WHERE signal = 'dislike' AND card_id IN ({marks})",
+            chunk,
+        ).fetchall()
+        for r in rows:
+            conn.execute("DELETE FROM rewards WHERE id = ?", (r["id"],))
+            conn.execute(
+                "UPDATE stories SET disliked = 0 "
+                "WHERE story_key = (SELECT story_key FROM cards WHERE id = ?)",
+                (r["card_id"],),
+            )
+        n += len(rows)
+    return n
+
+
+def _stamp_familiarity(conn, cfg, nmaps: dict) -> None:
+    """Write the reader's familiarity with its code into each new impression, before the
+    knowledge model counts it: the reward must learn what the reader knew when the card was
+    ranked, not after this impression was counted."""
+    rows = conn.execute(
+        "SELECT e.id, e.card_id FROM events e WHERE e.type = 'impression' "
+        "AND e.card_id IS NOT NULL AND json_valid(e.data) AND json_type(e.data) = 'object' "
+        "AND json_extract(e.data, '$.familiarity') IS NULL "
+        "AND EXISTS (SELECT 1 FROM cards c WHERE c.id = e.card_id) "
+        "AND NOT EXISTS (SELECT 1 FROM rewards r WHERE r.impression_event_id = e.id)"
+    ).fetchall()
+    for r in rows:
+        feats = set(
+            conn.execute(
+                "SELECT feature, value FROM card_features WHERE card_id = ? "
+                "AND feature IN ('repo', 'dir')",
+                (r["card_id"],),
+            ).fetchall()
+        )
+        feats = {(f, v) for f, v in feats}
+        repo = next((v for f, v in sorted(feats) if f == "repo"), None)
+        dirs = [v for f, v in feats if f == "dir"]
+        value = familiarity_of(conn, cfg, repo, dirs, nmaps)
+        conn.execute(
+            "UPDATE events SET data = json_set(data, '$.familiarity', ?) WHERE id = ?",
+            (value, r["id"]),
+        )
+
+
 def process_events(conn, cfg, now: datetime | None = None) -> dict:
-    """Turn closed, unprocessed impressions into rewards and update the model. Idempotent."""
+    """Turn closed, unprocessed impressions into rewards and update the model. Idempotent.
+
+    A 👎 that the reader took back is unlearned first: its reward goes, the model is rebuilt
+    from the other rewards, and the impression is scored again without it."""
     now = _now(now)
     rc = load_reward_config(cfg)
     stats = {"impressions": 0, "rewards": 0, "weights": 0}
     with db.immediate(conn):
-        model = Model.load(conn, cfg, now, rc)
+        dislikes = _dislike_state(conn)
+        if _retract_dislikes(conn, dislikes):
+            model = _relearn_in_tx(conn, cfg, rc, now)[0]
+        else:
+            model = Model.load(conn, cfg, now, rc)
         nmaps: dict[str, dict] = {}
-        for imp, end in _closed_impressions(conn, int(now.timestamp() * 1000)):
+        _stamp_familiarity(conn, cfg, nmaps)
+        undone = {cid for cid, (on, _) in dislikes.items() if not on}
+        for imp, end, end_id in _closed_impressions(conn, int(now.timestamp() * 1000), dislikes):
             row = conn.execute("SELECT spec FROM cards WHERE id = ?", (imp["card_id"],)).fetchone()
             if row is None:
                 continue
             spec = json.loads(row["spec"])
-            events = [
-                (e["type"], d if isinstance(d := db.loads(e["data"]), dict) else {})
-                for e in conn.execute(
-                    "SELECT type, data FROM events WHERE card_id = ? AND type != 'impression' "
-                    "AND (ts > ? OR (ts = ? AND id > ?)) AND ts <= ? ORDER BY ts, id",
-                    (imp["card_id"], imp["ts"], imp["ts"], imp["id"], end),
-                )
-            ]
+            events = _window_events(conn, imp, end, end_id)
+            if imp["card_id"] in undone:  # a 👎 taken back never counts
+                events = [e for e in events if e[0] != "dislike"]
             try:
                 out = outcome(rc, spec, events)
             except Exception:  # one odd event must not stop learning for the rest
                 log.exception("could not score impression %s", imp["id"])
+                conn.execute(  # weight 0: teaches nothing, and is not read again
+                    "INSERT INTO rewards(card_id, impression_event_id, reward, weight, features, "
+                    "computed_at) VALUES (?, ?, 0, 0, '[]', ?)",
+                    (imp["card_id"], imp["id"], _iso(now)),
+                )
                 continue
-            feats = impression_features(conn, cfg, imp["card_id"], now, nmaps)
+            data = db.loads(imp["data"])
+            stamped = data.get("familiarity") if isinstance(data, dict) else None
+            feats = impression_features(conn, cfg, imp["card_id"], now, nmaps, stamped)
             conn.execute(
                 "INSERT INTO rewards(card_id, impression_event_id, reward, weight, signal, "
                 "features, computed_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -299,12 +427,6 @@ def process_events(conn, cfg, now: datetime | None = None) -> dict:
                     _last_toggle(events, "dislike"),
                     imp["card_id"],
                 ),
-            )
-            conn.execute(  # running mean over every reward of cards made from the lead
-                "UPDATE leads SET mean_reward = (COALESCE(mean_reward, 0) * rewards_n + ?) "
-                "/ (rewards_n + 1), rewards_n = rewards_n + 1 "
-                "WHERE id = (SELECT lead_id FROM cards WHERE id = ?)",
-                (out.reward, imp["card_id"]),
             )
             stats["impressions"] += 1
             stats["rewards"] += 1
@@ -376,12 +498,21 @@ def add_familiarity(conn, cfg, feats, nmaps: dict) -> None:
     feats.add(("familiarity", familiarity_of(conn, cfg, repo, dirs, nmaps)))
 
 
-def impression_features(conn, cfg, card_id: str, now: datetime, nmaps: dict) -> set:
+IMPRESSION_FEATURES = ("familiarity",)  # known at the impression only, not from the card
+
+
+def impression_features(
+    conn, cfg, card_id: str, now: datetime, nmaps: dict, familiar: str | None = None
+) -> set:
     """What the model learns from for one impression: the card's features, and how well the
-    reader knew its code at that time."""
+    reader knew its code at that time (`familiar`, stamped on the impression; computed now
+    when the impression has none)."""
     feats = set(card_features(conn, cfg, card_id, now=now))
     if feats:
-        add_familiarity(conn, cfg, feats, nmaps)
+        if familiar:
+            feats.add(("familiarity", familiar))
+        else:
+            add_familiarity(conn, cfg, feats, nmaps)
     return feats
 
 
@@ -404,13 +535,13 @@ def _mix_share(cfg, feature: str, value: str) -> tuple[float, float] | None:
     """(share, mean_share) of a value within a default mix, or None if it is not in one."""
     if feature == "tone":
         mix = cfg.defaults.get("tones") or {}
-        return (mix[value], 1 / len(mix)) if value in mix else None
+        return (mix[value], sum(mix.values()) / len(mix)) if value in mix else None
     if feature in ("story_type", "format"):
         mix = cfg.defaults.get("categories") or {}
         stories, formats = _category_maps()
         table = stories if feature == "story_type" else formats
         shares = [mix[c] for c in mix if value in table.get(c, ())]
-        return (sum(shares) / len(shares), 1 / len(mix)) if shares else None
+        return (sum(shares) / len(shares), sum(mix.values()) / len(mix)) if shares else None
     return None
 
 
@@ -527,16 +658,17 @@ class Model:
 
     # ---- learning
 
-    def update(self, feats, y: float, c: float, now: datetime) -> None:
+    def update(self, feats, y: float, c: float, now: datetime, drop=frozenset()) -> None:
         """One Laplace step for a soft label y in [0, 1], counted c times.
 
         With a diagonal prior the new mode has w_k = m_k - c (p - y) x_k / q_k, where p is the
         prediction at the mode, so only z = w . x needs solving: z = z0 - c s (p(z) - y) with
         z0 = m . x and s = sum x_k^2 / q_k. The left side minus the right is increasing in z,
-        so Newton converges. Then q_k += c p (1 - p) x_k^2.
+        so Newton converges. Then q_k += c p (1 - p) x_k^2. `drop` names features (or crosses)
+        that this update leaves out.
         """
         self.now = now
-        x = self.expand(feats)
+        x = {k: v for k, v in self.expand(feats).items() if k[0] not in drop}
         st = {k: self.state(k) for k in x}
         z0 = sum(st[k][0] * xk for k, xk in x.items())
         s = sum(xk * xk / st[k][1] for k, xk in x.items())
@@ -591,25 +723,48 @@ class Draw:
         return _sigmoid(self.logit(feats))
 
 
-def relearn(conn, cfg, now: datetime | None = None) -> int:
-    """Rebuild the model from every reward, oldest first, with the features saved at the
-    impression (or the card's current features for a reward saved without them). Returns the
-    number of rewards replayed. Run it after a change to the features or the priors."""
-    rc = load_reward_config(cfg)
-    model = Model(cfg, rc, {}, _now(now))
+def _replay_features(conn, cfg, r, at: datetime) -> set:
+    """The features to learn a stored reward from again: the card's current ones (so a change
+    to how features are derived applies) with the impression-time ones of the snapshot, or the
+    snapshot alone when the card is gone."""
+    snap = {tuple(k) for k in json.loads(r["features"] or "[]")}
+    feats = set(card_features(conn, cfg, r["card_id"], now=at)) if r["card_id"] else set()
+    if not feats:
+        return snap
+    return feats | {k for k in snap if k[0] in IMPRESSION_FEATURES}
+
+
+def _relearn_in_tx(conn, cfg, rc: RewardConfig, now: datetime) -> tuple[Model, int]:
+    model = Model(cfg, rc, {}, now)
+    resets = conn.execute("SELECT feature, at FROM model_resets ORDER BY at").fetchall()
     replayed = 0
+    conn.execute("DELETE FROM model_weights")
+    for r in conn.execute(
+        "SELECT * FROM rewards WHERE weight > 0 ORDER BY computed_at, id"
+    ).fetchall():
+        later = [x["feature"] for x in resets if x["at"] > r["computed_at"]]
+        if None in later:  # every weight was reset after this reward
+            continue
+        at = _parse_iso(r["computed_at"])
+        feats = _replay_features(conn, cfg, r, at)
+        if not feats:
+            continue
+        model.update(feats, r["reward"], r["weight"], at, drop=frozenset(later))
+        replayed += 1
+    model.now = now
+    model.save(conn)
+    return model, replayed
+
+
+def relearn(conn, cfg, now: datetime | None = None) -> int:
+    """Rebuild the model from every reward, oldest first, with the cards' current features
+    and the familiarity saved at the impression (the saved snapshot alone for a card that is
+    gone). A reset (`reset_weights`) stays: what it removed is not learned again from older
+    rewards. Returns the number of rewards replayed. Run it after a change to the features
+    or the priors."""
+    rc = load_reward_config(cfg)
     with db.immediate(conn):
-        conn.execute("DELETE FROM model_weights")
-        for r in conn.execute("SELECT * FROM rewards ORDER BY computed_at, id").fetchall():
-            at = _parse_iso(r["computed_at"])
-            feats = {tuple(k) for k in json.loads(r["features"] or "[]")}
-            feats = feats or set(card_features(conn, cfg, r["card_id"], now=at))
-            if not feats:
-                continue
-            model.update(feats, r["reward"], r["weight"], at)
-            replayed += 1
-        model.save(conn)
-    return replayed
+        return _relearn_in_tx(conn, cfg, rc, _now(now))[1]
 
 
 def score_cards(
@@ -654,12 +809,14 @@ def _effects(model: Model, feature: str) -> dict[str, tuple[float, float]]:
 FACTOR_MAX = 4.0  # a learned factor stays within [1/FACTOR_MAX, FACTOR_MAX]
 
 
-def value_factors(conn, cfg, feature: str, now: datetime | None = None) -> dict[str, float]:
+def value_factors(
+    conn, cfg, feature: str, now: datetime | None = None, model: Model | None = None
+) -> dict[str, float]:
     """Learned factor per value of a feature, for the brief: exp(effect - mean effect) over
     the values with evidence, clamped to [1/FACTOR_MAX, FACTOR_MAX]. Values without evidence
     are absent, which counts as 1. The brief scales its tone mix, persona share, repo share,
     asked levels and format order with these."""
-    stats = _effects(Model.load(conn, cfg, now), feature)
+    stats = _effects(model or Model.load(conn, cfg, now), feature)
     if not stats:
         return {}
     ref = sum(e for e, _ in stats.values()) / len(stats)
@@ -668,12 +825,12 @@ def value_factors(conn, cfg, feature: str, now: datetime | None = None) -> dict[
     }
 
 
-def format_factors(conn, cfg, now: datetime | None = None) -> dict[str, float]:
+def format_factors(conn, cfg, now: datetime | None = None, model=None) -> dict[str, float]:
     """`value_factors` of the formats: the brief's format pick."""
-    return value_factors(conn, cfg, "format", now)
+    return value_factors(conn, cfg, "format", now, model)
 
 
-def category_shares(conn, cfg, now: datetime | None = None) -> dict[str, float]:
+def category_shares(conn, cfg, now: datetime | None = None, model=None) -> dict[str, float]:
     """Learned share per default-mix category: the default share times exp(effect_c - ref).
 
     effect_c is the evidence-weighted mean effect of the category's story types and formats
@@ -685,7 +842,7 @@ def category_shares(conn, cfg, now: datetime | None = None) -> dict[str, float]:
     mix = {k: float(v) for k, v in (cfg.defaults.get("categories") or {}).items()}
     if not mix:
         return {}
-    model = Model.load(conn, cfg, now)
+    model = model or Model.load(conn, cfg, now)
     stories, formats = _category_maps()
     evidence = {("story_type", v): e for v, e in _effects(model, "story_type").items()}
     evidence |= {("format", v): e for v, e in _effects(model, "format").items()}
@@ -727,13 +884,17 @@ def category_shares(conn, cfg, now: datetime | None = None) -> dict[str, float]:
 # ---------------------------------------------------------------- reset
 
 
-def reset_weights(conn, feature: str | None = None) -> int:
-    """Delete learned weights (all, or one feature). Returns the number of rows deleted."""
+def reset_weights(conn, feature: str | None = None, now: datetime | None = None) -> int:
+    """Delete learned weights (all, or one feature), and note the reset so that `relearn`
+    keeps it. Returns the number of rows deleted."""
     with conn:
         if feature is None:
             cur = conn.execute("DELETE FROM model_weights")
         else:
             cur = conn.execute("DELETE FROM model_weights WHERE feature = ?", (feature,))
+        conn.execute(
+            "INSERT INTO model_resets(feature, at) VALUES (?, ?)", (feature, _iso(_now(now)))
+        )
     return cur.rowcount
 
 

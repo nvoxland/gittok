@@ -24,6 +24,7 @@ So your files are `<gittok dir>/local/...`, and in a clone they are `<clone>/loc
 | repos | The repos and groups | none | `local/repos.yaml` | The `add_repo`, `remove_repo`, `set_group`, `set_mascot` tools, `gittok repos ...`, or you |
 | mascots | The mascot of each repo | none | `local/mascots.yaml` | The `set_mascot` tool, `gittok mascot set`, or you |
 | profiles | The profile of one repo | none | `local/profiles/<repo>.yaml` | The `gittok-profile-repo` skill, through `save_profile` |
+| guidance | Your own words for the card writers: tone, style, subjects | none | `local/guidance.md` | You, or Claude by a file edit |
 | settings | Server, agent, analysis, render and clean-up settings | `config/settings.yaml` | `local/settings.yaml` | You, or Claude by a file edit. The `set_lan` tool writes `server.lan` |
 | personas | Names, voices and bios of the cast | `config/personas.yaml` | `local/personas.yaml` | The `edit_persona` tool, `gittok persona edit`, or you |
 | defaults | The starting mix of categories and tones | `config/defaults.yaml` | `local/defaults.yaml` | You, or Claude by a file edit |
@@ -98,6 +99,7 @@ So "also read `.proto` files in storefront" is a change to the profile of storef
 | "Also scan .proto files", "ignore the legacy folder" | Edits the file | `local/scan_defaults.yaml` (or the profile, for one repo) |
 | "Support Kotlin in all my repos" | Edits the files | `local/languages.yaml`, `local/queries/`, `local/file_types.yaml` |
 | "Never show keys that look like ACME-..." | Edits the file | `local/secrets.yaml` |
+| "Keep hooks short", "I'm new to Clojure, explain its syntax", "no pop-culture jokes" | Edits the file | `local/guidance.md` |
 | "Use my meme templates" | Edits the file | `local/meme_templates.yaml` |
 | "Change the reward for a like" | Edits the file | `local/reward.yaml` |
 | "Use port 8010" | Edits the file | `local/settings.yaml` |
@@ -324,6 +326,23 @@ How a repo gets one:
 - This happens only when the image renderer works (the `status` tool: `renderers.illustration`). Without it nobody can draw the mascot, so none is made.
 - **A repo with no mascot** gets no `mascot_scene` and no `comic` cards. All other formats work, and no card is rejected for a missing mascot. For a repo that you added earlier, the SessionStart hint offers a mascot once the renderer works; Claude makes it when you say yes.
 
+## Writing guidance
+
+`local/guidance.md` is free text, in Markdown, for the agents that write the cards. Use it for what the mix and the rules cannot say: tone, style, words to avoid, what you know already and what you want explained. GitTok ships none.
+
+```markdown
+# local/guidance.md
+# How I want my cards
+
+- Keep hooks under 12 words.
+- I am new to Clojure: explain its syntax when a card shows Clojure code.
+- No pop-culture references. Puns are fine.
+```
+
+Every `get_guidance` reply ends with this text, under "The reader's own guidance", so it applies from the next cards on, with no restart. It does not change cards that exist. The writers follow it for tone, style and subject, but GitTok's own rules win where the two conflict: facts must be true and sourced, the card JSON must be valid, and the length limits stay. Only the first 6000 characters are used; `check_config` warns about a longer file. The writers can read it but not change it.
+
+The mix (`local/defaults.yaml`) and the rules (`add_rule`) decide *how many* cards of each kind get made; this file says *how* to write them.
+
 ## Repo profiles
 
 `local/profiles/<repo>.yaml` holds the profile of one repo: its stack, the role of each dir, the file set (`scan`, `ignore`, `kinds`), and the detector rules. The `gittok-profile-repo` skill writes it through `save_profile`, which tests every rule first. The fields and the scoring are in `docs/learning.md`, "Candidate score and repo profiles". The schema is `src/gittok/schema/profile.schema.json`. A repo without a profile uses `scan_defaults`.
@@ -346,7 +365,7 @@ visual_mix:
 
 ### reward: weights and ranking
 
-Reward weights, the like and 👎 weights (`like_floor`, `like_weight`, `dislike_weight`), expected read times, the model priors (`prior_sd` per feature), `crosses`, the decay half-life, the lead score (`lead_score`: strength, novelty, covered, rejected) and slotting values (`docs/learning.md` sections 3 to 5 and 12). An unknown key in `weights` or `prior_sd` is ignored with a warning. After a change to `prior_sd` or `crosses`, run `gittok relearn` to rebuild the model with it.
+Reward weights, the like and 👎 weights (`like_floor`, `like_weight`, `dislike_weight`), expected read times, the model priors (`prior_sd` per feature), `crosses`, the decay half-life, the lead score (`lead_score`: strength, novelty, covered, rejected) and slotting values (`docs/learning.md` sections 3 to 5 and 12). An unknown key in `weights` or `prior_sd` is ignored with a warning. `half_life_days` and each `prior_sd` value must be above 0. After a change to `prior_sd` or `crosses`, run `gittok relearn` to rebuild the model with it.
 
 ```yaml
 # local/reward.yaml

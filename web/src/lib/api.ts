@@ -109,7 +109,7 @@ export async function postAnswer(card_id: string, choice: number): Promise<Answe
 	const res = await fetch('/api/answer', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ card_id, choice, session: getSessionId() })
+		body: JSON.stringify({ card_id, choice, session: getSessionId(), ts: Date.now() })
 	});
 	if (!res.ok) throw new ApiError(`POST /api/answer failed: ${res.status}`, res.status);
 	return (await res.json()) as AnswerResponse;

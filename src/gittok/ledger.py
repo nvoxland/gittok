@@ -325,6 +325,8 @@ def ranked(
     nmap: dict | None = None,
     subjects: _Subjects | None = None,
     files=None,
+    current: list | None = None,
+    symbols: knowledge.SymbolContext | None = None,
 ) -> list[brief.Lead]:
     """Current leads for one story type, best first, without leads still in their cooldown
     or whose story is blocked.
@@ -341,7 +343,10 @@ def ranked(
     rule factor). Novelty (knowledge model, damped by the symbol factor) is what the reader
     has not learned yet: it stays a fixed term so the feed keeps teaching new code.
 
-    `rejects` counts the cards rejected on the lead in the last `agent.subject_cooldown_days`.
+    `rejects` counts the cards rejected on the lead in its current run of rejects (a reject
+    after `agent.subject_cooldown_days` without one starts again at 1), and only while the
+    last one is inside that window. `current` (the `_current` rows) and `symbols` save the
+    reads when the caller already has them.
     A lead is also left out while its commit or path is the subject of a recent card (any
     story type). Server-made leads (notifications, digests, replies) skip both filters and
     go first.
@@ -356,7 +361,11 @@ def ranked(
     reject_cutoff = iso(now - timedelta(days=cfg.settings.agent.subject_cooldown_days))
     rows = [
         r
-        for r in _current(conn, repo, story_type, files or cfg.fileset(repo))
+        for r in (
+            current
+            if current is not None
+            else _current(conn, repo, story_type, files or cfg.fileset(repo))
+        )
         if (r["last_covered_at"] is None or r["last_covered_at"] < cutoff)
         and (_pinned(r) or not (blocks.blocks(_lead(r)) or subjects.blocks(_lead(r))))
     ]
@@ -364,7 +373,7 @@ def ranked(
     if nmap is None:
         nmap = knowledge.novelty_map(conn, repo, cfg.settings.user.git_identities)
 
-    symbols = knowledge.SymbolContext(conn, repo)
+    symbols = symbols or knowledge.SymbolContext(conn, repo)
     weights = learning.load_reward_config(cfg).lead_score
     fileset = files if files is not None or repo not in cfg.repos else cfg.fileset(repo)
 
@@ -394,6 +403,7 @@ def for_brief(
     analyses: dict | None = None,
     filesets: dict | None = None,
     rng=None,
+    model=None,
 ) -> dict:
     """`build_brief(ledger=...)` input: (repo, story type) -> ranked leads.
 
@@ -410,7 +420,7 @@ def for_brief(
             refresh_candidates(
                 conn, repo, a.get("signals") or {}, a.get("t0"), a.get("head_sha") or "", now
             )
-    model = learning.Model.load(conn, cfg, now)
+    model = model or learning.Model.load(conn, cfg, now)
     scorer = model.draw(rng).logit if rng is not None else model.mean_logit
     blocks = _StoryBlocks(_blocked_stories(conn, cfg, now))
     subjects = _Subjects(conn, cfg, now)
@@ -420,10 +430,23 @@ def for_brief(
     out = {}
     for repo in repos:
         fs = (filesets or {}).get(repo) or cfg.fileset(repo)
+        symbols = knowledge.SymbolContext(conn, repo)
         for t in types:
-            if _current(conn, repo, t, fs):
+            if current := _current(conn, repo, t, fs):
                 out[(repo, t)] = ranked(
-                    conn, cfg, repo, t, now, limit, scorer, blocks, nmaps[repo], subjects, fs
+                    conn,
+                    cfg,
+                    repo,
+                    t,
+                    now,
+                    limit,
+                    scorer,
+                    blocks,
+                    nmaps[repo],
+                    subjects,
+                    fs,
+                    current=current,
+                    symbols=symbols,
                 )
     return out
 
@@ -504,11 +527,23 @@ def match_lead(card: dict, lead_refs: list[dict]) -> dict | None:
     return None
 
 
-def mark_rejected(conn, lead_id: int, now: datetime) -> None:
-    """Count one rejected card on a lead; its rank drops for `agent.subject_cooldown_days`."""
+def mark_rejected(conn, lead_id: int, now: datetime, window_days: float | None = None) -> None:
+    """Count one rejected card on a lead; its rank drops for `agent.subject_cooldown_days`.
+
+    With `window_days`, a reject that comes after a quiet window starts the count again, so
+    the count holds only the rejects of the current run of rejects."""
+    if window_days is None:
+        conn.execute(
+            "UPDATE leads SET times_rejected = times_rejected + 1, last_rejected_at = ? "
+            "WHERE id = ?",
+            (iso(now), lead_id),
+        )
+        return
+    cutoff = iso(now - timedelta(days=window_days))
     conn.execute(
-        "UPDATE leads SET times_rejected = times_rejected + 1, last_rejected_at = ? WHERE id = ?",
-        (iso(now), lead_id),
+        "UPDATE leads SET times_rejected = CASE WHEN COALESCE(last_rejected_at, '') >= ? "
+        "THEN times_rejected + 1 ELSE 1 END, last_rejected_at = ? WHERE id = ?",
+        (cutoff, iso(now), lead_id),
     )
 
 

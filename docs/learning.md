@@ -8,8 +8,8 @@ Existing types keep their meaning. Data per type:
 
 | type | when | `data` |
 |---|---|---|
-| `impression` | card becomes ≥60% visible | `{}` |
-| `dwell` | card stops being visible | `{"ms": int}`; a beat card adds `"ms_played"` and `"total_ms"` |
+| `impression` | card becomes ≥60% visible | `{}`; the server adds `"familiarity"` (section 4) |
+| `dwell` | card stops being visible (one per visit) | `{"ms": int}`; a beat card adds `"ms_played"` (the time its beats played in this visit) and `"total_ms"` |
 | `skip` | left in under 1000 ms, or a beat card left during its first beat (sent with the dwell) | `{"ms": int}` |
 | `beats_done` | a beat card played to its end (by itself or by taps) | `{"beats": int, "ms_played": int}` |
 | `replay` | the replay control on a finished beat card | `{}` |
@@ -55,12 +55,16 @@ New story types and their server-side truth checks:
 
 ## 3. Reward (per impression)
 
-An impression window is the events for a card from one `impression` until the next `impression` of any card in the same client session, capped at 30 minutes. (The client sends a `session` string in every event's `data`; events without one are grouped by card and 30-minute gaps.) A `dislike` event closes its window at once: the next feed refresh (section 5) already knows it.
+An impression window is the events for a card from one `impression` until the next `impression` of any card in the same client session, capped at 30 minutes. (The client sends a `session` string in every event's `data`; events without one are grouped by card and 30-minute gaps.) An event at the same ms as the next impression belongs to the window with the lower event id. A 👎 that is still on (its last toggle) closes its window at once: the next feed refresh (section 5) already knows it.
+
+A 👎 that the reader takes back is unlearned: on the next pass its reward is deleted, the story's `disliked` mark is cleared, the model is rebuilt from the other rewards (`relearn`), and the impression is scored again with its 👎 events left out. The `dislike` events of a card whose last toggle is off never count.
 
 ```
 if dislike on (last toggle):  reward = 0, weight = dislike_weight (4), signal = dislike
-skipped = a `skip` event, or dwell_ms < skip_ms (reward.yaml, default 1000) with dwell events
-          and no other engagement (client did not send `skip`)
+visits  = one per dwell; a `skip` right after a dwell marks that visit a skip
+engaged = depth_open, lightbox_open, explain_more, source_tap, beats_done, replay or answer
+skipped = not engaged and (every visit was a skip
+                           or dwell_ms < skip_ms (reward.yaml, default 1000) over all the visits)
 if skipped and not (like on or save on): reward = 0      # explicit positive feedback wins
 else:
   watch = beat card:   min(1, sum(ms_played) / total_ms)     # time played, holds included
@@ -83,7 +87,9 @@ Defaults: `w.complete 0.15, w.replay 0.30, w.dwell 0.45, depth_open 0.15, explai
 
 `ms` values from the client are cleaned before use: non-numeric, null or negative becomes 0, and the value is capped at 24 hours. Events whose `data` is not an object are treated as having no data. One bad event never stops the processing of the others.
 
-Rewards are written to `rewards` (one row per impression, idempotent on `impression_event_id`), with the `weight`, the `signal` (`like`, `dislike` or none) and `features`: the features of the impression (section 4) at that time.
+One short look after a long read is not a skip: the client sends dwell and skip for each visit, and a window is a skip only when all its visits were. A scroll back is not engagement here: a quick pass on the way back is still a skip.
+
+Rewards are written to `rewards` (one row per impression, idempotent on `impression_event_id`), with the `weight`, the `signal` (`like`, `dislike` or none) and `features`: the features of the impression (section 4) at that time. An impression that cannot be scored gets a row with weight 0: it teaches nothing and is not read again. Event ids are never used again (`AUTOINCREMENT`), so a reward always names its own impression. Each pass reads only the impressions of existing cards that have no reward yet.
 
 ## 4. The learner: one additive model (Thompson sampling, SPEC §12.3)
 
@@ -102,14 +108,14 @@ Features of a card (`card_features`, written by `store`):
 | `tag` | the detector tag of the card's lead (a profile rule or a builtin miner), when the lead is a candidate |
 | `visual_kind`, `template`, `meme_template`, `verdict`, `has_comments`, `interactive` | from the card |
 
-Derived at read time: `group` (from config), `recency` (`new` < 7 days, `recent` < 30, `old`), and `familiarity`: how well the reader knows the card's deepest dir now (knowledge model, section 14): `new` (novelty ≥ 0.7), `some` (≥ 0.35) or `known`. The reward snapshot keeps the familiarity of the impression.
+Derived at read time: `group` (from config), `recency` (`new` < 7 days, `recent` < 30, `old`), and `familiarity`: how well the reader knows the card's deepest dir now (knowledge model, section 14): `new` (novelty ≥ 0.7), `some` (≥ 0.35) or `known`. Each pass writes the familiarity into each new impression (`data.familiarity`) before the knowledge model counts it, so the reward learns what the reader knew when the card was ranked. The reward snapshot keeps it.
 
 Inputs: a bias, 1 for each feature, and 1/n for each of a card's n `dir` prefixes (they share one unit, so a deep card does not outweigh its format). Crosses (reward.yaml `crosses`, default `[angle, familiarity]`) add one input per pair of values (`cross:angle*familiarity = why|known`): the reader may like `why` cards about code they know and `what` cards about code they do not.
 
 - Prior: mean 0, except for the default mix (story type and format via their category, tone): 0.5 · ln(share / mean share), clamped to ±0.7. The prior sd per feature is reward.yaml `prior_sd` (wide for what readers care about, narrow for `file`, which must back off to its dir).
 - Update for reward y counted c times (the reward's weight): with z0 = Σ m·x and s = Σ x²/q, solve z = z0 − c·s·(σ(z) − y) by Newton; then each active weight moves to m − c·(σ(z) − y)·x/q and its precision grows by c·σ(z)(1 − σ(z))·x². Before the update the evidence decays: mean and precision move back toward the prior by 0.5^(Δdays / half_life_days), half-life 21 days.
 - Thompson sampling: a draw samples each weight from N(mean, 1/precision), seeded by (draw seed, feature, value), so one draw scores the same in any order. Card score = σ(Σ sampled w·x): a sampled expected reward.
-- The stored weights are a cache: `gittok relearn` rebuilds them from the rewards, oldest first, with each reward's saved features. Run `gittok refeature` and then `gittok relearn` after a change to how features are derived or to the priors.
+- The stored weights are a cache: `gittok relearn` rebuilds them from the rewards, oldest first, with each card's current features and the familiarity of the impression (the saved snapshot alone for a card that is gone). Run `gittok refeature` and then `gittok relearn` after a change to how features are derived or to the priors. A reset (section 9) stays reset: `model_resets` notes it, and relearn leaves the reset features out of older rewards (all of an older reward after a full reset).
 
 Public API (`src/gittok/learning.py`):
 ```python
@@ -185,7 +191,7 @@ Saved state lives in the `saved_cards` table (`card_id`, `saved_at`, `saved_ts`)
 
 ## 9. Reset
 
-`gittok reset-weights [--feature F]` and `learning.reset_weights`. The MCP tool `reset_defaults` calls the same function. `gittok relearn` rebuilds the model from the rewards instead (section 4).
+`gittok reset-weights [--feature F]` and `learning.reset_weights`. The MCP tool `reset_defaults` calls the same function. Each reset is noted in `model_resets`, so a later `gittok relearn` (section 4) does not bring the weights back.
 
 ## 10. Which rules change generation (brief) and which only rank (slotter)
 
@@ -241,7 +247,8 @@ Removing a repo (`remove_repo`, `gittok repos remove`) uses the same code at onc
 | what | on removal of the repo |
 |---|---|
 | `cards` whose own repo (the first of `repos`) is the repo, with `card_features`, `assets`, `srs` | deleted |
-| `events`, `rewards`, `knowledge_events`, `saved_cards`, `replies`, `requests`, `notifications` of those cards | deleted (an old card deleted by the rules above keeps them) |
+| `events`, `knowledge_events`, `saved_cards`, `replies`, `requests`, `notifications` of those cards | deleted (an old card deleted by the rules above keeps them) |
+| `rewards` of those cards | kept without the card link (`card_id` and `impression_event_id` NULL): with their feature snapshot they are the evidence behind the kept weights, so `relearn` keeps what they taught |
 | `replies.answered_card_id`, `digests.card_id` that point at such a card | set to NULL |
 | `stories` of the repo | deleted, unless a card of another repo still has the story key |
 | `leads`, `candidates`, `candidate_ratings`, `scout_batches`, `knowledge`, `knowledge_symbols`, `digests`, `story_views` of the repo | deleted |
@@ -274,7 +281,7 @@ What a row holds:
 - Identity: repo, story type, `lead_key`. A commit lead is keyed by sha and path (`c:<sha>:<path>`), a path lead by its path (`p:<path>`), a lead with no repo identity by a synthetic key (`dir:src`, `pair:a|b`). An edit to a file keeps its row, so the cooldown and `times_covered` stay. The row also stores the kind, path, commit sha, and the blob sha at the analyzed ref (for information only).
 - `strength`: `1 / (1 + rank)` inside its story type, from the signal order.
 - `first_seen_at`, `last_seen_at`, `head_sha`: set again on each refresh.
-- `times_covered`, `last_covered_at`, `mean_reward`, `rewards_n`: see below.
+- `times_covered`, `last_covered_at`: see below. (`mean_reward` and `rewards_n` are no longer written: the model learns from the lead's features instead.)
 
 `get_brief` draws leads from the ledger. A row is a candidate when it was seen in the latest refresh of its repo (it still exists at HEAD) and its `last_covered_at` is not within `agent.lead_cooldown_days` (30). Candidates are sorted by one score from the same model that ranks the feed (section 4):
 
@@ -291,15 +298,13 @@ The lead's features (`ledger.lead_features`) are the ones its card would have be
 Dedup (`ledger.ranked`, `ledger.offerable`):
 
 - Subject cooldown: a card's subject is its visual's commit or path, else its first source's. A commit or path that was the subject of a ready (or `pending_render`) card made in the last `agent.subject_cooldown_days` (14) is not offered, in any story type. Server-made leads (`notif:`, digests, replies) skip this filter.
-- Rejects: when `submit_cards(packet_id)` rejects a card (not for `over_quota` or `illustration_budget`) that cites a packet lead, the lead gets `times_rejected + 1` and `last_rejected_at`. In `score` it costs `lead_score.rejected` per reject while `last_rejected_at` is inside the subject cooldown window. After the window the penalty is gone.
+- Rejects: when `submit_cards(packet_id)` rejects a card (not for `over_quota` or `illustration_budget`) that cites a packet lead, the lead gets `times_rejected + 1` and `last_rejected_at`. In `score` it costs `lead_score.rejected` per reject while `last_rejected_at` is inside the subject cooldown window. After the window the penalty is gone, and a later reject counts from 1 again.
 - Packets: `build_brief` deals the leads of a (repo, story type) round robin over the packets that hold that type. An intro lead is only in its own packet. A commit or path is offered to one packet of a repo. So two packets of one repo never share a lead.
 - Cross-repo leads (recap, drift, ripple) have no ledger row, so they have no cooldown. A card cannot be tied to one of them (it cites commits of several repos and carries no lead id), so coverage would be a guess.
 
 Spot the Bug minimum: `agent.min_spot_the_bug_per_run` (0.125, one card per 8) of a brief's cards are `spot_the_bug` slots, reserved before the category quotas, when some repo has a lead for it. The interactive quota grows to hold them. The slotter places one unseen quiz card in each window of 8 cards of a batch, if one exists.
 
 Coverage marking: `submit_cards(packet_id)` finds the packet lead each accepted card used. The first lead whose commit is cited by the card (sources, visual, or depth panels) wins. Else the first lead whose path is cited. The card gets `cards.lead_id`. The lead gets `times_covered + 1` and `last_covered_at`. Cards submitted without a packet mark nothing.
-
-Reward: when `process_events` writes a reward for a card with a `lead_id`, the lead's `mean_reward` becomes the running mean of those rewards (`rewards_n` counts them).
 
 The `coverage` tool adds `leads` (current leads under each top dir, one per file) and `leads_covered` (of those, how many a card used).
 

@@ -552,3 +552,28 @@ def test_gc_keeps_everything_when_no_repo_is_configured(ycfg):
         out = gc.collect(conn, empty, NOW)
         assert out["orphan_repos"] == 0 and out["orphan_cards"] == 0
         assert conn.execute("SELECT COUNT(*) FROM cards").fetchone()[0] == 2
+
+
+def test_what_a_removed_repo_taught_survives_a_relearn(ycfg):
+    with closing(open_db(ycfg)) as conn:
+        a = add_card(conn, ycfg, ["alpha"])
+        b = add_card(conn, ycfg, ["beta"])
+        for i, cid in enumerate((a, b)):
+            conn.execute(
+                "INSERT INTO events(card_id, type, ts, data, received_at) "
+                "VALUES (?, 'impression', ?, '{}', 'x')",
+                (cid, 1000 + i),
+            )
+        conn.commit()
+    steering.remove_repo(ycfg, "alpha")
+    with closing(open_db(ycfg)) as conn:
+        before = {
+            r[0] for r in conn.execute("SELECT value FROM model_weights WHERE feature='repo'")
+        }
+        assert "alpha" in before
+        learning.relearn(conn, ycfg)
+        after = {r[0] for r in conn.execute("SELECT value FROM model_weights WHERE feature='repo'")}
+        assert "alpha" in after
+        assert (
+            conn.execute("SELECT COUNT(*) FROM rewards WHERE card_id = ?", (a,)).fetchone()[0] == 0
+        )

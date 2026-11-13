@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- `local/guidance.md`: your own words for the card writers (tone, style, what to explain, what to avoid). It is added to the end of every `get_guidance` reply. Ask Claude ("keep hooks short", "no pop-culture jokes") and it edits the file. See docs/config.md, "Writing guidance".
+
+Fixes in how the feed learns (docs/learning.md):
+
+- One short look after a long read no longer makes the card a skip. A window is a skip only when every visit was a skip, and an answer or an opened panel always counts.
+- A beat card's watch time is no longer counted twice: each dwell sends the time of its own visit.
+- A 👎 that you take back is unlearned, and its story can be told again.
+- The familiarity of an impression is what you knew when the card was ranked, not after the impression was counted.
+- An event at the same moment as the next impression counts in one window only.
+- `gittok relearn` uses the cards' current features (after `gittok refeature`), keeps a reset, and keeps what a removed repo taught.
+- Event ids are never used again after garbage collection, so no impression loses its reward.
+- A meme template you disliked no longer goes before one you never saw.
+- A learning pass reads only the new impressions.
+- Quiz answers use the phone's clock, like the other events.
+- `half_life_days` or a `prior_sd` of 0 is a config error, not a crash.
+- Rejects of a lead count only inside the cooldown window.
+
 ## 1.0.0 (2026-11-12)
 
 First public release.

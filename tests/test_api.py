@@ -1,5 +1,6 @@
 import base64
 import json
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -446,6 +447,17 @@ def test_answer_returns_truth_and_records_server_side_event(cfg, client, fixture
     assert row["interval_days"] == 1 and row["mastered"] == 0
     assert client.post("/api/answer", json={"card_id": cid, "choice": 0}).json()["correct"] is True
     assert answer_events(cfg)[1] == (cid, {"choice": 0, "correct": True})
+
+
+def test_answer_event_uses_the_client_clock_like_the_other_events(cfg, client, fixture_repo):
+    """Impression windows use the client's `ts`; an answer stamped by the server clock falls
+    out of its window when the phone's clock is off."""
+    (cid,) = seed(cfg, fixture_repo, [quiz_card(fixture_repo)])
+    client_ts = int(datetime.now(UTC).timestamp() * 1000) - 5 * 60_000  # phone 5 min behind
+    client.post("/api/answer", json={"card_id": cid, "choice": 0, "ts": client_ts})
+    with db.session(cfg.settings.data_dir / "gittok.db") as conn:
+        ts = conn.execute("SELECT ts FROM events WHERE type = 'answer'").fetchone()[0]
+    assert ts == client_ts
 
 
 def test_answer_this_or_that_has_null_correctness(cfg, client, fixture_repo):

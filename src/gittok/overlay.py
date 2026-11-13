@@ -300,6 +300,11 @@ def _check_reward(d: dict) -> None:
     ):  # fmt: skip
         if key in d:
             _number(d[key], key)
+    # The model divides by these: 0 would stop learning with a ZeroDivisionError.
+    for k, v in (d.get("prior_sd") or {}).items():
+        _need(v > 0, f"'prior_sd.{k}' must be above 0")
+    if "half_life_days" in d:
+        _need(d["half_life_days"] > 0, "'half_life_days' must be above 0")
     for pair in d.get("crosses") or []:
         _need(
             isinstance(pair, list) and len(pair) == 2 and all(isinstance(x, str) for x in pair),
@@ -507,6 +512,20 @@ FILES: dict[str, FileSpec] = {
             edited_by="the set_mascot tool, `gittok mascot set`, or you",
             shipped=False,
             merge="local only: nothing is shipped",
+        ),
+        FileSpec(
+            name="guidance",
+            rel="guidance.md",
+            edited_by="you, or the agent on your request (file edit)",
+            what=(
+                "Your own words for the card writers, as Markdown: tone, style, what to write "
+                "about and what not"
+            ),
+            shipped=False,
+            merge=(
+                "local only: nothing is shipped. The text is added after GitTok's own guidance "
+                "in every get_guidance reply"
+            ),
         ),
         FileSpec(
             name="profiles",
@@ -850,6 +869,34 @@ def _local_shown(spec: FileSpec) -> str:
     return spec.local or f"local/{spec.rel}"
 
 
+GUIDANCE_MAX_CHARS = 6000  # a longer local/guidance.md is cut: get_guidance has a size limit
+
+
+def local_guidance(home: Path | None, cap: bool = True) -> str | None:
+    """The text of `local/guidance.md`, stripped; None when there is none or it is empty.
+    With `cap`, at most GUIDANCE_MAX_CHARS (what the writers get)."""
+    file = Path(home) / "local" / "guidance.md" if home else None
+    if not file or not file.is_file():
+        return None
+    try:
+        text = file.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError) as e:
+        raise ConfigError(f"local/guidance.md: cannot read it ({e})") from None
+    if not text:
+        return None
+    return text[:GUIDANCE_MAX_CHARS] if cap else text
+
+
+def _guidance_warnings(home: Path) -> tuple[str, ...]:
+    text = local_guidance(home, cap=False)
+    if text and len(text) > GUIDANCE_MAX_CHARS:
+        return (
+            f"local/guidance.md has {len(text)} characters: the writers get only the first "
+            f"{GUIDANCE_MAX_CHARS}. Make it shorter.",
+        )
+    return ()
+
+
 def describe(shared: Path | None, home: Path | None) -> list[dict]:
     """One row per config file: where it is shipped, where its local file goes, the rule."""
     rows = []
@@ -890,6 +937,8 @@ def _effect(name: str) -> str:
         return "the next analysis (the next cards); no restart"
     if name == "repos":
         return "the next tool call; no restart"
+    if name == "guidance":
+        return "the next get_guidance call (the next cards); no restart"
     return "at once: the next tool call and the next feed request; no restart"
 
 
@@ -933,6 +982,9 @@ def get(shared: Path | None, home: Path | None, name: str, key: str | None = Non
     elif spec.shipped:
         ld = load(name, shared, home)
         base, local, effective = ld.shipped_data, ld.local_data, ld.data
+    elif name == "guidance":
+        base, local = None, local_guidance(home, cap=False)
+        effective = local
     else:
         file = Path(home) / "local" / spec.rel if home else None
         local = _read_map(file, f"local/{spec.rel}") if file and file.is_file() else None
@@ -972,6 +1024,7 @@ def check(shared: Path | None, home: Path | None) -> dict:
             lambda: _c._load_repos(home) and (),
             lambda: _c._load_mascots(home) and (),
             lambda: load_profiles(home) and (),
+            lambda: _guidance_warnings(home),
         ):
             try:
                 warnings += [w for w in part() if w not in warnings]
@@ -982,7 +1035,7 @@ def check(shared: Path | None, home: Path | None) -> dict:
         local = Path(home) / "local"
         found = sorted(
             f"local/{p.relative_to(local).as_posix()}"
-            for pat in ("*.yaml", "queries/*", "profiles/*.yaml")
+            for pat in ("*.yaml", "*.md", "queries/*", "profiles/*.yaml")
             for p in local.glob(pat)
             if p.is_file()
         )

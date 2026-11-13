@@ -25,7 +25,12 @@ def test_migrate_creates_all_spec_tables(tmp_path):
 def test_migrate_twice_applies_nothing_second_time(tmp_path):
     conn = db.connect(tmp_path / "x.db")
     first = db.migrate(conn)
-    assert first == ["0001_schema.sql", "0002_pair_requests.sql", "0003_one_learner.sql"]
+    assert first == [
+        "0001_schema.sql",
+        "0002_pair_requests.sql",
+        "0003_one_learner.sql",
+        "0004_learning_fixes.sql",
+    ]
     assert db.migrate(conn) == []
     names = [r["name"] for r in conn.execute("SELECT name FROM schema_migrations ORDER BY name")]
     assert names == first

@@ -85,5 +85,13 @@ mascots: |
       style: "a small round otter with a teal scarf, flat vector illustration"
       seed: 4242
 
+guidance: |
+  # How I want my cards
+
+  - Keep hooks under 12 words.
+  - I am new to Clojure: explain its syntax when a card shows Clojure code.
+  - No pop-culture references. Puns are fine.
+  - More about why the code is the way it is, less about who wrote it.
+
 profiles: |
   scan: ['**/*.py', 'db/**/*.sql']   # written by save_profile, not by hand

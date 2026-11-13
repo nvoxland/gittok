@@ -350,3 +350,19 @@ async def test_get_packet_starts_with_the_hard_limits(fixture_repo, tmp_path):
               validator.MAX_FRONT_CODE_LINES, validator.MAX_SPAN):  # fmt: skip
         assert str(n) in text, n
     assert "check_cards" not in text
+
+
+async def test_writers_get_the_readers_own_guidance_last(fixture_repo, tmp_path):
+    cfg = make_config(fixture_repo, tmp_path)
+    server = mcp_server.build_server(lambda: cfg)
+    async with Client(server) as client:
+        brief = data(await client.call_tool("get_brief", {"count": 1}))
+        args = {"run_id": brief["run_id"], "packet_id": brief["packets"][0]["id"]}
+        plain = data(await client.call_tool("get_guidance", args))["guidance_markdown"]
+        (tmp_path / "local").mkdir(exist_ok=True)
+        (tmp_path / "local" / "guidance.md").write_text("Never use the word synergy.\n")
+        mine = data(await client.call_tool("get_guidance", args))["guidance_markdown"]
+    assert "synergy" not in plain and "The reader's own guidance" not in plain
+    head, tail = mine.split("## The reader's own guidance")
+    assert head.strip() == plain.strip()
+    assert "Never use the word synergy." in tail

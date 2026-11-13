@@ -32,6 +32,9 @@
 	// Cards at least 60% visible, whether or not the tab is shown. visibleSince only holds
 	// the ones whose dwell timer is running.
 	const inView = new Set<string>();
+	// Watch time already sent per beat card: the player's count only grows, and each dwell
+	// sends the time of its own visit.
+	const playedSent = new Map<string, number>();
 
 	function emit(card_id: string, type: FeedEvent['type'], data?: Record<string, unknown>) {
 		onEvent?.({ card_id, type, ts: Date.now(), data: { ...data, session: getSessionId() } });
@@ -55,7 +58,11 @@
 		// A beat card reports watch time like a video; leaving during its first beat is a skip.
 		const play = playStats(id);
 		if (play && play.totalMs > 0) {
-			emit(id, 'dwell', { ms, ms_played: play.msPlayed, total_ms: play.totalMs });
+			const sent = playedSent.get(id) ?? 0;
+			// A smaller count is a new player (the card was mounted again): all of it is new.
+			const msPlayed = play.msPlayed >= sent ? play.msPlayed - sent : play.msPlayed;
+			playedSent.set(id, play.msPlayed);
+			emit(id, 'dwell', { ms, ms_played: msPlayed, total_ms: play.totalMs });
 			if (!play.done && play.beat <= 0) emit(id, 'skip');
 			return;
 		}

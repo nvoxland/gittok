@@ -72,14 +72,25 @@ def test_dwell_reward_for_closed_impression(conn, cfg):
     assert rewards(conn)[a] == pytest.approx(0.45 * (exp // 2) / exp)
 
 
-def test_skip_is_zero_even_with_other_signals(conn, cfg):
+def test_a_quick_pass_is_a_skip_also_on_a_scroll_back(conn, cfg):
+    a, b = add_card(conn, cfg), add_card(conn, cfg)
+    ev(conn, a, "impression", T0)
+    ev(conn, a, "scroll_back", T0)
+    ev(conn, a, "dwell", T0 + 300, {"ms": 300})
+    ev(conn, a, "skip", T0 + 300)
+    ev(conn, b, "impression", T0 + 1000)
+    learning.process_events(conn, cfg, now=at(5))
+    assert rewards(conn)[a] == 0.0
+
+
+def test_a_depth_open_keeps_a_window_from_being_a_skip(conn, cfg):
     a, b = add_card(conn, cfg), add_card(conn, cfg)
     ev(conn, a, "impression", T0)
     ev(conn, a, "skip", T0 + 300, {"ms": 300})
     ev(conn, a, "depth_open", T0 + 400, {"panel": 1})
     ev(conn, b, "impression", T0 + 1000)
     learning.process_events(conn, cfg, now=at(5))
-    assert rewards(conn)[a] == 0.0
+    assert rewards(conn)[a] == pytest.approx(learning.default_reward_config().weights["depth_open"])
 
 
 @pytest.mark.parametrize("positive", ["like", "save"])
@@ -653,31 +664,6 @@ def test_reward_updates_every_prefix(conn, cfg):
     assert {v for (f, v) in w if f == "dir"} >= {"x", "x/y", "x/y/z"}
 
 
-def test_lead_mean_reward_updates(conn, cfg):
-    conn.execute(
-        "INSERT INTO leads(id, repo, story_type, kind, lead_key, text, strength, head_sha, "
-        "first_seen_at, last_seen_at) VALUES (1, 'fixture', 'rip', 'path', 'p:x', 't', 1.0, 'h', "
-        "'x', 'x')"
-    )
-    a, b, plain = add_card(conn, cfg), add_card(conn, cfg), add_card(conn, cfg)
-    conn.execute("UPDATE cards SET lead_id = 1 WHERE id IN (?, ?)", (a, b))
-    conn.commit()
-    ev(conn, a, "impression", T0)
-    ev(conn, a, "like", T0 + 400, {"on": True})
-    ev(conn, b, "impression", T0 + 1000)
-    ev(conn, b, "skip", T0 + 1100, {"ms": 100})
-    ev(conn, plain, "impression", T0 + 2000)
-    learning.process_events(conn, cfg, now=at(5))
-    got = conn.execute("SELECT mean_reward, rewards_n FROM leads WHERE id = 1").fetchone()
-    r = rewards(conn)
-    assert got["rewards_n"] == 2
-    assert got["mean_reward"] == pytest.approx((r[a] + r[b]) / 2)
-    assert r[a] != r[b]
-    # processing again changes nothing
-    learning.process_events(conn, cfg, now=at(6))
-    assert conn.execute("SELECT rewards_n FROM leads WHERE id = 1").fetchone()[0] == 2
-
-
 def test_reward_defaults_live_only_in_the_shipped_yaml():
     """config/reward.yaml is the one source of the defaults: the dataclass holds none."""
     from pathlib import Path
@@ -820,3 +806,227 @@ def test_a_dislike_closes_its_impression_window_at_once(conn, cfg):
     # No next impression and far under 30 minutes: the 👎 still counts now.
     learning.process_events(conn, cfg, now=at(1))
     assert reward_rows(conn)[a] == (0.0, learning.default_reward_config().dislike_weight)
+
+
+# ---------------------------------------------------------------- review fixes (2026-11-13)
+
+
+def reward_of(conn, impression_id):
+    return conn.execute(
+        "SELECT * FROM rewards WHERE impression_event_id = ?", (impression_id,)
+    ).fetchone()
+
+
+def test_one_short_visit_does_not_turn_a_read_card_into_a_skip(conn, cfg):
+    """The client sends dwell + skip for each visit under 1 s. A card read for 20 s and then
+    glanced at once more is not a skip."""
+    a, b = add_card(conn, cfg), add_card(conn, cfg)
+    ev(conn, a, "impression", T0)
+    ev(conn, a, "dwell", T0 + 20_000, {"ms": 20_000})
+    ev(conn, a, "dwell", T0 + 60_000, {"ms": 800})
+    ev(conn, a, "skip", T0 + 60_000)
+    ev(conn, b, "impression", T0 + 70_000)
+    learning.process_events(conn, cfg, now=at(5))
+    assert rewards(conn)[a] > 0.2
+
+
+def test_a_window_where_every_visit_was_a_skip_is_a_skip(conn, cfg):
+    a, b = add_card(conn, cfg), add_card(conn, cfg)
+    ev(conn, a, "impression", T0)
+    ev(conn, a, "dwell", T0 + 300, {"ms": 300})
+    ev(conn, a, "skip", T0 + 300)
+    ev(conn, a, "dwell", T0 + 5000, {"ms": 400})
+    ev(conn, a, "skip", T0 + 5000)
+    ev(conn, b, "impression", T0 + 9000)
+    learning.process_events(conn, cfg, now=at(5))
+    assert rewards(conn)[a] == 0.0
+
+
+def test_an_answer_keeps_a_window_from_being_a_skip(conn, cfg):
+    a, b = add_card(conn, cfg), add_card(conn, cfg)
+    ev(conn, a, "impression", T0)
+    ev(conn, a, "dwell", T0 + 800, {"ms": 800})
+    ev(conn, a, "skip", T0 + 800)
+    ev(conn, a, "answer", T0 + 900, {"choice": 0})
+    ev(conn, b, "impression", T0 + 1000)
+    learning.process_events(conn, cfg, now=at(5))
+    assert rewards(conn)[a] >= learning.default_reward_config().weights["answer"]
+
+
+def test_a_dislike_taken_back_at_once_does_not_close_the_window(conn, cfg):
+    a = add_card(conn, cfg)
+    ev(conn, a, "impression", T0)
+    ev(conn, a, "dislike", T0 + 500, {"on": True})
+    ev(conn, a, "dislike", T0 + 700, {"on": False})
+    learning.process_events(conn, cfg, now=at(1))
+    assert reward_rows(conn) == {}  # still on screen: no reward yet
+
+
+def test_a_dislike_taken_back_later_is_unlearned(conn, cfg):
+    a, b = add_card(conn, cfg), add_card(conn, cfg)
+    ev(conn, a, "impression", T0)
+    ev(conn, a, "dwell", T0 + 400, {"ms": 400})
+    ev(conn, a, "dislike", T0 + 500, {"on": True})
+    learning.process_events(conn, cfg, now=at(1))
+    assert reward_rows(conn)[a][1] == learning.default_reward_config().dislike_weight
+    ev(conn, a, "dislike", T0 + 60_000, {"on": False})
+    ev(conn, a, "dwell", T0 + 61_000, {"ms": 30_000})
+    ev(conn, b, "impression", T0 + 120_000)
+    learning.process_events(conn, cfg, now=at(3))
+    row = conn.execute("SELECT * FROM rewards WHERE card_id = ?", (a,)).fetchone()
+    assert row["signal"] is None and row["weight"] == 1 and row["reward"] > 0
+    story = conn.execute(
+        "SELECT s.disliked FROM stories s JOIN cards c USING (story_key) WHERE c.id = ?", (a,)
+    ).fetchone()
+    assert story["disliked"] == 0
+    assert weights(conn)[learning.BIAS][2] == pytest.approx(1.0, abs=0.01)  # not 4 + 1
+
+
+def test_familiarity_is_what_the_reader_knew_before_the_impression(conn, cfg):
+    """The knowledge model counts an impression on the pass that first sees it, maybe while
+    its window is still open. The reward must learn the familiarity from before that."""
+    cards = [add_card(conn, cfg, dirs=["src/app"]) for _ in range(2)]
+    other = [add_card(conn, cfg, dirs=["lib"]) for _ in range(2)]
+    ev(conn, cards[0], "impression", T0)
+    ev(conn, other[0], "impression", T0 + 1000)
+    t = T0 + 2000
+    learning.process_events(conn, cfg, now=at(1))
+    before = learning.familiarity_of(conn, cfg, "fixture", ["src/app"], {})
+    last = ev(conn, cards[1], "impression", t)
+    learning.process_events(conn, cfg, now=at(1.5))  # open window: counted, not rewarded
+    after = learning.familiarity_of(conn, cfg, "fixture", ["src/app"], {})
+    assert before != after, "the test needs a bucket change"
+    ev(conn, other[1], "impression", t + 1000)
+    learning.process_events(conn, cfg, now=at(3))
+    feats = {tuple(k) for k in json.loads(reward_of(conn, last)["features"])}
+    assert ("familiarity", before) in feats
+
+
+def test_an_event_at_the_next_impressions_millisecond_belongs_to_the_next_window(conn, cfg):
+    a, b = add_card(conn, cfg), add_card(conn, cfg)
+    first = ev(conn, a, "impression", T0)
+    ev(conn, a, "dwell", T0 + 500, {"ms": 500})
+    ev(conn, a, "impression", T0 + 1000)
+    ev(conn, a, "scroll_back", T0 + 1000)
+    ev(conn, b, "impression", T0 + 2000)
+    learning.process_events(conn, cfg, now=at(5))
+    assert (
+        reward_of(conn, first)["reward"] < learning.default_reward_config().weights["scroll_back"]
+    )
+
+
+def test_relearn_uses_the_cards_current_features(conn, cfg):
+    a, b = add_card(conn, cfg), add_card(conn, cfg)
+    liked_impression(conn, a, b)
+    learning.process_events(conn, cfg, now=at(5))
+    conn.execute(
+        "INSERT INTO card_features(card_id, feature, value) VALUES (?, 'kind', 'brand_new')", (a,)
+    )
+    conn.commit()
+    learning.relearn(conn, cfg, now=at(5))
+    w = weights(conn)
+    assert ("kind", "brand_new") in w
+    assert any(f == "familiarity" for f, _ in w)  # impression-time features stay
+
+
+def test_relearn_uses_the_snapshot_of_a_deleted_card(conn, cfg):
+    from gittok import gc
+
+    a, b = add_card(conn, cfg, persona="greybeard"), add_card(conn, cfg)
+    liked_impression(conn, a, b)
+    learning.process_events(conn, cfg, now=at(5))
+    with conn:
+        gc.delete_cards(conn, [a])
+    assert learning.relearn(conn, cfg, now=at(5)) == 1
+    assert ("persona", "greybeard") in weights(conn)
+
+
+def test_relearn_keeps_a_reset(conn, cfg):
+    a, b = add_card(conn, cfg, persona="greybeard"), add_card(conn, cfg)
+    liked_impression(conn, a, b)
+    learning.process_events(conn, cfg, now=at(5))
+    learning.reset_weights(conn, "persona", now=at(6))
+    learning.relearn(conn, cfg, now=at(7))
+    w = weights(conn)
+    assert not any(f == "persona" for f, _ in w) and ("tone", "wholesome-nerdy") in w
+    learning.reset_weights(conn, now=at(8))
+    assert learning.relearn(conn, cfg, now=at(9)) == 0 and weights(conn) == {}
+    # evidence after a reset is learned again: b's open window and the new one
+    c = add_card(conn, cfg)
+    liked_impression(conn, b, c, t=20 * MIN)
+    learning.process_events(conn, cfg, now=at(30))
+    assert learning.relearn(conn, cfg, now=at(30)) == 2
+
+
+def test_event_ids_are_not_reused_after_gc_deletes_the_newest_events(conn, cfg):
+    a, b = add_card(conn, cfg), add_card(conn, cfg)
+    old = ev(conn, a, "impression", T0)
+    ev(conn, b, "impression", T0 + 1000)
+    learning.process_events(conn, cfg, now=at(5))
+    conn.execute("DELETE FROM events")
+    conn.commit()
+    new = ev(conn, b, "impression", T0 + 10 * MIN)
+    assert new > old + 1
+    ev(conn, a, "impression", T0 + 11 * MIN)
+    learning.process_events(conn, cfg, now=at(20))
+    assert reward_of(conn, new) is not None
+
+
+def test_an_impression_that_cannot_be_scored_is_not_read_again(conn, cfg, monkeypatch):
+    a, b = add_card(conn, cfg), add_card(conn, cfg)
+    ev(conn, a, "impression", T0)
+    ev(conn, b, "impression", T0 + 1000)
+    calls = []
+
+    def boom(*args):
+        calls.append(1)
+        raise ValueError("odd event")
+
+    monkeypatch.setattr(learning, "outcome", boom)
+    learning.process_events(conn, cfg, now=at(5))
+    learning.process_events(conn, cfg, now=at(6))
+    assert len(calls) == 1
+    assert weights(conn) == {}  # nothing learned from it
+
+
+def test_impressions_of_deleted_cards_are_not_scanned(conn, cfg):
+    a, b = add_card(conn, cfg), add_card(conn, cfg)
+    ev(conn, "c_gone", "impression", T0 - 1000)
+    ev(conn, a, "impression", T0)
+    ev(conn, b, "impression", T0 + 1000)
+    got = learning._closed_impressions(conn, int(at(5).timestamp() * 1000))
+    assert [r["card_id"] for r, _, _ in got] == [a]
+
+
+def test_the_mix_prior_does_not_depend_on_the_scale_of_the_mix(conn, cfg):
+    import dataclasses
+
+    rc = learning.load_reward_config(cfg)
+    tones = cfg.defaults["tones"]
+    doubled = dataclasses.replace(
+        cfg, defaults={**cfg.defaults, "tones": {k: 2 * v for k, v in tones.items()}}
+    )
+    for tone in tones:
+        key = ("tone", tone)
+        a = learning.Model(cfg, rc, {}, NOW).prior(key)
+        b = learning.Model(doubled, rc, {}, NOW).prior(key)
+        assert a == pytest.approx(b), tone
+
+
+@pytest.mark.parametrize("bad", ["half_life_days: 0\n", "prior_sd:\n  tone: 0\n"])
+def test_a_zero_half_life_or_prior_sd_is_a_config_error(cfg, tmp_path, bad):
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "reward.yaml").write_text(bad)
+    with pytest.raises(learning.RewardConfigError, match="above 0"):
+        learning.load_reward_config(cfg)
+
+
+def test_a_disliked_meme_template_ranks_below_an_untried_one(conn, cfg):
+    """The brief breaks menu ties by learned weight, with 0 for a template with no
+    evidence. So the weights it gets must be centered on that: a disliked one below 0."""
+    from gittok import mcp_server
+
+    put_weight(conn, cfg, "meme_template", "drake", 0, 6)
+    put_weight(conn, cfg, "meme_template", "fine", 6, 0)
+    w = mcp_server.template_weights(conn, cfg)
+    assert w["drake"] < 0 < w["fine"]

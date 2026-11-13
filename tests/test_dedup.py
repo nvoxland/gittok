@@ -116,3 +116,14 @@ def test_rejected_lead_ranks_lower_and_recovers_after_the_window(conn, cfg):
     after = NOW + timedelta(days=cfg.settings.agent.subject_cooldown_days + 2)
     got = ledger.ranked(conn, cfg, "r", "hot_spot", after, 10)
     assert [x.path for x in got] == ["src/a.py", "lib/b.py"]
+
+
+def test_only_rejects_inside_the_window_lower_the_rank(conn, cfg):
+    """Old rejects are forgotten: a new reject after the window counts as the first."""
+    refresh(conn, sig("src/a.py", "lib/b.py"))
+    a = conn.execute("SELECT id FROM leads WHERE path = 'src/a.py'").fetchone()[0]
+    days = cfg.settings.agent.subject_cooldown_days
+    for _ in range(5):
+        ledger.mark_rejected(conn, a, NOW - timedelta(days=days + 10), window_days=days)
+    ledger.mark_rejected(conn, a, NOW - timedelta(days=1), window_days=days)
+    assert conn.execute("SELECT times_rejected FROM leads WHERE id = ?", (a,)).fetchone()[0] == 1

@@ -191,6 +191,22 @@ describe('Feed', () => {
 			expect(dwell.data!.ms_played).toBeLessThanOrEqual(3000);
 		});
 
+		it('sends the watch time of each visit, not the total so far', async () => {
+			vi.useFakeTimers();
+			const { events, io, el } = setupChat();
+			io.fire(el, true);
+			await tick();
+			await vi.advanceTimersByTimeAsync(2000);
+			setVisibility('hidden');
+			setVisibility('visible');
+			await vi.advanceTimersByTimeAsync(500);
+			io.fire(el, false);
+			const played = events.filter((e) => e.type === 'dwell').map((e) => e.data!.ms_played as number);
+			expect(played).toHaveLength(2);
+			expect(played[0]).toBeGreaterThan(1000);
+			expect(played[1]).toBeLessThanOrEqual(500);
+		});
+
 		it('leaving a beat card during its first beat is a skip, even after 1 s', async () => {
 			vi.useFakeTimers();
 			const { events, io, el } = setupChat();

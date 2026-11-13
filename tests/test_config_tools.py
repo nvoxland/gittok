@@ -56,6 +56,26 @@ async def test_config_files_lists_every_file_with_paths_and_rule(home_dir):
 
 
 @pytest.mark.anyio
+async def test_the_readers_guidance_is_a_local_markdown_file(home_dir):
+    """`local/guidance.md`: the user's own words for the card writers. Nothing is shipped."""
+    async with Client(server(home_dir)) as client:
+        rows = {r["file"]: r for r in data(await client.call_tool("config_files", {}))}
+        empty = data(await client.call_tool("get_config", {"file": "guidance"}))
+        local(home_dir, "guidance.md", "# My style\n\nKeep hooks short.\n")
+        got = data(await client.call_tool("get_config", {"file": "guidance"}))
+        ok = data(await client.call_tool("check_config", {}))
+        local(home_dir, "guidance.md", "x" * (overlay.GUIDANCE_MAX_CHARS + 1))
+        long = data(await client.call_tool("check_config", {}))
+    row = rows["guidance"]
+    assert row["shipped"] is None and row["local"] == "local/guidance.md"
+    assert "get_guidance" in row["merge"] and "# " in row["example"]
+    assert empty["effective"] is None
+    assert got["local"] == got["effective"] == "# My style\n\nKeep hooks short."
+    assert ok["ok"] is True and not any("guidance" in w for w in ok["warnings"])
+    assert long["ok"] is True and any("local/guidance.md" in w for w in long["warnings"])
+
+
+@pytest.mark.anyio
 async def test_get_config_gives_shipped_local_and_effective(home_dir):
     local(home_dir, "defaults.yaml", "categories: {memes: 0.05}\n")
     async with Client(server(home_dir)) as client:
@@ -174,7 +194,7 @@ def _skill(name: str) -> str:
 LOCAL_FILES = (
     "local/scan_defaults.yaml", "local/languages.yaml", "local/queries/", "local/file_types.yaml",
     "local/secrets.yaml", "local/claims.yaml", "local/meme_templates.yaml",
-    "local/defaults.yaml", "local/reward.yaml", "local/settings.yaml",
+    "local/defaults.yaml", "local/reward.yaml", "local/settings.yaml", "local/guidance.md",
 )  # fmt: skip
 
 

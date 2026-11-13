@@ -689,6 +689,7 @@ class Answer(BaseModel):
     card_id: str
     choice: int
     session: str | None = None
+    ts: int | None = None  # the client clock, like the other events; the server's when absent
 
 
 class StorySeen(BaseModel):
@@ -1026,7 +1027,12 @@ def create_app(
             c.execute(
                 "INSERT INTO events(card_id, type, ts, data, received_at) "
                 "VALUES (?, 'answer', ?, ?, ?)",
-                (body.card_id, int(now.timestamp() * 1000), db.dumps(data), db.now_iso()),
+                (
+                    body.card_id,
+                    body.ts if body.ts is not None else int(now.timestamp() * 1000),
+                    db.dumps(data),
+                    db.now_iso(),
+                ),
             )
         return result
 

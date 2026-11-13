@@ -109,6 +109,7 @@ GitTok ships its defaults in `config/`. The user's changes go in `local/` of the
 | "change the reward for a like", "make a 👎 count more", "forget old taste faster" | `local/reward.yaml` (`like_floor`, `like_weight`, `dislike_weight`, `half_life_days`) |
 | "more history cards", "fewer who-wrote-it cards", "more about code I do not know" | a rule on `angle` (`what`, `how`, `why`, `who`, `risk`) or `familiarity` (step B), not a file |
 | "use port 8010", "make 15 cards per run" | `local/settings.yaml` |
+| "keep hooks short", "I'm new to Clojure, explain its syntax", "no pop-culture jokes", "write like a senior engineer" | `local/guidance.md`: free Markdown for the card writers (no merge rule: edit the text, keep what the user wrote before). `get_config(file="guidance")` gives the current text |
 | a persona's voice, a mascot | The tools: `edit_persona`, `set_mascot` |
 
 2. **Read before you write.** Call `get_config(file, key)`: it gives the shipped value, the user's local value and the effective value. Tell the user the current value if they asked what it is.

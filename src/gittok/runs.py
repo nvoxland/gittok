@@ -254,7 +254,12 @@ def submit(conn, cfg, run_id: str, cards: list | dict, packet_id: str | None = N
             if r.reason not in _NOT_THE_CARDS_FAULT and (
                 lead := _cited_lead(cards[r.index], lead_refs)
             ):
-                ledger.mark_rejected(conn, lead["id"], datetime.now(UTC))
+                ledger.mark_rejected(
+                    conn,
+                    lead["id"],
+                    datetime.now(UTC),
+                    window_days=cfg.settings.agent.subject_cooldown_days,
+                )
         rej = [r.as_dict() for r in rejected]
         reasons = run["reject_reasons"] + [
             {**r, "submission": n, **({"packet": packet_id} if packet_id else {})} for r in rej

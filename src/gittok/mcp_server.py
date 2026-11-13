@@ -154,23 +154,35 @@ def _db(cfg: Config):
         conn.close()
 
 
-def mix_inputs(conn, cfg) -> dict:
+READER_GUIDANCE_HEAD = (
+    "## The reader's own guidance\n\n"
+    "The reader wrote this for you (`local/guidance.md`). Follow it for tone, style and "
+    "subject. Where it conflicts with a rule above (true facts, sources, the card JSON, the "
+    "length limits), the rule above wins."
+)
+
+
+def mix_inputs(conn, cfg, model=None) -> dict:
     """What the learner says the brief should make, as build_brief kwargs: category shares,
-    factors for formats, tones, personas, repos and angles, and the reward count."""
+    factors for formats, tones, personas, repos and angles, and the reward count. `model`
+    (one `learning.Model.load`) saves a load per value."""
+    model = model or learning.Model.load(conn, cfg)
     return {
-        "category_shares": learning.category_shares(conn, cfg),
-        "format_weights": learning.format_factors(conn, cfg),
-        "tone_weights": learning.value_factors(conn, cfg, "tone"),
-        "persona_weights": learning.value_factors(conn, cfg, "persona"),
-        "repo_weights": learning.value_factors(conn, cfg, "repo"),
-        "angle_weights": learning.value_factors(conn, cfg, "angle"),
-        "evidence": conn.execute("SELECT COUNT(*) FROM rewards").fetchone()[0],
+        "category_shares": learning.category_shares(conn, cfg, model=model),
+        "format_weights": learning.format_factors(conn, cfg, model=model),
+        "tone_weights": learning.value_factors(conn, cfg, "tone", model=model),
+        "persona_weights": learning.value_factors(conn, cfg, "persona", model=model),
+        "repo_weights": learning.value_factors(conn, cfg, "repo", model=model),
+        "angle_weights": learning.value_factors(conn, cfg, "angle", model=model),
+        "evidence": conn.execute("SELECT COUNT(*) FROM rewards WHERE weight > 0").fetchone()[0],
     }
 
 
-def template_weights(conn, cfg) -> dict[str, float]:
-    """Learned mean reward per meme template: breaks ties when the brief ranks a menu."""
-    return {t: m for t, (m, _) in learning.posterior_means(conn, cfg, "meme_template").items()}
+def template_weights(conn, cfg, model=None) -> dict[str, float]:
+    """Learned effect per meme template (log-odds; 0 = no evidence, below 0 = the reader
+    liked it less than average): breaks ties when the brief ranks a menu."""
+    model = model or learning.Model.load(conn, cfg)
+    return {t: model.effect(("meme_template", t)) for t in model.values("meme_template")}
 
 
 def recent_stories(conn, days: int = 30, limit: int = 30) -> list[dict]:
@@ -334,6 +346,7 @@ def _analyze_repos(conn, cfg: Config, names: list[str]) -> tuple[dict[str, dict]
 def build_brief(conn, cfg: Config, repo_signals: dict[str, dict], count: int):
     """The brief for `count` cards from the analyzed repos and everything the feed learned."""
     now = datetime.now(UTC)
+    model = learning.Model.load(conn, cfg, now)  # one load for every learned input below
     return brief_mod.build_brief(
         repo_signals=repo_signals,
         defaults=cfg.defaults,
@@ -342,14 +355,20 @@ def build_brief(conn, cfg: Config, repo_signals: dict[str, dict], count: int):
         packet_size=cfg.settings.agent.packet_size,
         recent=recent_stories(conn),
         meme_templates=memes.usable_templates(cfg),  # only templates that can be drawn
-        template_weights=template_weights(conn, cfg),
+        template_weights=template_weights(conn, cfg, model),
         rules=steering.list_rules(conn),
         unavailable_formats=unavailable_formats(cfg),
         no_mascot_repos=no_mascot_repos(cfg, repo_signals),
         max_illustrations=cfg.settings.render.max_illustrations_per_run,
         # One Thompson draw of the model ranks every lead of this brief: it explores.
         ledger=ledger.for_brief(
-            conn, cfg, sorted(repo_signals), now, analyses=repo_signals, rng=random.Random()
+            conn,
+            cfg,
+            sorted(repo_signals),
+            now,
+            analyses=repo_signals,
+            rng=random.Random(),
+            model=model,
         ),
         lead_ok=ledger.offerable(conn, cfg, now),
         variants=ledger.variants(conn, cfg, now),
@@ -360,7 +379,7 @@ def build_brief(conn, cfg: Config, repo_signals: dict[str, dict], count: int):
         novelty=knowledge.novelty_maps(conn, cfg, sorted(repo_signals)),
         intro_prefer={r: candidate_leads.dirs_with_core(conn, r) for r in repo_signals},
         filesets={r: cfg.fileset(r) for r in repo_signals},
-        **mix_inputs(conn, cfg),
+        **mix_inputs(conn, cfg, model),
     )
 
 
@@ -562,17 +581,19 @@ def _register_run_tools(
             pk = runs.get_packet(conn, run_id, packet_id)
         # Sections for every allowed format; packets from before `allowed` fall back to formats.
         shown = [f for fs in pk.get("allowed") or [] for f in fs] or pk["formats"]
-        return {
-            "guidance_markdown": brief_mod.guidance_markdown(
-                cfg.personas,
-                shown,
-                cfg.meme_templates,
-                cfg.mascots,
-                pk.get("templates"),
-                cfg.repos,
-                story_types=pk.get("story_types"),
-            )
-        }
+        text = brief_mod.guidance_markdown(
+            cfg.personas,
+            shown,
+            cfg.meme_templates,
+            cfg.mascots,
+            pk.get("templates"),
+            cfg.repos,
+            story_types=pk.get("story_types"),
+        )
+        mine = overlay.local_guidance(cfg.root)
+        if mine:
+            text = f"{text.rstrip()}\n\n{READER_GUIDANCE_HEAD}\n\n{mine}\n"
+        return {"guidance_markdown": text}
 
     @tool
     def get_card_schema(cfg: Config) -> dict:
