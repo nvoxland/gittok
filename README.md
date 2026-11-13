@@ -13,14 +13,6 @@ Some posts teach. Some are quizzes: spot the bug, guess who wrote it, guess when
 
 <p align="center"><img src="https://raw.githubusercontent.com/nvoxland/gittok/main/docs/images/feed-swipe.webp" width="320" alt="A GitTok feed on a phone, swiping up through five posts: a comic about garbage collection, a meme about a file deleted the day it was born, a group chat between two files, a spot-the-bug quiz, and a tier list of load-bearing files."></p>
 
-## Documentation
-
-**<https://nvoxland.github.io/gittok/>**
-
-- [Install](https://nvoxland.github.io/gittok/getting-started/install/) and [your first feed](https://nvoxland.github.io/gittok/getting-started/first-feed/)
-- [Guide](https://nvoxland.github.io/gittok/guide/repos/): repos, cards, steering, how the feed learns, privacy, configuration, the feed API
-- [Blog](https://nvoxland.github.io/gittok/blog/): what is new in each release
-
 ## Quick start
 
 macOS, [uv](https://docs.astral.sh/uv/), git and [Claude Code](https://claude.com/claude-code):
@@ -34,7 +26,10 @@ claude
 
 Approve the `gittok` MCP server, then ask Claude: "Add the repo at ~/src/myapp to GitTok." When the first posts are made, open the feed address that Claude gives you on your phone (or ask "what is the feed address?"), tap "Pair with a code", tell Claude the code, and start scrolling.
 
-## More
+## Documentation
 
-- [Security](https://github.com/nvoxland/gittok/blob/main/SECURITY.md): what GitTok protects and what it does not.
-- [Develop GitTok](https://github.com/nvoxland/gittok/blob/main/DEV.md).
+**<https://nvoxland.github.io/gittok/>**
+
+- [Install](https://nvoxland.github.io/gittok/getting-started/install/) and [your first feed](https://nvoxland.github.io/gittok/getting-started/first-feed/)
+- [Guide](https://nvoxland.github.io/gittok/guide/repos/): repos, cards, steering, how the feed learns, privacy, configuration, the feed API
+- [Blog](https://nvoxland.github.io/gittok/blog/): what is new in each release
