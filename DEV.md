@@ -103,12 +103,12 @@ An installed tool keeps your files in the GitTok directory that you made, not in
 
 A release is a pushed tag `vX.Y.Z`. The workflow `.github/workflows/release.yml` does the rest.
 
-One-time setup:
+One-time setup (PyPI trusted publishing: no token, no secret):
 
-1. Create the `gittok` project on PyPI and an API token for it.
-2. In the GitHub repository settings, add an environment named `pypi`, and add the token as the secret `PYPI_API_TOKEN`.
+1. On PyPI, under Your account → Publishing, add a trusted publisher (a pending one before the first release) for the project `gittok`: owner `nvoxland`, repository `gittok`, workflow `release.yml`, environment `pypi`.
+2. In the GitHub repository settings, add an environment named `pypi`. It needs no secret. Limit it to tags `v*` if you want only a release tag to publish.
 
-To use PyPI trusted publishing in place of a token: register this repository, the workflow `release.yml` and the environment `pypi` as a trusted publisher on PyPI, then remove the `password:` line from the `publish-pypi` job. The job already has `id-token: write`.
+The `publish-pypi` job has `id-token: write`, which trusted publishing uses to log in.
 
 For each release:
 
