@@ -10,6 +10,14 @@ You are the **driver**. You only hand out packet ids and close the run. Writers 
 
 Requires the `gittok` MCP server (tools named `mcp__gittok__*`). If those tools are missing, say so and help the user start the server, then stop. The server starts with the Claude Code session, from the `.mcp.json` of a GitTok directory (or of a GitTok clone). So the session must be open in that directory: the user starts `claude` there, approves the `gittok` MCP server, and checks `/mcp` for errors. If the user has no GitTok directory, `gittok init <dir>` makes one.
 
+## Driver overhead
+
+Discover only the tools needed for the current step; read their argument schemas once instead of printing the tool catalog. When structured output repeats the JSON text, inspect one copy. Keep run and packet metadata, outcomes, and errors; leave materials and card JSON with the workers.
+
+Keep a small ledger of the watch handle, batch and packet assignments, run id, accepted counts, failures, and remaining work. Start each worker with only its instructions and identifiers, without the driver's conversation history where the client supports this. Prefer fresh workers; if reuse is required, keep scouts and writers separate. Queue work within the client's concurrency limit, and close completed workers only if the client supports it.
+
+Use completion notifications while workers run. If waiting requires polling, wait about 30 seconds between checks, within the client's communication limits. Give milestone or blocker updates rather than narrating each wait. If a worker fails, record it and still finish the open run with failed or empty packets in the notes. An authorized retry must go through normal tool checks and preserve already accepted submissions; never reopen a finished run to retry it.
+
 ## Steps
 
 0. **Profile first.** Call `list_repos`. Look at the repos of this run: the repo the user named, else all of them. For each one with `profiled: false`: tell the user in one line that you profile it first so that GitTok learns which code is worth teaching, and that this takes a few minutes and some model quota. Then run the `gittok-profile-repo` skill for it (Skill tool, with the repo name as the argument; or read that skill and follow it) to its end, and come back here. Do not ask first. Never profile a repo here that has `profiled: true`, even when a hint offers a revision. If the profile fails or the user stops it, say so in one line and go on: GitTok uses its default rules for that repo.

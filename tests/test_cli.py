@@ -646,12 +646,24 @@ def test_watch_parent_calls_back_once_the_parent_is_gone():
     assert gone.wait(2)
 
 
-def test_watch_parent_stays_quiet_while_the_parent_lives():
+def test_watch_parent_stays_quiet_while_the_parent_lives(monkeypatch):
     import threading
 
+    parent_exited = threading.Event()
     gone = threading.Event()
+
+    def check_parent(_pid, _signal):
+        if parent_exited.is_set():
+            raise ProcessLookupError
+
+    monkeypatch.setattr(cli.os, "kill", check_parent)
     cli._watch_parent(os.getpid(), gone.set, interval=0.01)
-    assert not gone.wait(0.1)
+    try:
+        assert not gone.wait(0.1)
+    finally:
+        # Do not leave a daemon thread to collide with later tests' fake clocks.
+        parent_exited.set()
+        assert gone.wait(2)
 
 
 def test_port_free_sees_a_listening_socket():
@@ -1325,3 +1337,185 @@ def test_url_hint_gives_the_computer_address_when_phone_access_is_off(cfg, monke
     out = capsys.readouterr().out
     assert "http://127.0.0.1:9123" in out and "phone access is off" in out.lower()
     assert "192.168.1.5" not in out
+
+
+def test_feed_watch_codex_queues_the_signalled_request_for_its_thread(cfg, monkeypatch, capsys):
+    from datetime import UTC, datetime
+
+    from gittok import supply
+
+    log = cfg.settings.data_dir / supply.WANTS_FILE
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text("")
+    pending = _poll_steps(
+        monkeypatch, lambda: _append(log, supply.wants_line(datetime.now(UTC), 12))
+    )
+    calls = []
+
+    def queue(command, **kwargs):
+        calls.append((command, kwargs))
+        return cli.subprocess.CompletedProcess(command, 0, "Queued message.\n", "")
+
+    monkeypatch.setattr(cli.subprocess, "run", queue)
+    assert cli.main(["feed-watch", "--codex-thread", "session-123", "--poll", "0.05"]) == 0
+    assert pending == [] and len(calls) == 1
+    command, kwargs = calls[0]
+    assert command[:4] == ["codex", "queue", "--thread", "session-123"]
+    assert command[-1] == "--resume"
+    prompt = command[command.index("--message") + 1]
+    assert "$gittok-generate" in prompt and "12" in prompt
+    assert len(prompt.encode()) <= 1000
+    assert kwargs["cwd"] == cfg.root and kwargs["stdin"] == cli.subprocess.DEVNULL
+    assert kwargs["timeout"] == 30 and not kwargs.get("shell")
+    assert "queued" in capsys.readouterr().out.lower()
+
+
+def test_feed_watch_without_codex_never_calls_the_codex_daemon(cfg, monkeypatch):
+    from datetime import UTC, datetime
+
+    from gittok import supply
+
+    log = cfg.settings.data_dir / supply.WANTS_FILE
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text(supply.wants_line(datetime.now(UTC), 5))
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Claude's feed watch must not call Codex")
+
+    monkeypatch.setattr(cli.subprocess, "run", forbidden)
+    assert cli.main(["feed-watch"]) == 0
+
+
+@pytest.mark.parametrize("failure", ["missing", "timeout", "exit"])
+def test_feed_watch_codex_queue_failure_leaves_the_request_pending(
+    cfg, monkeypatch, capsys, failure
+):
+    from datetime import UTC, datetime
+
+    from gittok import supply
+
+    now = datetime.now(UTC)
+    log = cfg.settings.data_dir / supply.WANTS_FILE
+    log.parent.mkdir(parents=True, exist_ok=True)
+    original = supply.wants_line(now, 5)
+    log.write_text(original)
+
+    def queue(command, **kwargs):
+        if failure == "missing":
+            raise FileNotFoundError("codex not installed")
+        if failure == "timeout":
+            raise cli.subprocess.TimeoutExpired(command, 30)
+        return cli.subprocess.CompletedProcess(command, 1, "", "daemon unavailable")
+
+    monkeypatch.setattr(cli.subprocess, "run", queue)
+    assert cli.main(["feed-watch", "--codex-thread", "session-123"]) == 1
+    assert "could not queue" in capsys.readouterr().err.lower()
+    assert log.read_text() == original
+    assert cli._unanswered_signal(cfg, now)
+
+
+def test_feed_watch_codex_preserves_resume_warnings(cfg, monkeypatch, capsys):
+    from datetime import UTC, datetime
+
+    from gittok import supply
+
+    log = cfg.settings.data_dir / supply.WANTS_FILE
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text(supply.wants_line(datetime.now(UTC), 5))
+    warning = "WARNING: failed to resume thread; message remains queued"
+    monkeypatch.setattr(
+        cli.subprocess, "run",
+        lambda command, **kwargs: cli.subprocess.CompletedProcess(command, 0, "Queued.", warning),
+    )
+    assert cli.main(["feed-watch", "--codex-thread", "session-123"]) == 0
+    out = capsys.readouterr()
+    assert warning in out.err
+    assert "confirmed" not in out.out.lower()
+
+
+def test_feed_watch_codex_rearm_waits_for_a_new_signal_even_before_a_run_starts(
+    cfg, monkeypatch
+):
+    from datetime import UTC, datetime, timedelta
+
+    from gittok import supply
+
+    now = datetime.now(UTC)
+    log = cfg.settings.data_dir / supply.WANTS_FILE
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text(supply.wants_line(now, 5))
+    calls = []
+
+    def queue(command, **kwargs):
+        calls.append(command)
+        return cli.subprocess.CompletedProcess(command, 0, "Queued", "")
+
+    monkeypatch.setattr(cli.subprocess, "run", queue)
+    assert cli.main(["feed-watch", "--codex-thread", "session-123"]) == 0
+    assert len(calls) == 1
+    # Queueing is not a generation run. A restarted watch must still remember delivery.
+    assert cli._unanswered_signal(cfg, now)
+    pending = _poll_steps(
+        monkeypatch,
+        lambda: _append(log, supply.wants_line(now + timedelta(minutes=1), 12)),
+    )
+    assert cli.main(["feed-watch", "--codex-thread", "session-123"]) == 0
+    assert pending == [] and len(calls) == 2
+    assert "12" in calls[-1][calls[-1].index("--message") + 1]
+    # A delivery to one thread does not hide a request from another session.
+    assert cli.main(["feed-watch", "--codex-thread", "another-session"]) == 0
+    assert len(calls) == 3
+
+
+def test_codex_delivery_serializes_overlapping_watches(cfg, monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from datetime import UTC, datetime
+
+    signal = {"at": datetime.now(UTC), "want": 5}
+    entered, release, second_checked = threading.Event(), threading.Event(), threading.Event()
+    calls = []
+    receipt = cli._codex_queued_at
+
+    def checked(c, thread):
+        if entered.is_set():
+            second_checked.set()
+        return receipt(c, thread)
+
+    def queue(command, **kwargs):
+        calls.append(command)
+        entered.set()
+        assert release.wait(5)
+        return cli.subprocess.CompletedProcess(command, 0, "Queued", "")
+
+    monkeypatch.setattr(cli.subprocess, "run", queue)
+    monkeypatch.setattr(cli, "_codex_queued_at", checked)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(cli._report_signal, signal, cfg, "same-thread")
+        assert entered.wait(5)
+        second = pool.submit(cli._report_signal, signal, cfg, "same-thread")
+        try:
+            # An unlocked implementation reaches queue again while the first is in flight.
+            second_checked.wait(0.1)
+        finally:
+            release.set()
+        assert first.result(timeout=5) == second.result(timeout=5) == 0
+    assert len(calls) == 1
+    assert cli._codex_queued_at(cfg, "same-thread") == signal["at"]
+
+
+def test_codex_delivery_rechecks_receipt_before_queueing(cfg, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime.now(UTC)
+    calls = []
+    monkeypatch.setattr(cli.subprocess, "run", lambda command, **kw: (
+        calls.append(command) or cli.subprocess.CompletedProcess(command, 0, "Queued", "")
+    ))
+    assert cli._report_signal({"at": now, "want": 5}, cfg, "thread") == 0
+    # A watcher may have cached an older receipt before the first watcher delivered.
+    assert cli._report_signal({"at": now, "want": 5}, cfg, "thread") == 0
+    assert cli._report_signal({"at": now - timedelta(seconds=1), "want": 5}, cfg, "thread") == 0
+    assert len(calls) == 1
+    assert cli._report_signal({"at": now + timedelta(seconds=1), "want": 6}, cfg, "thread") == 0
+    assert len(calls) == 2

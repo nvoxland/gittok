@@ -19,6 +19,10 @@ Requires the `gittok` MCP server (tools named `mcp__gittok__*`). If those tools 
 
 `list_repos`, `survey_repo(repo)`, `list_dir(repo, path)`, `read_file(repo, path)`, `git_grep(repo, pattern)`, `test_detector(repo, rule, scan?, ignore?)`, `save_profile(repo, profile)`, `rule_stats(repo)`, `submit_facts(repo, head_sha, tool, facts)`, and the read-only `get_config(file, key)` (for `analyzers` when the survey cut its `how` texts). Do not call any other config tool (`add_repo`, `remove_repo`, `set_lan`, `feed_address`, `pair_device`, `add_rule`, `set_group`, `set_mascot`, `edit_persona`, `reset_defaults`). Never edit a file in `local/` or `config/` by hand (no file tools on them, no shell): the one thing you write is this repo's profile, and only through `save_profile`.
 
+## Tool output
+
+Discover tools by exact name or a narrow filter, and read argument schemas once. When structured output repeats the JSON text, inspect one copy. Keep full results in orchestration state when available and print only what the next decision needs. For detector tests, retain success, errors, hit counts, skipped rules, and enough sample code to judge relevance; expand suspicious samples. Summarize analyzer submissions by accepted counts and representative rejects. Do not hide failures or treat truncated output as success.
+
 ## What the profile holds
 
 - `stack`: a short list of names (framework, language, database).

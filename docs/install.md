@@ -75,9 +75,11 @@ only. No Claude installation or Claude subprocess is needed.
 Codex uses [project configuration](https://developers.openai.com/codex/config-reference/),
 [local skills](https://developers.openai.com/codex/skills/), and
 [trusted hooks](https://learn.chatgpt.com/docs/hooks).
-Startup instructions provide a fallback when hooks do not run. Idle refill depends
-on the client's background completion support; otherwise health is checked on the
-next user turn. See [Keeping the feed full](scheduling.md).
+Startup instructions provide a fallback when hooks do not run. The Codex feed watch
+uses `codex queue --resume` to request an idle refill in the same local thread.
+This needs a compatible Codex CLI and reachable daemon; clients without them check
+health on the next user turn. Claude's watch is unchanged.
+See [Keeping the feed full](scheduling.md).
 
 GitTok makes the rest when it needs it:
 

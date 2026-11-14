@@ -14,6 +14,8 @@ Requires the `gittok` MCP server (tools named `mcp__gittok__*`). If those tools 
 
 `get_taste_profile`, `feed_health`, `explain_weights(feature)`, `list_rules`, `add_rule`, `remove_rule`, `reset_defaults`, `coverage(repo)`, `recent_cards(limit, repo)`, `card_stats`, `list_repos`, `recent_runs(limit)`, `status`. Config tools: `add_repo`, `remove_repo`, `set_group`, `set_mascot`, `edit_persona`, `set_playback_speed`, `set_lan`, `feed_address`, `pair_device`. A config tool changes the user's own setup: call one only for a request the user made in this conversation. Config reading tools, for step D: `config_files`, `get_config(file, key)`, `check_config`.
 
+Discover only the tools needed for the request and read their argument schemas once. Avoid printing the entire catalog or repeated tool descriptions. When structured output duplicates JSON text, inspect one copy and retain the outcome, errors, and next steps.
+
 ## Steps
 
 "How is the feed doing": call `feed_health` and report backlog, runway_days, and image_share.
@@ -48,6 +50,8 @@ Answer these with the tools. Do not read the database or run the CLI for them.
 5. "Which repos do you have": `list_repos`. "Put X in group Y": `set_group`.
 
 ### M. Mascots
+
+Use a slug for the mascot `name`: letters, digits, `_`, and `-`, avoiding YAML boolean, null, or numeric values. Put the character description in `style`, not the identifier.
 
 A mascot is a small character that the illustration cards of one repo draw (`mascot_scene`, `comic`). It lives in the user's `local/mascots.yaml`; GitTok ships none. A repo with no mascot gets no mascot cards, and no card is rejected for it.
 

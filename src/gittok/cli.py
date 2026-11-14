@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import fcntl
+import hashlib
 import json
 import os
 import signal
@@ -29,6 +31,7 @@ from gittok import (
     learning,
     mcp_server,
     pair_codes,
+    private,
     profile,
     profiling,
     refit,
@@ -381,8 +384,8 @@ def feed_watch_hint(clone: bool) -> str:
     return (
         f"GitTok feed watch: start `{home.feed_watch_command(clone)}` with Bash "
         "run_in_background now (once per session). When it exits, run /gittok-generate, "
-        "then start the watch again. In Codex, follow .agents/GITTOK.md for the "
-        "shell background process and skill equivalents."
+        "then start the watch again. In Codex, follow .agents/GITTOK.md to add "
+        "--codex-thread and queue refill prompts through the daemon."
     )
 
 
@@ -399,8 +402,12 @@ def _feed_watch(args) -> int:
     old = _read_from(path, 0)
     start = old.rfind(b"\n") + 1  # a half-written last line is read again when it is whole
     before = supply.parse_wants(old[:start].decode(errors="replace"))
-    if before and _unanswered_signal(cfg, before[-1]["at"]):
-        return _report_signal(before[-1])  # written while no watch ran; no run has answered it
+    queued_at = _codex_queued_at(cfg, args.codex_thread) if args.codex_thread else None
+    if (
+        before and (queued_at is None or before[-1]["at"] > queued_at)
+        and _unanswered_signal(cfg, before[-1]["at"])
+    ):
+        return _report_signal(before[-1], cfg, args.codex_thread)
     while True:
         size = path.stat().st_size if path.exists() else 0
         if size < start:  # the file was replaced: read it from the top
@@ -410,8 +417,8 @@ def _feed_watch(args) -> int:
             whole = new.rfind(b"\n") + 1
             start += whole
             signals = supply.parse_wants(new[:whole].decode(errors="replace"))
-            if signals:
-                return _report_signal(signals[-1])
+            if signals and (queued_at is None or signals[-1]["at"] > queued_at):
+                return _report_signal(signals[-1], cfg, args.codex_thread)
         time.sleep(args.poll)
 
 
@@ -424,11 +431,79 @@ def _read_from(path: Path, start: int) -> bytes:
         return b""
 
 
-def _report_signal(signal: dict) -> int:
-    print(
-        f"{signal['at'].isoformat()} want {signal['want']} cards\n"
-        "The feed wants cards: run /gittok-generate, then restart the watch."
+def _codex_delivery_path(cfg, thread: str) -> Path:
+    # A thread name can contain path separators; it must never become a filesystem path.
+    key = hashlib.sha256(thread.encode()).hexdigest()
+    return cfg.settings.data_dir / "codex-wake" / f"{key}.txt"
+
+
+def _codex_queued_at(cfg, thread: str) -> datetime | None:
+    try:
+        at = datetime.fromisoformat(_codex_delivery_path(cfg, thread).read_text())
+    except (OSError, ValueError):
+        return None
+    return at if at.tzinfo is not None else None
+
+
+def _report_signal(signal: dict, cfg, codex_thread: str | None) -> int:
+    print(f"{signal['at'].isoformat()} want {signal['want']} cards", flush=True)
+    if codex_thread is None:
+        print("The feed wants cards: run /gittok-generate, then restart the watch.")
+        return 0
+    receipt = _codex_delivery_path(cfg, codex_thread)
+    try:
+        private.make_dir(receipt.parent)
+        with open(receipt.with_suffix(".lock"), "a", opener=private.opener) as lock:
+            # Serialize the external queue call and receipt write across watch processes.
+            # The startup receipt can be stale by the time a watcher sees a signal.
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            queued_at = _codex_queued_at(cfg, codex_thread)
+            if queued_at is not None and signal["at"] <= queued_at:
+                print("Refill signal already queued for this Codex thread.")
+                return 0
+            return _queue_codex_signal(signal, cfg, codex_thread, receipt)
+    except OSError as exc:
+        print(f"Could not lock Codex refill delivery: {exc}", file=sys.stderr)
+        return 1
+
+
+def _queue_codex_signal(signal: dict, cfg, codex_thread: str, receipt: Path) -> int:
+    """Queue and record one signal while the caller holds this thread's delivery lock."""
+    # Only parsed counts and fixed instructions enter the prompt, never repo or log text.
+    prompt = (
+        f"GitTok feed watch: the feed requested {signal['want']} cards. "
+        "Run $gittok-generate in this session's GitTok directory, then restart its Codex "
+        "feed watch as .agents/GITTOK.md describes. Recheck current need and run limits; "
+        "a stale signal must not force extra cards."
     )
+    command = ["codex", "queue", "--thread", codex_thread, "--message", prompt, "--resume"]
+    try:
+        result = subprocess.run(
+            command, cwd=cfg.root, stdin=subprocess.DEVNULL, capture_output=True,
+            text=True, timeout=30, check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        print(f"Could not queue Codex refill: {e}", file=sys.stderr)
+        return 1
+    if result.stdout.strip():
+        print(result.stdout.strip())
+    if result.stderr.strip():
+        print(result.stderr.strip(), file=sys.stderr)
+    if result.returncode:
+        print("Could not queue Codex refill; the feed request remains pending.", file=sys.stderr)
+        return 1
+    # Record delivery, not generation: rearming before a run starts must not queue twice.
+    try:
+        pending = receipt.with_suffix(".tmp")
+        with open(pending, "w", opener=private.opener) as f:
+            f.write(signal["at"].isoformat())
+        pending.replace(receipt)
+    except OSError as e:
+        print(f"Codex prompt queued, but could not record delivery: {e}. "
+              "Do not requeue this signal automatically.", file=sys.stderr)
+        return 1
+    # queue can succeed while --resume merely warns. Preserve warnings; do not claim a wake.
+    print("Codex refill prompt queued; thread resume requested.")
     return 0
 
 
@@ -1094,6 +1169,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--hint", action="store_true", help="print the line that arms the watch")
     p.add_argument("--poll", type=float, default=10.0, help="seconds between file checks")
+    p.add_argument(
+        "--codex-thread", metavar="THREAD",
+        help="queue a refill prompt with codex queue --resume for this thread when signalled",
+    )
     p.set_defaults(fn=_feed_watch)
     p = sub.add_parser(
         "structure", help="tree-sitter structure layer: status, and --prefetch for its grammars"

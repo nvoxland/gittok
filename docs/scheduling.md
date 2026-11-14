@@ -31,11 +31,23 @@ hooks with `/hooks`. The startup instructions run the same hints if hooks did no
 Use `$gittok-generate` in place of `/gittok-generate`; generation uses Codex
 subagents and inherits your session model, rather than selecting Claude models.
 
-The Codex runtime adapter starts the feed watch with its shell process tools.
-When the client delivers background completion, it generates and restarts the
-watch. A client that does not wake while idle checks health on the next user turn;
-it cannot promise automatic idle refill. Claude's `/loop` is specific to Claude.
-The limits below still apply to both clients.
+The Codex runtime adapter starts `gittok feed-watch --codex-thread "$CODEX_THREAD_ID"`
+in the background (with `uv run --quiet` in a source clone). When the feed asks
+for cards, the watch queues a fixed refill prompt with `codex queue --thread <id>
+--message <prompt> --resume`, then exits. The local Codex daemon is asked to resume
+the existing thread, so shell completion notifications are not needed to request
+an idle refill. Private delivery receipts under `data/codex-wake/` remember the
+last signal queued to each thread, including across watch restarts. A per-thread
+file lock covers the fresh receipt check, queue call and receipt write, so
+overlapping watches cannot queue the same signal twice. The agent generates cards and starts the same watch again.
+
+This requires a local Codex CLI with `queue --resume`, a nonempty thread id, and
+a reachable daemon. A successful queue can still print a resume warning; the
+agent preserves that warning rather than claiming it woke. A failed queue leaves
+the feed request pending. Clients without this capability use the plain watch
+and check health on the next user turn; automatic idle refill is unavailable there.
+Claude's watch is unchanged and does not invoke Codex. The limits below still apply
+to both clients.
 
 ## How the feed watch works
 
@@ -45,7 +57,7 @@ The limits below still apply to both clients.
 - It does not write a line when there are no repos, while a run that started in the last `agent.wake_cooldown_hours` is still open, when `agent.per_day_runs` runs started in the last 24 hours (a new run could not start), or within `agent.wake_cooldown_hours` of the last line.
 - The end of the feed is the exception to the last rule. When no unseen card is left and a run started after the last line, the server writes a new line at once. So a reader who reads every card does not wait for the cooldown. When no run answered the last line, a second line would say nothing new, and the server writes none.
 - `gittok feed-watch` checks the file every `--poll` seconds. It exits when a new line arrives. It also exits at once if the last line is newer than the newest run, because no run answered that line.
-- `gittok feed-watch --hint` prints the line that tells the session to start the watch.
+- `gittok feed-watch --hint` prints the line that tells the session to start the watch. `--codex-thread THREAD` adds one queue-and-resume attempt for that Codex thread when a signal arrives. The prompt contains only a parsed count and fixed instructions, never raw log text or repo contents.
 
 ## When cards are made without a request
 
