@@ -104,6 +104,7 @@ class ResearchSettings:
 
 @dataclass(frozen=True)
 class RenderSettings:
+    image_backend: str = "auto"  # auto: Codex agent, Claude Python; missing mflux: agent
     max_illustrations_per_run: int = 6
     # Where `gittok memes --prefetch` downloads meme templates and fonts from (memes.py).
     meme_source: str = "https://raw.githubusercontent.com/jacebrowning/memegen/main"
@@ -370,6 +371,8 @@ def _section(cls: type, data: Any, what: str, file: Path) -> Any:
         if isinstance(t, bool) or not isinstance(t, int | float) or t <= 0:
             raise ConfigError(f"{what}.git_timeout_s must be a number of seconds above 0 ({file})")
     if cls is RenderSettings:
+        if kwargs.get("image_backend", "auto") not in ("auto", "agent", "local"):
+            raise ConfigError(f"{what}.image_backend must be auto, agent or local ({file})")
         for name, default in (
             ("mflux_timeout_s", 120), ("mflux_load_timeout_s", 600), ("mflux_batch_idle_s", 10)
         ):

@@ -45,6 +45,8 @@
 	let error = $state<string | null>(null);
 	// HTTP 401: this device has no pairing cookie (a LAN device that never paired by code).
 	let unpaired = $state(false);
+	let pairing = $state(false);
+	let pairError = $state<string | null>(null);
 	// A failed next page or a failed "check for new cards": shown with a retry, never hidden.
 	let moreError = $state<string | null>(null);
 	let checkError = $state<string | null>(null);
@@ -61,6 +63,7 @@
 	let generating = $state(false);
 	let checking = $state(false);
 	let checkedEmpty = $state(false);
+	let endPanel: HTMLElement | undefined = $state();
 	let loadingMore = false;
 	let stories = $state<Story[]>([]);
 	let openStory = $state<number | null>(null);
@@ -118,10 +121,15 @@
 			else if (atEnd && !checking) void checkAgain(true);
 		};
 		document.addEventListener('visibilitychange', onVis);
+		const onShow = (event: PageTransitionEvent) => {
+			if (event.persisted && unpaired) void load();
+		};
+		window.addEventListener('pageshow', onShow);
 		void load();
 		void loadStories();
 		return () => {
 			document.removeEventListener('visibilitychange', onVis);
+			window.removeEventListener('pageshow', onShow);
 			batcher.stop();
 		};
 	});
@@ -150,6 +158,22 @@
 	function failed(e: unknown, set: (msg: string) => void) {
 		if (e instanceof ApiError && e.status === 401) unpaired = true;
 		else set(message(e));
+	}
+
+	async function pairWithCode(event: SubmitEvent) {
+		event.preventDefault();
+		if (pairing) return;
+		pairing = true;
+		pairError = null;
+		try {
+			const response = await fetch('/pair/code', { method: 'POST', credentials: 'same-origin' });
+			if (!response.ok) throw new Error('pairing request failed');
+			window.location.replace('/pair/wait');
+		} catch {
+			pairError = 'Could not get a pairing code. Try again.';
+		} finally {
+			pairing = false;
+		}
 	}
 
 	// The page opens on the first card, a full screen like every other. The top bar sits above
@@ -245,6 +269,8 @@
 			const feed = await fetchFeed(sentCursor ?? undefined, 20, filter);
 			const have = new Set(cards.map((c) => c.id));
 			const fresh = feed.cards.filter((c) => !have.has(c.id));
+			const endBounds = endPanel?.getBoundingClientRect();
+			const reveal = !quiet || !!(endBounds && endBounds.top < window.innerHeight && endBounds.bottom > 0);
 			clearAnswers(fresh.map((c) => c.id));
 			cards = [...cards, ...fresh];
 			nextCursor = feed.next_cursor;
@@ -252,6 +278,14 @@
 			atEnd = nextCursor === null;
 			generating = !!feed.generating && !feed.fromCache;
 			if (!quiet) checkedEmpty = fresh.length === 0;
+			if (fresh.length && reveal) {
+				// The end panel moves below the new cards. Scroll anchoring can otherwise keep
+				// it on screen, leaving the cards we just fetched above the reader.
+				await tick();
+				const first = [...document.querySelectorAll<HTMLElement>('.feed [data-card-id]')]
+					.find((element) => element.dataset.cardId === fresh[0].id);
+				first?.scrollIntoView?.({ behavior: 'instant', block: 'start' });
+			}
 		} catch (e) {
 			// Not "no new cards": the check itself failed.
 			if (!quiet) failed(e, (msg) => (checkError = msg));
@@ -299,9 +333,10 @@
 				Get a short code, then tell your coding agent the code ("pair code ...") on the computer that runs
 				GitTok. You do this once for each device.
 			</p>
-			<form method="post" action="/pair/code">
-				<button type="submit">Pair with a code</button>
+			<form method="post" action="/pair/code" onsubmit={pairWithCode}>
+				<button type="submit" disabled={pairing}>Pair with a code</button>
 			</form>
+			{#if pairError}<p>{pairError}</p>{/if}
 			<button type="button" onclick={load}>Try again</button>
 		</div>
 	{:else if error}
@@ -334,7 +369,7 @@
 			</section>
 		{/if}
 		{#if atEnd}
-			<section class="end" aria-label="End of feed">
+			<section class="end" aria-label="End of feed" bind:this={endPanel}>
 				<h2>You're all caught up</h2>
 				<p>You have seen every card for now.</p>
 				{#if generating}

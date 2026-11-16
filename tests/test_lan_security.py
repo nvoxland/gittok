@@ -546,6 +546,25 @@ def test_pair_wait_without_a_request_offers_a_new_code(lan_app):
     assert "Pair with a code" in r.text and TOKEN not in r.text
 
 
+@pytest.mark.parametrize("method,path", [("GET", "/pair/wait"), ("POST", "/pair/code")])
+def test_paired_device_cannot_go_back_to_a_pairing_page(lan_app, method, path):
+    r = call(lan_app, method, path, "192.168.1.9", cookies={"cs_lan": TOKEN},
+             follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/"
+    assert "cs_pair" not in r.headers.get("set-cookie", "")
+
+
+def test_every_pairing_page_loads_history_safe_navigation(lan_app):
+    lan = "192.168.1.9"
+    for path in ("/", "/pair/wait"):
+        r = call(lan_app, "GET", path, lan, headers={"Accept": "text/html"})
+        assert '<script src="/pair.js"></script>' in r.text
+    req = call(lan_app, "POST", "/pair/code", lan, follow_redirects=False).cookies["cs_pair"]
+    wait = call(lan_app, "GET", "/pair/wait", lan, cookies={"cs_pair": req})
+    assert 'data-pair-wait' in wait.text
+    assert '<noscript><meta http-equiv="refresh" content="3"></noscript>' in wait.text
+
+
 def test_pair_code_refuses_a_cross_origin_post(lan_app):
     r = call(
         lan_app, "POST", "/pair/code", "192.168.1.9", headers={"Origin": "http://evil.example"}

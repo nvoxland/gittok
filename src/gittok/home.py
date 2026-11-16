@@ -18,7 +18,8 @@ import yaml
 from .config import MARKER, claude_dir, is_clone, shipped_root
 
 SKILL_NAMES = ("gittok-generate", "gittok-steer", "gittok-profile-repo")
-AGENT_FILES = ("gittok-writer.md", "gittok-scout.md")  # subagent types the generate skill uses
+# subagent types the generate skill uses
+AGENT_FILES = ("gittok-writer.md", "gittok-scout.md", "gittok-illustrator.md")
 TEMPLATES = Path(__file__).parent / "templates"
 IGNORED = {".DS_Store"}  # Finder makes it; a directory with only this file is empty
 MARKER_HEAD = (

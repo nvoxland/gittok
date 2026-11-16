@@ -50,9 +50,11 @@ research:
   max_read_lines: 300
   redact_secrets: true         # mask secrets in repo text sent out (JWTs, keys, ...); false is UNSAFE
 render:
-  # Illustrations need mflux (the images extra; in a clone: uv sync --group images). With it
-  # installed, the feed server downloads the pre-quantized model below (about 6 GB) into
-  # data/models/ by itself; `gittok images --download` does the same by hand (docs/install.md).
+  # auto: Codex uses its native image tool; Claude uses mflux when installed. Missing mflux
+  # always falls back to the agent. agent/local override the harness default.
+  image_backend: auto
+  # With the Python backend, the feed server downloads this pre-quantized model into
+  # data/models/ by itself. Agent rendering never starts that download.
   mflux_model: z-image-turbo
   mflux_repo: filipstrand/Z-Image-Turbo-mflux-4bit
   mflux_revision: b3a8f31115a11f2f9e2fa0bfbc8d78dcc3e6568b

@@ -197,6 +197,8 @@ async def test_brief_skips_formats_whose_renderer_is_unavailable(
     monkeypatch.setattr(
         render, "default_renderers", lambda cfg: {"meme": Down(), "illustration": Down()}
     )
+    monkeypatch.setenv("GITTOK_AGENT", "claude")
+    monkeypatch.setattr(render, "worker_check", lambda model: None)
     cfg = make_config(fixture_repo, tmp_path)
     server = mcp_server.build_server(lambda: cfg)
     async with Client(server) as client:

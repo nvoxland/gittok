@@ -5,55 +5,38 @@ from __future__ import annotations
 import fcntl
 import functools
 import logging
-import shutil
-import struct
+import os
 import subprocess
 import sys
 import tempfile
 import threading
 from collections.abc import Callable
 from contextlib import closing, contextmanager
-from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
 import yaml
 
 from gittok import db, image_model, memes, private
+from gittok import render_jobs as jobs
+from gittok.render_jobs import (
+    RenderedImage,
+    RenderError,
+    RendererUnavailable,
+    illustration_requests,
+    png_size,
+)
+from gittok.render_jobs import retry_failed as retry_failed
 
 log = logging.getLogger("gittok.render")
 
-STALE_RENDERING = timedelta(minutes=30)
-RENDERING_SINCE = "rendering_since"  # key in cards.resolved while status is `rendering`
 
+class LocalRenderer(Protocol):
+    """Synchronous adapter; the shared request/completion API lives in render_jobs."""
 
-class RendererUnavailable(Exception):
-    """The backend is not reachable or not installed; try again later."""
-
-
-class RenderError(Exception):
-    """The backend ran and failed; the card cannot be rendered."""
-
-
-@dataclass
-class RenderedImage:
-    data: bytes
-    width: int
-    height: int
-    meta: dict[str, Any] = field(default_factory=dict)
-
-
-class Renderer(Protocol):
     def available(self) -> bool: ...
 
     def render(self, visual: dict, cfg, spec: dict) -> list[RenderedImage]: ...
-
-
-def png_size(data: bytes) -> tuple[int, int]:
-    if data[:8] != b"\x89PNG\r\n\x1a\n" or len(data) < 24:
-        raise RenderError("backend did not return a PNG")
-    return struct.unpack(">II", data[16:24])
 
 
 class MemeRenderer:
@@ -135,16 +118,14 @@ NOT_INSTALLED = (
 )
 
 
-def mascots_for(visual: dict, cfg, spec: dict) -> list:
-    """Mascots named by the visual, else the mascot of the card's first repo."""
-    names = list(visual.get("mascots") or [])
-    if not names:
-        repo = cfg.repos.get((spec.get("repos") or [None])[0])
-        if repo is not None and repo.mascot:
-            names = [repo.mascot]
-        elif repo is not None:
-            names = [m.name for m in cfg.mascots.values() if m.repo == repo.name][:1]
-    return [cfg.mascots[n] for n in names if n in cfg.mascots]
+def image_backend(cfg) -> str:
+    """Choose the session's illustration backend, without loading model weights."""
+    preference = cfg.settings.render.image_backend
+    if preference == "agent" or (
+        preference == "auto" and os.environ.get("GITTOK_AGENT") == "codex"
+    ):
+        return "agent"
+    return "agent" if worker_check(cfg.settings.render.mflux_model) else "local"
 
 
 def _start_batch_process(cfg, cancel, **kwargs):
@@ -194,18 +175,15 @@ class IllustrationRenderer:
     def render(self, visual: dict, cfg, spec: dict) -> list[RenderedImage]:
         if why := self.why_unavailable():
             raise RendererUnavailable(why)
-        scenes = visual["panels"] if visual.get("kind") == "comic" else [visual]
-        mascots = mascots_for(visual, cfg, spec)
-        seed0 = visual.get("seed", mascots[0].seed if mascots else 0)
-        style = ", ".join(m.style for m in mascots)
-        return [
-            self.generate(cfg, style, scene["prompt"], seed0 + i)
-            for i, scene in enumerate(scenes)
-        ]
+        return [self.generate_prompt(cfg, request["prompt"], request["seed"])
+                for request in illustration_requests(visual, cfg, spec)]
 
     def generate(self, cfg, style: str, scene: str, seed: int) -> RenderedImage:
-        r = cfg.settings.render
         prompt = ", ".join(p for p in (style, scene) if p) + ", no text, no letters"
+        return self.generate_prompt(cfg, prompt, seed)
+
+    def generate_prompt(self, cfg, prompt: str, seed: int) -> RenderedImage:
+        r = cfg.settings.render
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "out.png"
             if self._cancel.is_set():
@@ -255,7 +233,7 @@ def illustration_renderer(cfg) -> IllustrationRenderer:
     )
 
 
-def default_renderers(cfg) -> dict[str, Renderer]:
+def default_renderers(cfg) -> dict[str, LocalRenderer]:
     return {"meme": MemeRenderer(memes.store(cfg)), "illustration": illustration_renderer(cfg)}
 
 
@@ -266,6 +244,7 @@ def renderer_setup(cfg) -> dict:
     not_installed = worker_check(model)
     download = image_model.status(cfg)
     ready = download["state"] == "ready"
+    backend = image_backend(cfg)
     reason = None
     if not_installed:
         reason = f"{NOT_INSTALLED}: {not_installed}"
@@ -279,146 +258,29 @@ def renderer_setup(cfg) -> dict:
     return {
         "meme": MemeRenderer(memes.store(cfg)).setup(),
         "illustration": {
+            "backend": backend,
             "installed": not not_installed,
-            "available": not not_installed and ready,
-            "reason": reason,
+            "available": backend == "agent" or (not not_installed and ready),
+            "reason": None if backend == "agent" else reason,
+            "python_reason": reason,
             "download": download,
-            "command": None if not_installed or ready else "gittok images --download",
+            "command": None if backend == "agent" or not_installed or ready
+                       else "gittok images --download",
         },
     }
 
 
-def retry_failed(conn) -> int:
-    rows = conn.execute("SELECT id, resolved FROM cards WHERE status = 'render_failed'").fetchall()
-    with db.immediate(conn):
-        for r in rows:
-            resolved = db.loads(r["resolved"]) or {}
-            resolved.pop("render_error", None)
-            conn.execute(
-                "UPDATE cards SET status = 'pending_render', resolved = ? WHERE id = ?",
-                (db.dumps(resolved), r["id"]),
-            )
-    return len(rows)
-
-
-def _store_images(conn, cfg, card_id: str, kind: str, images: list[RenderedImage]) -> None:
-    folder = cfg.settings.data_dir / "assets" / card_id
-    private.make_dir(folder)
-    try:
-        paths = []
-        for n, img in enumerate(images):
-            (folder / f"{n}.png").write_bytes(img.data)
-            paths.append((n, f"assets/{card_id}/{n}.png", img))
-        with db.immediate(conn):
-            row = conn.execute("SELECT resolved FROM cards WHERE id = ?", (card_id,)).fetchone()
-            resolved = db.loads(row["resolved"]) or {}
-            resolved.pop("render_error", None)
-            resolved.pop(RENDERING_SINCE, None)
-            resolved["visual"] = {
-                "images": [f"/{p}" for _, p, _ in paths],
-                "width": images[0].width,
-                "height": images[0].height,
-            }
-            conn.execute("DELETE FROM assets WHERE card_id = ?", (card_id,))
-            for _, path, img in paths:
-                meta = {"width": img.width, "height": img.height, **img.meta}
-                conn.execute(
-                    "INSERT INTO assets(card_id, kind, path, meta) VALUES (?, ?, ?, ?)",
-                    (card_id, kind, path, db.dumps(meta)),
-                )
-            conn.execute(
-                "UPDATE cards SET status = 'ready', resolved = ? "
-                "WHERE id = ? AND status = 'rendering'",
-                (db.dumps(resolved), card_id),
-            )
-    except BaseException:
-        shutil.rmtree(folder, ignore_errors=True)
-        raise
-
-
-def _mark_failed(conn, card_id: str, error: str) -> None:
-    with db.immediate(conn):
-        row = conn.execute("SELECT resolved FROM cards WHERE id = ?", (card_id,)).fetchone()
-        if row is None:  # the card was deleted while it rendered
-            return
-        resolved = db.loads(row["resolved"]) or {}
-        resolved["render_error"] = error
-        resolved.pop(RENDERING_SINCE, None)
-        conn.execute(
-            "UPDATE cards SET status = 'render_failed', resolved = ? "
-            "WHERE id = ? AND status IN ('rendering', 'pending_render')",
-            (db.dumps(resolved), card_id),
-        )
-
-
-def _release(conn, card_id: str) -> None:
-    """Put a claimed card back to `pending_render` (renderer unavailable)."""
-    with db.immediate(conn):
-        row = conn.execute("SELECT resolved FROM cards WHERE id = ?", (card_id,)).fetchone()
-        if row is None:
-            return
-        resolved = db.loads(row["resolved"]) or {}
-        resolved.pop(RENDERING_SINCE, None)
-        conn.execute(
-            "UPDATE cards SET status = 'pending_render', resolved = ? "
-            "WHERE id = ? AND status = 'rendering'",
-            (db.dumps(resolved), card_id),
-        )
-
-
-def _claim(conn, card_id: str) -> bool:
-    """Atomically move one card from `pending_render` to `rendering`."""
-    since = datetime.now(UTC).isoformat()
-    with db.immediate(conn):
-        row = conn.execute("SELECT resolved FROM cards WHERE id = ?", (card_id,)).fetchone()
-        resolved = (db.loads(row["resolved"]) or {}) if row else {}
-        resolved[RENDERING_SINCE] = since
-        cur = conn.execute(
-            "UPDATE cards SET status = 'rendering', resolved = ? "
-            "WHERE id = ? AND status = 'pending_render'",
-            (db.dumps(resolved), card_id),
-        )
-    return cur.rowcount == 1
-
-
-def reset_stale_rendering(conn, max_age: timedelta = STALE_RENDERING) -> int:
-    """Cards left in `rendering` by a crashed pass go back to `pending_render`."""
-    cutoff = datetime.now(UTC) - max_age
-    rows = conn.execute("SELECT id, resolved FROM cards WHERE status = 'rendering'").fetchall()
-    n = 0
-    for r in rows:
-        resolved = db.loads(r["resolved"]) or {}
-        try:
-            since = datetime.fromisoformat(resolved.get(RENDERING_SINCE, ""))
-        except ValueError:
-            since = datetime.min.replace(tzinfo=UTC)  # no usable timestamp: treat as stale
-        if since < cutoff:
-            resolved.pop(RENDERING_SINCE, None)
-            with db.immediate(conn):
-                cur = conn.execute(
-                    "UPDATE cards SET status = 'pending_render', resolved = ? "
-                    "WHERE id = ? AND status = 'rendering'",
-                    (db.dumps(resolved), r["id"]),
-                )
-            n += cur.rowcount
-    return n
-
-
-def render_pending(conn, cfg, renderers: dict[str, Renderer], limit: int = 10) -> dict:
+def render_pending(conn, cfg, renderers: dict[str, LocalRenderer], limit: int = 10) -> dict:
     """One pass over `pending_render` cards, oldest first. Returns counts."""
     counts = {"rendered": 0, "failed": 0, "waiting": 0}
-    reset_stale_rendering(conn)
-    rows = conn.execute(
-        "SELECT id, spec FROM cards WHERE status = 'pending_render' "
-        "ORDER BY created_at, id LIMIT ?",
-        (limit,),
-    ).fetchall()
+    jobs.reset_stale_rendering(conn)
+    ids = jobs.pending_ids(conn, "local", limit=limit)
     up: dict[str, bool] = {}
-    for row in rows:
-        card_id = row["id"]
+    for card_id in ids:
         claimed = False
         try:
-            spec = db.loads(row["spec"])
+            request = jobs.request(conn, cfg, card_id, backend="local")
+            spec = request.spec
             visual = spec["visual"]
             kind = visual["kind"]
             key = RENDERER_KEY[kind]
@@ -431,19 +293,19 @@ def render_pending(conn, cfg, renderers: dict[str, Renderer], limit: int = 10) -
             if not up[key]:
                 counts["waiting"] += 1
                 continue
-            if not _claim(conn, card_id):  # another pass took it
+            if not jobs.claim(conn, request):  # another pass took it
                 continue
             claimed = True
             images = renderer.render(visual, cfg, spec)
-            _store_images(conn, cfg, card_id, kind, images)
+            jobs.complete(conn, cfg, jobs.RenderCompletion(request, tuple(images)), claimed=True)
         except RendererUnavailable:
             up[key] = False
             counts["waiting"] += 1
             if claimed:
-                _release(conn, card_id)
+                jobs.release(conn, card_id)
         except Exception as e:  # noqa: BLE001 - any failure fails this card, not the pass
             log.warning("render failed for %s: %s", card_id, e)
-            _mark_failed(conn, card_id, str(e) or type(e).__name__)
+            jobs.fail(conn, card_id, str(e) or type(e).__name__)
             counts["failed"] += 1
         else:
             counts["rendered"] += 1
@@ -453,12 +315,14 @@ def render_pending(conn, cfg, renderers: dict[str, Renderer], limit: int = 10) -
 class RenderWorker:
     """Background thread that runs `render_pending` every `worker_interval_s`."""
 
-    def __init__(self, get_config: Callable[[], Any], renderers: dict[str, Renderer] | None = None):
+    def __init__(
+        self, get_config: Callable[[], Any], renderers: dict[str, LocalRenderer] | None = None,
+    ):
         self._get_config = get_config
         self._renderers = renderers
         self._stop = threading.Event()
         self._active_lock = threading.Lock()
-        self._active: dict[str, Renderer] = {}
+        self._active: dict[str, LocalRenderer] = {}
         self._active_key = None
         self._thread = threading.Thread(target=self._run, name="render-worker", daemon=True)
 
@@ -498,7 +362,7 @@ class RenderWorker:
                     renderers = self._active
                 if self._renderers is None:  # the server's own worker, not a test's
                     image_model.maybe_start(
-                        cfg, installed=worker_check(cfg.settings.render.mflux_model) is None
+                        cfg, installed=image_backend(cfg) == "local"
                     )
                 with closing(db.open_db(cfg.settings.data_dir / "gittok.db")) as conn:
                     counts = render_pending(conn, cfg, renderers)

@@ -12,12 +12,24 @@ GitTok is a Python tool that you install once. It then works in a **GitTok direc
 ## Install GitTok
 
 ```bash
-uv tool install --python 3.13 'gittok[images]'
+uv tool install --python 3.13 gittok    # Claude Code: see "Better images" below
 ```
 
-Default meme templates and fonts are included and work offline.
+!!! tip "Better images in Claude Code"
+    Claude Code has no image tool. Without extras, Claude draws the illustration and comic posts as simple flat SVG pictures. On Apple silicon, install with the `images` extra for real illustrations:
 
-The `images` extra adds [mflux](https://github.com/filipstrand/mflux), which draws the illustration and comic posts. It works on Apple silicon only, and it is a large download: about 1 GB now, plus a 6 GB model that GitTok downloads by itself in the background (see [Advanced setup](../install.md#illustration-renderer-mflux)). On a Mac that is not Apple silicon, the extra adds nothing. Without it, all the other posts still work.
+    ```bash
+    uv tool install --python 3.13 'gittok[images]'
+    ```
+
+    It adds [mflux](https://github.com/filipstrand/mflux), about 1 GB, plus a 6 GB model that GitTok downloads by itself in the background (see [Advanced setup](../install.md#illustration-renderer-mflux)). On a Mac that is not Apple silicon, the extra adds nothing. Codex uses its own image tool by default. To use mflux in Codex instead, install with the extra and ask Codex: "Use local image generation." Or set it yourself in `local/settings.yaml` of your GitTok directory:
+
+    ```yaml
+    render:
+      image_backend: local
+    ```
+
+Default meme templates and fonts are included and work offline. Every kind of post works with or without the extra.
 
 ## Make a GitTok directory
 

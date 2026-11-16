@@ -6,7 +6,7 @@ You need macOS, `uv`, `git`, and a coding agent. GitTok supports Claude Code and
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh        # if you do not have uv yet
-uv tool install --python 3.13 'gittok[images]'
+uv tool install --python 3.13 gittok   # Claude Code: see "Better images" below
 gittok --version
 cd ~/gittok                   # a new or empty directory of your choice (make it first)
 gittok init .
@@ -15,13 +15,21 @@ claude                        # approve the MCP server `gittok` when Claude Code
 
 The wheel is also attached to each GitHub release of the repository: `uv tool install --python 3.13 ./gittok-<version>-py3-none-any.whl` installs such a file. A git URL install (`uv tool install git+<url>`) does not work, because the web build is not committed. `DEV.md` says how to build the wheel in a clone.
 
-The `images` extra adds mflux, which draws the illustration and comic cards and the persona avatars. It works on Apple silicon only, and it is large (torch and mlx, about 1 GB, plus a 6 GB model that GitTok downloads by itself; see "Illustration renderer"). On a Mac that is not Apple silicon the extra adds nothing. For a smaller install without illustrated cards, leave the extra out:
+!!! tip "Better images in Claude Code"
+    Claude Code has no image tool. Without extras, Claude draws the illustration and comic posts as simple flat SVG pictures. On Apple silicon, install with the `images` extra for real illustrations:
 
-```bash
-uv tool install --python 3.13 gittok
-```
+    ```bash
+    uv tool install --python 3.13 'gittok[images]'
+    ```
 
-GitTok then does not ask for the illustration and comic formats. The tree-sitter structure layer and ast-grep rules come with every install.
+    It adds [mflux](https://github.com/filipstrand/mflux), about 1 GB, plus a 6 GB model that GitTok downloads by itself in the background (see "Illustration renderer" below). On a Mac that is not Apple silicon, the extra adds nothing. Codex uses its own image tool by default. To use mflux in Codex instead, install with the extra and ask Codex: "Use local image generation." Or set it yourself in `local/settings.yaml` of your GitTok directory:
+
+    ```yaml
+    render:
+      image_backend: local
+    ```
+
+Without the extra, illustrations and comics use the coding agent (see "Agent images"): Codex uses its native image tool, and in Claude a subagent draws each image as SVG that GitTok renders. That art is simpler than a model's, but it needs no download. With the extra, Claude uses mflux, which also draws the persona avatars. GitTok never switches to a separate paid API automatically. The tree-sitter structure layer and ast-grep rules come with every install.
 
 The tool alone does nothing. GitTok works in a **GitTok directory**, and only while a Claude Code or Codex session is open in it. Nothing is installed outside the directory: no user-wide MCP entry, no files in your home folder, and no background service.
 
@@ -285,11 +293,37 @@ gittok memes                # which templates are downloaded, and which are miss
 
 The default assets stay read-only in the installed package. Extra downloads go to `data/memes/` of the GitTok directory and take precedence over bundled assets. Only template files are downloaded; no card text leaves your computer. `settings.render.meme_source` names their source. A custom template must be a memegen template id. The SessionStart hint offers a download only for configured templates that are unavailable.
 
+## Agent images
+
+`render.image_backend` defaults to `auto`: Codex creates illustrations and comic panels
+with its native image tool; Claude uses the Python renderer when it is installed, and
+otherwise draws simple flat SVG images through its `gittok-illustrator` subagent.
+Set `image_backend: agent` or `image_backend: local` under `render` in
+`local/settings.yaml` to choose explicitly. If mflux is unavailable, either harness
+falls back to agent images, even with `local` selected. Meme templates and fonts
+are bundled and use the same lightweight renderer in both modes.
+
+The generation driver gets the scene prompts after the writers submit cards,
+and the images go through GitTok's normal asset pipeline. In Codex the driver
+makes them with its native image tool. Claude Code has no image tool: the driver
+starts one `gittok-illustrator` subagent (Sonnet) for each card. It draws each
+panel as SVG and submits it with `submit_images(card_id, svgs=...)`, and GitTok
+renders it to PNG at the panel size with resvg. An SVG may only refer to its own
+parts: GitTok rejects `<image>`, `<style>`, `<script>`, and any outside file or
+URL. Both paths use the same mascot appearance and panel order. If image
+generation fails, the driver reports it and leaves those cards pending; it can
+retry them later with `get_image_requests(run_id)`. No local model
+is downloaded for agent rendering. The `gittok avatars` CLI remains a local Python
+renderer command; personas have SVG avatars until PNG avatars are generated.
+
+After upgrading an existing GitTok directory, run `gittok update .` and restart
+Codex so its MCP launch identifies the harness and picks the Codex default.
+
 ## Illustration renderer (mflux)
 
-Without this renderer GitTok makes no illustration cards and no mascot; everything else works. When it is installed, Claude gives each new repo a mascot (`docs/config.md`, "Mascots").
+This renderer is optional. Without it, illustrations come from the coding agent (see "Agent images"); in Claude Code they are simple SVG drawings. Claude gives each new repo a mascot either way (`docs/config.md`, "Mascots").
 
-Illustration and comic cards, and the persona avatars, are drawn by [mflux](https://github.com/filipstrand/mflux) on Apple Silicon. Install it with the `images` extra:
+With the Python backend, illustration and comic cards, and the persona avatars, are drawn by [mflux](https://github.com/filipstrand/mflux) on Apple Silicon. Install it with the `images` extra:
 
 ```bash
 uv sync --group images                                                   # in a clone
@@ -298,7 +332,7 @@ uv tool install --force --python 3.13 'gittok[images]'                   # insta
 
 The batch uses mflux's Python API, so mflux must be installed in GitTok's own environment through the `images` extra; an mflux command on your PATH from somewhere else is not enough.
 
-**The model downloads by itself.** When the renderer is installed, the feed server downloads a pre-quantized 4-bit model, [filipstrand/Z-Image-Turbo-mflux-4bit](https://huggingface.co/filipstrand/Z-Image-Turbo-mflux-4bit) (about 6 GB, pinned to one revision), in the background, into `data/models/` of the GitTok directory. Nothing else is written outside the directory. A stopped download resumes the next time the server runs. Until the model is there, illustration cards wait (`pending_render`) and the brief makes no `mascot_scene` or `comic` cards; everything else goes on. A failed download is not retried by itself for an hour.
+**The model downloads by itself.** When the Python backend is selected and the renderer is installed, the feed server downloads a pre-quantized 4-bit model, [filipstrand/Z-Image-Turbo-mflux-4bit](https://huggingface.co/filipstrand/Z-Image-Turbo-mflux-4bit) (about 6 GB, pinned to one revision), in the background, into `data/models/` of the GitTok directory. Nothing else is written outside the directory. A stopped download resumes the next time the server runs. Until the model is there, illustration cards wait (`pending_render`) and the brief makes no `mascot_scene` or `comic` cards; everything else goes on. A failed download is not retried by itself for an hour.
 
 To download it by hand, with progress (it does the same thing):
 

@@ -18,11 +18,18 @@ Some posts teach. Some are quizzes: spot the bug, guess who wrote it, guess when
 macOS, [uv](https://docs.astral.sh/uv/), git and [Claude Code](https://claude.com/claude-code) or [Codex](https://developers.openai.com/codex/):
 
 ```bash
-uv tool install --python 3.13 'gittok[images]'
+uv tool install --python 3.13 gittok    # Claude Code: see "Better images" below
 mkdir ~/gittok && cd ~/gittok
 gittok init .
 claude
 ```
+
+> **Better images in Claude Code.** Claude Code has no image tool, so without extras Claude draws the illustration and comic posts as simple flat SVG pictures. On Apple silicon, install with the `images` extra for real illustrations: `uv tool install --python 3.13 'gittok[images]'`. It adds [mflux](https://github.com/filipstrand/mflux) (about 1 GB) and a 6 GB model that GitTok downloads by itself. Codex uses its own image tool by default. To use mflux in Codex instead, install with the extra and ask Codex: "Use local image generation." Or set it yourself in `local/settings.yaml` of your GitTok directory:
+>
+> ```yaml
+> render:
+>   image_backend: local
+> ```
 
 Approve the `gittok` MCP server, then ask Claude: "Add the repo at ~/src/myapp to GitTok." When the first posts are made, open the feed address that Claude gives you on your phone (or ask "what is the feed address?"), tap "Pair with a code", tell Claude the code, and start scrolling.
 

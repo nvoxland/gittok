@@ -174,6 +174,23 @@ Rendering tests inject `FakeRunner`; lifecycle tests use `real_render_runner`
 only with small Python child processes. Never use a real model to test
 executable discovery, missing dependencies, timeouts, or process cleanup.
 
+## Image requests and completions
+
+`render_jobs.py` is the backend-neutral card rendering interface. Both the local
+worker (`render.py`) and agent handoff (`agent_images.py`) get a `RenderRequest`
+with `request(conn, cfg, card_id, backend=...)`, then publish a `RenderCompletion`
+through `complete(conn, cfg, completion)`. Requests contain the card identity,
+assignment and ordered image prompts; completions contain the resulting image bytes.
+The shared module builds prompts, validates panel counts and PNG data, claims work,
+stores assets, and makes the card ready. Successful completion is idempotent.
+
+The local adapter calls `claim` before expensive generation and completes with
+`claimed=True`. Agent tools return image bytes later; `complete` claims atomically
+when they arrive. Failed writes release the claim for retry. Backend selection,
+model execution, file staging and data URL transport stay in the adapters; the
+common module imports no model code and invokes no agent tools. Test both adapters
+with fake image bytes; never use a real model to verify this lifecycle.
+
 Batch rendering uses `render_batch.py` for process/lock lifetime and the isolated
 `mflux_worker.py` for model reuse. A batch retains its text encoder and transformer,
 clears temporary caches after each image, and exits after the configured idle gap.

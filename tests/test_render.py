@@ -422,9 +422,11 @@ def test_unknown_kind_fails_that_card_only(fixture_repo, tmp_path):
 
 
 def test_mark_failed_tolerates_deleted_card(fixture_repo, tmp_path):
+    from gittok import render_jobs
+
     cfg = render_cfg(fixture_repo, tmp_path)
     with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
-        render._mark_failed(conn, "c_gone", "boom")
+        render_jobs.fail(conn, "c_gone", "boom")
 
 
 def test_illustration_with_no_mascot_draws_the_scene_alone(fixture_repo, tmp_path, batch):
@@ -449,7 +451,9 @@ def test_renderer_setup_says_what_is_missing_and_how_it_gets_there(fixture_repo,
     assert render.renderer_setup(cfg)["meme"]["available"] is True  # bundled
     monkeypatch.setattr(render, "worker_check", lambda model: "No module named 'mflux'")
     ill = render.renderer_setup(cfg)["illustration"]
-    assert ill["installed"] is False and ill["command"] is None and "mflux" in ill["reason"]
+    assert ill["installed"] is False and ill["command"] is None
+    assert ill["backend"] == "agent" and ill["available"] is True
+    assert ill["reason"] is None and "mflux" in ill["python_reason"]
 
 
 def test_low_ram_mode_and_timeout_can_be_overridden(fixture_repo, tmp_path, batch):

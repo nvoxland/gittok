@@ -16,6 +16,7 @@ import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from importlib.resources import files
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlsplit
@@ -139,7 +140,10 @@ _CODE_FORM = (
 
 
 def _pair_page(body: str, head: str = "") -> str:
-    return f"{_PAIR_HEAD}{head}<main>{_BRAND}{body}</main></html>"
+    return (
+        f"{_PAIR_HEAD}{head}<main>{_BRAND}{body}</main>"
+        '<script src="/pair.js"></script></html>'
+    )
 
 
 PAIR_HTML = _pair_page(
@@ -151,38 +155,9 @@ PAIR_HTML = _pair_page(
 )
 
 
-# The copy button of the wait page. A file, not an inline script: the CSP allows scripts of
-# this server only. Plain HTTP on the LAN is not a secure context, so `navigator.clipboard`
-# is missing there; selecting a text field and `execCommand('copy')` still works.
-PAIR_JS = """document.addEventListener('click', function (e) {
-  var b = e.target.closest('button[data-copy]');
-  if (!b) return;
-  var text = b.getAttribute('data-copy');
-  function done(ok) {
-    b.textContent = ok ? 'Copied \u2713' : 'Select the code and copy it';
-    if (ok) b.classList.add('done');
-  }
-  function fallback() {
-    var t = document.createElement('textarea');
-    t.value = text;
-    t.setAttribute('readonly', '');
-    t.style.position = 'fixed';
-    t.style.opacity = '0';
-    document.body.appendChild(t);
-    t.select();
-    t.setSelectionRange(0, text.length);
-    var ok = false;
-    try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
-    document.body.removeChild(t);
-    done(ok);
-  }
-  if (navigator.clipboard && window.isSecureContext) {
-    navigator.clipboard.writeText(text).then(function () { done(true); }, fallback);
-  } else {
-    fallback();
-  }
-});
-"""
+# Served before pairing and kept as a file so the navigation behavior is tested directly.
+# The CSP allows same-origin files rather than inline scripts.
+PAIR_JS = files("gittok").joinpath("static", "pair.js").read_text(encoding="utf-8")
 
 
 def pair_wait_html(code: str | None) -> str:
@@ -201,11 +176,10 @@ def pair_wait_html(code: str | None) -> str:
         f'<div class="well"><span class="label">pair code</span>'
         f'<span class="code">{shown}</span></div>'
         f'<button type="button" class="copy" data-copy="pair code {shown}">Copy</button>'
-        '<div class="status"><span class="dot"></span>'
+        '<div class="status" data-pair-wait><span class="dot"></span>'
         "<span>Waiting for Claude to approve. This page opens the feed by itself.</span></div>"
-        '<p class="muted">The code lasts 10 minutes.</p>'
-        '<script src="/pair.js"></script>',
-        head='<meta http-equiv="refresh" content="3">',
+        '<p class="muted">The code lasts 10 minutes.</p>',
+        head='<noscript><meta http-equiv="refresh" content="3"></noscript>',
     )
 
 
@@ -826,9 +800,11 @@ def create_app(
         return _error_json(exc.status_code, exc.code, exc.detail)
 
     @app.post("/pair/code")
-    def pair_code():
+    def pair_code(request: Request):
         if not lan_token:
             raise ApiError(404, "phone_access_off", "phone access is off")
+        if hmac.compare_digest(request.cookies.get(LAN_COOKIE, "").encode(), lan_token.encode()):
+            return RedirectResponse("/", status_code=303, headers=PAIR_PAGE_HEADERS)
         with conn() as c:
             try:
                 req = pair_codes.request(c, datetime.now(UTC))
@@ -843,11 +819,13 @@ def create_app(
     def pair_wait(request: Request):
         if not lan_token:
             raise ApiError(404, "phone_access_off", "phone access is off")
+        if hmac.compare_digest(request.cookies.get(LAN_COOKIE, "").encode(), lan_token.encode()):
+            return RedirectResponse("/", status_code=303, headers=PAIR_PAGE_HEADERS)
         rid = request.cookies.get(PAIR_COOKIE) or ""
         with conn() as c:
             st = pair_codes.status(c, rid, datetime.now(UTC)) if rid else {"state": "unknown"}
         if st["state"] == "approved":
-            resp = RedirectResponse("/", status_code=303)
+            resp = RedirectResponse("/", status_code=303, headers=PAIR_PAGE_HEADERS)
             resp.set_cookie(
                 LAN_COOKIE, lan_token, max_age=LAN_COOKIE_MAX_AGE, httponly=True, samesite="lax"
             )

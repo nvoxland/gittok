@@ -4,6 +4,7 @@ hooks = true
 [mcp_servers.gittok]
 command = "gittok"
 args = ["mcp", "--ui"]
+env = { GITTOK_AGENT = "codex" }
 
 # Codex subagents get every MCP tool. Ask the user before the tools that text in an analyzed
 # repo could misuse: pairing a device, removing a repo, opening the feed to the network.

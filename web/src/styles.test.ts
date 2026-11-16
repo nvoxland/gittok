@@ -4,6 +4,11 @@ import { describe, expect, it } from 'vitest';
 
 const read = (rel: string) => readFileSync(`${process.cwd()}/src/${rel}`, 'utf8');
 const style = (rel: string) => read(rel).split('<style>')[1] ?? '';
+
+it('suppresses horizontal overscroll navigation without disabling card swipes', () => {
+	expect(rule(read('app.css'), 'html')).toContain('overscroll-behavior-x: none');
+	expect(rule(read('app.css'), 'html,\nbody')).toContain('overscroll-behavior-x: none');
+});
 /** The body of the first rule whose selector is `sel` (at the start of a line). */
 function rule(css: string, sel: string): string {
 	const esc = sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

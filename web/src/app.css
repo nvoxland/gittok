@@ -48,12 +48,14 @@
 /* No pull-to-refresh or bounce at the top: scrolling back up past the first card reloaded the feed. */
 html {
 	overscroll-behavior-y: none;
+	overscroll-behavior-x: none;
 }
 
 html,
 body {
 	/* Also on body: browsers differ in which element they read for the page scroller. */
 	overscroll-behavior-y: none;
+	overscroll-behavior-x: none;
 	margin: 0;
 	padding: 0;
 	min-height: 100dvh;

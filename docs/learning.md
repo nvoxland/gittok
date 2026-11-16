@@ -180,7 +180,7 @@ Rules still win: caps and boosts work as before. With no evidence nothing change
 
 ### Image share target
 
-`config/defaults.yaml` has `visual_mix.image_min_share` (default 0.5). Image formats are the formats whose visual kind is `meme`, `illustration`, `comic`, `chart` or `diagram`. The target is soft. Each packet tells its writer how many of its cards should use an image format: the share times the packet's cards, but never more than the number of its cards whose format list has an image format. No format is forced. A format that cannot be drawn is not in any list: `meme` without the meme server, `mascot_scene` and `comic` without the illustration renderer or for a repo with no mascot. So with no renderer the target counts only `chart` and `diagram`, which the client draws. Without `visual_mix` the target is 0.
+`config/defaults.yaml` has `visual_mix.image_min_share` (default 0.5). Image formats are the formats whose visual kind is `meme`, `illustration`, `comic`, `chart` or `diagram`. The target is soft. Each packet tells its writer how many of its cards should use an image format: the share times the packet's cards, but never more than the number of its cards whose format list has an image format. No format is forced. A format that cannot be drawn is not in any list: `meme` without the meme server, `mascot_scene` and `comic` when no illustration backend can run (neither mflux nor agent images) or for a repo with no mascot. So with no renderer the target counts only `chart` and `diagram`, which the client draws. Without `visual_mix` the target is 0.
 
 ## 8. Saved cards
 

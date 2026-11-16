@@ -25,6 +25,7 @@ OWNED = [
     ".claude/skills/gittok-profile-repo/SKILL.md",
     ".claude/agents/gittok-writer.md",
     ".claude/agents/gittok-scout.md",
+    ".claude/agents/gittok-illustrator.md",
 ]
 
 
@@ -458,6 +459,9 @@ def test_clone_codex_adapters_match_init_and_use_uv():
             server = cfg["mcp_servers"]["gittok"]
             assert (server["command"], server["args"]) == (
                 "uv", ["run", "gittok", "mcp", "--ui"])
+            assert server["env"]["GITTOK_AGENT"] == "codex"
+            shipped = tomllib.loads(data.decode())["mcp_servers"]["gittok"]
+            assert shipped["env"] == server["env"]
         elif rel == ".codex/hooks.json":
             clone = json.loads((REAL / rel).read_text())["hooks"]
             claude = json.loads((REAL / ".claude/settings.json").read_text())["hooks"]

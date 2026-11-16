@@ -182,6 +182,10 @@ def insert_card(conn, cfg, run_id: str, acc, now: str | None = None) -> str:
         shuffle_choices(acc.card, acc.resolved, card_id) if SHUFFLE else (acc.card, acc.resolved)
     )
     status = "pending_render" if card["visual"]["kind"] in RENDERED_KINDS else "ready"
+    if card["visual"]["kind"] in {"illustration", "comic"}:
+        from .render import image_backend
+
+        resolved = {**resolved, "image_backend": image_backend(cfg)}
     repo_id = ensure_repo(conn, cfg.repos[card["repos"][0]])
     conn.execute(
         "INSERT INTO cards(id, run_id, repo_id, story_type, format, persona, tone, "

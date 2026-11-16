@@ -405,6 +405,61 @@ describe('feed page', () => {
 		expect(urls.filter((u) => u.startsWith('/api/feed')).at(-1)).toContain('cursor=sent1');
 	});
 
+	it('Check for new cards moves from the end panel to the first newly appended card', async () => {
+		const scrolled: string[] = [];
+		const previous = Element.prototype.scrollIntoView;
+		Element.prototype.scrollIntoView = function () {
+			scrolled.push((this as HTMLElement).dataset.cardId ?? '');
+		};
+		try {
+			const old = Array.from({ length: 8 }, (_, n) => fakeCard({ id: `c_old${n}`, hook: `Old ${n}` }));
+			const fresh = fakeCard({ id: 'c_new', hook: 'New card' });
+			feedRoutes((u) => u.includes('cursor=sent1')
+				? { cards: [fresh], next_cursor: null, cursor: 'sent2' }
+				: { cards: old, next_cursor: null, cursor: 'sent1' });
+			render(Page);
+			await screen.findByRole('region', { name: 'End of feed' });
+			await vi.waitFor(() => expect(scrolled).toContain('c_old0'));
+			scrolled.length = 0;
+			await fireEvent.click(screen.getByRole('button', { name: /check for new cards/i }));
+			await vi.waitFor(() => expect(scrolled).toEqual(['c_new']));
+			// The target may be virtualized: it must still be scrolled into view so the observer mounts it.
+			expect(document.querySelector('[data-card-id="c_new"]')).toBeInTheDocument();
+		} finally {
+			Element.prototype.scrollIntoView = previous;
+		}
+	});
+
+	it.each([true, false])('a background check reveals new cards only while the end panel is visible (%s)', async (endVisible) => {
+		const scrolled: string[] = [];
+		const previous = Element.prototype.scrollIntoView;
+		Element.prototype.scrollIntoView = function () {
+			scrolled.push((this as HTMLElement).dataset.cardId ?? '');
+		};
+		try {
+			feedRoutes((u) => u.includes('cursor=sent1')
+				? { cards: [fakeCard({ id: 'c_new', hook: 'New card' })], next_cursor: null, cursor: 'sent2' }
+				: { cards: [fakeCard({ id: 'c_old', hook: 'Old card' })], next_cursor: null, cursor: 'sent1' });
+			render(Page);
+			const end = await screen.findByRole('region', { name: 'End of feed' });
+			await vi.waitFor(() => expect(scrolled).toContain('c_old'));
+			scrolled.length = 0;
+			vi.spyOn(end, 'getBoundingClientRect').mockReturnValue({
+				top: endVisible ? 100 : 10000, bottom: endVisible ? 500 : 10400
+			} as DOMRect);
+			const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+			document.dispatchEvent(new Event('visibilitychange'));
+			await screen.findByText('New card');
+			await vi.waitFor(() => {
+				expect(screen.getByRole('button', { name: /check for new cards/i })).not.toBeDisabled();
+				expect(scrolled).toEqual(endVisible ? ['c_new'] : []);
+			});
+			visibility.mockRestore();
+		} finally {
+			Element.prototype.scrollIntoView = previous;
+		}
+	});
+
 	it('shows the end card for an empty feed too', async () => {
 		route({ '/api/feed': { cards: [], next_cursor: null } });
 		render(Page);
@@ -564,6 +619,31 @@ describe('feed page', () => {
 			fail = false;
 			await fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
 			expect(await screen.findByText('Hook 1')).toBeInTheDocument();
+		});
+
+		it('the feed pairing form replaces navigation and remains usable when requesting a code fails', async () => {
+			serve(() => ({ status: 401 }), { '/pair/code': { status: 503 } });
+			render(Page);
+			const button = await screen.findByRole('button', { name: 'Pair with a code' });
+			const event = new Event('submit', { bubbles: true, cancelable: true });
+			button.closest('form')!.dispatchEvent(event);
+			expect(event.defaultPrevented).toBe(true);
+			expect(await screen.findByText('Could not get a pairing code. Try again.')).toBeInTheDocument();
+			expect(fetchMock).toHaveBeenCalledWith('/pair/code', expect.objectContaining({ method: 'POST', credentials: 'same-origin' }));
+			expect(button).not.toBeDisabled();
+		});
+
+		it('rechecks authentication when Back restores an unpaired feed after pairing', async () => {
+			let paired = false;
+			serve(() => paired ? { body: { cards: [card(1)], next_cursor: null } } : { status: 401 });
+			render(Page);
+			await screen.findByRole('button', { name: 'Pair with a code' });
+			paired = true;
+			const event = new Event('pageshow');
+			Object.defineProperty(event, 'persisted', { value: true });
+			window.dispatchEvent(event);
+			expect(await screen.findByText('Hook 1')).toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: 'Pair with a code' })).toBeNull();
 		});
 
 		it('a 401 on a later page also says the device is not paired', async () => {

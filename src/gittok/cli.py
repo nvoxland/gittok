@@ -327,11 +327,13 @@ def _health(args) -> int:
 
 
 def _renderers(cfg) -> dict:
-    """Which image renderers are installed. Only `illustration` matters to the callers here:
-    a mascot is worth making once the renderer is installed, while its model downloads."""
+    """Which image renderers can draw. Only `illustration` matters to the callers here: a
+    mascot is worth making once mflux is installed (while its model downloads), or when the
+    agent draws the images (Codex's image tool, Claude's SVG illustrator)."""
     from . import render
 
-    return {"illustration": render.worker_check(cfg.settings.render.mflux_model) is None}
+    return {"illustration": render.image_backend(cfg) == "agent"
+            or render.worker_check(cfg.settings.render.mflux_model) is None}
 
 
 def _config_roots():

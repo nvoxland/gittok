@@ -31,6 +31,7 @@ dependencies = [
   "tree-sitter-language-pack>=1.22,<1.23",  # its grammars
   "ast-grep-py>=0.51",  # ast_grep rules in repo profiles
   "pillow>=11",  # draws meme cards (memes.py)
+  "resvg-py>=0.5",  # rasterizes the SVG images Claude draws (agent_images.py)
 ]
 
 [project.scripts]
@@ -72,6 +73,7 @@ packages = ["src/gittok"]
 ".claude/skills/gittok-profile-repo" = "gittok/_bundled/claude/skills/gittok-profile-repo"
 ".claude/agents/gittok-writer.md" = "gittok/_bundled/claude/agents/gittok-writer.md"
 ".claude/agents/gittok-scout.md" = "gittok/_bundled/claude/agents/gittok-scout.md"
+".claude/agents/gittok-illustrator.md" = "gittok/_bundled/claude/agents/gittok-illustrator.md"
 
 # `uv build` makes the wheel from the sdist, so the sdist carries the same files.
 [tool.hatch.build.targets.sdist]
