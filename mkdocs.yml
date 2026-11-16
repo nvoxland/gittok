@@ -49,9 +49,7 @@ theme:
 
 nav:
   - Home: index.md
-  - Getting Started:
-      - Install: getting-started/install.md
-      - Your first feed: getting-started/first-feed.md
+  - Get started: getting-started/install.md
   - Guide:
       - Repos: guide/repos.md
       - Cards: guide/cards.md

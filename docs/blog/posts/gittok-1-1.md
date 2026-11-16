@@ -40,7 +40,7 @@ There is now one way to pair a phone, and it works the same in the browser and i
 2. Tap **Pair with a code**.
 3. Tell Claude the code: "pair code X6J2-QG".
 
-The QR code page and the pairing link are gone. No page or link holds the pairing token any more, so there is nothing to leak in a screenshot or a chat. See [Your first feed](../../getting-started/first-feed.md#2-pair-your-phone).
+The QR code page and the pairing link are gone. No page or link holds the pairing token any more, so there is nothing to leak in a screenshot or a chat. See [Get started: pair your phone](../../getting-started/install.md#pair-your-phone).
 
 ## A feed that learns better
 

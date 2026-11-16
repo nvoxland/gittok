@@ -37,6 +37,6 @@ In Claude Code, approve the `gittok` MCP server; in Codex, trust the project con
 
 **<https://nvoxland.github.io/gittok/>**
 
-- [Install](https://nvoxland.github.io/gittok/getting-started/install/) and [your first feed](https://nvoxland.github.io/gittok/getting-started/first-feed/)
+- [Get started](https://nvoxland.github.io/gittok/getting-started/install/): install, add a repo, pair your phone
 - [Guide](https://nvoxland.github.io/gittok/guide/repos/): repos, cards, steering, how the feed learns, privacy, configuration, the feed API
 - [Blog](https://nvoxland.github.io/gittok/blog/): what is new in each release
