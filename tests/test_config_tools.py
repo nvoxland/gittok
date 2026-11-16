@@ -209,7 +209,7 @@ def test_steer_skill_says_how_to_change_a_default():
         assert tool in sec, tool
     # The workflow: read, write the smallest override, check, tell the user.
     assert sec.index("`get_config") < sec.index("smallest") < sec.index("`check_config`")
-    assert "$remove" in sec and "Reconnect" in sec and "never edit a file in `config/`" in sec
+    assert "$remove" in sec and "restart" in sec and "never edit a file in `config/`" in sec
     # A rule first, the prior only when the user means the default itself.
     memes = next(ln for ln in sec.splitlines() if "fewer memes" in ln)
     assert memes.index("`add_rule`") < memes.index("local/defaults.yaml")

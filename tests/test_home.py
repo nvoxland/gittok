@@ -5,6 +5,7 @@ Nothing here writes outside `tmp_path`.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import tomllib
 from pathlib import Path
@@ -218,15 +219,13 @@ def test_update_records_the_new_version(tmp_path):
 
 def test_update_replaces_a_stale_file_the_user_did_not_edit_without_a_backup(tmp_path, monkeypatch):
     g = tmp_path / "g"
-    old = tmp_path / "old-shared"
-    import shutil
-
-    shutil.copytree(REAL / ".claude" / "skills", old / "claude" / "skills")
-    shutil.copytree(REAL / ".claude" / "agents", old / "claude" / "agents")
-    skill = old / "claude" / "skills" / "gittok-steer" / "SKILL.md"
+    home.init(g, "1.2.3")
+    # What an older version wrote: other text, recorded as written by GitTok.
+    skill = g / OWNED[5]
     skill.write_text(skill.read_text() + "\nold text\n")
-    home.init(g, "1.2.3", shared=old)
-    assert "old text" in (g / OWNED[5]).read_text()
+    marker = home.read_marker(g)
+    marker["files"][OWNED[5]] = hashlib.sha256(skill.read_bytes()).hexdigest()
+    (g / config.MARKER).write_text(yaml.safe_dump(marker))
     lines = home.update(g, "1.3.0")
     assert (g / OWNED[5]).read_bytes() == (REAL / OWNED[5]).read_bytes()
     assert not (g / (OWNED[5] + ".bak")).exists()
@@ -419,23 +418,19 @@ def test_codex_init_registers_the_same_stdio_server_and_startup_hints(tmp_path):
     assert cfg["features"]["hooks"] is True
 
 
-def test_codex_skills_are_thin_adapters_for_the_shared_workflows(tmp_path):
+def test_codex_gets_full_skills_and_workers_and_session_notes(tmp_path):
     g = tmp_path / "g"
     home.init(g, "1.2.3")
     for name in home.SKILL_NAMES:
         skill = (g / f".agents/skills/{name}/SKILL.md").read_text()
-        metadata = yaml.safe_load(skill.split("---")[1])
-        shared = (g / f".claude/skills/{name}/SKILL.md").read_text()
-        assert metadata["name"] == name
-        assert metadata["description"] == yaml.safe_load(shared.split("---")[1])["description"]
-        assert "model" not in metadata
-        assert f".claude/skills/{name}/SKILL.md" in skill
-        assert ".agents/GITTOK.md" in skill
-        assert len(skill.split("---", 2)[2].splitlines()) < 12
-    runtime = (g / ".agents/GITTOK.md").read_text()
-    for word in ("spawn_agent", "finish_run", "suggested_model", "get_brief",
-                 "gittok-writer.md", "gittok-scout.md", "local/", "config/"):
-        assert word in runtime
+        assert "## In Codex" in skill and ".claude/" not in skill
+    for name in home.WORKER_NAMES:
+        assert (g / f".agents/workers/{name}.md").is_file()
+    notes = (g / ".agents/GITTOK.md").read_text()
+    for word in ("feed-watch --codex-thread", "/hooks", "/mcp", "agent.models.codex",
+                 ".agents/skills/", ".agents/workers/"):
+        assert word in notes, word
+    assert "Claude" not in notes
 
 
 def test_update_adds_codex_to_an_existing_claude_only_home(tmp_path):

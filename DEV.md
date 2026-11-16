@@ -28,25 +28,24 @@ Without mflux, illustrations and comics fall back to agent images, and there are
 
 ## Run from the clone
 
-Start Claude Code in the clone:
+Start your agent in the clone: `claude` or `codex`.
+
+- **Claude Code:** the project `.mcp.json` starts `uv run gittok mcp --ui`. Approve the `gittok` MCP server when Claude Code asks. A change to the MCP tools themselves needs `/mcp`, gittok, Reconnect.
+- **Codex:** trust the project configuration; its `.codex/config.toml` starts the same command. Review `.codex/hooks.json` with `/hooks`. Restart Codex after an MCP change.
+
+That process is the MCP server (stdio). It also starts a child `gittok serve --reload` that serves the feed on port 7313 while the session runs (an installed tool starts the child without `--reload`). The child restarts when a file in `src/gittok/` changes.
+
+**Skills and workers.** Edit them only in `src/gittok/workflows/`: `skills/` and `workers/` are agent-neutral (they name no agent program; a test checks), and `harness/claude.md` and `harness/codex.md` are the last section that each program's skills get. Then run:
 
 ```bash
-claude
+uv run python -m gittok.home     # writes .claude/skills|agents and .agents/skills|workers
 ```
 
-The project `.mcp.json` makes Claude Code start `uv run gittok mcp --ui`. Approve the `gittok` MCP server when Claude Code asks. That process is the MCP server (stdio). It also starts a child `gittok serve --reload` that serves the feed on port 7313 while the session runs (an installed tool starts the child without `--reload`). The child restarts when a file in `src/gittok/` changes. A change to the MCP tools themselves needs `/mcp`, gittok, Reconnect.
-
-For Codex, run `codex` in the clone and trust the project configuration. Its
-`.codex/config.toml` starts the same `uv run gittok mcp --ui` command. Review
-`.codex/hooks.json` with `/hooks`; use `$gittok-generate`, `$gittok-profile-repo`
-and `$gittok-steer`. Restart Codex after MCP changes. `.agents/skills/` contains
-only adapters; workflow and worker changes belong in the shared `.claude/` files.
-The adapter templates live in `src/gittok/templates/`; tests check that the clone
-and `init` outputs agree.
+The clone commits those generated copies, and a test fails when they are out of date. The other files that `gittok init` writes are templates in `src/gittok/templates/`.
 
 A clone is its own GitTok directory: your repo list and settings are in `local/`, the database is in `data/`, and clones of repos added by URL are in `repos/`. All three are in `.gitignore`. `GITTOK_ROOT=<dir>` makes a `gittok` command in any directory use that clone or GitTok directory. It is the only such variable.
 
-Then use GitTok as the docs site says: ask Claude to add a repo, profile it, make cards, and pair a phone. The project `.claude/settings.json` has the two SessionStart hooks (`docs/scheduling.md`).
+Then use GitTok as the docs site says: ask your agent to add a repo, profile it, make cards, and pair a phone. The SessionStart hooks are in `.claude/settings.json` and `.codex/hooks.json` (`docs/scheduling.md`).
 
 Commands that help during development (`uv run gittok --help` lists all):
 
@@ -61,7 +60,7 @@ uv run gittok render                 # one render pass
 uv run gittok init /tmp/gittok-try   # make a GitTok directory with the code of the clone
 ```
 
-If port 7313 is in use (another session, or a `gittok serve` that you started), `gittok mcp --ui` runs MCP only and tells Claude which directory has the port.
+If port 7313 is in use (another session, or a `gittok serve` that you started), `gittok mcp --ui` runs MCP only and tells the agent which directory has the port.
 
 A directory from `uv run gittok init` has a `.mcp.json` that runs the `gittok` on your PATH, not the clone. To try the clone's code in such a directory, install the clone as the tool first (`uv tool install --editable .`), or build and install the wheel (below).
 
@@ -79,7 +78,7 @@ uv run --only-group docs mkdocs build --strict   # the docs site
 Rules:
 
 - **Red/green TDD.** Write the failing test first, see it fail, then write the code.
-- Tests build their own fixture git repo. A unit test never needs the network or a Claude session.
+- Tests build their own fixture git repo. A unit test never needs the network or an agent session.
 - Some structure tests are skipped until the grammars are in the local cache (`uv run gittok structure --prefetch`).
 - No logic for one programming language in the shipped Python. Language data lives in `config/` (`tests/test_no_language_logic.py`).
 - The shipped `config/` goes to every user. It holds defaults for any repo: nothing about one project, one stack or one computer. A user changes a default in `local/` of the GitTok directory (`docs/config.md`). Read a config file through `overlay.py`, which merges the local file over the shipped one; a new config file needs an entry in `overlay.FILES`, an example in `src/gittok/prompts/config_examples.yaml`, and a section in `docs/config.md` (tests check all three).
@@ -110,7 +109,7 @@ npm --prefix web run build      # the web build goes into the wheel
 uv build                        # writes dist/gittok-<version>.tar.gz and dist/gittok-<version>-py3-none-any.whl
 ```
 
-The build stops with an error if `web/build/index.html` is missing. The wheel bundles `config/`, the web build, and the Claude Code skills and agents (`gittok/_bundled/`). The files that `gittok init` writes from templates are package data in `src/gittok/templates/`. A git URL install (`uv tool install git+<url>`) does not work, because the web build is not committed.
+The build stops with an error if `web/build/index.html` is missing. The wheel bundles `config/` and the web build (`gittok/_bundled/`). The workflow sources (`src/gittok/workflows/`) and the templates (`src/gittok/templates/`) are package data; `gittok init` generates each agent program's files from them. A git URL install (`uv tool install git+<url>`) does not work, because the web build is not committed.
 
 Until the first release is on PyPI, `uv tool install gittok` does not work. Install a wheel that you built:
 
@@ -118,7 +117,7 @@ Until the first release is on PyPI, `uv tool install gittok` does not work. Inst
 uv tool install --python 3.13 ./dist/gittok-<version>-py3-none-any.whl
 uv tool install --python 3.13 'gittok[images] @ ./dist/gittok-<version>-py3-none-any.whl'   # with mflux
 gittok init ~/gittok
-cd ~/gittok && claude
+cd ~/gittok && claude          # or: codex
 ```
 
 An installed tool keeps your files in the GitTok directory that you made, not in the clone. `docs/install.md` describes `gittok init`, `gittok update`, and how GitTok picks its folders.
@@ -141,7 +140,7 @@ For each release:
    - frontmatter with `date`, `authors: [nvoxland]` and `categories: [Releases]`;
    - a title `# GitTok X.Y: <the main change>`, one short paragraph, then `<!-- more -->`;
    - the upgrade steps first (`uv tool upgrade gittok`, then updating the GitTok directory, and a new session when the release adds skills or agents);
-   - one section per user-visible change, with what to ask Claude and a link to the docs page (relative, from `../../`); then "Smaller fixes" as a list.
+   - one section per user-visible change, with what to ask your agent and a link to the docs page (relative, from `../../`); then "Smaller fixes" as a list.
 
    `git log vPREVIOUS..HEAD` lists what the release holds. Write for users, not for developers.
 3. Run the gates (see "Test and lint"). Commit.

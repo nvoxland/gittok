@@ -57,7 +57,7 @@ And these files for Claude Code:
 | `.mcp.json` | The MCP entry. Claude Code starts `gittok mcp --ui` (stdio) when a session starts here |
 | `CLAUDE.md` | One line, `@AGENTS.md`. Claude Code reads `CLAUDE.md`, and this makes it read `AGENTS.md` |
 | `.claude/skills/` | The skills `gittok-generate`, `gittok-steer` and `gittok-profile-repo` |
-| `.claude/agents/` | The agents `gittok-writer`, `gittok-scout` and `gittok-illustrator` |
+| `.claude/agents/` | The workers `gittok-writer`, `gittok-scout` and `gittok-illustrator` |
 | `.claude/settings.json` | The two session hooks and one permission ("Session hooks" below) |
 
 And these files for Codex:
@@ -66,19 +66,20 @@ And these files for Codex:
 |---|---|
 | `.codex/config.toml` | Starts the same stdio MCP server, `gittok mcp --ui` |
 | `.codex/hooks.json` | The same SessionStart hints; review and trust them with `/hooks` |
-| `.agents/skills/` | Thin adapters for the three shared workflows |
-| `.agents/GITTOK.md` | Codex startup, delegation, model and process instructions |
+| `.agents/skills/` | The skills `gittok-generate`, `gittok-steer` and `gittok-profile-repo` |
+| `.agents/workers/` | The workers `gittok-writer`, `gittok-scout` and `gittok-illustrator` |
+| `.agents/GITTOK.md` | Codex session notes: connection, startup hints, the feed watch |
 
 Start `codex` in this directory and trust the project configuration. Use
 `$gittok-generate`, `$gittok-profile-repo <repo>` and `$gittok-steer`, or ask in plain
 language. Check `/mcp` if GitTok tools are missing. Restart Codex after MCP/server
 changes. Existing directories gain support with `gittok update`.
 
-The workflow bodies and worker instructions have one source, at the historical
-`.claude/skills/` and `.claude/agents/` paths. Codex adapters read these files with
-runtime adaptations; keep `.claude/` even if you only use Codex. Generation uses
-Codex subagents and inherits the session model. Claude model names are cost hints
-only. No Claude installation or Claude subprocess is needed.
+Both programs get the same skills and workers, generated from one source in the
+GitTok package. Each copy ends with a section on how that program does the shared
+steps. You can delete the files of a program you do not use; `gittok update` writes
+them again. Generation uses Codex subagents, on the models of `agent.models.codex`
+(none: the session's model). No Claude installation or Claude subprocess is needed.
 
 Codex uses [project configuration](https://developers.openai.com/codex/config-reference/),
 [local skills](https://developers.openai.com/codex/skills/), and
@@ -297,7 +298,7 @@ The default assets stay read-only in the installed package. Extra downloads go t
 
 `render.image_backend` defaults to `auto`: Codex creates illustrations and comic panels
 with its native image tool; Claude Code uses the Python renderer when it is installed, and
-otherwise draws simple flat SVG images through its `gittok-illustrator` subagent.
+otherwise draws simple flat SVG images through its `gittok-illustrator` workers.
 To choose explicitly, ask your agent ("use agent images", "use local image
 generation"), or set `image_backend: agent` or `image_backend: local` under
 `render` in `local/settings.yaml` yourself. If mflux is unavailable, either harness
@@ -307,7 +308,7 @@ are bundled and use the same lightweight renderer in both modes.
 The generation driver gets the scene prompts after the writers submit cards,
 and the images go through GitTok's normal asset pipeline. In Codex the driver
 makes them with its native image tool. Claude Code has no image tool: the driver
-starts one `gittok-illustrator` subagent (Sonnet) for each card. It draws each
+starts one `gittok-illustrator` worker (standard tier) for each card. It draws each
 panel as SVG and submits it with `submit_images(card_id, svgs=...)`, and GitTok
 renders it to PNG at the panel size with resvg. An SVG may only refer to its own
 parts: GitTok rejects `<image>`, `<style>`, `<script>`, text, and any outside file

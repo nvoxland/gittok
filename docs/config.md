@@ -206,7 +206,8 @@ The values below are the shipped ones.
 | `variant_max_share` | `0.2` | At most this share of a brief's cards are variants |
 | `intro_share` | `0.25` | At least this share of a brief's cards introduce the dirs you know least |
 | `scout_max` | `60` | Unrated candidates that one `scout_status` call hands out |
-| `scout_batch` | `15` | Candidates per scout subagent |
+| `scout_batch` | `15` | Candidates per scout worker |
+| `models` | `claude: {light: haiku, standard: sonnet}`, `codex: {}` | The model of each worker tier, per agent program. `light`: scouts and packets of simple formats; `standard`: the other writers, the illustrator, and (in Claude Code) the skills. A tier that is missing uses the session's model. Ask your agent ("use gpt-5-mini for light Codex workers") or set it in `local/settings.yaml` |
 | `require_facts` | `false` | `true`: reject a card that names a `backticked` identifier which no listed fact and no cited code covers. `false`: only warn |
 | `require_claim_sources` | `false` | `true`: reject a card whose why-sentence has no sourced claim behind it. `false`: only warn |
 | `claim_checks` | `true` | Reject cards whose numbers, dates, shas or names git does not back |

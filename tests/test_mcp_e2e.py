@@ -32,8 +32,9 @@ async def test_scripted_run_stores_valid_cards_and_reports_rejects(fixture_repo,
         assert "## Packet" not in brief["summary_markdown"]
         assert "guidance_markdown" not in brief and "brief_markdown" not in brief
         pk0 = brief["packets"][0]
-        assert pk0["suggested_model"] in ("haiku", "sonnet")
-        assert set(pk0) == {"id", "repo", "count", "suggested_model", "categories", "formats"}
+        assert pk0["tier"] in ("light", "standard")
+        assert pk0["model"] == brief["models"][pk0["tier"]]
+        assert set(pk0) == {"id", "repo", "count", "tier", "model", "categories", "formats"}
 
         # Each subagent fetches its own packet (leads, recent stories, evidence), then the
         # guidance for its formats in a second call: one reply with both was over 50 KB, and

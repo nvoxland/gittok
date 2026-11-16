@@ -68,7 +68,7 @@ Start your coding agent in the GitTok directory.
 
     Trust the project configuration, so that Codex loads `.codex/config.toml`. Then review and trust the startup hooks with `/hooks`. If the GitTok tools are missing, check `/mcp`.
 
-    The skills are `$gittok-steer`, `$gittok-profile-repo <repo>` and `$gittok-generate`. Generation gives scouts and writers to Codex subagents, so use a client that supports subagents. They use your Codex model; the Claude model names in the shared guidance do not choose Codex models.
+    The skills are `$gittok-steer`, `$gittok-profile-repo <repo>` and `$gittok-generate`. Generation gives scouts and writers to Codex subagents, so use a client that supports subagents. They use your Codex session's model; to name smaller models for them, see `agent.models` in [Configuration](../config.md).
 
     Without hooks, the startup hints come from the instructions instead. Background feed watching uses the process tools of the Codex client; a client that does not wake when a process ends checks the feed on your next message.
 

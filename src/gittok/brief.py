@@ -119,8 +119,9 @@ IMAGE_FORMATS = frozenset(
     if IMAGE_KINDS & set((k,) if isinstance(k, str) else k)
 )
 
-# Formats a haiku can write when the story type is concrete. Everything else needs sonnet.
-HAIKU_FORMATS = frozenset(
+# Formats a light-tier writer can write when the story type is concrete. Everything else
+# needs the standard tier.
+LIGHT_FORMATS = frozenset(
     {
         "meme",
         "text_meme",
@@ -781,7 +782,7 @@ class Packet:
     repo: str
     count: int
     story_types: list[str]
-    suggested_model: str
+    tier: str  # config.TIERS: the worker model tier that can write this packet
     tones: list[str]
     personas: list[str]
     leads: list[str]
@@ -877,7 +878,7 @@ class Brief:
         out = [
             f"## Packet {pk.id}: {pk.count} card(s) from {where}",
             "",
-            f"- suggested model: {pk.suggested_model}",
+            f"- worker tier: {pk.tier}",
             f"- categories: {', '.join(pk.categories)}",
             f"- story types: {', '.join(pk.story_types)}",
             f"- tones, one per card: {', '.join(pk.tones)}",
@@ -1735,10 +1736,10 @@ class _BriefBuilder:
                     for i, s in enumerate(slots)
                     if s[0] == repo
                     and s[4] == grp
-                    # The writer may pick any allowed format, so a haiku needs all of them to
+                    # The writer may pick any allowed format, so a light writer needs all of them to
                     # be easy.
                     and (
-                        s[2] in CONCRETE_TYPES and all(f in HAIKU_FORMATS for f in slot_allowed[i])
+                        s[2] in CONCRETE_TYPES and all(f in LIGHT_FORMATS for f in slot_allowed[i])
                     )
                     == cheap
                 ]
@@ -1835,7 +1836,7 @@ class _BriefBuilder:
                     repo=repo,
                     count=len(chunk),
                     story_types=types,
-                    suggested_model="haiku" if cheap else "sonnet",
+                    tier="light" if cheap else "standard",
                     tones=self.tone_pool[slot_no : slot_no + len(chunk)],
                     personas=[
                         persona_pool[(slot_no + i) % len(persona_pool)] for i in range(len(chunk))

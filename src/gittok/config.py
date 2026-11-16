@@ -73,6 +73,9 @@ class AgentSettings:
     claim_checks: bool = True  # reject cards whose numbers, dates, or names git does not back
     require_facts: bool = False  # reject cards with a backticked identifier no listed fact covers
     require_claim_sources: bool = False  # reject (not warn) a why-sentence with no sourced claim
+    # Worker model per agent program and tier; a missing tier: the session's model.
+    models: dict = field(default_factory=lambda: {
+        "claude": {"light": "haiku", "standard": "sonnet"}, "codex": {}})
 
 
 @dataclass(frozen=True)
@@ -266,10 +269,19 @@ def shipped_root() -> Path:
     return b if (b / "config").is_dir() else Path(__file__).parents[2]
 
 
-def claude_dir(shared: Path) -> Path:
-    """The folder with `skills/` and `agents/`: `.claude` in a clone, `claude` in the bundle."""
-    dot = shared / ".claude"
-    return dot if dot.is_dir() else shared / "claude"
+HARNESS_NAMES = ("claude", "codex")
+TIERS = ("light", "standard")  # the work a worker does: rating or simple formats, or the rest
+
+
+def harness() -> str:
+    """The agent program of this session: `codex` when its MCP launch says so, else `claude`."""
+    return "codex" if os.environ.get("GITTOK_AGENT") == "codex" else "claude"
+
+
+def worker_models(cfg) -> dict[str, str | None]:
+    """The model of each worker tier for this session's agent program (None: its own model)."""
+    mapping = cfg.settings.agent.models.get(harness()) or {}
+    return {tier: mapping.get(tier) or None for tier in TIERS}
 
 
 MARKER = "gittok.yaml"  # written by `gittok init`; a directory that has it is a GitTok directory
@@ -364,6 +376,20 @@ def _section(cls: type, data: Any, what: str, file: Path) -> Any:
         if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
             raise ConfigError(f"{what}.git_identities must be a list of text ({file})")
         kwargs["git_identities"] = tuple(ids)
+    if cls is AgentSettings and "models" in kwargs:
+        models = kwargs["models"] or {}
+        if not isinstance(models, dict) or not set(models) <= set(HARNESS_NAMES):
+            raise ConfigError(
+                f"{what}.models has a key per agent program: claude or codex ({file})")
+        for name, tiers in models.items():
+            tiers = tiers or {}
+            if not isinstance(tiers, dict) or not set(tiers) <= set(TIERS):
+                raise ConfigError(f"{what}.models.{name} has a key per tier: light or standard "
+                                  f"({file})")
+            if not all(isinstance(m, str) or m is None for m in tiers.values()):
+                raise ConfigError(f"{what}.models.{name}: each value is a model name ({file})")
+            models[name] = tiers
+        kwargs["models"] = models
     if "churn_windows_days" in kwargs:
         kwargs["churn_windows_days"] = tuple(kwargs["churn_windows_days"])
     if "git_timeout_s" in kwargs:

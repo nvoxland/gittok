@@ -15,12 +15,15 @@ from pathlib import Path
 
 import yaml
 
-from .config import MARKER, claude_dir, is_clone, shipped_root
+from .config import MARKER, AgentSettings, is_clone
 
 SKILL_NAMES = ("gittok-generate", "gittok-steer", "gittok-profile-repo")
-# subagent types the generate skill uses
-AGENT_FILES = ("gittok-writer.md", "gittok-scout.md", "gittok-illustrator.md")
+WORKER_NAMES = ("gittok-writer", "gittok-scout", "gittok-illustrator")  # the generate skill's
+AGENT_FILES = tuple(f"{n}.md" for n in WORKER_NAMES)
 TEMPLATES = Path(__file__).parent / "templates"
+# The one agent-neutral source of the skills and workers. Each agent program gets full
+# generated copies, with a last section on how it does the shared steps (harness/).
+WORKFLOWS = Path(__file__).parent / "workflows"
 IGNORED = {".DS_Store"}  # Finder makes it; a directory with only this file is empty
 MARKER_HEAD = (
     "# `gittok init` wrote this file. It marks this directory as a GitTok directory.\n"
@@ -79,46 +82,82 @@ def core_files() -> dict[str, bytes]:
     return {"AGENTS.md": (TEMPLATES / "AGENTS.md").read_bytes()}
 
 
+def _source(kind: str, name: str) -> tuple[dict, str]:
+    """The frontmatter and body of one neutral skill or worker source."""
+    _, head, body = (WORKFLOWS / kind / f"{name}.md").read_text().split("---", 2)
+    return yaml.safe_load(head), body.lstrip("\n")
+
+
+def _document(meta: dict, *parts: str) -> bytes:
+    head = yaml.safe_dump(meta, sort_keys=False, width=100000, allow_unicode=True)
+    return ("---\n" + head + "---\n\n" + "\n".join(p.rstrip("\n") + "\n" for p in parts)).encode()
+
+
+def _harness_section(program: str) -> str:
+    return (WORKFLOWS / "harness" / f"{program}.md").read_text()
+
+
+def _claude_model(tier: str) -> str:
+    return AgentSettings().models["claude"][tier]
+
+
 def claude_code_files(shared: Path | None = None) -> dict[str, bytes]:
     """The owned files that only Claude Code reads: the MCP entry, a `CLAUDE.md` that points
-    to `AGENTS.md`, the session settings, and the skills and agents."""
-    src = claude_dir(shared or shipped_root())
+    to `AGENTS.md`, the session settings, and the skills and agents (generated)."""
     out = {
         ".mcp.json": (TEMPLATES / "mcp.json").read_bytes(),
         "CLAUDE.md": (TEMPLATES / "CLAUDE.md").read_bytes(),
         ".claude/settings.json": (TEMPLATES / "settings.json").read_bytes(),
     }
+    section = _harness_section("claude")
     for name in SKILL_NAMES:
-        root = src / "skills" / name
-        for p in sorted(root.rglob("*")):
-            if p.is_file() and p.name not in IGNORED:
-                out[f".claude/skills/{name}/{p.relative_to(root).as_posix()}"] = p.read_bytes()
-    for name in AGENT_FILES:
-        out[f".claude/agents/{name}"] = (src / "agents" / name).read_bytes()
+        meta, body = _source("skills", name)
+        head = {"name": name, "description": meta["description"],
+                "model": _claude_model(meta["tier"])}
+        out[f".claude/skills/{name}/SKILL.md"] = _document(head, body, section)
+    for name in WORKER_NAMES:
+        meta, body = _source("workers", name)
+        head = {"name": name, "description": meta["description"],
+                "tools": ", ".join(f"mcp__gittok__{t}" for t in meta["tools"]),
+                "model": _claude_model(meta["tier"])}
+        out[f".claude/agents/{name}.md"] = _document(head, body)
     return out
 
 
 def codex_files(shared: Path | None = None) -> dict[str, bytes]:
-    """Codex discovers thin adapters; the workflows and workers have one shared source.
-
-    The historical `.claude/` paths remain the source for both harnesses. Adapters read
-    those files in the home, so updates never leave a second workflow to keep in sync.
-    """
-    src = claude_dir(shared or shipped_root())
+    """The owned files that only Codex reads: its MCP entry and hooks, its runtime notes,
+    and the skills and workers (generated from the same sources as Claude Code's)."""
     settings = json.loads((TEMPLATES / "settings.json").read_text())
     out = {
         ".codex/config.toml": (TEMPLATES / "codex.toml").read_bytes(),
         ".codex/hooks.json": (json.dumps({"hooks": settings["hooks"]}, indent=2) + "\n").encode(),
         ".agents/GITTOK.md": (TEMPLATES / "codex.md").read_bytes(),
     }
-    template = (TEMPLATES / "codex-skill.md").read_text()
+    section = _harness_section("codex")
     for name in SKILL_NAMES:
-        text = (src / "skills" / name / "SKILL.md").read_text()
-        metadata = yaml.safe_load(text.split("---", 2)[1])
-        header = yaml.safe_dump({"name": name, "description": metadata["description"]})
-        adapter = "---\n" + header + "---\n\n" + template.replace("{name}", name)
-        out[f".agents/skills/{name}/SKILL.md"] = adapter.encode()
+        meta, body = _source("skills", name)
+        head = {"name": name, "description": meta["description"]}
+        out[f".agents/skills/{name}/SKILL.md"] = _document(head, body, section)
+    for name in WORKER_NAMES:
+        meta, body = _source("workers", name)
+        head = {"name": name, "description": meta["description"], "tools": meta["tools"],
+                "tier": meta["tier"]}
+        out[f".agents/workers/{name}.md"] = _document(head, body)
     return out
+
+
+def write_clone_files(root: Path) -> list[str]:
+    """Write the generated skills and workers into a clone (they are committed there)."""
+    written = []
+    for files in (claude_code_files(), codex_files()):
+        for rel, data in files.items():
+            if rel.startswith((".claude/skills/", ".claude/agents/", ".agents/")):
+                path = root / rel
+                if not path.is_file() or path.read_bytes() != data:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(data)
+                    written.append(rel)
+    return written
 
 
 # One unit of files for each agent program. Files for another program go in a new unit here.
@@ -207,7 +246,7 @@ def init(target: Path, version: str, shared: Path | None = None) -> list[str]:
         "  .mcp.json           starts `gittok mcp --ui` when Claude Code starts here",
         "  CLAUDE.md           points to AGENTS.md",
         "  .claude/skills/     " + ", ".join(SKILL_NAMES),
-        "  .claude/agents/     " + ", ".join(n.removesuffix(".md") for n in AGENT_FILES),
+        "  .claude/agents/     " + ", ".join(WORKER_NAMES),
         "  .claude/settings.json   the session hooks that keep the feed full",
         "For Codex:",
         "  .codex/config.toml  starts the same MCP server (stdio)",
@@ -293,3 +332,8 @@ def version_hint(home: Path, installed: str) -> str | None:
         "(it writes the new skills, agents and settings; an edited file is kept as "
         "<name>.bak). After it, the user starts a new session."
     )
+
+
+if __name__ == "__main__":  # in a clone: `uv run python -m gittok.home`
+    for rel in write_clone_files(Path(__file__).parents[2]):
+        print("wrote", rel)

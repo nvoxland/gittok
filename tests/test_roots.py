@@ -134,14 +134,6 @@ def test_shipped_root_in_clone_is_repo(monkeypatch):
     assert config.shipped_root() == REAL
 
 
-def test_claude_dir_prefers_dot_claude(tmp_path):
-    (tmp_path / ".claude").mkdir()
-    assert config.claude_dir(tmp_path) == tmp_path / ".claude"
-    other = tmp_path / "b"
-    (other / "claude").mkdir(parents=True)
-    assert config.claude_dir(other) == other / "claude"
-
-
 def test_api_serves_web_from_shared_bundle(tmp_path, monkeypatch, bundle):
     from fastapi.testclient import TestClient
 

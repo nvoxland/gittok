@@ -207,10 +207,10 @@ def test_interactive_slots_use_quiz_format_and_sonnet_packets():
     assert quiz
     assert sum(f == "quiz" for p in b.packets for f in p.formats) == b.quotas["interactive"]
     for p in quiz:
-        assert p.suggested_model == "sonnet"
+        assert p.tier == "standard"
     for p in b.packets:
         if "quiz" in p.formats:
-            assert p.suggested_model == "sonnet"
+            assert p.tier == "standard"
 
 
 def test_interactive_story_types_are_known_to_the_validator():
@@ -228,8 +228,8 @@ def test_spot_the_bug_leads_point_at_fix_commits():
 def test_concrete_story_packets_suggest_haiku():
     b = build(count=20)
     for p in b.packets:
-        cheap = set(p.story_types) <= brief.CONCRETE_TYPES and set(p.formats) <= brief.HAIKU_FORMATS
-        assert p.suggested_model == ("haiku" if cheap else "sonnet"), p
+        cheap = set(p.story_types) <= brief.CONCRETE_TYPES and set(p.formats) <= brief.LIGHT_FORMATS
+        assert p.tier == ("light" if cheap else "standard"), p
 
 
 def test_markdown_lists_packets_leads_and_recent():
@@ -237,7 +237,7 @@ def test_markdown_lists_packets_leads_and_recent():
     md = build(count=10, recent=recent).to_markdown()
     assert "Make 10 cards" in md
     assert "## Packet p1" in md
-    assert "suggested model:" in md
+    assert "worker tier:" in md
     assert "src/legacy.py" in md
     assert "RIP legacy.py" in md  # recently used, avoid repeating
 
@@ -464,7 +464,7 @@ def test_packets_are_few_and_full():
     assert len(b.packets) <= 6
     groups = {}
     for p in b.packets:
-        groups.setdefault((p.repo, p.suggested_model), []).append(p.count)
+        groups.setdefault((p.repo, p.tier), []).append(p.count)
     for counts in groups.values():
         assert all(c == 4 for c in counts[:-1])
 
@@ -547,7 +547,7 @@ def test_illustrated_packets_need_sonnet():
     b = build(count=20)
     for p in b.packets:
         if set(p.formats) & (set(brief.ILLUSTRATION_COST) | {"thread", "diagram", "day_in_life"}):
-            assert p.suggested_model == "sonnet", p
+            assert p.tier == "standard", p
 
 
 def test_cheap_formats_on_concrete_stories_use_haiku():
@@ -561,11 +561,11 @@ def test_cheap_formats_on_concrete_stories_use_haiku():
         recent=[],
     )
     # A haiku writes a packet only when every allowed format of every card is a cheap one.
-    cheap = [p for p in b.packets if p.suggested_model == "haiku"]
+    cheap = [p for p in b.packets if p.tier == "light"]
     assert cheap
     for p in b.packets:
-        easy = all(f in brief.HAIKU_FORMATS for fs in p.allowed for f in fs)
-        assert (p.suggested_model == "haiku") == (
+        easy = all(f in brief.LIGHT_FORMATS for fs in p.allowed for f in fs)
+        assert (p.tier == "light") == (
             easy and set(p.story_types) <= brief.CONCRETE_TYPES
         )
 
@@ -1014,7 +1014,7 @@ def test_cross_repo_slots_become_a_multi_repo_sonnet_packet():
     assert sum(b.quotas.values()) == 20
     [pk] = cross_packets(b)
     assert pk.repos == ["api", "web"] and pk.repo == "api"
-    assert pk.suggested_model == "sonnet"
+    assert pk.tier == "standard"
     assert "cross_repo_and_recent" in pk.categories
     assert set(pk.story_types) <= set(brief.CROSS_STORIES)
     assert set(pk.formats) <= set(brief.CROSS_FORMATS)
@@ -1445,7 +1445,7 @@ def test_lead_refs_for_known_stories():
 
 
 def test_code_card_and_text_post_are_haiku_formats():
-    assert {"code_card", "text_post"} <= brief.HAIKU_FORMATS
+    assert {"code_card", "text_post"} <= brief.LIGHT_FORMATS
 
 
 def test_ledger_leads_replace_computed_leads_and_keep_ids():

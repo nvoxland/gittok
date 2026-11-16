@@ -21,7 +21,7 @@ macOS, [uv](https://docs.astral.sh/uv/), git and [Claude Code](https://claude.co
 uv tool install --python 3.13 gittok    # Claude Code: see "Better images" below
 mkdir ~/gittok && cd ~/gittok
 gittok init .
-claude
+claude                                  # or: codex
 ```
 
 > **Better images in Claude Code.** Claude Code has no image tool, so without extras Claude draws the illustration and comic posts as simple flat SVG pictures. On Apple silicon, install with the `images` extra for real illustrations: `uv tool install --python 3.13 'gittok[images]'` (add `--force` if GitTok is already installed, then start a new session). On other Macs the extra adds nothing. It adds [mflux](https://github.com/filipstrand/mflux) (about 1 GB) and a 6 GB model that GitTok downloads by itself. Codex uses its own image tool by default. To use mflux in Codex instead, install with the extra and ask Codex: "Use local image generation." Or set it yourself in `local/settings.yaml` of your GitTok directory:
@@ -31,9 +31,7 @@ claude
 >   image_backend: local
 > ```
 
-Approve the `gittok` MCP server, then ask your agent: "Add the repo at ~/src/myapp to GitTok." When the first posts are made, open the feed address that your agent gives you on your phone (or ask "what is the feed address?"), tap "Pair with a code", tell your agent the code, and start scrolling.
-
-For Codex, run `codex` in the same directory, trust the project configuration and review `/hooks`. Ask Codex to add a repo, or use `$gittok-generate` to make cards. Both agents share the same workflows and MCP server.
+In Claude Code, approve the `gittok` MCP server; in Codex, trust the project configuration and review `/hooks`. Then ask your agent: "Add the repo at ~/src/myapp to GitTok." When the first posts are made, open the feed address that your agent gives you on your phone (or ask "what is the feed address?"), tap "Pair with a code", tell your agent the code, and start scrolling. Both agents get the same skills, workers and MCP server.
 
 ## Documentation
 

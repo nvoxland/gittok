@@ -49,14 +49,15 @@ def test_wheel_has_shared_files(wheel_names):
         "config/languages.yaml",
         "config/queries/",
         "web/index.html",
-        "claude/skills/gittok-generate/SKILL.md",
-        "claude/skills/gittok-steer/SKILL.md",
-        "claude/skills/gittok-profile-repo/SKILL.md",
-        "claude/agents/gittok-writer.md",
-        "claude/agents/gittok-scout.md",
-        "claude/agents/gittok-illustrator.md",
     ):
         assert any(n.startswith(b + want) for n in wheel_names), want
+    # The skills and workers ship once, agent-neutral; init generates each program's copies.
+    for want in ("skills/gittok-generate.md", "skills/gittok-steer.md",
+                 "skills/gittok-profile-repo.md", "workers/gittok-writer.md",
+                 "workers/gittok-scout.md", "workers/gittok-illustrator.md",
+                 "harness/claude.md", "harness/codex.md"):
+        assert f"gittok/workflows/{want}" in wheel_names, want
+    assert not any(n.startswith(b + "claude/") for n in wheel_names)
     assert "gittok/prompts/generate.md" in wheel_names
     assert "gittok/static/pair.js" in wheel_names
     assert "gittok/prompts/config_examples.yaml" in wheel_names
@@ -65,7 +66,7 @@ def test_wheel_has_shared_files(wheel_names):
 
 def test_wheel_has_everything_that_init_writes(wheel_names):
     for name in ("mcp.json", "settings.json", "AGENTS.md", "CLAUDE.md", "gitignore", "repos.yaml",
-                 "codex.toml", "codex.md", "codex-skill.md"):
+                 "codex.toml", "codex.md"):
         assert f"gittok/templates/{name}" in wheel_names, name
     assert "gittok/home.py" in wheel_names and "gittok/install.py" not in wheel_names
     for name in ("render_batch.py", "mflux_worker.py", "render_process.py"):

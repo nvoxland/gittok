@@ -6,13 +6,20 @@ All your files are in the GitTok directory that you made with `gittok init`. You
 ~/gittok/
 ├── gittok.yaml                marks the directory, with the gittok version
 ├── AGENTS.md                  tells the coding agent what this directory is
-├── CLAUDE.md                  points to AGENTS.md
-├── .mcp.json                  makes Claude Code start the GitTok server
 ├── .gitignore                 for data/ and repos/, if you put the directory under git
-├── .claude/
+├── CLAUDE.md                  Claude Code: points to AGENTS.md
+├── .mcp.json                  Claude Code: starts the GitTok server
+├── .claude/                   Claude Code
 │   ├── settings.json          session hooks: the feed address, the feed watch
 │   ├── skills/                gittok-generate, gittok-steer, gittok-profile-repo
 │   └── agents/                gittok-writer, gittok-scout, gittok-illustrator
+├── .codex/                    Codex
+│   ├── config.toml            starts the GitTok server
+│   └── hooks.json             session hooks
+├── .agents/                   Codex
+│   ├── GITTOK.md              session notes
+│   ├── skills/                gittok-generate, gittok-steer, gittok-profile-repo
+│   └── workers/               gittok-writer, gittok-scout, gittok-illustrator
 ├── local/                     your settings
 │   ├── repos.yaml             the repo list
 │   ├── profiles/<repo>.yaml   one profile per repo

@@ -20,6 +20,6 @@ Or type `/gittok-generate`. This always works.
 
 ## What a run costs
 
-A run uses your model quota. It uses one writer subagent for each small packet of cards (2 by default). In Claude Code the writers run on small, cheap models (Haiku or Sonnet); in Codex they use your Codex model. Most automatic checks end with nothing to do and cost one tool call.
+A run uses your model quota. It uses one writer worker for each small packet of cards (2 by default). A packet of simple formats needs only a `light` model, the rest a `standard` one. In Claude Code these are Haiku and Sonnet. In Codex, workers use your session's model until you name Codex models for the tiers (`agent.models` in [Configuration](../config.md)). Most automatic checks end with nothing to do and cost one tool call.
 
 The exact rules and limits are in [Scheduling](../scheduling.md).

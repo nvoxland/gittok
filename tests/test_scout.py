@@ -69,7 +69,7 @@ async def test_scout_flow_and_rating_reuse(repo, tmp_path):
         await rate_all(client, st["batches"][1])
 
         again = data(await client.call_tool("scout_status", {}))
-        assert again == {"batches": [], "unrated_total": 0}
+        assert again == {"batches": [], "unrated_total": 0, "model": "haiku"}
 
         # An unrelated commit keeps the ratings (same window text).
         b = _Builder(repo.path)

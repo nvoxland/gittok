@@ -29,7 +29,7 @@ Cards are written by an agent session: Claude Code or Codex. GitTok does not sta
 workflow and worker instructions. Trust the project configuration and review the
 hooks with `/hooks`. The startup instructions run the same hints if hooks did not.
 Use `$gittok-generate` in place of `/gittok-generate`; generation uses Codex
-subagents and inherits your session model, rather than selecting Claude models.
+subagents on the models of `agent.models.codex` (none: your session's model).
 
 The Codex runtime adapter starts `gittok feed-watch --codex-thread "$CODEX_THREAD_ID"`
 in the background (with `uv run --quiet` in a source clone). When the feed asks
@@ -75,6 +75,6 @@ The web app says this at the end of the feed. `GET /api/feed` has `generating`, 
 
 ## Limits
 
-The server enforces the limits, whatever starts the run: `agent.max_count` cards per run and `agent.per_day_runs` runs per day (`docs/config.md`). In Claude Code, the skill pins its own model (sonnet for the driver, haiku or sonnet for each packet). Codex uses your session model.
+The server enforces the limits, whatever starts the run: `agent.max_count` cards per run and `agent.per_day_runs` runs per day (`docs/config.md`). The worker models come from `agent.models`: in Claude Code Haiku and Sonnet by default, in Codex the session's model unless you name others.
 
 A cloud agent cannot generate cards: it cannot reach `127.0.0.1` on your Mac, and it cannot read your local repos.

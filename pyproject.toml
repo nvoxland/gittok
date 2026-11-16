@@ -68,16 +68,10 @@ packages = ["src/gittok"]
 # The web build is added by hatch_build.py, so a clone without it still installs for development.
 [tool.hatch.build.targets.wheel.force-include]
 "config" = "gittok/_bundled/config"
-".claude/skills/gittok-generate" = "gittok/_bundled/claude/skills/gittok-generate"
-".claude/skills/gittok-steer" = "gittok/_bundled/claude/skills/gittok-steer"
-".claude/skills/gittok-profile-repo" = "gittok/_bundled/claude/skills/gittok-profile-repo"
-".claude/agents/gittok-writer.md" = "gittok/_bundled/claude/agents/gittok-writer.md"
-".claude/agents/gittok-scout.md" = "gittok/_bundled/claude/agents/gittok-scout.md"
-".claude/agents/gittok-illustrator.md" = "gittok/_bundled/claude/agents/gittok-illustrator.md"
 
 # `uv build` makes the wheel from the sdist, so the sdist carries the same files.
 [tool.hatch.build.targets.sdist]
-include = ["/src", "/config", "/.claude/skills", "/.claude/agents", "/hatch_build.py", "/docs", "/README*", "/LICENSE", "/AGENTS.md", "/DEV.md", "/SPEC.md"]
+include = ["/src", "/config", "/hatch_build.py", "/docs", "/README*", "/LICENSE", "/AGENTS.md", "/DEV.md", "/SPEC.md"]
 artifacts = ["/web/build"]
 
 [tool.pytest.ini_options]
