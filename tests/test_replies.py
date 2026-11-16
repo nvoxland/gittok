@@ -93,7 +93,7 @@ def test_submit_rejects_wrong_persona_and_links_right_one(cfg, fixture_repo):
         ref = {"id": lead["id"], "story_type": "what_it_does", "kind": "path", "path": "src/app.py"}
         packets = [{"id": "p1", "repo": "fixture", "count": 2, "lead_refs": [ref]}]
         run_id = runs.open_run(
-            c, cfg, repo="fixture", brief="b", requested=3, packets=packets, now=NOW
+            c, cfg, repo="fixture", brief="b", requested=3, packets=packets
         )
         bad = path_card(fixture_repo, hook="Wrong voice.", persona="archivist")
         res = runs.submit(c, cfg, run_id, [bad], packet_id="p1")

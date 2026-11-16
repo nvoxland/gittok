@@ -24,6 +24,7 @@ MAX_STORY_COMMITS = 10
 HOT_FILE_COMMITS = 3
 HOT_FILE_SHOWN = 3
 FMT = "%Y-%m-%dT%H:%M:%SZ"
+NEW_CARDS_DAYS = 7  # a finished run older than this makes no "new cards" notification
 
 _CACHE: dict[tuple[str, str], list[dict]] = {}
 _CACHE_LOCK = threading.Lock()
@@ -297,10 +298,16 @@ def generate_notifications(conn, cfg: Config, now: datetime) -> dict[str, int]:
     """One idempotent pass. Returns how many notifications of each kind were created."""
     made = dict.fromkeys(("new_cards", "srs_due", "hot_file", "new_kind"), 0)
 
+    # Only recent runs: gc deletes a read notification after `social_after_days`, and a run
+    # older than that must not bring it back as unread.
+    days = max(1, min(NEW_CARDS_DAYS, cfg.settings.gc.social_after_days - 1))
+    cutoff = (now - timedelta(days=days)).strftime(FMT)
     for r in conn.execute(
         "SELECT r.id, r.accepted, r.finished_at, p.name AS repo FROM runs r "
         "LEFT JOIN repos p ON p.id = r.repo_id "
-        "WHERE r.status = 'finished' AND r.accepted > 0 ORDER BY r.finished_at, r.id"
+        "WHERE r.status = 'finished' AND r.accepted > 0 AND r.finished_at >= ? "
+        "ORDER BY r.finished_at, r.id",
+        (cutoff,),
     ).fetchall():
         text = _plural(r["accepted"], "new card", "new cards")
         if r["repo"]:

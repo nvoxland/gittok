@@ -122,4 +122,33 @@ describe('StoryViewer', () => {
 		await fireEvent.click(screen.getByRole('button', { name: 'Next' }));
 		expect(screen.getByText('First fix')).toBeInTheDocument();
 	});
+
+	describe('modal behaviour', () => {
+		it('moves focus into the dialog, locks body scroll, and restores both on close', async () => {
+			const opener = document.createElement('button');
+			document.body.appendChild(opener);
+			opener.focus();
+			const { unmount } = render(StoryViewer, { story, onClose: vi.fn(), now: NOW });
+			await Promise.resolve();
+			expect(screen.getByRole('dialog').contains(document.activeElement)).toBe(true);
+			expect(document.body.style.overflow).toBe('hidden');
+			unmount();
+			expect(document.body.style.overflow).toBe('');
+			expect(document.activeElement).toBe(opener);
+			opener.remove();
+		});
+
+		it('keeps Tab inside the dialog', async () => {
+			setup();
+			await Promise.resolve();
+			const dialog = screen.getByRole('dialog');
+			const items = [...dialog.querySelectorAll<HTMLElement>('button, a[href]')];
+			items[items.length - 1].focus();
+			await fireEvent.keyDown(window, { key: 'Tab' });
+			expect(document.activeElement).toBe(items[0]);
+			items[0].focus();
+			await fireEvent.keyDown(window, { key: 'Tab', shiftKey: true });
+			expect(document.activeElement).toBe(items[items.length - 1]);
+		});
+	});
 });

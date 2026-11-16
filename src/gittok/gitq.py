@@ -13,7 +13,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-HEX_ID_PATTERN = r"[0-9a-f]{7,40}"
+HEX_ID_PATTERN = r"[0-9a-f]{7,64}"  # SHA-1 ids have 40 digits, SHA-256 ids 64
 _HEX_RE = re.compile(HEX_ID_PATTERN)
 DEFAULT_TIMEOUT_S = 120
 MAX_STDERR_BYTES = 64 * 1024
@@ -253,7 +253,7 @@ def split_lines(text: str) -> list[str]:
     return [ln[:-1] if ln.endswith("\r") else ln for ln in lines]
 
 
-_BLAME_HEAD = re.compile(r"^([0-9a-f]{40}) \d+ \d+")
+_BLAME_HEAD = re.compile(r"^([0-9a-f]{40}|[0-9a-f]{64}) \d+ \d+")
 _HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+")
 
 
@@ -308,48 +308,74 @@ _NEW_HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 _RAW = re.compile(r"^:\d+ \d+ [0-9a-f]+ ([0-9a-f]+) [A-Z]\d*\t(.+)$")
 
 
+MAX_HUNK_LOG_BYTES = 64 * 1024 * 1024
+
+
 def log_new_hunks(
-    repo: Path | str, ref: str, since_ts: int | None, limit: int, paths: set[str] | None = None
+    repo: Path | str,
+    ref: str,
+    since_ts: int | None,
+    limit: int,
+    paths: set[str] | None = None,
+    max_bytes: int = MAX_HUNK_LOG_BYTES,
 ) -> list[dict]:
     """The newest `limit` non-merge commits on `ref`, each with the new-side line ranges its diff
     changed, per file: `{sha, ts, files: {path: {"blob": sha, "ranges": [(start, end)]}}}`.
 
     One git call. A pure deletion reports the two lines around the cut. Deleted files and files
-    outside `paths` (when given) are left out."""
+    outside `paths` (when given) are left out. `paths` is passed to git as a pathspec; the output
+    is read up to `max_bytes`, and a commit cut by the cap is dropped. A diff header is read
+    only before the first hunk of a file, so file content cannot pose as one.
+    """
     _check_rev(ref)
     args = [
         "log", ref, "--no-merges", "--no-renames", "-p", "--raw", "--no-abbrev", "-U0",
-        f"-n{int(limit)}", "--format=%x1e%H%x1f%at",
+        f"-n{int(limit)}", "--format=%x1e%H%x1f%ct",
     ]  # fmt: skip
     if since_ts is not None:
         args.append(f"--since=@{since_ts}")
-    out = run(repo, *args, "--")
-    commits = []
-    for rec in out.split("\x1e"):
-        if not rec.strip():
+    pathspec = sorted(paths) if paths else []
+    out = run(repo, *args, "--", *pathspec, max_bytes=max_bytes)
+    truncated = out.endswith(TRUNCATED_MARKER)
+    if truncated:
+        out = out[: -len(TRUNCATED_MARKER)]
+    commits: list[dict] = []
+    files: dict[str, dict] = {}
+    blobs: dict[str, str] = {}
+    cur = None
+    in_header = False
+    for line in out.split("\n"):
+        # Content lines of a diff start with "+", "-" or " ", so "\x1e" starts a commit only.
+        if line.startswith("\x1e"):
+            sha, _, ts = line[1:].partition("\x1f")
+            files, blobs, cur, in_header = {}, {}, None, False
+            if ts.isdigit():
+                commits.append({"sha": sha, "ts": int(ts), "files": files})
+            else:
+                commits.append({"sha": sha, "ts": 0, "files": files, "bad": True})
+        elif not commits:
             continue
-        head, _, body = rec.partition("\n")
-        sha, _, ts = head.partition("\x1f")
-        files: dict[str, dict] = {}
-        blobs: dict[str, str] = {}
-        cur = None
-        for line in body.split("\n"):
-            if m := _RAW.match(line):
-                if set(m.group(1)) != {"0"}:
-                    blobs[m.group(2)] = m.group(1)
-            elif line.startswith("+++ "):
-                p = line[6:] if line.startswith("+++ b/") else None
-                cur = p if p in blobs and (paths is None or p in paths) else None
-                if cur:
-                    files[cur] = {"blob": blobs[cur], "ranges": []}
-            elif cur and (m := _NEW_HUNK.match(line)):
+        elif m := _RAW.match(line):
+            if set(m.group(1)) != {"0"}:
+                blobs[m.group(2)] = m.group(1)
+        elif line.startswith("diff --git "):
+            cur, in_header = None, True
+        elif in_header and line.startswith("+++ "):
+            p = line[6:] if line.startswith("+++ b/") else None
+            cur = p if p in blobs and (paths is None or p in paths) else None
+            if cur:
+                files[cur] = {"blob": blobs[cur], "ranges": []}
+        elif line.startswith("@@"):
+            in_header = False
+            if cur and (m := _NEW_HUNK.match(line)):
                 start = int(m.group(1))
                 count = 1 if m.group(2) is None else int(m.group(2))
                 files[cur]["ranges"].append(
                     (start, start + count - 1) if count else (start, start + 1)
                 )
-        commits.append({"sha": sha, "ts": int(ts), "files": files})
-    return commits
+    if truncated and commits:
+        commits.pop()  # the last commit may be cut short
+    return [c for c in commits if not c.get("bad")]
 
 
 def recent_commits(repo: Path | str, ref: str, since_ts: int) -> list[dict]:
@@ -541,7 +567,10 @@ def default_remote_ref(repo: Path | str) -> str:
     prefix = "refs/remotes/"
     if code != 0 or not full.startswith(prefix + "origin/"):
         raise GitError("the remote has no default branch (is it empty?)")
-    return full[len(prefix) :]
+    ref = full[len(prefix) :]
+    if "/-" in ref or ref.startswith("-"):
+        raise GitError("the remote's default branch has a name that looks like an option")
+    return ref
 
 
 _last_fetch: dict[str, float] = {}  # repo path -> time.monotonic() of the last attempt
@@ -550,7 +579,7 @@ _fetch_lock = threading.Lock()
 
 def _split_remote_ref(repo: Path | str, ref: str) -> tuple[str, str] | None:
     """('origin', 'master') for the remote-tracking ref 'origin/master'; None for any other ref."""
-    if ref.startswith("-") or "/" not in ref:
+    if ref.startswith("-") or "/" not in ref or "/-" in ref:
         return None
     try:
         remotes = run(repo, "remote").split()
@@ -591,7 +620,7 @@ def fetch_ref(
     remote, branch = split
     # No automatic gc after the fetch: it would repack the user's repo.
     cmd = _command(repo, "-c", "gc.auto=0", "-c", "maintenance.auto=false")
-    cmd += ["fetch", "--no-tags", "--quiet", remote, branch]
+    cmd += ["fetch", "--no-tags", "--quiet", "--end-of-options", remote, branch]
     try:
         subprocess.run(
             cmd,

@@ -73,6 +73,15 @@ FREE_VALUES = ("file", "tag")  # any value: a path, a detector tag
 
 
 DEFAULT_FACTOR = {"boost": 2.0, "prefer": 1.5}
+# The (type, feature) pairs that the brief reads (docs/learning.md section 10). Any other rule
+# would be stored and do nothing, so `add_rule` refuses it.
+_BOOSTABLE = ("format", "story_type", "repo", "group", "tone", "dir", "angle")
+SUPPORTED_FEATURES = {
+    "limit": ("format", "story_type", "repo", "tone"),
+    "boost": _BOOSTABLE,
+    "prefer": _BOOSTABLE,
+    "focus": ("repo", "dir", "format", "story_type", "group", "tone"),
+}
 
 
 def _now(now: datetime | None) -> datetime:
@@ -244,6 +253,12 @@ def add_rule(
         raise SteeringError(f"Unknown type '{type}'. Use one of: {', '.join(RULE_TYPES)}.")
     if feature not in FEATURES:
         raise SteeringError(f"Unknown feature '{feature}'. Use one of: {', '.join(FEATURES)}.")
+    if feature not in SUPPORTED_FEATURES[type]:
+        raise SteeringError(
+            f"A {type} rule works on: {', '.join(SUPPORTED_FEATURES[type])}. The brief does not "
+            f"read a {type} rule on '{feature}', so it would do nothing. For that, write it in "
+            "local/guidance.md (every card writer reads it)."
+        )
     value = _check_value(cfg, feature, value)
     factor, slots, max_share = _params(type, factor, slots, max_share)
     now = _now(now)
@@ -289,9 +304,11 @@ TREND_DELTA = 0.1
 
 
 def _reward_rows(conn, cfg, now: datetime):
-    """(card_id, reward, age_in_days) for each reward, newest data from the impression event."""
+    """(card_id, reward, age_in_days, saved_features) for each reward, newest data from the
+    impression event. `saved_features` are the (feature, value) pairs stored with the reward:
+    the only place that holds the impression-time features (familiarity)."""
     rows = conn.execute(
-        "SELECT r.card_id, r.reward, r.computed_at, e.ts FROM rewards r "
+        "SELECT r.card_id, r.reward, r.computed_at, r.features, e.ts FROM rewards r "
         "LEFT JOIN events e ON e.id = r.impression_event_id "
         "JOIN cards c ON c.id = r.card_id"
     ).fetchall()
@@ -300,7 +317,11 @@ def _reward_rows(conn, cfg, now: datetime):
             when = datetime.fromtimestamp(r["ts"] / 1000, UTC)
         else:
             when = learning._parse_iso(r["computed_at"])
-        yield r["card_id"], r["reward"], (now - when).total_seconds() / 86400
+        try:
+            saved = {tuple(k) for k in json.loads(r["features"] or "[]")}
+        except (ValueError, TypeError):
+            saved = set()
+        yield r["card_id"], r["reward"], (now - when).total_seconds() / 86400, saved
 
 
 def _trend(ages_and_rewards: list[tuple[float, float]]) -> str:
@@ -328,10 +349,12 @@ def explain_weights(
     wanted = [feature] if feature else list(FEATURES)
     seen: dict[tuple[str, str], list[tuple[float, float]]] = {}
     features: dict[str, list[tuple[str, str]]] = {}
-    for card_id, value, age in _reward_rows(conn, cfg, now):
+    for card_id, value, age, saved in _reward_rows(conn, cfg, now):
         if card_id not in features:
             features[card_id] = learning.card_features(conn, cfg, card_id, now=now)
-        for key in features[card_id]:
+        keys = {k for k in features[card_id] if k[0] not in learning.IMPRESSION_FEATURES}
+        keys |= {k for k in saved if k[0] in learning.IMPRESSION_FEATURES}
+        for key in keys:
             if key[0] in wanted:
                 seen.setdefault(key, []).append((age, value))
     out = []

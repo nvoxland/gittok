@@ -171,9 +171,16 @@ def test_an_empty_feed_signals_inside_the_cooldown_once_a_run_answered_the_last_
     assert supply.signal_wants_cards(conn, cfg, NOW) == 1
     # No run answered that line: a second line would say nothing new.
     assert supply.signal_wants_cards(conn, cfg, NOW + timedelta(minutes=30)) == 0
-    runs.open_run(conn, cfg, repo=None, brief="b", requested=5, now=NOW + timedelta(minutes=5))
+    run_id = runs.open_run(
+        conn, cfg, repo=None, brief="b", requested=5, now=NOW + timedelta(minutes=5)
+    )
     assert supply.signal_wants_cards(conn, cfg, NOW + timedelta(minutes=30)) == 0  # run open
     _finish_runs(conn)
+    # A finished run that made no card does not answer the line (review: runs chained).
+    assert supply.signal_wants_cards(conn, cfg, NOW + timedelta(minutes=30)) == 0
+    conn.execute("UPDATE cards SET run_id = ? WHERE id = ?", (run_id, fill(conn, cfg, 1)[0]))
+    conn.execute("UPDATE cards SET status = 'seen' WHERE run_id = ?", (run_id,))
+    conn.commit()
     assert supply.signal_wants_cards(conn, cfg, NOW + timedelta(minutes=30)) == 1
     assert supply.signal_wants_cards(conn, cfg, NOW + timedelta(minutes=31)) == 0
     assert len(log.read_text().splitlines()) == 2

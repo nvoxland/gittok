@@ -34,6 +34,7 @@ What is stored:
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import posixpath
 import re
@@ -398,9 +399,27 @@ def _touches(out, repo, path, head, t0, settings, profile, head_symbols) -> None
                     )
 
 
-def _query_key(profile) -> str:
-    q = sorted((profile.queries or {}).items()) if profile is not None else []
-    return hashlib.sha1(repr(q).encode()).hexdigest()[:12]
+def input_key(settings: AnalysisSettings, profile) -> str:
+    """A hash of everything besides HEAD that decides what a facts build holds: the profile
+    queries, the file set (scan, ignore and kinds, with the shipped defaults), the language
+    and query files, the facts and candidate limits, and which grammars are ready."""
+    from . import overlay
+
+    limits = {
+        k: v
+        for k, v in vars(settings).items()
+        if k.startswith(("facts_", "candidate_")) or k == "history_window_days"
+    }
+    parts = [
+        sorted((profile.queries or {}).items()) if profile is not None else [],
+        repr(fileset_for(profile)),
+        json.dumps(
+            [overlay.data("languages"), overlay.data("queries")], sort_keys=True, default=repr
+        ),
+        sorted(limits.items()),
+        sorted(structure.ready_grammars()),
+    ]
+    return hashlib.sha1(repr(parts).encode()).hexdigest()[:16]
 
 
 def refresh(
@@ -420,7 +439,7 @@ def refresh(
     row = conn.execute("SELECT id FROM repos WHERE name = ?", (repo_name,)).fetchone()
     if row is None:
         return {"built": False, "counts": {}}
-    repo_id, qkey = row["id"], _query_key(profile)
+    repo_id, qkey = row["id"], input_key(settings, profile)
     cur = conn.execute(
         "SELECT head_sha, query_key, counts FROM fact_builds WHERE repo_id = ?", (repo_id,)
     ).fetchone()
@@ -577,17 +596,30 @@ def symbols_named(conn, repo: str, name: str) -> list[str]:
     return sorted({d["symbol"] for d in definitions(conn, repo, name)})
 
 
-def callers_of(conn, repo: str, name: str, limit: int = 200) -> list[dict]:
-    """Calls to `name`: resolved to any definition it names, plus unresolved calls by that
-    bare name (their `resolved` is 0)."""
+def _callers_where(conn, repo: str, name: str, resolved_only: bool) -> tuple[str, list]:
     symbols = symbols_named(conn, repo, name) or [name]
     marks = ",".join("?" * len(symbols))
+    where = f"repo_id = ? AND (callee_symbol IN ({marks}) OR (resolved = 0 AND callee_name = ?))"
+    if resolved_only:
+        where += " AND resolved = 1"
+    return where, [_repo_id(conn, repo), *symbols, name]
+
+
+def callers_of(
+    conn, repo: str, name: str, limit: int = 200, resolved_only: bool = False
+) -> list[dict]:
+    """Calls to `name`: resolved to any definition it names, plus unresolved calls by that
+    bare name (their `resolved` is 0). `resolved_only` leaves the unresolved ones out."""
+    where, args = _callers_where(conn, repo, name, resolved_only)
     return _rows(
-        conn,
-        f"SELECT * FROM fact_calls WHERE repo_id = ? AND (callee_symbol IN ({marks})"
-        " OR (resolved = 0 AND callee_name = ?)) ORDER BY path, line LIMIT ?",
-        _repo_id(conn, repo), *symbols, name, limit,
-    )  # fmt: skip
+        conn, f"SELECT * FROM fact_calls WHERE {where} ORDER BY path, line LIMIT ?", *args, limit
+    )
+
+
+def count_resolved_callers(conn, repo: str, name: str) -> int:
+    """How many resolved calls name `name` (no row limit)."""
+    where, args = _callers_where(conn, repo, name, True)
+    return conn.execute(f"SELECT COUNT(*) FROM fact_calls WHERE {where}", args).fetchone()[0]
 
 
 def callees_of(conn, repo: str, name: str, limit: int = 200) -> list[dict]:
@@ -673,7 +705,7 @@ class _Files:
                 data = gitq.show_file(self.repo_path, self.head, path)
             except gitq.GitError:
                 raise _Reject(f"{path} is not a file at {self.head[:12]}") from None
-            self.cache[path] = data.decode("utf-8", errors="replace").splitlines()
+            self.cache[path] = gitq.split_lines(data.decode("utf-8", errors="replace"))
         return self.cache[path]
 
     def line(self, path: str, n: int, above: int = 0) -> str:

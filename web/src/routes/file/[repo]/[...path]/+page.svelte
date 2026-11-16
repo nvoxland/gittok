@@ -5,8 +5,15 @@
 	let followed = $state<boolean | undefined>();
 	const on = $derived(followed ?? p.followed);
 
+	let followError = $state<string | null>(null);
+
 	async function toggle() {
-		followed = await postFollow(p.repo, p.path, !on);
+		followError = null;
+		try {
+			followed = await postFollow(p.repo, p.path, !on);
+		} catch {
+			followError = 'Could not update. Try again.';
+		}
 	}
 </script>
 
@@ -19,6 +26,7 @@
 		</div>
 		<button type="button" aria-pressed={on} onclick={toggle}>{on ? 'Following' : 'Follow'}</button>
 	</header>
+	{#if followError}<p class="follow-error" role="alert">{followError}</p>{/if}
 
 	{#if p.history}
 		<dl class="stats">
@@ -52,6 +60,11 @@
 </main>
 
 <style>
+	.follow-error {
+		color: var(--bad);
+		font-size: 0.85rem;
+		margin: 0 0 0.5rem;
+	}
 	.profile {
 		padding: calc(0.75rem + var(--safe-top)) max(16px, var(--safe-right)) calc(2rem + var(--safe-bottom)) max(16px, var(--safe-left));
 		max-width: 48rem;

@@ -18,16 +18,15 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from importlib.resources import files
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
-from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AfterValidator, BaseModel, Field, field_validator
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from gittok import (
@@ -184,9 +183,25 @@ def pair_wait_html(code: str | None) -> str:
     )
 
 
+def _encodable(v: str) -> str:
+    try:
+        v.encode("utf-8")
+    except UnicodeEncodeError:
+        raise ValueError("text must be valid unicode (no lone surrogates)") from None
+    return v
+
+
+# Text that SQLite and JSON can store: a lone surrogate would end as a 500.
+Text = Annotated[str, AfterValidator(_encodable)]
+# Client clock in ms: from 1970 up to year 9999, the range that `datetime` takes.
+TsMs = Annotated[int, Field(ge=0, le=253_402_300_799_999)]
+SmallInt = Annotated[int, Field(ge=-(2**31), le=2**31)]
+RowId = Annotated[int, Field(ge=0, le=2**63 - 1)]
+
+
 class FollowBody(BaseModel):
-    repo: str
-    path: str = Field(min_length=1, max_length=400)
+    repo: Text
+    path: Text = Field(min_length=1, max_length=400)
     on: bool = True
 
 
@@ -481,9 +496,27 @@ class SecurityMiddleware:
                 private.make_dir(path.parent)
                 host = (scope.get("client") or ("?",))[0]
                 with open(path, "a", opener=private.opener) as f:
-                    f.write(f"{db.now_iso()} {host} {scope['method']} {scope['path']} {status}\n")
+                    line = f"{db.now_iso()} {host} {scope['method']} {_log_text(scope['path'])}"
+                    f.write(f"{line} {status}\n")
             except OSError:
                 pass  # logging never fails a request
+
+    async def _origin_ok(self, scope, value: bytes) -> bool:
+        """The Origin names an allowed host, and its scheme and port are those of this request
+        (a page on another port of this machine is another origin). A request that came
+        through a proxy has its own scheme and port, so only the host counts there. The Vite
+        dev server of a clone is the one exception."""
+        parts = _origin_parts(value)
+        if parts is None:
+            return False
+        scheme, host, port = parts
+        if not await self.hosts.allows(host):
+            return False
+        if _is_forwarded(scope):
+            return True
+        if port == DEV_UI_PORT and host in ("localhost", "127.0.0.1", "[::1]", "::1"):
+            return True
+        return scheme == scope.get("scheme", "http") and port == _own_port(scope, scheme)
 
     async def _handle(self, scope, receive, send):
         path = scope["path"]
@@ -498,7 +531,7 @@ class SecurityMiddleware:
             return await reply(_error_json(421, "unknown_host", "unknown Host"))
         if scope["method"] not in SAFE_METHODS:
             for k, v in scope["headers"]:
-                if k == b"origin" and not await self.hosts.allows(_origin_host(v)):
+                if k == b"origin" and not await self._origin_ok(scope, v):
                     return await reply(_error_json(403, "cross_origin", "cross-origin request"))
 
         if not self.token and _is_forwarded(scope):
@@ -520,18 +553,22 @@ class SecurityMiddleware:
 
         seen = 0
         started = False
+        too_large = False
 
         async def counting_receive():
-            nonlocal seen
+            nonlocal seen, too_large
             msg = await receive()
             if msg["type"] == "http.request":
                 seen += len(msg.get("body", b""))
                 if seen > MAX_BODY_BYTES:
+                    too_large = True
                     raise _BodyTooLarge
             return msg
 
         async def tracking_send(msg):
             nonlocal started
+            if too_large:
+                return  # the app may turn the failed read into a 400: the answer is 413
             if msg["type"] == "http.response.start":
                 started = True
             await send(msg)
@@ -539,8 +576,34 @@ class SecurityMiddleware:
         try:
             await self.app(scope, counting_receive, tracking_send)
         except _BodyTooLarge:
-            if not started:
-                await reply(_error_json(413, "body_too_large", "request body too large"))
+            pass
+        if too_large and not started:
+            await reply(_error_json(413, "body_too_large", "request body too large"))
+
+
+DEV_UI_PORT = 5173  # the Vite dev server of a clone, on a loopback name
+
+
+def _origin_parts(value: bytes) -> tuple[str, str | None, int | None] | None:
+    """(scheme, host, port) of an Origin header; the port is the default one when absent."""
+    try:
+        u = urlsplit(value.decode("latin-1").strip())
+        port = u.port
+    except ValueError:
+        return None
+    scheme = u.scheme.lower()
+    if scheme not in ("http", "https") or not u.hostname:
+        return None
+    return scheme, u.hostname.lower().removesuffix("."), port or (443 if scheme == "https" else 80)
+
+
+def _own_port(scope, scheme: str) -> int:
+    for k, v in scope["headers"]:
+        if k == b"host":
+            _, _, rest = v.decode("latin-1").strip().rpartition(":")
+            if rest.isdigit() and not v.decode("latin-1").strip().endswith("]"):
+                return int(rest)
+    return 443 if scheme == "https" else 80
 
 
 def _origin_host(value: bytes) -> str | None:
@@ -549,6 +612,15 @@ def _origin_host(value: bytes) -> str | None:
     except ValueError:
         return None
     return host.lower().removesuffix(".") if host else None
+
+
+def _log_text(text: str) -> str:
+    """One log field: control characters and spaces escaped, so a request cannot add a line
+    or a column to the log."""
+    return "".join(
+        ch if ch.isprintable() and ch != " " else ch.encode("unicode_escape").decode()
+        for ch in text
+    ).replace(" ", "\\x20")
 
 
 class _BodyTooLarge(Exception):
@@ -566,9 +638,9 @@ def _cookie(scope, name: str) -> str | None:
 
 
 class Event(BaseModel):
-    card_id: str | None = None
+    card_id: Text | None = None
     type: EventType
-    ts: int
+    ts: TsMs
     data: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("data")
@@ -580,10 +652,10 @@ class Event(BaseModel):
 
 
 class Answer(BaseModel):
-    card_id: str
-    choice: int
-    session: str | None = None
-    ts: int | None = None  # the client clock, like the other events; the server's when absent
+    card_id: Text
+    choice: SmallInt
+    session: Text | None = None
+    ts: TsMs | None = None  # the client clock, like the other events; the server's when absent
 
 
 class StorySeen(BaseModel):
@@ -599,13 +671,13 @@ class StorySeen(BaseModel):
 
 
 class ReplyBody(BaseModel):
-    card_id: str
-    comment_index: int
-    text: str
+    card_id: Text
+    comment_index: SmallInt
+    text: Text
 
 
 class NotificationsRead(BaseModel):
-    ids: list[int] | None = None
+    ids: list[RowId] | None = None
     all: bool = False
 
 
@@ -723,16 +795,22 @@ class SPAStaticFiles(StaticFiles):
     """Serve the web build; unknown non-API paths fall back to index.html."""
 
     async def get_response(self, path, scope):
+        served = path
         try:
             res = await super().get_response(path, scope)
         except StarletteHTTPException as e:
-            if e.status_code == 404 and not path.startswith("api/"):
-                res = await super().get_response("index.html", scope)
+            # A route (no file extension) falls back to the app. A missing file does not:
+            # index.html in place of a JavaScript chunk would be cached and break the app.
+            last = path.rsplit("/", 1)[-1]
+            is_file = path.startswith(("api/", "_app/")) or "." in last
+            if e.status_code == 404 and not is_file:
+                served = "index.html"
+                res = await super().get_response(served, scope)
             else:
                 raise
         # Hashed build files never change; everything else (index.html above all) must be
         # checked each time, or a phone keeps loading old JavaScript after a rebuild.
-        immutable = path.startswith("_app/immutable/")
+        immutable = served.startswith("_app/immutable/")
         res.headers["Cache-Control"] = (
             "public, max-age=31536000, immutable" if immutable else "no-cache"
         )
@@ -792,9 +870,12 @@ def create_app(
             private.make_dir(logs)
             host = request.client.host if request.client else "?"
             errors = db.dumps(jsonable_encoder(exc.errors()))[:2000]
+            errors = errors.encode("utf-8", "backslashreplace").decode()  # no lone surrogates
             with open(logs / "rejected-events.log", "a", opener=private.opener) as f:
                 f.write(f"{db.now_iso()} 422 {host} {errors}\n")
-        return await request_validation_exception_handler(request, exc)
+        # Not the input: it can hold text that no JSON encoder takes (a lone surrogate).
+        detail = [{k: e.get(k) for k in ("loc", "msg", "type")} for e in exc.errors()]
+        return JSONResponse({"detail": jsonable_encoder(detail)}, 422)
 
     @app.exception_handler(ApiError)
     async def api_error(_request: Request, exc: ApiError):
@@ -808,7 +889,12 @@ def create_app(
             return RedirectResponse("/", status_code=303, headers=PAIR_PAGE_HEADERS)
         with conn() as c:
             try:
-                req = pair_codes.request(c, datetime.now(UTC))
+                req = pair_codes.request(
+                    c,
+                    datetime.now(UTC),
+                    peer=request.client.host if request.client else "?",
+                    existing_id=request.cookies.get(PAIR_COOKIE),
+                )
             except pair_codes.TooManyRequests as e:
                 raise ApiError(429, "too_many_pair_requests", str(e)) from None
         resp = RedirectResponse("/pair/wait", status_code=303)
@@ -876,10 +962,17 @@ def create_app(
     @app.get("/api/cards/{card_id}")
     def card(card_id: str):
         with conn() as c:
-            row = c.execute("SELECT * FROM cards WHERE id = ?", (card_id,)).fetchone()
-            if row is None:
+            cfg = get_config()
+            row = c.execute(
+                "SELECT c.*, r.name AS repo_name FROM cards c JOIN repos r ON r.id = c.repo_id "
+                "WHERE c.id = ? AND c.status = 'ready'",
+                (card_id,),
+            ).fetchone()
+            # The same rule as the feed: a card that is not ready, or of a repo that is not
+            # configured now, does not exist for the reader.
+            if row is None or row["repo_name"] not in cfg.repos:
                 raise ApiError(404, "unknown_card", f"unknown card {card_id}")
-            card = public_card(row, get_config())
+            card = public_card(row, cfg)
             replies.attach(c, [card])
         return card
 
@@ -913,12 +1006,13 @@ def create_app(
     @app.get("/api/saved")
     def saved():
         with conn() as c:
-            rows = c.execute(
-                "SELECT c.* FROM saved_cards s JOIN cards c ON c.id = s.card_id "
-                "ORDER BY s.saved_ts DESC, s.card_id"
-            ).fetchall()
             cfg = get_config()
-            cards = [public_card(r, cfg) for r in rows]
+            rows = c.execute(
+                "SELECT c.*, r.name AS repo_name FROM saved_cards s "
+                "JOIN cards c ON c.id = s.card_id JOIN repos r ON r.id = c.repo_id "
+                "WHERE c.status = 'ready' ORDER BY s.saved_ts DESC, s.card_id"
+            ).fetchall()
+            cards = [public_card(r, cfg) for r in rows if r["repo_name"] in cfg.repos]
             replies.attach(c, cards)
         return {"cards": cards}
 
@@ -926,7 +1020,7 @@ def create_app(
     def post_reply(body: ReplyBody):
         with conn() as c:
             try:
-                return replies.add(c, body.card_id, body.comment_index, body.text)
+                return replies.add(c, body.card_id, body.comment_index, body.text, cfg=get_config())
             except replies.UnknownCard as e:
                 raise ApiError(404, "unknown_card", str(e)) from None
             except replies.ReplyError as e:
@@ -1020,6 +1114,21 @@ def create_app(
         now = db.now_iso()
         kept = [e for e in batch.events if e.type not in RETIRED_EVENTS]
         with conn() as c:
+            # The client names each event (`data.event_id`) so that a retried batch is not
+            # stored twice. An event without an id is always stored.
+            seen: set[str] = set()
+            fresh = []
+            for e in kept:
+                eid = e.data.get("event_id")
+                if isinstance(eid, str):
+                    if eid in seen or c.execute(
+                        "SELECT 1 FROM events WHERE json_extract(data, '$.event_id') = ? LIMIT 1",
+                        (eid,),
+                    ).fetchone():
+                        continue
+                    seen.add(eid)
+                fresh.append(e)
+            kept = fresh
             c.executemany(
                 "INSERT INTO events(card_id, type, ts, data, received_at) VALUES (?, ?, ?, ?, ?)",
                 [(e.card_id, e.type, e.ts, db.dumps(e.data), now) for e in kept],

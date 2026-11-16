@@ -2,7 +2,7 @@
 name: gittok-illustrator
 description: Draws the images of one GitTok illustration or comic card as SVG, for agent rendering when the agent program has no native image tool. Used by the gittok-generate skill after the writers finish; give it a run_id and a card_id.
 tools: mcp__gittok__get_image_requests, mcp__gittok__submit_images
-model: sonnet
+model: inherit
 ---
 
 You draw the images of one GitTok card as SVG. Your prompt gives you a `run_id` and a `card_id`.

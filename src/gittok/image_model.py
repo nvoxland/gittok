@@ -31,6 +31,7 @@ APPROX_GB = 6
 RETRY_AFTER_S = 3600  # after a failed download, wait this long before starting one by itself
 STARTING_S = 60  # a started download has this long to take the lock before it counts as gone
 STATUS_FILE = "download.json"
+MARKER_FILE = ".model-complete-marker"  # in each folder a download made; only that is replaced
 LOCK_FILE = ".download.lock"
 PATTERNS = [f"{c}/" for c in (*COMPONENTS, "tokenizer")]  # a folder: everything in it
 
@@ -48,6 +49,11 @@ def model_dir(cfg) -> Path:
     if r.mflux_path:
         return Path(r.mflux_path).expanduser()
     return models_root(cfg) / r.mflux_repo.rsplit("/", 1)[-1]
+
+
+def user_path(cfg) -> bool:
+    """True when `render.mflux_path` names the model folder: the user's own, never written."""
+    return bool(cfg.settings.render.mflux_path)
 
 
 def ready(path: Path) -> bool:
@@ -119,11 +125,16 @@ def downloading(cfg) -> bool:
 
 
 def status(cfg) -> dict:
-    """{state: ready | downloading | failed | missing, path, done, total, error}."""
+    """{state: ready | downloading | failed | missing | invalid path, path, done, total, error}."""
     path = model_dir(cfg)
     out = {"state": "missing", "path": str(path), "done": 0, "total": 0, "error": None}
     if ready(path):
         return {**out, "state": "ready"}
+    if user_path(cfg):
+        return {**out, "state": "invalid path",
+                "error": f"render.mflux_path {path} is not a complete saved mflux model "
+                         "(each of transformer, text_encoder and vae with its index and "
+                         "shards, and tokenizer/tokenizer.json); GitTok never downloads into it"}
     saved = _read_status(cfg)
     if downloading(cfg) or (saved.get("state") == "starting" and _age(saved) < STARTING_S):
         return {**out, "state": "downloading", "done": saved.get("done", 0),
@@ -168,6 +179,8 @@ def download(cfg, *, fetch=None, total: int | None = None, poll_s: float = 2.0,
     r = cfg.settings.render
     final = model_dir(cfg)
     partial = final.with_name(final.name + ".partial")
+    if user_path(cfg) and not ready(final):
+        raise DownloadError(status(cfg)["error"])
     with _lock(cfg) as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -176,6 +189,9 @@ def download(cfg, *, fetch=None, total: int | None = None, poll_s: float = 2.0,
         if ready(final):
             _write_status(cfg, state="ready")
             return final
+        if final.exists() and not (final / MARKER_FILE).exists():
+            raise DownloadError(f"{final} exists and GitTok did not make it; "
+                                "move it away to download the model there")
         try:
             if total is None:
                 total = _remote_total(r.mflux_repo, r.mflux_revision)
@@ -199,8 +215,9 @@ def download(cfg, *, fetch=None, total: int | None = None, poll_s: float = 2.0,
                 watcher.join()
             if not ready(partial):
                 raise DownloadError(f"the download of {r.mflux_repo} is incomplete")
+            (partial / MARKER_FILE).write_text("made by gittok images --download\n")
             if final.exists():
-                shutil.rmtree(final)  # an incomplete folder from before
+                shutil.rmtree(final)  # an incomplete folder that a download made
             os.replace(partial, final)
         except Exception as e:
             _write_status(cfg, state="failed", error=str(e) or type(e).__name__)
@@ -233,7 +250,7 @@ def maybe_start(cfg, *, installed: bool, spawn: Callable[[list[str]], None] | No
     if not installed or not cfg.settings.render.mflux_auto_download:
         return False
     st = status(cfg)
-    if st["state"] in ("ready", "downloading"):
+    if st["state"] in ("ready", "downloading", "invalid path"):
         return False
     if st["state"] == "failed" and _age(_read_status(cfg)) < RETRY_AFTER_S:
         return False

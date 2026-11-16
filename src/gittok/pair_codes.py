@@ -17,6 +17,7 @@ from . import db
 ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
 CODE_TTL = timedelta(minutes=10)
 MAX_PENDING = 20
+MAX_PENDING_PER_PEER = 3
 CODE_RE = re.compile(rf"[{ALPHABET}]{{4}}-[{ALPHABET}]{{2}}")
 
 NO_SUCH_CODE = (
@@ -48,10 +49,27 @@ def normalize(typed: str) -> str:
     return f"{raw[:4]}-{raw[4:]}" if len(raw) == 6 else raw
 
 
-def request(conn, now: datetime) -> dict:
-    """A new request: {id (secret, for the device only), code (for the user to say)}."""
+def request(
+    conn, now: datetime, peer: str | None = None, existing_id: str | None = None
+) -> dict:
+    """A request: {id (secret, for the device only), code (for the user to say)}. A device
+    that names its waiting request (`existing_id`) gets that one back. One `peer` address
+    may have `MAX_PENDING_PER_PEER` requests, so it cannot take every slot."""
     with db.immediate(conn):
         _prune(conn, now)
+        if existing_id:
+            row = conn.execute(
+                "SELECT id, code FROM pair_requests WHERE id = ? AND approved_at IS NULL",
+                (existing_id,),
+            ).fetchone()
+            if row:
+                return {"id": row["id"], "code": row["code"]}
+        if peer is not None:
+            mine = conn.execute(
+                "SELECT COUNT(*) FROM pair_requests WHERE peer = ?", (peer,)
+            ).fetchone()[0]
+            if mine >= MAX_PENDING_PER_PEER:
+                raise TooManyRequests("this device waits for too many pairing codes; try later")
         n = conn.execute("SELECT COUNT(*) FROM pair_requests").fetchone()[0]
         if n >= MAX_PENDING:
             raise TooManyRequests("too many devices wait for a pairing code; try again later")
@@ -61,8 +79,8 @@ def request(conn, now: datetime) -> dict:
                 break
         rid = secrets.token_urlsafe(32)
         conn.execute(
-            "INSERT INTO pair_requests(id, code, created_at) VALUES (?, ?, ?)",
-            (rid, code, _iso(now)),
+            "INSERT INTO pair_requests(id, code, created_at, peer) VALUES (?, ?, ?, ?)",
+            (rid, code, _iso(now), peer),
         )
     return {"id": rid, "code": code}
 

@@ -243,3 +243,46 @@ def test_count_claims_skips_hedges_ranges_and_line_refs():
     assert _counts("It saw 101 commits and 1,200 lines changed.") == [101, 1200]
     assert _counts("about 101 commits, over 50 files, lines 36-60") == []
     assert _counts("12 commits, 3 files, line 40 changed, 99% of files") == []
+
+
+# --- review fixes: years, ports, statuses, hex literals ---------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "In 2026 the rounding changed twice.",
+        "Since January 2026 this file changed a lot",
+        "Port 8080 changes nothing",
+        "HTTP 404 the handler changes",
+        "A 500 error times out",
+    ],
+)
+def test_years_ports_and_statuses_are_not_counts(text):
+    assert claims._count_tokens(text) == []
+
+
+def test_real_counts_still_found():
+    assert [t for t, _ in claims._count_tokens("It had 999 commits.")] == ["999"]
+
+
+def test_hex_literals_in_code_or_dotted_names_are_not_shas():
+    assert claims.sha_tokens("The `deadbeef1` constant") == []
+    assert claims.sha_tokens("bundle app.3f2a1b9c.js ships") == []
+    assert claims.sha_tokens("color #3f2a1b9 is used") == []
+    assert claims.sha_tokens("see 3f2a1b9c here") == ["3f2a1b9c"]
+
+
+def test_hex_literal_in_cited_code_is_not_checked_as_sha(fixture_repo, monkeypatch):
+    monkeypatch.setattr(claims.Evidence, "commit_text", "", raising=False)
+    card = card_with(fixture_repo, hook="The seed is deadbeef1 in code")
+
+    class NoGit:
+        def commit(self, repo, c):
+            return c
+
+        def repo(self, name):
+            raise AssertionError("git must not be asked")
+
+    got = claims.first_unverified(card, NoGit(), haystack=lambda: "SEED = 'deadbeef1'")
+    assert got is None or got.why != "is not a commit in the repo"

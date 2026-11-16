@@ -167,7 +167,7 @@ agent:
   per_day_runs: 4
 ```
 
-A key that GitTok does not know is ignored with a warning; `gittok health` and `gittok config check` print the warning. Restart the server after a change to `server`, `render`, `data_dir` or a worker interval (`gittok serve`, or the agent session that owns it); the other settings are read on the next tool call.
+A number must be a number of the right kind and in range (for example `packet_size` 1 to 5, `min_burn_per_day` 1 or more, `server.port` 1 to 65535, a share 0 to 1); a wrong value is an error that names the file, and `gittok config check` shows it. A `key:` with no value means the default. A key that GitTok does not know is ignored with a warning; `gittok health` and `gittok config check` print the warning. Restart the server after a change to `server`, `render`, `data_dir` or a worker interval (`gittok serve`, or the agent session that owns it); the other settings are read on the next tool call.
 
 The values below are the shipped ones.
 
@@ -207,7 +207,7 @@ The values below are the shipped ones.
 | `intro_share` | `0.25` | At least this share of a brief's cards introduce the dirs you know least |
 | `scout_max` | `60` | Unrated candidates that one `scout_status` call hands out |
 | `scout_batch` | `15` | Candidates per scout worker |
-| `models` | `claude: {light: haiku, standard: sonnet}`, `codex: {}` | The model of each worker tier, per agent program. `light`: scouts and packets of simple formats; `standard`: the other writers, the illustrator, and (in Claude Code) the skills. A tier that is missing uses the session's model. Ask your agent ("use gpt-5-mini for light Codex workers") or set it in `local/settings.yaml` |
+| `models` | `claude: {light: haiku, standard: sonnet}`, `codex: {}` | The model of each worker tier, per agent program. `light`: scouts and packets of simple formats; `standard`: the other writers, the illustrator, and (in Claude Code) the skills. A tier that is missing or empty uses the session's model. In Claude Code, the model of a tier is `haiku`, `sonnet`, `opus`, `inherit` or a full id that starts with `claude-`; the driver passes it when it starts each worker, and a null tier lets the worker inherit the session's model (the worker files say `model: inherit`). The `model:` in the skill files of Claude Code is fixed when the files are made (`sonnet`): it does not follow this setting. Your local file merges per agent program and per tier, so naming one Codex tier keeps the shipped Claude tiers. Ask your agent ("use gpt-5-mini for light Codex workers") or set it in `local/settings.yaml` |
 | `require_facts` | `false` | `true`: reject a card that names a `backticked` identifier which no listed fact and no cited code covers. `false`: only warn |
 | `require_claim_sources` | `false` | `true`: reject a card whose why-sentence has no sourced claim behind it. `false`: only warn |
 | `claim_checks` | `true` | Reject cards whose numbers, dates, shas or names git does not back |
@@ -251,7 +251,7 @@ The values below are the shipped ones.
 | `mflux_repo` | `filipstrand/Z-Image-Turbo-mflux-4bit` | The pre-quantized model that GitTok downloads (about 6 GB) |
 | `mflux_revision` | `b3a8f311...` | The revision of `mflux_repo` to download |
 | `mflux_auto_download` | `true` | The feed server downloads the model by itself when using the Python backend and the renderer is installed. `false`: only `gittok images --download` does |
-| `mflux_path` | `""` | A model folder of your own (for example from `mflux-save`). Empty: `data/models/<repo name>`, where the download goes |
+| `mflux_path` | `""` | A model folder of your own (for example from `mflux-save`). GitTok never writes into it; if it is incomplete the state is `invalid path`. Empty: `data/models/<repo name>`, where the download goes |
 | `mflux_steps` | `9` | Steps per image |
 | `mflux_low_ram` | `true` | Bound temporary MLX caches and enable tiled decoding where supported, retaining model components for reuse during a batch |
 | `mflux_timeout_s` | `120` | Maximum seconds per image once the model is loaded; a timeout kills the batch and its child processes |

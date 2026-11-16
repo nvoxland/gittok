@@ -58,10 +58,21 @@ def apply(conn, cfg, in_dir: Path) -> dict:
             facts_conn=conn,
             require_facts=cfg.settings.agent.require_facts,
             require_claim_sources=cfg.settings.agent.require_claim_sources,
+            # the card keeps the format it has, even a variant its story type does not list
+            variant_formats={(old["story_type"], old["format"])},
         )
         if rejects:
             r = rejects[0]
             rejected.append({"card_id": card_id, "reason": r.reason, "detail": r.detail})
+            continue
+        a = accepted[0]
+        clash = conn.execute(
+            "SELECT 1 FROM cards WHERE story_key = ? AND format = ? AND id != ?",
+            (a.story_key, a.card["format"], card_id),
+        ).fetchone()
+        if clash:
+            detail = "another card has this story and format"
+            rejected.append({"card_id": card_id, "reason": "duplicate_story", "detail": detail})
             continue
         _replace(conn, cfg, card_id, accepted[0], old, row["status"], db.loads(row["resolved"]))
         replaced.append(card_id)
@@ -83,7 +94,7 @@ def _replace(conn, cfg, card_id: str, acc, old: dict, status: str, old_resolved=
     with conn:
         conn.execute(
             "UPDATE cards SET format = ?, persona = ?, tone = ?, spec = ?, resolved = ?, "
-            "status = ? WHERE id = ?",
+            "status = ?, story_key = ? WHERE id = ?",
             (
                 card["format"],
                 card["persona"],
@@ -91,7 +102,37 @@ def _replace(conn, cfg, card_id: str, acc, old: dict, status: str, old_resolved=
                 db.dumps(card),
                 db.dumps(resolved),
                 "pending_render" if redraw else status,
+                acc.story_key,
                 card_id,
             ),
         )
+        _keep_story(conn, acc, card)
         store.set_features(conn, card_id, card, cfg)
+
+
+def _keep_story(conn, acc, card: dict) -> None:
+    """The story of the card (its key and formats) follows the rewritten card."""
+    now = db.now_iso()
+    conn.execute(
+        "INSERT INTO stories(story_key, repo, story_type, sources, first_card_at, last_card_at, "
+        "formats) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(story_key) DO NOTHING",
+        (
+            acc.story_key,
+            card["repos"][0],
+            card["story_type"],
+            db.dumps(card.get("sources", [])),
+            now,
+            now,
+            db.dumps([card["format"]]),
+        ),
+    )
+    used = db.loads(
+        conn.execute(
+            "SELECT formats FROM stories WHERE story_key = ?", (acc.story_key,)
+        ).fetchone()["formats"]
+    )
+    if card["format"] not in used:
+        conn.execute(
+            "UPDATE stories SET formats = ? WHERE story_key = ?",
+            (db.dumps([*used, card["format"]]), acc.story_key),
+        )

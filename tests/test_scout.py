@@ -133,7 +133,7 @@ async def test_scout_max_caps_the_total(repo, tmp_path):
 def test_scout_agent_file_has_only_the_two_tools():
     text = (ROOT / ".claude" / "agents" / "gittok-scout.md").read_text()
     head = text.split("---")[1]
-    assert "model: haiku" in head
+    assert "model: inherit" in head
     tools = next(ln for ln in head.splitlines() if ln.startswith("tools:"))
     got = {t.strip() for t in tools.removeprefix("tools:").split(",")}
     assert got == {"mcp__gittok__get_candidates", "mcp__gittok__rate_candidates"}

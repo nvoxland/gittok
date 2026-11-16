@@ -204,6 +204,11 @@ def _downloaded() -> frozenset[str]:
     return frozenset(_pack.downloaded_languages()) if available() else frozenset()
 
 
+def ready_grammars() -> frozenset[str]:
+    """The grammars in the local cache (empty without the pack)."""
+    return _downloaded()
+
+
 def ready(grammar: str) -> bool:
     """True when `grammar` is in the local cache (no download is needed)."""
     return available() and grammar in _downloaded()

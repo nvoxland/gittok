@@ -31,7 +31,38 @@ class Commit:
     files: tuple[FileChange, ...]
 
 
-_FORMAT = "--format=%x1e%H%x1f%P%x1f%at%x1f%ai%x1f%aN%x1f%aE%x1f%s"
+_FORMAT = "--format=%x1e%H%x1f%P%x1f%ct%x1f%ai%x1f%aN%x1f%aE%x1f%s"
+
+
+_REC_START = re.compile(r"[0-9a-f]{40,64}\x1f")
+
+
+def _records(
+    out: str, nfields: int, whole: bool = False, ts_at: int = 1
+) -> list[tuple[list[str], str]]:
+    """Split `--format=%x1e<f1>%x1f...` output into (fields, body) pairs.
+
+    A subject or author may hold the separator bytes. A chunk that does not start
+    with a commit id and a field separator is glued back onto the record before it,
+    the last field takes the rest (subject), and a malformed record is skipped.
+    """
+    chunks: list[str] = []
+    for chunk in out.split("\x1e"):
+        if _REC_START.match(chunk) or not chunks:
+            chunks.append(chunk)
+        else:
+            chunks[-1] += "\x1e" + chunk
+    rows = []
+    for rec in chunks:
+        if not rec.strip():
+            continue
+        text = rec.strip("\n")
+        head, _, body = (text, "", "") if whole else text.partition("\n")
+        fields = head.split("\x1f", nfields - 1)
+        ok = len(fields) == nfields and fields[ts_at].lstrip("-").isdigit()
+        if ok and _REC_START.match(rec):
+            rows.append((fields, body))
+    return rows
 
 
 def parse_log(repo: Path | str, ref: str, since_ts: int | None = None) -> list[Commit]:
@@ -41,14 +72,10 @@ def parse_log(repo: Path | str, ref: str, since_ts: int | None = None) -> list[C
     args.append("--")
     out = gitq.run(repo, *args)
     commits = []
-    for rec in out.split("\x1e"):
-        if not rec.strip():
-            continue
-        head, _, body = rec.partition("\n")
-        sha, parents, ts, ai, author, email, subject = head.split("\x1f", 6)
-        files = tuple(f for f in (_parse_numstat(ln) for ln in body.splitlines()) if f)
-        commits.append(
-            Commit(
+    for head, body in _records(out, 7, ts_at=2):
+        sha, parents, ts, ai, author, email, subject = head
+        try:
+            commit = Commit(
                 sha=sha,
                 parents=tuple(parents.split()),
                 ts=int(ts),
@@ -56,9 +83,11 @@ def parse_log(repo: Path | str, ref: str, since_ts: int | None = None) -> list[C
                 author=author,
                 email=email,
                 subject=subject,
-                files=files,
+                files=tuple(f for f in (_parse_numstat(ln) for ln in body.split("\n")) if f),
             )
-        )
+        except ValueError:
+            continue
+        commits.append(commit)
     return commits
 
 
@@ -214,18 +243,14 @@ def huge_diffs(commits: list[Commit], threshold=1000, top=10) -> list[dict]:
 def new_files(repo: Path | str, ref: str, since_ts: int | None) -> list[dict]:
     args = [
         "log", ref, "--diff-filter=A", "-M", "--name-only",
-        "--format=%x1e%H%x1f%at%x1f%aN%x1f%s",
+        "--format=%x1e%H%x1f%ct%x1f%aN%x1f%s",
     ]  # fmt: skip
     if since_ts is not None:
         args.append(f"--since=@{since_ts}")
     args.append("--")
     rows: list[dict] = []
-    for rec in gitq.run(repo, *args).split("\x1e"):
-        if not rec.strip():
-            continue
-        head, _, body = rec.partition("\n")
-        sha, ts, author, subject = head.split("\x1f", 3)
-        for path in body.splitlines():
+    for (sha, ts, author, subject), body in _records(gitq.run(repo, *args), 4):
+        for path in body.split("\n"):
             if path:
                 rows.append(
                     {"path": path, "sha": sha, "ts": int(ts), "author": author, "subject": subject}
@@ -237,15 +262,12 @@ _REVERT_RE = re.compile(r"This reverts commit ([0-9a-f]{7,40})")
 
 
 def reverts(repo: Path | str, ref: str, since_ts: int | None = None) -> list[dict]:
-    args = ["log", ref, '--grep=^Revert "', "--format=%x1e%H%x1f%at%x1f%aN%x1f%s%x1f%b"]
+    args = ["log", ref, '--grep=^Revert "', "--format=%x1e%H%x1f%ct%x1f%aN%x1f%s%x1f%b"]
     if since_ts is not None:
         args.append(f"--since=@{since_ts}")
     args.append("--")
     rows: list[dict] = []
-    for rec in gitq.run(repo, *args).split("\x1e"):
-        if not rec.strip():
-            continue
-        sha, ts, author, subject, body = rec.strip("\n").split("\x1f", 4)
+    for (sha, ts, author, subject, body), _ in _records(gitq.run(repo, *args), 5, whole=True):
         m = _REVERT_RE.search(body)
         if not m:
             continue
@@ -329,7 +351,7 @@ def deleted_paths(
 ) -> list[dict]:
     args = [
         "log", ref, "--diff-filter=D", "-M", "--name-only",
-        "--format=%x1e%H%x1f%at%x1f%aN%x1f%s",
+        "--format=%x1e%H%x1f%ct%x1f%aN%x1f%s",
     ]  # fmt: skip
     if since_ts is not None:
         args.append(f"--since=@{since_ts}")
@@ -337,12 +359,8 @@ def deleted_paths(
     if added is None:
         added = added_map(repo, ref)
     rows: list[dict] = []
-    for rec in gitq.run(repo, *args).split("\x1e"):
-        if not rec.strip():
-            continue
-        head, _, body = rec.partition("\n")
-        sha, ts, author, subject = head.split("\x1f", 3)
-        for path in body.splitlines():
+    for (sha, ts, author, subject), body in _records(gitq.run(repo, *args), 4):
+        for path in body.split("\n"):
             if not path:
                 continue
             born = _birth_before(added.get(path), int(ts))
@@ -373,17 +391,15 @@ def commits_since(repo: Path | str, ref: str, last_sha: str | None) -> dict:
     except gitq.GitError:
         return none
     out = gitq.run(
-        repo, "log", f"{base}..{ref}", "--no-merges", "--format=%x1e%H%x1f%at%x1f%aN%x1f%s"
+        repo, "log", f"{base}..{ref}", "--no-merges", "--format=%x1e%H%x1f%ct%x1f%aN%x1f%s"
     )
     rows = []
-    for rec in out.split("\x1e"):
-        if not rec.strip():
-            continue
-        sha, ts, author, subject = rec.strip("\n").split("\x1f", 3)
+    for (sha, ts, author, subject), _ in _records(out, 4):
         rows.append({"sha": sha, "ts": int(ts), "author": author, "subject": subject})
     return {"base": last_sha, "count": len(rows), "commits": rows[:50]}
 
 
+_HEX_ID = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 _TODO_RE = re.compile(r"\b(TODO|FIXME|HACK|XXX)\b")
 # \b is not portable in POSIX ERE (macOS libc); spell out the word boundaries for git grep.
 _TODO_GREP = "(^|[^[:alnum:]_])(TODO|FIXME|HACK|XXX)([^[:alnum:]_]|$)"
@@ -396,7 +412,7 @@ def _parse_blame(out: str) -> list[dict]:
     for ln in out.split("\n"):
         if cur is None:
             parts = ln.split(" ")
-            if len(parts) >= 3 and len(parts[0]) == 40:
+            if len(parts) >= 3 and _HEX_ID.fullmatch(parts[0]):
                 cur = {"sha": parts[0], "line": int(parts[2])}
             continue
         if ln.startswith("\t"):
@@ -410,10 +426,15 @@ def _parse_blame(out: str) -> list[dict]:
     return rows
 
 
+TODO_GREP_MAX_BYTES = 8 * 1024 * 1024
+
+
 def todo_ages(repo: Path | str, ref: str, max_hits=150) -> list[dict]:
-    out = gitq.run_bytes(
-        repo, "grep", "-n", "-z", "-I", "-E", _TODO_GREP, ref, "--", ok_codes=(0, 1)
-    )[1].decode(errors="replace")
+    _, raw = gitq.run_bytes(
+        repo, "grep", "-n", "-z", "-I", "-E", _TODO_GREP, ref, "--",
+        ok_codes=(0, 1), max_bytes=TODO_GREP_MAX_BYTES,
+    )  # fmt: skip
+    out = raw.decode(errors="replace")
     prefix = f"{ref}:"
     hits: dict[str, list[tuple[int, str]]] = {}
     n = 0
@@ -463,7 +484,7 @@ def _source_files(repo: Path | str, ref: str, max_bytes: int) -> list[str]:
     """Source-like files at `ref` no bigger than `max_bytes`, in ls-tree order."""
     out = gitq.run(repo, "ls-tree", "-r", "-l", ref)
     paths = []
-    for ln in out.splitlines():
+    for ln in gitq.split_lines(out):
         meta, _, path = ln.partition("\t")
         parts = meta.split()
         if len(parts) < 4 or parts[1] != "blob" or not parts[3].isdigit():
@@ -512,7 +533,10 @@ def oldest_lines(
             chosen.append(p)
     rows: list[dict] = []
     for path in chosen:
-        out = gitq.run_bytes(repo, "blame", "--line-porcelain", ref, "--", path)[1]
+        try:
+            out = gitq.run_bytes(repo, "blame", "--line-porcelain", ref, "--", path)[1]
+        except gitq.GitError:
+            continue  # skip this file; one bad blame must not drop the repo
         lines = [b for b in _parse_blame(out.decode(errors="replace")) if "ts" in b]
         if not lines:
             continue
@@ -585,7 +609,7 @@ def renames(repo: Path | str, ref: str, commits: list[Commit]) -> dict[str, str 
         return {}
     out = gitq.run(repo, "log", ref, "--format=", "--name-status", "-M", "--diff-filter=R", "--")
     moved: dict[str, str] = {}
-    for line in reversed(out.splitlines()):
+    for line in reversed(gitq.split_lines(out)):
         parts = line.split("\t")
         if len(parts) == 3 and parts[0].startswith("R"):
             moved[parts[1]] = parts[2]
@@ -618,6 +642,9 @@ SIGNAL_KINDS = (
 )
 
 
+MINE_KEY = "mine_key"  # a git_signals row that holds the key of the last candidate mining
+
+
 def _cached(conn, repo_id: int, head: str) -> dict | None:
     rows = conn.execute(
         "SELECT kind, payload FROM git_signals WHERE repo_id = ? AND head_sha = ?",
@@ -643,10 +670,14 @@ def analyze(
     ).fetchone()
     previous = row["last_analyzed_sha"] if row else None
     meta = {"head_sha": head, "t0": t0, "group": repo.group, "path": str(repo.path)}
+    mkey = _mine_key(settings, profile)
     if row and not force and previous == head:
         cached = _cached(conn, row["id"], head)
         if cached is not None:
             facts.refresh(conn, repo.name, repo.path, head, t0, settings, profile)
+            if _stored_mine_key(conn, row["id"], head) != mkey:
+                # The profile or a config file changed: mine again from the stored signals.
+                _remine(conn, repo, head, t0, cached, settings, profile, mkey)
             conventions.refresh(conn, repo.name, repo.path, head, settings, profile, stats)
             return {**meta, "cached": True, "signals": cached}
 
@@ -708,20 +739,52 @@ def analyze(
             (head, now, repo_id),
         )
     result = {kind: db.loads(text) for kind, text, _ in computed}
-    candidates.refresh(conn, repo.name, path, head, t0, result, settings, profile)
+    _remine(conn, repo, head, t0, result, settings, profile, mkey)
+    facts.refresh(conn, repo.name, path, head, t0, settings, profile, force=force)
+    conventions.refresh(conn, repo.name, path, head, settings, profile, stats)
+    return {**meta, "cached": False, "signals": result}
+
+
+def _mine_key(settings: AnalysisSettings, profile) -> str:
+    """What the candidates and leads depend on besides HEAD: the whole profile and the
+    inputs of `facts.input_key`."""
+    import dataclasses
+    import hashlib
+    import json
+
+    prof = dataclasses.asdict(profile) if profile is not None else None
+    text = json.dumps([prof, facts.input_key(settings, profile)], sort_keys=True, default=repr)
+    return hashlib.sha1(text.encode()).hexdigest()[:16]
+
+
+def _stored_mine_key(conn, repo_id: int, head: str) -> str | None:
+    row = conn.execute(
+        "SELECT payload FROM git_signals WHERE repo_id = ? AND head_sha = ? AND kind = ?",
+        (repo_id, head, MINE_KEY),
+    ).fetchone()
+    return db.loads(row["payload"]) if row else None
+
+
+def _remine(conn, repo: Repo, head: str, t0: int, result: dict, settings, profile, mkey) -> None:
+    """Mine the candidates and refresh the lead ledger from `result`; remember the key."""
+    candidates.refresh(conn, repo.name, repo.path, head, t0, result, settings, profile)
     ledger.refresh(
         conn,
         repo.name,
         result,
         t0,
         head,
-        gitq.ls_tree_blobs(path, ref),
+        gitq.ls_tree_blobs(repo.path, head),
         datetime.now(UTC),
         profiles.fileset_for(profile),
     )
-    facts.refresh(conn, repo.name, path, head, t0, settings, profile)
-    conventions.refresh(conn, repo.name, path, head, settings, profile, stats)
-    return {**meta, "cached": False, "signals": result}
+    with db.immediate(conn):
+        rid = conn.execute("SELECT id FROM repos WHERE name = ?", (repo.name,)).fetchone()[0]
+        conn.execute(
+            "INSERT OR REPLACE INTO git_signals"
+            "(repo_id, head_sha, kind, payload, computed_at, duration_ms) VALUES (?,?,?,?,?,0)",
+            (rid, head, MINE_KEY, db.dumps(mkey), db.now_iso()),
+        )
 
 
 def load_signals(conn, repo_name: str) -> dict | None:
@@ -731,7 +794,7 @@ def load_signals(conn, repo_name: str) -> dict | None:
     if row is None or row["last_analyzed_sha"] is None:
         return None
     rows = conn.execute(
-        "SELECT kind, payload FROM git_signals WHERE repo_id = ? AND head_sha = ?",
-        (row["id"], row["last_analyzed_sha"]),
+        "SELECT kind, payload FROM git_signals WHERE repo_id = ? AND head_sha = ? AND kind != ?",
+        (row["id"], row["last_analyzed_sha"], MINE_KEY),
     ).fetchall()
     return {r["kind"]: db.loads(r["payload"]) for r in rows} or None

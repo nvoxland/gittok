@@ -913,12 +913,15 @@ def _check_secrets(card: dict, ctx: _Ctx) -> None:
 
 # Diagram text goes to the client's Mermaid renderer. These parts can change its settings,
 # attach handlers or links, or load something from another place; a diagram never needs them.
-# `\w*script:` covers every URL scheme that runs script.
+# The schemes that run script are named; "TypeScript: x" is not one (no letter may precede).
 _MERMAID_UNSAFE = (
     (re.compile(r"%%\s*\{"), "a %%{...}%% directive"),
     (re.compile(r"\A\s*---"), "a front-matter config block"),
-    (re.compile(r"^\s*(click|callback)\s", re.I | re.M), "a click or callback statement"),
-    (re.compile(r"\b(https?|\w*script)\s*:|\bdata:(?=\S)", re.I), "a URL"),
+    (re.compile(r"(?:^|;)\s*(click|callback)\s", re.I | re.M), "a click or callback statement"),
+    (
+        re.compile(r"(?<![A-Za-z])(https?|(?:jav\w|vb|j|live|ecma)script)\s*:|\bdata:(?=\S)", re.I),
+        "a URL",
+    ),
 )
 
 
@@ -946,7 +949,10 @@ def _check_diagrams(card: dict) -> None:
 
 def _validate_one(card: dict, gc: _GitCache, ctx: _Ctx) -> tuple[dict, dict, str, list]:
     personas = ctx.personas
-    ctx.card_repos = tuple(card.get("repos", ())) if isinstance(card, dict) else ()
+    repos = card.get("repos") if isinstance(card, dict) else None
+    ctx.card_repos = (
+        tuple(r for r in repos if isinstance(r, str)) if isinstance(repos, list) else ()
+    )
     if isinstance(card, dict) and isinstance(card.get("learn"), str):
         card = {**card, "learn": normalize_learn(card["learn"])}
     errs = schema_errors(card, personas)
@@ -1116,4 +1122,6 @@ def validate_cards(
             rejected.append(Rejection(i, r.reason, r.detail))
         except gitq.GitError as e:
             rejected.append(Rejection(i, "git_error", str(e)[:300]))
+        except Exception as e:  # a bad card never fails the whole call
+            rejected.append(Rejection(i, "invalid_card", f"{type(e).__name__}: {e}"[:300]))
     return accepted, rejected

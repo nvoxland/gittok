@@ -154,47 +154,154 @@ class Profile:
 # ---------- globs ----------
 
 
-def _glob_regex(glob: str) -> str:
+MAX_GLOB_LENGTH = 500
+_LOOPS = frozenset({"*", "**"})
+_DIRECT_LIMIT = 2  # globs with more unbounded wildcards use the linear matcher
+
+
+def _glob_tokens(glob: str) -> list[tuple]:
+    """Tokens of a glob: ("c", ch), ("?",), ("[", body), ("*",), ("**",) and ("d",) for
+    `**/` (an optional `anything/`)."""
+    if len(glob) > MAX_GLOB_LENGTH:
+        raise ValueError(f"a glob is at most {MAX_GLOB_LENGTH} characters")
     if glob.startswith("/") or ".." in glob.split("/"):
         raise ValueError("a glob must be relative and must not contain '..'")
-    out, i = [], 0
+    out: list[tuple] = []
+    i = 0
     while i < len(glob):
         c = glob[i]
         if glob.startswith("**/", i):
-            out.append("(?:.*/)?")
+            out.append(("d",))
             i += 3
             continue
         if glob.startswith("**", i):
-            out.append(".*")
+            out.append(("**",))
             i += 2
             continue
         if c == "*":
-            out.append("[^/]*")
+            out.append(("*",))
         elif c == "?":
-            out.append("[^/]")
+            out.append(("?",))
         elif c == "[":
             j = glob.find("]", i + 2)
             if j < 0:
                 raise ValueError("unclosed '[' in glob")
             body = glob[i + 1 : j]
             body = "^" + body[1:] if body.startswith("!") else body
-            out.append("[" + body.replace("\\", "\\\\") + "]")
+            out.append(("[", body.replace("\\", "\\\\")))
             i = j
         else:
-            out.append(re.escape(c))
+            out.append(("c", c))
         i += 1
-    rx = "".join(out)
-    return rx if "/" in glob else "(?:.*/)?" + rx
+    if "/" not in glob:
+        out.insert(0, ("d",))
+    return out
+
+
+def _tokens_regex(tokens: list[tuple]) -> str:
+    parts = []
+    for t in tokens:
+        kind = t[0]
+        if kind == "d":
+            parts.append("(?:.*/)?")
+        elif kind == "**":
+            parts.append(".*")
+        elif kind == "*":
+            parts.append("[^/]*")
+        elif kind == "?":
+            parts.append("[^/]")
+        elif kind == "[":
+            parts.append("[" + t[1] + "]")
+        else:
+            parts.append(re.escape(t[1]))
+    return "".join(parts)
+
+
+def _glob_regex(glob: str) -> str:
+    return _tokens_regex(_glob_tokens(glob))
+
+
+def _nfa_matcher(tokens: list[tuple]):
+    """Match without backtracking: track the set of token positions (O(path x glob))."""
+    steps: list[tuple] = []  # consuming steps: (kind, arg)
+    for t in tokens:
+        if t[0] == "d":  # `(?:.*/)?` is: skip, or loop on anything then "/"
+            steps.append(("opt", None))
+            steps.append(("**", None))
+            steps.append(("c", "/"))
+        elif t[0] == "[":
+            steps.append(("[", re.compile("[" + t[1] + "]")))
+        else:
+            steps.append((t[0], t[1] if len(t) > 1 else None))
+    n = len(steps)
+
+    def close(states: set[int]) -> set[int]:
+        todo, seen = list(states), set(states)
+        while todo:
+            i = todo.pop()
+            if i >= n:
+                continue
+            kind = steps[i][0]
+            nxt = []
+            if kind == "opt":
+                nxt = [i + 1, i + 3]  # enter the loop, or skip the whole group
+            elif kind in _LOOPS:
+                nxt = [i + 1]  # a loop may match nothing
+            for j in nxt:
+                if j not in seen:
+                    seen.add(j)
+                    todo.append(j)
+        return seen
+
+    def match(path: str) -> bool:
+        cur = close({0})
+        for ch in path:
+            nxt: set[int] = set()
+            for i in cur:
+                if i >= n:
+                    continue
+                kind, arg = steps[i]
+                if kind == "c":
+                    if ch == arg:
+                        nxt.add(i + 1)
+                elif kind == "?":
+                    if ch != "/":
+                        nxt.add(i + 1)
+                elif kind == "[":
+                    if arg.fullmatch(ch):
+                        nxt.add(i + 1)
+                elif kind == "*":
+                    if ch != "/":
+                        nxt.add(i)
+                elif kind == "**":
+                    nxt.add(i)
+            if not nxt:
+                return False
+            cur = close(nxt)
+        return n in cur
+
+    return match
 
 
 @cache
 def glob_matcher(glob: str):
-    """A function path -> bool for `glob`. Raises ValueError for a bad glob."""
+    """A function path -> bool for `glob`. Raises ValueError for a bad glob.
+
+    A glob with many `*` would make `re` backtrack for a long time on a hostile pattern
+    (a `.gitattributes` line is data). Those globs use a matcher that takes time linear
+    in the path and the glob."""
+    tokens = _glob_tokens(glob)
     try:
-        rx = re.compile(_glob_regex(glob) + r"\Z")
+        rx = re.compile(_tokens_regex(tokens) + r"\Z")
+        for t in tokens:
+            if t[0] == "[":
+                re.compile("[" + t[1] + "]")
     except re.error as e:
         raise ValueError(f"bad glob: {e}") from e
-    return lambda path: rx.match(path) is not None
+    loops = sum(1 for t in tokens if t[0] in ("*", "**", "d"))
+    if loops <= _DIRECT_LIMIT:
+        return lambda path: rx.match(path) is not None
+    return _nfa_matcher(tokens)
 
 
 # ---------- file set ----------

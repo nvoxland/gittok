@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
 	cacheKey,
+	evictOldest,
+	isCacheableAsset,
 	classifyRequest,
 	markFromCache,
 	replayQueue,
@@ -43,6 +45,30 @@ describe('cacheKey', () => {
 	it('keys cards by path', () => expect(cacheKey('/api/cards/c_1', '')).toBe('/api/cards/c_1'));
 	it('keys everything else by path and query', () =>
 		expect(cacheKey('/assets/a.png', '?v=2')).toBe('/assets/a.png?v=2'));
+});
+
+describe('cacheKey with filters', () => {
+	it('keeps the repo and dir filters apart', () => {
+		expect(cacheKey('/api/feed', '?repo=x&dir=y&limit=20')).toBe('/api/feed?dir=y&repo=x');
+		expect(cacheKey('/api/feed', '?repo=x')).not.toBe(cacheKey('/api/feed', ''));
+		expect(cacheKey('/api/feed', '?repo=x&cursor=abc')).toBeNull();
+	});
+});
+
+describe('isCacheableAsset', () => {
+	it('refuses an html answer for a script or image (the SPA fallback)', () => {
+		expect(isCacheableAsset('/assets/a.png', { ok: true, contentType: 'text/html; charset=utf-8' })).toBe(false);
+		expect(isCacheableAsset('/assets/a.png', { ok: true, contentType: 'image/png' })).toBe(true);
+		expect(isCacheableAsset('/assets/a.png', { ok: false, contentType: 'image/png' })).toBe(false);
+		expect(isCacheableAsset('/page.html', { ok: true, contentType: 'text/html' })).toBe(true);
+	});
+});
+
+describe('evictOldest', () => {
+	it('names the oldest keys beyond the limit', () => {
+		expect(evictOldest(['a', 'b', 'c', 'd'], 2)).toEqual(['a', 'b']);
+		expect(evictOldest(['a'], 2)).toEqual([]);
+	});
 });
 
 describe('selectPrecache', () => {

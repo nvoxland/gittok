@@ -81,3 +81,18 @@ def test_the_number_of_waiting_codes_is_capped(conn):
 def test_status_of_an_id_that_was_never_made(conn):
     assert pair_codes.status(conn, "nope", T0)["state"] == "unknown"
     assert pair_codes.status(conn, "", T0)["state"] == "unknown"
+
+
+def test_a_device_that_asks_again_gets_its_waiting_request_back(conn):
+    first = pair_codes.request(conn, T0, peer="192.168.1.9")
+    again = pair_codes.request(conn, T0, peer="192.168.1.9", existing_id=first["id"])
+    assert again == first
+    assert conn.execute("SELECT COUNT(*) FROM pair_requests").fetchone()[0] == 1
+
+
+def test_one_peer_cannot_take_every_slot(conn):
+    for _ in range(pair_codes.MAX_PENDING_PER_PEER):
+        pair_codes.request(conn, T0, peer="192.168.1.9")
+    with pytest.raises(pair_codes.TooManyRequests):
+        pair_codes.request(conn, T0, peer="192.168.1.9")
+    pair_codes.request(conn, T0, peer="192.168.1.10")  # another device can still pair

@@ -29,7 +29,8 @@ RENDER_TIMEOUT_S = 30.0
 _RENDER = ("import sys, resvg_py; svg = sys.stdin.buffer.read().decode(); "
            "sys.stdout.buffer.write(bytes(resvg_py.svg_to_bytes(svg_string=svg, "
            "skip_system_fonts=True)))")
-_NUMBER = re.compile(r"-?\d+(?:\.\d+)?(?:e-?\d+)?", re.I)
+_NUMBER = re.compile(r"[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?", re.I)
+MAX_DEPTH = 64
 _FENCE = re.compile(r"\A\s*```[\w-]*\s*\n(.*?)\n\s*```\s*\Z", re.S)
 _URL = re.compile(r"url\(\s*['\"]?\s*([^)'\"\s]*)")
 
@@ -118,6 +119,26 @@ def _local(name: str) -> str:
     return name.rsplit("}", 1)[-1]
 
 
+def _numbers(value: str, tag: str, attr: str) -> list[float]:
+    """The numbers of a number list; anything else is an error (resvg could read it differently)."""
+    parts = [p for p in re.split(r"[\s,]+", value.strip()) if p]
+    if not parts or not all(_NUMBER.fullmatch(p) for p in parts):
+        raise ImageError(f"SVG filter {tag} {attr} must be a number or a list of numbers")
+    nums = [float(p) for p in parts]
+    if any(n != n for n in nums):
+        raise ImageError(f"SVG filter {tag} {attr} must be a number or a list of numbers")
+    return nums
+
+
+def _check_depth(root) -> None:
+    stack = [(root, 1)]
+    while stack:
+        el, depth = stack.pop()
+        if depth > MAX_DEPTH:
+            raise ImageError(f"SVG is nested deeper than {MAX_DEPTH} levels; flatten it")
+        stack.extend((child, depth + 1) for child in el)
+
+
 def svg_image(svg: str, width: int, height: int) -> jobs.RenderedImage:
     """Rasterize one drawn panel to exactly width x height, with no outside resources."""
     if fenced := _FENCE.match(svg):
@@ -128,10 +149,11 @@ def svg_image(svg: str, width: int, height: int) -> jobs.RenderedImage:
         raise ImageError("SVG must not have a DOCTYPE, entities or stylesheets")
     try:
         root = ET.fromstring(svg)
-    except ET.ParseError as e:
+    except (ET.ParseError, RecursionError) as e:
         raise ImageError(f"cannot render SVG: {e}") from e
     if _local(root.tag) != "svg":
         raise ImageError("SVG root must be <svg>")
+    _check_depth(root)
     filters = 0
     for el in root.iter():
         tag = _local(str(el.tag))
@@ -142,7 +164,7 @@ def svg_image(svg: str, width: int, height: int) -> jobs.RenderedImage:
                                  "use fewer filters")
         for (filter_tag, attr), limit in FILTER_LIMITS.items():
             value = el.get(attr) if tag == filter_tag else None
-            if value and any(abs(float(n)) > limit for n in _NUMBER.findall(value)):
+            if value and any(abs(n) > limit for n in _numbers(value, tag, attr)):
                 raise ImageError(f"SVG filter {tag} {attr} is over {limit}; use a smaller value")
         if tag in _BLOCKED_TAGS:
             raise ImageError(f"SVG must not use <{tag}>: draw with shapes, paths and gradients")
@@ -168,6 +190,8 @@ def svg_image(svg: str, width: int, height: int) -> jobs.RenderedImage:
             [sys.executable, "-I", "-c", _RENDER], capture_output=True,
             input=ET.tostring(root, encoding="unicode").encode(), timeout=RENDER_TIMEOUT_S,
         )
+    except RecursionError as e:
+        raise ImageError("SVG is nested too deeply; flatten it") from e
     except subprocess.TimeoutExpired as e:
         raise ImageError(f"SVG took too long to render (over {RENDER_TIMEOUT_S:g} s); "
                          "simplify it") from e

@@ -37,19 +37,11 @@ def open_run(
     now: datetime | None = None,
 ) -> str:
     now = now or datetime.now(UTC)
-    max_count = cfg.settings.agent.max_count
-    if not 1 <= requested <= max_count:
-        raise RunError(f"requested must be between 1 and {max_count}; got {requested}")
-    expire_stale(conn, now=now)
-    limit = cfg.settings.agent.per_day_runs
-    recent = _runs_last_day(conn, now)
-    if len(recent) >= limit:
-        free_at = datetime.strptime(recent[-limit], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
-        retry = _iso(free_at + timedelta(hours=24))
-        raise RunLimitError(f"daily run limit reached ({limit}); try again after {retry}")
+    precheck(conn, cfg, requested, now=now)
     run_id = _new_run_id(now)
     repo_id = store.ensure_repo(conn, cfg.repos[repo]) if repo else None
-    with conn:
+    with db.immediate(conn):
+        _check_cap(conn, cfg, now)  # again under the write lock: two openers cannot both pass
         conn.execute(
             "INSERT INTO runs(id, repo_id, status, brief, requested, meta, started_at) "
             "VALUES (?, ?, 'open', ?, ?, ?, ?)",
@@ -63,6 +55,25 @@ def open_run(
             ),
         )
     return run_id
+
+
+def precheck(conn, cfg, requested: int, *, now: datetime | None = None) -> None:
+    """Raise what `open_run` would raise for the count and the daily cap, before any work."""
+    now = now or datetime.now(UTC)
+    max_count = cfg.settings.agent.max_count
+    if not 1 <= requested <= max_count:
+        raise RunError(f"requested must be between 1 and {max_count}; got {requested}")
+    expire_stale(conn, now=now)
+    _check_cap(conn, cfg, now)
+
+
+def _check_cap(conn, cfg, now: datetime) -> None:
+    limit = cfg.settings.agent.per_day_runs
+    recent = _runs_last_day(conn, now)
+    if len(recent) >= limit:
+        free_at = datetime.strptime(recent[-limit], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+        retry = _iso(free_at + timedelta(hours=24))
+        raise RunLimitError(f"daily run limit reached ({limit}); try again after {retry}")
 
 
 def _runs_last_day(conn, now: datetime) -> list[str]:
@@ -115,7 +126,9 @@ def _card_list(cards: list | dict) -> list:
     return cards
 
 
-def _validate(conn, cfg, run: dict, cards: list, lead_refs: list[dict] | None = None):
+def _validate(
+    conn, cfg, run: dict, cards: list, lead_refs: list[dict] | None = None, *, budget=True
+):
     max_images = cfg.settings.render.max_illustrations_per_run
     # A variant retells a story in a format its packet named, even one the story type's list lacks.
     variants = {
@@ -131,7 +144,10 @@ def _validate(conn, cfg, run: dict, cards: list, lead_refs: list[dict] | None = 
         meme_templates=cfg.meme_templates,
         mascots=cfg.mascots,
         signals_for=lambda name: signals.load_signals(conn, name),
-        illustration_budget=max(0, max_images - run["meta"].get("illustrations", 0)),
+        # submit counts the budget itself, under the lock, over the cards it stores
+        illustration_budget=(
+            max(0, max_images - run["meta"].get("illustrations", 0)) if budget else None
+        ),
         claim_checks=cfg.settings.agent.claim_checks,
         redact_secrets=cfg.settings.research.redact_secrets,
         facts_conn=conn,
@@ -165,9 +181,10 @@ def _duplicate_why(conn, cfg, a, seen: set[str]) -> str | None:
 def check(conn, cfg, run_id: str, cards: list | dict) -> dict:
     """Validate without storing: the same git checks as submit, plus duplicate stories.
 
-    Run quota and illustration budget are not checked here; submit decides those.
+    The illustration budget is checked here too; the run quota is not (submit decides it).
     """
     cards = _card_list(cards)
+    expire_stale(conn)
     run = get_run(conn, run_id)
     _check_open(run, run_id)
     accepted, rejected = _validate(conn, cfg, run, cards)
@@ -186,14 +203,19 @@ def check(conn, cfg, run_id: str, cards: list | dict) -> dict:
 def submit(conn, cfg, run_id: str, cards: list | dict, packet_id: str | None = None) -> dict:
     raw = cards
     cards = _card_list(cards)
+    expire_stale(conn)
     lead_refs: list[dict] = []
+    packet_count: int | None = None
     if packet_id is not None:
-        lead_refs = get_packet(conn, run_id, packet_id).get("lead_refs") or []
+        packet = get_packet(conn, run_id, packet_id)
+        lead_refs = packet.get("lead_refs") or []
+        if isinstance(packet.get("count"), int):
+            packet_count = packet["count"]
     run0 = get_run(conn, run_id)
     _check_open(run0, run_id)
     max_images = cfg.settings.render.max_illustrations_per_run
     # Git validation is slow: do it before taking the write lock.
-    accepted, rejected = _validate(conn, cfg, run0, cards, lead_refs)
+    accepted, rejected = _validate(conn, cfg, run0, cards, lead_refs, budget=False)
     out_dir = cfg.settings.data_dir / "runs" / run_id
     stored: list[dict] = []
     backend = None
@@ -208,6 +230,12 @@ def submit(conn, cfg, run_id: str, cards: list | dict, packet_id: str | None = N
         private.make_dir(out_dir)
         (out_dir / f"submission-{n}.json").write_text(json.dumps(raw, indent=2, ensure_ascii=False))
         quota = run["requested"] - run["accepted"] if run["requested"] is not None else None
+        if packet_count is not None:  # a writer may not store more than its packet holds
+            done = ((run["meta"].get("packet_results") or {}).get(packet_id) or {}).get(
+                "accepted", 0
+            )
+            left = max(0, packet_count - done)
+            quota = left if quota is None else min(quota, left)
         seen: set[str] = set()
         used = run["meta"].get("illustrations", 0)  # re-read under the lock
         for a in accepted:
@@ -335,6 +363,7 @@ def _summary(run: dict) -> dict:
 
 def recent(conn, limit: int = 5) -> list[dict]:
     """The newest runs first: counts, times and the top reject reasons. No card text."""
+    expire_stale(conn)
     rows = conn.execute(
         "SELECT u.id, p.name AS repo FROM runs u LEFT JOIN repos p ON p.id = u.repo_id "
         "ORDER BY u.started_at DESC, u.id DESC LIMIT ?",
@@ -368,15 +397,19 @@ def finish_run(conn, run_id: str, notes: dict | None = None, now: datetime | Non
     if run is None:
         raise RunError(f"unknown run {run_id}; call get_brief for a new run")
     if run["status"] == "open":
-        started = datetime.strptime(run["started_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
-        duration_ms = int((now - started).total_seconds() * 1000)
-        meta = {**run["meta"], "notes": notes}
-        with conn:
-            conn.execute(
-                "UPDATE runs SET status = 'finished', finished_at = ?, duration_ms = ?, "
-                "meta = ? WHERE id = ?",
-                (_iso(now), duration_ms, db.dumps(meta), run_id),
-            )
+        with db.immediate(conn):
+            run = get_run(conn, run_id)  # re-read under the lock: submits write meta too
+            if run["status"] == "open":
+                started = datetime.strptime(run["started_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
+                    tzinfo=UTC
+                )
+                duration_ms = int((now - started).total_seconds() * 1000)
+                meta = {**run["meta"], "notes": notes}
+                conn.execute(
+                    "UPDATE runs SET status = 'finished', finished_at = ?, duration_ms = ?, "
+                    "meta = ? WHERE id = ?",
+                    (_iso(now), duration_ms, db.dumps(meta), run_id),
+                )
         run = get_run(conn, run_id)
     return _summary(run)
 

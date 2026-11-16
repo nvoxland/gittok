@@ -43,7 +43,7 @@ gittok init .
 
 - `AGENTS.md`: tells your coding agent what this directory is and how to work with GitTok.
 - For Claude Code: `.mcp.json` (it starts the GitTok server when a session starts here), `.claude/` (the skills and agents that make posts and manage GitTok, and the session hooks that keep the feed full), and a `CLAUDE.md` that points to `AGENTS.md`.
-- For Codex: `.codex/config.toml` (the same MCP server), `.codex/hooks.json` (startup hints), and `.agents/skills/` (adapters for the shared workflows).
+- For Codex: `.codex/config.toml` (the same MCP server), `.codex/hooks.json` (startup hints), `.agents/skills/` and `.agents/workers/` (the same skills and workers as Claude Code gets, made from one source), and `.agents/GITTOK.md` (notes for Codex sessions).
 - `local/repos.yaml`: your repo list, empty for now.
 
 [Your GitTok directory](../guide/files.md) shows everything that goes in it later.

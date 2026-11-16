@@ -12,6 +12,7 @@ import tempfile
 import threading
 from collections.abc import Callable
 from contextlib import closing, contextmanager
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -270,12 +271,41 @@ def renderer_setup(cfg) -> dict:
     }
 
 
+MAX_PANELS = 3  # the most panels one card asks for; sizes the stale limit
+
+
+def stale_limit(cfg) -> timedelta:
+    """How long a `rendering` claim lives before it counts as crashed: the longest local pass
+    the timeouts allow (model load, then up to MAX_PANELS panels), and a margin."""
+    r = cfg.settings.render
+    longest = r.mflux_load_timeout_s + MAX_PANELS * r.mflux_timeout_s + 300
+    return max(jobs.STALE_RENDERING, timedelta(seconds=longest))
+
+
+def _fall_back_to_agent(conn) -> None:
+    """The local model will not come (download failed): let the agent draw these cards."""
+    with db.immediate(conn):
+        for card_id in jobs.pending_ids(conn, "local", only_kinds=("illustration", "comic")):
+            row = conn.execute("SELECT resolved FROM cards WHERE id = ?", (card_id,)).fetchone()
+            resolved = db.loads(row["resolved"]) or {}
+            resolved["image_backend"] = "agent"
+            conn.execute("UPDATE cards SET resolved = ? WHERE id = ?",
+                         (db.dumps(resolved), card_id))
+
+
 def render_pending(conn, cfg, renderers: dict[str, LocalRenderer], limit: int = 10) -> dict:
-    """One pass over `pending_render` cards, oldest first. Returns counts."""
+    """One pass over `pending_render` cards, oldest first. Returns counts. Kinds whose
+    renderer cannot run are left out of the selection, so they never block the others."""
     counts = {"rendered": 0, "failed": 0, "waiting": 0}
-    jobs.reset_stale_rendering(conn)
-    ids = jobs.pending_ids(conn, "local", limit=limit)
+    jobs.reset_stale_rendering(conn, stale_limit(cfg), backend="local")
     up: dict[str, bool] = {}
+    for key, renderer in renderers.items():
+        up[key] = renderer.available()
+    down = tuple(kind for kind, key in RENDERER_KEY.items() if not up.get(key, False))
+    if "illustration" in down and image_model.status(cfg)["state"] in ("failed", "invalid path"):
+        _fall_back_to_agent(conn)
+    counts["waiting"] += len(jobs.pending_ids(conn, "local", only_kinds=down)) if down else 0
+    ids = jobs.pending_ids(conn, "local", limit=limit, exclude_kinds=down)
     for card_id in ids:
         claimed = False
         try:
@@ -284,13 +314,8 @@ def render_pending(conn, cfg, renderers: dict[str, LocalRenderer], limit: int = 
             visual = spec["visual"]
             kind = visual["kind"]
             key = RENDERER_KEY[kind]
-            renderer = renderers.get(key)
-            if renderer is None:
-                counts["waiting"] += 1
-                continue
-            if key not in up:
-                up[key] = renderer.available()
-            if not up[key]:
+            renderer = renderers[key]
+            if not up[key]:  # it went away during this pass
                 counts["waiting"] += 1
                 continue
             if not jobs.claim(conn, request):  # another pass took it

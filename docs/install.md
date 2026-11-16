@@ -345,7 +345,7 @@ gittok images --download     # in a clone: uv run gittok images --download
 gittok images                # the state: ready, downloading (with progress), failed, missing
 ```
 
-`status` reports it too: `renderer_setup.illustration` has `backend` (`agent` or `local`), `installed`, `available`, `download` (state and progress), `reason` (null for the agent backend) and `python_reason`. To keep a model of your own, such as a folder from `mflux-save`, set `render.mflux_path` to it; `render.mflux_auto_download: false` turns the automatic download off.
+`status` reports it too: `renderer_setup.illustration` has `backend` (`agent` or `local`), `installed`, `available`, `download` (state and progress), `reason` (null for the agent backend) and `python_reason`. To keep a model of your own, such as a folder from `mflux-save`, set `render.mflux_path` to it. GitTok never downloads into or deletes that folder: if it is not a complete model, `download.state` is `invalid path` with the reason. When the download of the GitTok model fails, local cards go to the agent backend. `render.mflux_auto_download: false` turns the automatic download off.
 
 A model folder counts as ready only when it is complete: the `transformer`, `text_encoder` and `vae` parts, each with every shard its index names (none empty), and the tokenizer. A render takes about 10 to 20 s per image at 9 steps, after the model loads once per batch. Then ask your agent to draw the persona avatars, or run:
 

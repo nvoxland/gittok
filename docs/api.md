@@ -38,7 +38,7 @@ All endpoints are served by `gittok serve` (default `http://127.0.0.1:7313`). Re
 The server checks each request in this order. The first check that fails answers the request.
 
 1. **Host.** The `Host` header must be a known local name: `127.0.0.1`, `localhost`, `[::1]`, one of this machine's LAN IPv4 addresses, its host name (also the short name and `<short name>.local`), or a name in `server.allowed_hosts` (`config/settings.yaml` or `local/settings.yaml`). The port is ignored. Any other, missing or repeated `Host` gets **421** `{"detail": "unknown Host", "code": "unknown_host"}`. This applies to every path.
-2. **Origin.** A request that is not `GET`, `HEAD` or `OPTIONS` and has an `Origin` header whose host is not in the same list gets **403** `{"detail": "cross-origin request", "code": "cross_origin"}`. A request with no `Origin` passes.
+2. **Origin.** A request that is not `GET`, `HEAD` or `OPTIONS` and has an `Origin` header whose host is not in the same list, or whose scheme or port differs from the request, gets **403** `{"detail": "cross-origin request", "code": "cross_origin"}`. A request with no `Origin` passes.
 3. **Pairing.** When the server has a pairing token, a request that is not loopback needs the `cs_lan` cookie on every path except `/pair/code`, `/pair/wait`, `/pair.js`, and the app icons and manifest (`/apple-touch-icon.png`, `/icon-192.png`, `/icon-512.png`, `/icon-maskable-512.png`, `/manifest.webmanifest`). The server has a token whenever it binds a non-loopback address: with `server.lan: true` (the default), `--lan`, or a non-loopback `--host`. It has none when LAN serving is off (`server.lan: false` or `--no-lan`). Without the cookie, `/api/*` gets **401** `{"detail": "pair this device", "code": "unpaired"}` and every other path gets a 401 HTML page. Loopback requests never need the cookie. The web app shows "This device is not paired" on a 401 from the feed. When the server has no pairing token, a request with a proxy header (see below) cannot pair, so it gets **403** `{"detail": "<text>", "code": "proxy_needs_pairing"}` on every path.
 4. **Body size.** A body over 1 MB gets **413** `{"detail": "request body too large", "code": "body_too_large"}`. A `Content-Length` that is not a number gets **400** `{"detail": "bad content-length", "code": "bad_content_length"}`.
 
@@ -182,7 +182,7 @@ Body: `{ "repo": "storefront", "path": "src/billing", "on": true }`. `path` is 1
 
 Response: `{ "stored": 3 }`. An unknown type, or a batch over a limit, is rejected whole with 422. The server writes the reason to `<data_dir>/logs/rejected-events.log`.
 
-A `save` event (`data: {"on": bool}`) also updates the `saved_cards` table in the same transaction. The newest event by `ts` wins. `GET /api/saved` reads that table, most recently saved first.
+An event with a string `data.event_id` that the server stored before is ignored (the client retries a batch with the same ids); `stored` counts the new events only. A `save` event (`data: {"on": bool}`) also updates the `saved_cards` table in the same transaction. The newest event by `ts` wins. `GET /api/saved` reads that table, most recently saved first.
 
 ## MCP `get_packet(run_id, packet_id)`
 
@@ -203,7 +203,7 @@ Body: `{ "card_id": "c_...", "choice": 0, "session": "..." }`. Returns the revea
 
 ## GET /api/saved
 
-`{ "cards": [Card, ...] }`, most recently saved first. Each card has a `replies` list.
+`{ "cards": [Card, ...] }`, most recently saved first. Only `ready` cards of configured repos (the rule of the feed); `GET /api/cards/{id}` and `POST /api/replies` give 404 for any other card. Each card has a `replies` list.
 
 ## POST /api/replies
 

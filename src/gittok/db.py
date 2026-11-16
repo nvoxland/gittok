@@ -74,13 +74,15 @@ def migrate(conn: sqlite3.Connection) -> list[str]:
 def _statements(script: str):
     """The statements of an SQL script, one at a time (a trigger body stays in one piece)."""
     buf = ""
-    for part in script.split(";")[:-1]:
+    parts = script.split(";")
+    for part in parts[:-1]:
         buf += part + ";"
         if sqlite3.complete_statement(buf):
             yield buf
             buf = ""
+    buf += parts[-1]  # the text after the last ";": a last statement may have none
     if buf.strip():
-        yield buf  # not a complete statement: sqlite reports the error
+        yield buf  # not a complete statement: sqlite runs it or reports the error
 
 
 def _applied(conn: sqlite3.Connection) -> set[str]:

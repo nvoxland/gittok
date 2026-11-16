@@ -192,9 +192,10 @@ def signal_wants_cards(conn, cfg, now: datetime) -> int:
 
     No line when there are no repos, while a run is open (`run_open`), when the daily run cap
     is reached (a run could not start), or within the cooldown of the last line. One exception
-    to the cooldown: the feed is empty (the reader reached its end) and a run started after the
-    last line, so that line was answered. The line holds only a time and a count, never repo
-    text.
+    to the cooldown: the feed is empty (the reader reached its end) and a run that made at
+    least one card started after the last line and finished, so that line was answered (a run
+    that made no card does not count: it would chain runs up to the daily cap). The line holds
+    only a time and a count, never repo text.
     """
     from gittok import learning, runs  # runs imports modules that import this one
 
@@ -209,10 +210,12 @@ def signal_wants_cards(conn, cfg, now: datetime) -> int:
         if any(unseen_by_repo(conn, cfg, learning.load_reward_config(cfg), now).values()):
             return 0
         answered = conn.execute(
-            "SELECT 1 FROM runs WHERE started_at > ?", (_iso(datetime.fromtimestamp(last, UTC)),)
+            "SELECT 1 FROM runs r WHERE r.started_at > ? AND r.status != 'open' "
+            "AND EXISTS (SELECT 1 FROM cards c WHERE c.run_id = r.id)",
+            (_iso(datetime.fromtimestamp(last, UTC)),),
         ).fetchone()
         if not answered:
-            return 0  # no run answered the last line: a second line says nothing new
+            return 0  # no finished run made cards since the last line: nothing new to say
     want = feed_health(conn, cfg, now)["want"]
     if want <= 0:
         return 0

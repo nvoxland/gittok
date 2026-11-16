@@ -835,8 +835,8 @@ class Brief:
             f"Mix: {mix}",
             f"Categories: {cats}.",
             f"Tones: {tones}.",
-            f"{len(self.packets)} work packets. Give each packet to one subagent on its "
-            "suggested model.",
+            f"{len(self.packets)} work packets. Give each packet to one worker on its "
+            "`model` (null: your own model).",
         ]
         if self.unavailable:
             out += [

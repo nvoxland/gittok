@@ -81,8 +81,10 @@
 	}
 
 	onMount(() => {
-		document.addEventListener('visibilitychange', onVisibility);
-		return () => document.removeEventListener('visibilitychange', onVisibility);
+		// Capture on window: runs before any listener on document, so the page can flush the
+		// batcher in its own listener and still send the dwell of the card on screen.
+		window.addEventListener('visibilitychange', onVisibility, true);
+		return () => window.removeEventListener('visibilitychange', onVisibility, true);
 	});
 
 	onDestroy(() => {

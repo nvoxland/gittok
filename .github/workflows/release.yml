@@ -9,7 +9,7 @@ on:
       - "v*.*.*"
 
 permissions:
-  contents: write
+  contents: read  # a job that needs more says so itself
 
 jobs:
   validate-version:
@@ -18,6 +18,8 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: The tag must match the version in both files
         id: version
@@ -85,6 +87,8 @@ jobs:
       VERSION: ${{ needs.validate-version.outputs.version }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v7

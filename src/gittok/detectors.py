@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import posixpath
+import time
 from functools import cache
 
 import regex
@@ -104,11 +105,15 @@ def _applies(d: Detector, sf, include, exclude) -> bool:
 
 def _regex_hits(d: Detector, rx, sf, stats: dict | None = None) -> list[dict]:
     out = []
+    deadline = time.monotonic() + REGEX_TIMEOUT_S  # one budget for the whole file and rule
     try:
         for i, line in enumerate(sf.lines):
             if len(line) > MAX_LINE:
                 continue
-            m = rx.search(line, timeout=REGEX_TIMEOUT_S)
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise TimeoutError
+            m = rx.search(line, timeout=left)
             if m:
                 found = next((g for g in m.groups() if g is not None), m.group(0))
                 out.append(_hit(d, sf, i + 1, line.strip(), found))

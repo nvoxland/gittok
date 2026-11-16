@@ -58,4 +58,16 @@ describe('/file/[repo]/[...path]', () => {
 			'true'
 		);
 	});
+
+	it('shows a short error when Follow fails, and the button works again', async () => {
+		render(Page, { data: { profile: body } } as never);
+		fetchMock.mockResolvedValue({ ok: false, status: 500 });
+		await fireEvent.click(screen.getByRole('button', { name: 'Follow' }));
+		expect(await screen.findByRole('alert')).toHaveTextContent(/could not/i);
+		expect(screen.getByRole('button', { name: 'Follow' })).not.toBeDisabled();
+		fetchMock.mockResolvedValue({ ok: true, json: async () => ({ followed: true }) });
+		await fireEvent.click(screen.getByRole('button', { name: 'Follow' }));
+		expect(await screen.findByRole('button', { name: 'Following' })).toBeInTheDocument();
+		expect(screen.queryByRole('alert')).toBeNull();
+	});
 });

@@ -69,6 +69,12 @@ _COUNT = re.compile(
     rf"\s+(?:[A-Za-z-]+\s+){{0,2}}?(?:{_COUNT_WORDS})\b",
     re.I,
 )
+_YEAR = re.compile(r"(?<![\w.,#/$-])(?:19|20)\d\d(?![\w%-]|\.\d)")
+_PORTISH = re.compile(
+    r"\b(?:port|ports|http|https|status|error|errno|code|exit|v|version)\s*:?\s*#?\d+\b"
+    r"|(?<![\w.,#/$])\d{3}\s+(?:error|errors|status|response)\b",
+    re.I,
+)
 _LINE_REF = re.compile(r"\blines?\s+(\d+)(?:\s*(?:-|–|to)\s*(\d+))?", re.I)
 _PATH_TOKEN = re.compile(r"(?<![\w/.-])((?:[\w.-]+/)+[\w.-]*[\w])")
 _INT = re.compile(r"\d[\d,]*")
@@ -119,7 +125,7 @@ def _blank(text: str, spans) -> str:
     return text
 
 
-def _mask(text: str, *, code=True, shas=True, dates=True) -> str:
+def _mask(text: str, *, code=True, shas=True, dates=True, ids=False) -> str:
     spans = [m.span() for m in _URL.finditer(text)]
     if code:
         spans += [m.span() for m in _CODE_SPAN.finditer(text)]
@@ -128,6 +134,9 @@ def _mask(text: str, *, code=True, shas=True, dates=True) -> str:
         spans += [m.span() for m in _MDY.finditer(text)] + [m.span() for m in _DMY.finditer(text)]
     if shas:
         spans += [m.span() for m in _SHA.finditer(text) if _looks_like_sha(m.group())]
+    if ids:  # numbers that name a year, a port or a status, not a count
+        spans += [m.span() for m in _YEAR.finditer(text)]
+        spans += [m.span() for m in _PORTISH.finditer(text)]
     return _blank(text, spans)
 
 
@@ -139,8 +148,20 @@ def _looks_like_sha(tok: str) -> bool:
 
 
 def sha_tokens(text: str) -> list[str]:
-    plain = _blank(text, [m.span() for m in _URL.finditer(text)])
-    return [m.group() for m in _SHA.finditer(plain) if _looks_like_sha(m.group())]
+    spans = [m.span() for m in _URL.finditer(text)]
+    spans += [m.span() for m in _CODE_SPAN.finditer(text)]
+    plain = _blank(text, spans)
+    return [
+        m.group()
+        for m in _SHA.finditer(plain)
+        if _looks_like_sha(m.group())
+        and not (m.start() and plain[m.start() - 1] in ".#")
+        and not (
+            m.end() < len(plain)
+            and plain[m.end()] == "."
+            and plain[m.end() : m.end() + 2].strip(".") != ""
+        )
+    ]
 
 
 def date_tokens(text: str) -> list[tuple[str, date]]:
@@ -171,7 +192,7 @@ def _hedged(text: str, start: int) -> bool:
 
 
 def _count_tokens(text: str) -> list[tuple[str, int]]:
-    masked = _mask(text)
+    masked = _mask(text, ids=True)
     out = []
     for m in _COUNT.finditer(masked):
         n = int(m.group(1).replace(",", ""))
@@ -479,6 +500,8 @@ def first_unverified(
     )
     for where, text in fields(card):
         for sha in sha_tokens(text):
+            if sha in ev.haystack:  # a hex literal of the cited code, not a commit
+                continue
             if not ev.sha_exists(sha):
                 return Unverified(sha, where, "is not a commit in the repo")
         bad = _bad_date(text, ev)

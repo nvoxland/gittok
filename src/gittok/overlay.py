@@ -281,6 +281,10 @@ def _check_defaults(d: dict) -> None:
             _number(v, f"{key}.{k}")
 
 
+REQUIRED_WEIGHTS = (
+    "dwell", "depth_open", "lightbox_open", "explain_more", "source_tap", "scroll_back",
+    "complete", "replay", "answer", "like", "save",
+)
 REWARD_MAPS = ("weights", "format_base_ms", "prior_sd", "lead_score", "slotting")
 
 
@@ -302,6 +306,23 @@ def _check_reward(d: dict) -> None:
         _need(v > 0, f"'prior_sd.{k}' must be above 0")
     if "half_life_days" in d:
         _need(d["half_life_days"] > 0, "'half_life_days' must be above 0")
+    # More that the learner divides by or takes a root of, and keys it reads by name.
+    _need(d.get("expected_ms_max", 1) > 0, "'expected_ms_max' must be above 0")
+    for k, v in (d.get("format_base_ms") or {}).items():
+        _need(v > 0, f"'format_base_ms.{k}' must be above 0")
+    for key in ("skip_ms", "ms_per_word", "like_weight", "dislike_weight"):
+        _need(d.get(key, 0) >= 0, f"'{key}' must be 0 or more")
+    _need(0 <= d.get("like_floor", 0) <= 1, "'like_floor' must be between 0 and 1")
+    weights = d.get("weights") or {}
+    for k in REQUIRED_WEIGHTS:
+        _need(k in weights, f"'weights.{k}' is required: do not remove it")
+    slotting = d.get("slotting") or {}
+    for k, kind in (("repeat_days", int | float), ("max_srs_per_batch", int)):
+        v = slotting.get(k)
+        _need(
+            isinstance(v, kind) and not isinstance(v, bool) and v >= 0,
+            f"'slotting.{k}' is required and must be a number of 0 or more",
+        )
     for pair in d.get("crosses") or []:
         _need(
             isinstance(pair, list) and len(pair) == 2 and all(isinstance(x, str) for x in pair),
@@ -956,13 +977,7 @@ def _settings_layers(shared: Path, home: Path | None) -> tuple[dict, dict | None
     base = _read_map(shared / "config" / "settings.yaml", "config/settings.yaml")
     file = Path(home) / "local" / "settings.yaml" if home else None
     local = _read_map(file, "local/settings.yaml") if file and file.is_file() else None
-    merged = dict(base)
-    for key, val in (local or {}).items():
-        if isinstance(val, dict) and isinstance(merged.get(key), dict):
-            merged[key] = {**merged[key], **val}
-        elif val is not None or key == "data_dir":
-            merged[key] = val
-    return base, local, merged
+    return base, local, _c.merge_settings(base, local)
 
 
 def get(shared: Path | None, home: Path | None, name: str, key: str | None = None) -> dict:
@@ -1025,7 +1040,7 @@ def check(shared: Path | None, home: Path | None) -> dict:
         ):
             try:
                 warnings += [w for w in part() if w not in warnings]
-            except ConfigError as e:
+            except (ConfigError, TypeError, ValueError, KeyError, ArithmeticError) as e:
                 errors.append(_one_line(e))
     found = []
     if home is not None:

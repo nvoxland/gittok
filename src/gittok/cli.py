@@ -330,10 +330,18 @@ def _renderers(cfg) -> dict:
     """Which image renderers can draw. Only `illustration` matters to the callers here: a
     mascot is worth making once mflux is installed (while its model downloads), or when the
     agent draws the images (Codex's image tool, Claude's SVG illustrator)."""
-    from . import render
+    return {"illustration": _illustration_can_draw(cfg)}
 
-    return {"illustration": render.image_backend(cfg) == "agent"
-            or render.worker_check(cfg.settings.render.mflux_model) is None}
+
+def _illustration_can_draw(cfg) -> bool:
+    """True when the agent draws the images, or when mflux is the backend and its model did
+    not fail to download (a missing model that is still coming is fine: the hint waits for
+    nothing). A failed download draws nothing until the user fixes it."""
+    from . import image_model
+
+    if render.image_backend(cfg) == "agent":
+        return True
+    return image_model.status(cfg)["state"] != "failed"
 
 
 def _config_roots():
@@ -408,6 +416,7 @@ def _feed_watch(args) -> int:
     if (
         before and (queued_at is None or before[-1]["at"] > queued_at)
         and _unanswered_signal(cfg, before[-1]["at"])
+        and _feed_wants_cards(cfg)
     ):
         return _report_signal(before[-1], cfg, args.codex_thread)
     while True:
@@ -507,6 +516,14 @@ def _queue_codex_signal(signal: dict, cfg, codex_thread: str, receipt: Path) -> 
     # queue can succeed while --resume merely warns. Preserve warnings; do not claim a wake.
     print("Codex refill prompt queued; thread resume requested.")
     return 0
+
+
+def _feed_wants_cards(cfg) -> bool:
+    """True when the feed needs cards now. An old line that no run answered is live only then:
+    without this check a watch that restarts after a `nothing_to_do` run would exit at once
+    on the same line, and the session would loop between generate and watch."""
+    with closing(db.open_db(_db_path(cfg))) as conn:
+        return supply.feed_health(conn, cfg, _now())["want"] > 0
 
 
 def _unanswered_signal(cfg, signal_at: datetime) -> bool:
@@ -1288,7 +1305,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return args.fn(args)
-    except (ConfigError, SteeringError, home.InitError) as e:
+    except (ConfigError, SteeringError, home.InitError, gitq.GitError, OSError, ValueError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
 

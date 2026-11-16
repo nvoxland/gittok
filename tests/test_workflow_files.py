@@ -4,7 +4,6 @@ full generated copies with its own last section: no program reads another progra
 from pathlib import Path
 
 import pytest
-import yaml
 
 from gittok import home
 
@@ -15,9 +14,7 @@ HARNESS_WORDS = ("Claude", "claude", "Codex", "codex", "haiku", "sonnet", "opus"
                  "$gittok-", "/mcp", "Reconnect", "/loop", ".claude/", ".agents/")
 
 
-def _split(text: str) -> tuple[dict, str]:
-    _, head, body = text.split("---", 2)
-    return yaml.safe_load(head), body
+_split = home.split_frontmatter
 
 
 @pytest.mark.parametrize("path", sorted((SOURCES / "skills").glob("*.md"))
@@ -51,7 +48,7 @@ def test_each_program_gets_the_worker_with_its_tool_names_and_model(name):
     claude_meta, claude_body = _split(claude_file.decode())
     codex_meta, codex_body = _split(home.codex_files()[f".agents/workers/{name}.md"].decode())
     assert claude_meta["tools"] == ", ".join(f"mcp__gittok__{t}" for t in meta["tools"])
-    assert claude_meta["model"] == {"light": "haiku", "standard": "sonnet"}[meta["tier"]]
+    assert claude_meta["model"] == "inherit"  # the driver passes the tier's model when it has one
     assert codex_meta["tools"] == meta["tools"] and "model" not in codex_meta
     assert claude_body.strip() == source.strip() == codex_body.strip()
 

@@ -68,7 +68,8 @@ class RenderCompletion:
 
 
 def pending_ids(conn, backend: str, *, run_id: str | None = None,
-                limit: int | None = None) -> list[str]:
+                limit: int | None = None, exclude_kinds: tuple[str, ...] = (),
+                only_kinds: tuple[str, ...] = ()) -> list[str]:
     """Select work by assignment; a malformed spec cannot prevent later cards running."""
     sql = ("SELECT id FROM cards WHERE status = 'pending_render' "
            "AND coalesce(json_extract(resolved, '$.image_backend'), 'local') = ?")
@@ -76,6 +77,11 @@ def pending_ids(conn, backend: str, *, run_id: str | None = None,
     if run_id is not None:
         sql += " AND run_id = ?"
         args.append(run_id)
+    for kinds, op in ((exclude_kinds, "NOT IN"), (only_kinds, "IN")):
+        if kinds:
+            kind = "CASE WHEN json_valid(spec) THEN json_extract(spec, '$.visual.kind') END"
+            sql += f" AND coalesce({kind}, '') {op} ({', '.join('?' * len(kinds))})"
+            args.extend(kinds)
     sql += " ORDER BY created_at, id"
     if limit is not None:
         sql += " LIMIT ?"
@@ -124,7 +130,8 @@ def complete(conn, cfg, completion: RenderCompletion, *, claimed: bool = False) 
         for image in completion.images:
             validate_image(image)
         if not claimed and job.backend != "local":
-            reset_stale_rendering(conn)  # a submission that crashed; no worker resets agent cards
+            # a submission that crashed; no worker resets agent cards
+            reset_stale_rendering(conn, backend="agent")
         if not claimed and not claim(conn, current):
             raise JobError("card is busy; retry after the current image submission finishes")
         owns_claim = True
@@ -307,13 +314,17 @@ def _claim_card(conn, card_id: str, backend: str = "local") -> bool:
     return cur.rowcount == 1
 
 
-def reset_stale_rendering(conn, max_age: timedelta = STALE_RENDERING) -> int:
-    """Cards left in `rendering` by a crashed pass go back to `pending_render`."""
+def reset_stale_rendering(conn, max_age: timedelta = STALE_RENDERING,
+                          backend: str | None = None) -> int:
+    """Cards left in `rendering` by a crashed pass go back to `pending_render`. With
+    `backend`, only the cards assigned to it (a local pass is slow, not crashed, to an agent)."""
     cutoff = datetime.now(UTC) - max_age
     rows = conn.execute("SELECT id, resolved FROM cards WHERE status = 'rendering'").fetchall()
     n = 0
     for r in rows:
         resolved = db.loads(r["resolved"]) or {}
+        if backend is not None and resolved.get("image_backend", "local") != backend:
+            continue
         try:
             since = datetime.fromisoformat(resolved.get(RENDERING_SINCE, ""))
         except ValueError:

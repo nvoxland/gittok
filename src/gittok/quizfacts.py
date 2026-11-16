@@ -85,8 +85,8 @@ class _Truth:
         self.ids = [r["fact_id"] for r in rows[:MAX_IDS]]
 
     def _caller_count(self):
-        rows = [r for r in facts.callers_of(self.conn, self.repo, self.subject) if r["resolved"]]
-        self.answers = [str(len(rows))]
+        rows = facts.callers_of(self.conn, self.repo, self.subject, MAX_IDS, resolved_only=True)
+        self.answers = [str(facts.count_resolved_callers(self.conn, self.repo, self.subject))]
         self.ids = [d["fact_id"] for d in self.defs] + [r["fact_id"] for r in rows]
         self.ids = self.ids[:MAX_IDS]
 

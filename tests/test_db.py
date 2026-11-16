@@ -30,6 +30,7 @@ def test_migrate_twice_applies_nothing_second_time(tmp_path):
         "0002_pair_requests.sql",
         "0003_one_learner.sql",
         "0004_learning_fixes.sql",
+        "0005_server_fixes.sql",
     ]
     assert db.migrate(conn) == []
     names = [r["name"] for r in conn.execute("SELECT name FROM schema_migrations ORDER BY name")]
@@ -318,3 +319,11 @@ def test_one_learner_migration(tmp_path):
     assert {"mean", "precision", "n", "updated_at"} <= cols("model_weights")
     for t in ("knowledge", "knowledge_symbols"):
         assert not {"knew_it", "teach_more"} & cols(t)
+
+
+def test_statements_keeps_a_last_statement_without_semicolon():
+    assert [x.strip() for x in db._statements("CREATE TABLE a(x);\nCREATE TABLE b(y)")] == [
+        "CREATE TABLE a(x);",
+        "CREATE TABLE b(y)",
+    ]
+    assert list(db._statements("CREATE TABLE a(x);  \n")) == ["CREATE TABLE a(x);"]

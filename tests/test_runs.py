@@ -17,7 +17,7 @@ from gittok.config import (
 from tests.cards import example_card, text_card
 
 PERSONAS = ["greybeard", "penny_learns", "archivist", "meme_compiler", "paranoid_sec", "shipit_sam"]
-NOW = datetime(2026, 3, 1, 12, 0, tzinfo=UTC)
+NOW = datetime.now(UTC).replace(microsecond=0)  # runs older than a day expire
 
 
 @pytest.fixture
@@ -93,7 +93,7 @@ def test_daily_run_limit(conn, cfg):
     with pytest.raises(
         runs.RunLimitError,
         match=r"daily run limit reached \(4\); try again after "
-        r"2026-03-02T12:00:00Z",
+        rf"{runs._iso(NOW + timedelta(hours=24))}",
     ):
         runs.open_run(conn, cfg, repo=None, brief="b", requested=1, now=later)
     assert issubclass(runs.RunLimitError, runs.RunError)
@@ -123,7 +123,7 @@ def test_finish_run_summary_and_idempotence(conn, cfg, fixture_repo):
         "packets": {},
     }
     run = runs.get_run(conn, run_id)
-    assert run["finished_at"] == "2026-03-01T12:01:30Z"
+    assert run["finished_at"] == runs._iso(done)
     assert run["meta"]["notes"] == {"mood": "ok"}
 
     again = runs.finish_run(conn, run_id, notes={"mood": "changed"}, now=done + timedelta(hours=1))
@@ -543,3 +543,79 @@ def test_rejected_card_penalizes_the_lead_it_cited(conn, cfg, fixture_repo):
     row = conn.execute("SELECT * FROM leads WHERE id = ?", (lead,)).fetchone()
     assert row["times_rejected"] == 1 and row["last_rejected_at"] > "2026"
     assert row["times_covered"] == 0
+
+
+def test_precheck_refuses_before_any_work(conn, cfg):
+    with pytest.raises(runs.RunError, match="requested"):
+        runs.precheck(conn, cfg, 99, now=NOW)
+    for i in range(4):
+        runs.open_run(conn, cfg, repo=None, brief="b", requested=1, now=NOW + timedelta(hours=i))
+    with pytest.raises(runs.RunLimitError):
+        runs.precheck(conn, cfg, 1, now=NOW + timedelta(hours=5))
+    runs.precheck(conn, cfg, 1, now=NOW + timedelta(hours=25))
+
+
+def test_packet_cap_limits_accepted_cards_per_packet(conn, cfg, fixture_repo):
+    run_id = runs.open_run(
+        conn, cfg, repo="fixture", brief="b", requested=5, packets=PACKETS, now=NOW
+    )
+    res = runs.submit(conn, cfg, run_id, _variants(fixture_repo, 3), packet_id="p2")  # count 1
+    assert [a["index"] for a in res["accepted"]] == [0]
+    assert [r["reason"] for r in res["rejected"]] == ["over_quota", "over_quota"]
+    again = runs.submit(
+        conn,
+        cfg,
+        run_id,
+        [text_card(fixture_repo, story_type="analogy", format="eli5")],
+        packet_id="p2",
+    )
+    assert [r["reason"] for r in again["rejected"]] == ["over_quota"]
+
+
+def test_check_cards_checks_the_illustration_budget(conn, cfg, fixture_repo):
+    from tests import cards as C
+
+    cfg = _m2_cfg(cfg, budget=1)
+    run_id = runs.open_run(conn, cfg, repo="fixture", brief="b", requested=5, now=NOW)
+    comic = C.comic_card(fixture_repo, panels=2)
+    comic["sources"] = [{"repo": "fixture", "path": "README.md"}]
+    got = runs.check(conn, cfg, run_id, [comic])
+    assert [r["reason"] for r in got["rejected"]] == ["illustration_budget"]
+
+
+def test_budget_is_not_held_by_a_card_rejected_later_in_submit(conn, cfg, fixture_repo):
+    from tests import cards as C
+
+    cfg = _m2_cfg(cfg, budget=2)
+    run_id = runs.open_run(conn, cfg, repo="fixture", brief="b", requested=5, now=NOW)
+    x = C.illustration_card(fixture_repo)
+    assert len(runs.submit(conn, cfg, run_id, [x])["accepted"]) == 1
+    y = C.illustration_card(fixture_repo)
+    y["sources"] = [{"repo": "fixture", "path": "README.md"}]
+    res = runs.submit(conn, cfg, run_id, [C.illustration_card(fixture_repo), y])
+    assert [r["reason"] for r in res["rejected"]] == ["duplicate_story"]
+    assert [a["index"] for a in res["accepted"]] == [1]
+
+
+def test_submit_to_an_abandoned_run_is_refused_and_recent_shows_expired(conn, cfg, fixture_repo):
+    old = datetime.now(UTC) - timedelta(hours=48)
+    run_id = runs.open_run(conn, cfg, repo="fixture", brief="b", requested=3, now=old)
+    assert runs.recent(conn)[0]["status"] == "expired"
+    with pytest.raises(runs.RunError, match="expired"):
+        runs.submit(conn, cfg, run_id, [text_card(fixture_repo)])
+    with pytest.raises(runs.RunError, match="expired"):
+        runs.check(conn, cfg, run_id, [text_card(fixture_repo)])
+
+
+def test_finish_and_open_run_use_write_transactions(conn, cfg, monkeypatch):
+    seen = []
+    real = db.immediate
+
+    def spy(c):
+        seen.append(1)
+        return real(c)
+
+    monkeypatch.setattr(runs.db, "immediate", spy)
+    run_id = runs.open_run(conn, cfg, repo=None, brief="b", requested=1, now=NOW)
+    runs.finish_run(conn, run_id, now=NOW)
+    assert len(seen) == 2

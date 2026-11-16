@@ -56,14 +56,18 @@ class RenderBatchSession:
                 return
             self._closed = True
             try:
-                os.killpg(self.process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            self.process.wait()
-            self.process.stdin.close()
-            self.process.stdout.close()
-            self._errors.close()
-            self._slot.__exit__(None, None, None)
+                try:
+                    os.killpg(self.process.pid, signal.SIGKILL)
+                except OSError:  # gone already (ProcessLookupError), or a zombie group (macOS)
+                    pass
+                self.process.wait()
+            finally:
+                for pipe in (self.process.stdin, self.process.stdout, self._errors):
+                    try:
+                        pipe.close()
+                    except OSError:
+                        pass
+                self._slot.__exit__(None, None, None)
 
     def _failure(self):
         self._errors.seek(0, os.SEEK_END)

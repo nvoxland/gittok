@@ -605,3 +605,58 @@ def test_a_card_the_agent_takes_over_during_a_pass_is_not_failed(fixture_repo, t
         counts = render.render_pending(conn, cfg, {"illustration": TakeOver()})
     assert counts["failed"] == 0
     assert card_row(cfg, second)["status"] == "pending_render"
+
+
+def test_unavailable_renderer_does_not_block_available_kinds(fixture_repo, tmp_path):
+    cfg = render_cfg(fixture_repo, tmp_path)
+    ids = seed_pending(cfg, fixture_repo, {"kind": "illustration", "prompt": "x"}, count=3)
+    meme_visual = {"kind": "meme", "template": "drake", "lines": ["a", "b"]}
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
+        spec = db.loads(conn.execute("SELECT spec FROM cards WHERE id=?", (ids[0],)).fetchone()[0])
+        spec["visual"] = meme_visual
+        conn.execute("UPDATE cards SET spec=?, created_at='2030-01-01T00:00:00Z' WHERE id=?",
+                     (db.dumps(spec), ids[0]))
+        conn.commit()
+        render.render_pending(conn, cfg, {"meme": FakeRenderer(),
+                                          "illustration": FakeRenderer(is_available=False)},
+                              limit=2)
+    assert card_row(cfg, ids[0])["status"] == "ready"
+
+
+def test_failed_model_download_hands_local_cards_to_the_agent(fixture_repo, tmp_path, monkeypatch):
+    from gittok import image_model
+
+    cfg = render_cfg(fixture_repo, tmp_path)
+    (cid,) = seed_pending(cfg, fixture_repo, {"kind": "illustration", "prompt": "x"})
+    monkeypatch.setattr(image_model, "status", lambda c: {"state": "failed", "error": "boom",
+                                                          "path": "p", "done": 0, "total": 0})
+    monkeypatch.setattr(render, "image_backend", lambda c: "local")
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
+        render.render_pending(conn, cfg, {"illustration": FakeRenderer(is_available=False)})
+    row = card_row(cfg, cid)
+    assert row["status"] == "pending_render"
+    assert db.loads(row["resolved"])["image_backend"] == "agent"
+
+
+def test_stale_limit_follows_render_timeouts(fixture_repo, tmp_path):
+    from datetime import timedelta
+
+    cfg = render_cfg(fixture_repo, tmp_path, mflux_timeout_s=3600.0)
+    assert render.stale_limit(cfg) >= timedelta(seconds=600 + 3600)
+    assert render.stale_limit(render_cfg(fixture_repo, tmp_path)) >= timedelta(minutes=30)
+
+
+def test_reset_stale_can_be_limited_to_one_backend(fixture_repo, tmp_path):
+    from gittok import render_jobs as jobs
+
+    cfg = render_cfg(fixture_repo, tmp_path)
+    (cid,) = seed_pending(cfg, fixture_repo, MEME)
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
+        r = jobs.request(conn, cfg, cid, backend="local")
+        assert jobs.claim(conn, r)
+        res = db.loads(conn.execute("SELECT resolved FROM cards WHERE id=?", (cid,)).fetchone()[0])
+        res["rendering_since"] = "2020-01-01T00:00:00+00:00"
+        conn.execute("UPDATE cards SET resolved=? WHERE id=?", (db.dumps(res), cid))
+        conn.commit()
+        assert jobs.reset_stale_rendering(conn, backend="agent") == 0
+        assert jobs.reset_stale_rendering(conn, backend="local") == 1

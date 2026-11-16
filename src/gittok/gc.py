@@ -178,10 +178,11 @@ def _delete_repo_rows(conn, name: str) -> int:
         "DELETE FROM stories WHERE repo = ? AND story_key NOT IN (SELECT story_key FROM cards)",
         (name,),
     )
-    conn.execute("DELETE FROM notifications WHERE dedup_key LIKE ?", (f"hot_file:{name}:%",))
-    rules = conn.execute(
-        "DELETE FROM rules WHERE feature = 'repo' AND value = ?", (name,)
-    ).rowcount
+    prefix = f"hot_file:{name}:"  # a prefix test: "_" and "%" in a name are not wildcards
+    conn.execute(
+        "DELETE FROM notifications WHERE substr(dedup_key, 1, ?) = ?", (len(prefix), prefix)
+    )
+    rules = conn.execute("DELETE FROM rules WHERE feature = 'repo' AND value = ?", (name,)).rowcount
     row = conn.execute("SELECT value FROM prefs WHERE key = ?", (FOLLOW_KEY,)).fetchone()
     if row:
         left = [f for f in json.loads(row["value"]) if f[0] != name]
@@ -192,6 +193,7 @@ def _delete_repo_rows(conn, name: str) -> int:
         return rules
     for table in _BY_REPO_ID:
         conn.execute(f"DELETE FROM {table} WHERE repo_id = ?", (rid[0],))
+    _scrub_runs(conn, name, rid[0])
     # Run rows stay (the daily run cap and the run history count them) without the repo's
     # brief; a run that is still open cannot go on.
     conn.execute(
@@ -202,6 +204,53 @@ def _delete_repo_rows(conn, name: str) -> int:
     if conn.execute("SELECT 1 FROM cards WHERE repo_id = ?", (rid[0],)).fetchone() is None:
         conn.execute("DELETE FROM repos WHERE id = ?", (rid[0],))
     return rules
+
+
+def _scrub_runs(conn, name: str, repo_id: int) -> None:
+    """Take the text of the repo `name` out of the meta, brief and reject details of its runs.
+
+    A run of this repo alone loses its packets, notes and reject details. A run over all repos
+    (no repo_id) loses the packets of this repo, the reject details of those packets, and its
+    brief (one text for all repos, so it cannot be cut)."""
+    for row in conn.execute("SELECT id, repo_id, meta, reject_reasons FROM runs").fetchall():
+        meta, reasons = db.loads(row["meta"]), db.loads(row["reject_reasons"])
+        if not isinstance(meta, dict):
+            meta = {}
+        if not isinstance(reasons, list):
+            reasons = []
+        packets = meta.get("packets") or []
+        if row["repo_id"] == repo_id:
+            meta = {**meta, "packets": [], "notes": None}
+            reasons = [{k: v for k, v in r.items() if k != "detail"} for r in reasons]
+        elif row["repo_id"] is None and any(p.get("repo") == name for p in packets):
+            gone = {p.get("id") for p in packets if p.get("repo") == name}
+            meta = {**meta, "packets": [p for p in packets if p.get("repo") != name]}
+            reasons = [
+                {k: v for k, v in r.items() if k != "detail"} if r.get("packet") in gone else r
+                for r in reasons
+            ]
+        else:
+            continue
+        conn.execute(
+            "UPDATE runs SET meta = ?, reject_reasons = ?, brief = NULL WHERE id = ?",
+            (db.dumps(meta), db.dumps(reasons), row["id"]),
+        )
+
+
+def _scrub_submissions(cfg, name: str) -> None:
+    """Drop the cards of the repo `name` from the saved submission files of all runs."""
+    for path in (cfg.settings.data_dir / "runs").glob("*/submission-*.json"):
+        try:
+            raw = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        cards = raw.get("cards") if isinstance(raw, dict) else raw
+        if not isinstance(cards, list):
+            continue
+        kept = [c for c in cards if not (isinstance(c, dict) and name in (c.get("repos") or []))]
+        if len(kept) != len(cards):
+            out = {**raw, "cards": kept} if isinstance(raw, dict) else kept
+            path.write_text(json.dumps(out, indent=2, ensure_ascii=False))
 
 
 def _repo_plan(conn, cfg, name: str) -> tuple[list[str], list[Path]]:
@@ -225,6 +274,7 @@ def purge_repo(conn, cfg, name: str) -> dict[str, int]:
         rules = _delete_repo_rows(conn, name)
     for d in dirs:
         shutil.rmtree(d, ignore_errors=True)
+    _scrub_submissions(cfg, name)
     return {"cards": len(ids), "files": files, "rules": rules}
 
 

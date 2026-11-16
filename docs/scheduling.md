@@ -55,8 +55,8 @@ to both clients.
 - The notification worker of the feed server makes this check once a minute. A feed request does not make it.
 - The feed wants cards when the unseen cards will not last `agent.target_runway_days` at the reading speed of the last 7 days.
 - It does not write a line when there are no repos, while a run that started in the last `agent.wake_cooldown_hours` is still open, when `agent.per_day_runs` runs started in the last 24 hours (a new run could not start), or within `agent.wake_cooldown_hours` of the last line.
-- The end of the feed is the exception to the last rule. When no unseen card is left and a run started after the last line, the server writes a new line at once. So a reader who reads every card does not wait for the cooldown. When no run answered the last line, a second line would say nothing new, and the server writes none.
-- `gittok feed-watch` checks the file every `--poll` seconds. It exits when a new line arrives. It also exits at once if the last line is newer than the newest run, because no run answered that line.
+- The end of the feed is the exception to the last rule. When no unseen card is left and a run that made at least one card started after the last line and has finished, the server writes a new line at once. So a reader who reads every card does not wait for the cooldown. When no run answered the last line (or a run made no card), a second line would say nothing new, and the server writes none. So runs that make nothing cannot chain up to the daily cap.
+- `gittok feed-watch` checks the file every `--poll` seconds. It exits when a new line arrives. It also exits at once if the last line is newer than the newest run, because no run answered that line, but only while the feed still wants cards. If the feed is full again (a run found `nothing_to_do`), the watch waits for a new line.
 - `gittok feed-watch --hint` prints the line that tells the session to start the watch. `--codex-thread THREAD` adds one queue-and-resume attempt for that Codex thread when a signal arrives. The prompt contains only a parsed count and fixed instructions, never raw log text or repo contents.
 
 ## When cards are made without a request
@@ -67,7 +67,7 @@ All of these must be true:
 2. The feed server runs (the session starts it) and at least one repo is configured.
 3. The feed wants cards: the unseen cards last under `agent.target_runway_days` (3).
 4. No run is open, and fewer than `agent.per_day_runs` (10) runs started in the last 24 hours.
-5. The last signal is older than `agent.wake_cooldown_hours` (4), or the feed is empty and a run answered the last signal.
+5. The last signal is older than `agent.wake_cooldown_hours` (4), or the feed is empty and a run that made cards answered the last signal.
 
 With no session open, nothing makes cards. The server still writes the line, and the next session that starts the watch answers it at once.
 

@@ -1,3 +1,8 @@
+<script module lang="ts">
+	// One counter for all diagrams: mermaid ids must be unique in the whole page.
+	let seq = 0;
+</script>
+
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import type { DiagramVisual } from '#lib/types.ts';
@@ -5,7 +10,6 @@
 	let { visual }: { visual: DiagramVisual; resolved?: unknown } = $props();
 	let svg = $state<string | null>(null);
 	let failed = $state(false);
-	let seq = 0;
 
 	onMount(() => {
 		void draw();

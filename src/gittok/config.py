@@ -367,6 +367,83 @@ def _check_keys(data: dict, allowed: set[str], what: str, file: Path) -> None:
             raise ConfigError(f"unknown key '{key}' in {what} ({file})")
 
 
+_CLAUDE_ALIASES = ("haiku", "sonnet", "opus", "inherit")
+
+
+def _models(models: Any, what: str, file: Path) -> dict:
+    """`agent.models`, checked: a mapping of agent program -> a mapping of tier -> model."""
+    if models is None:
+        return {}
+    if not isinstance(models, dict) or not set(models) <= set(HARNESS_NAMES):
+        raise ConfigError(f"{what}.models has a key per agent program: claude or codex ({file})")
+    out = {}
+    for name, tiers in models.items():
+        if tiers is None:
+            tiers = {}
+        if not isinstance(tiers, dict) or not set(tiers) <= set(TIERS):
+            raise ConfigError(f"{what}.models.{name} has a key per tier: light or standard "
+                              f"({file})")
+        for tier, m in tiers.items():
+            if m is not None and not isinstance(m, str):
+                raise ConfigError(f"{what}.models.{name}.{tier}: a model name is text ({file})")
+            if name == "claude" and m and m not in _CLAUDE_ALIASES and not m.startswith("claude-"):
+                raise ConfigError(
+                    f"{what}.models.claude.{tier}: '{m}' is not a Claude model. Use haiku, "
+                    f"sonnet, opus, inherit, or a full id such as claude-sonnet-4-5 ({file})")
+        out[name] = tiers
+    return out
+
+
+def _is_int(v: object) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+# Where the default range of a number is not "0 or more": (least, most).
+_RANGES: dict[str, tuple[float, float]] = {
+    "packet_size": (1, 5),
+    "port": (1, 65535),
+    "min_spot_the_bug_per_run": (0, 1), "variant_max_share": (0, 1), "intro_share": (0, 1),
+    "variant_min_reward": (0, 1),
+    **dict.fromkeys(
+        ("default_count", "max_count", "target_runway_days", "min_burn_per_day", "min_run_count",
+         "scout_max", "scout_batch", "max_read_lines", "max_output_bytes", "image_width",
+         "image_height", "mflux_steps", "max_illustrations_per_run", "worker_interval_s",
+         "interval_s", "history_window_days", "log_max_kb", "max_hits", "max_ms",
+         "candidates_per_tag"),
+        (1, math.inf)),
+}  # fmt: skip
+
+
+def _check_values(cls: type, kwargs: dict, what: str, file: Path) -> None:
+    """Type and range of each plain value, from the type of its default: a number is a number
+    (not a bool, not text) and in range, a flag is true or false, text is text. A bad value is
+    a one-line ConfigError here, not a crash in the code that uses it later."""
+    for f in fields(cls):
+        if f.name not in kwargs:
+            continue
+        v, default = kwargs[f.name], f.default
+        if v is None and not isinstance(default, tuple | dict):
+            del kwargs[f.name]  # `key:` with no value means the default
+            continue
+        where = f"{what}.{f.name}"
+        if isinstance(default, bool):
+            if not isinstance(v, bool):
+                raise ConfigError(f"{where} must be true or false ({file})")
+        elif isinstance(default, str):
+            if not isinstance(v, str):
+                raise ConfigError(f"{where} must be text ({file})")
+        elif isinstance(default, int | float):
+            ok = (_is_int(v) if isinstance(default, int)
+                  else isinstance(v, int | float) and not isinstance(v, bool))
+            if not ok or (isinstance(v, float) and not math.isfinite(v)):
+                kind = "a whole number" if isinstance(default, int) else "a number"
+                raise ConfigError(f"{where} must be {kind} ({file})")
+            lo, hi = _RANGES.get(f.name, (0, math.inf))
+            if not lo <= v <= hi:
+                rng = f"{lo:g} or more" if hi == math.inf else f"{lo:g} to {hi:g}"
+                raise ConfigError(f"{where} must be {rng}, not {v} ({file})")
+
+
 def _section(cls: type, data: Any, what: str, file: Path) -> Any:
     data = _mapping(data, what, file)
     _check_keys(data, {f.name for f in fields(cls)}, what, file)
@@ -377,21 +454,14 @@ def _section(cls: type, data: Any, what: str, file: Path) -> Any:
             raise ConfigError(f"{what}.git_identities must be a list of text ({file})")
         kwargs["git_identities"] = tuple(ids)
     if cls is AgentSettings and "models" in kwargs:
-        models = kwargs["models"] or {}
-        if not isinstance(models, dict) or not set(models) <= set(HARNESS_NAMES):
-            raise ConfigError(
-                f"{what}.models has a key per agent program: claude or codex ({file})")
-        for name, tiers in models.items():
-            tiers = tiers or {}
-            if not isinstance(tiers, dict) or not set(tiers) <= set(TIERS):
-                raise ConfigError(f"{what}.models.{name} has a key per tier: light or standard "
-                                  f"({file})")
-            if not all(isinstance(m, str) or m is None for m in tiers.values()):
-                raise ConfigError(f"{what}.models.{name}: each value is a model name ({file})")
-            models[name] = tiers
-        kwargs["models"] = models
+        kwargs["models"] = _models(kwargs["models"], what, file)
     if "churn_windows_days" in kwargs:
-        kwargs["churn_windows_days"] = tuple(kwargs["churn_windows_days"])
+        days = kwargs["churn_windows_days"]
+        if (not isinstance(days, list | tuple) or not days
+                or not all(_is_int(d) and d > 0 for d in days)):
+            raise ConfigError(f"{what}.churn_windows_days must be a list of days above 0 ({file})")
+        kwargs["churn_windows_days"] = tuple(days)
+    _check_values(cls, kwargs, what, file)
     if "git_timeout_s" in kwargs:
         t = kwargs["git_timeout_s"]
         if isinstance(t, bool) or not isinstance(t, int | float) or t <= 0:
@@ -416,7 +486,10 @@ def _section(cls: type, data: Any, what: str, file: Path) -> Any:
         if not isinstance(hosts, list) or not all(isinstance(h, str) for h in hosts):
             raise ConfigError(f"{what}.allowed_hosts must be a list of host names ({file})")
         kwargs["allowed_hosts"] = tuple(hosts)
-    return cls(**kwargs)
+    try:
+        return cls(**kwargs)
+    except (TypeError, ValueError) as e:
+        raise ConfigError(f"{what} is not valid: {' '.join(str(e).split())} ({file})") from e
 
 
 def _repos_settings(data: Any, root: Path, file: Path) -> ReposSettings:
@@ -480,6 +553,35 @@ def _drop_unknown(data: dict, file: Path) -> tuple[dict, list[str]]:
     return out, warnings
 
 
+def merge_settings(base: dict, local: dict | None) -> dict:
+    """The settings of `local` over `base`: a section merges key by key, a null is ignored,
+    and `agent.models` merges per agent program and per tier, so that a local Codex tier does
+    not drop the shipped Claude tiers."""
+    merged = dict(base)
+    for key, val in (local or {}).items():
+        if isinstance(val, dict) and isinstance(merged.get(key), dict):
+            merged[key] = {**merged[key], **val}
+            if key == "agent":
+                merged[key]["models"] = _merge_models(base.get("agent"), val)
+        elif val is not None:
+            merged[key] = val
+    return merged
+
+
+def _merge_models(base_agent: dict | None, local_agent: dict) -> Any:
+    base = (base_agent or {}).get("models")
+    local = local_agent.get("models")
+    if not isinstance(base, dict) or not isinstance(local, dict):
+        return local if "models" in local_agent else base
+    out = dict(base)
+    for harness_name, tiers in local.items():
+        mine = out.get(harness_name)
+        out[harness_name] = (
+            {**mine, **tiers} if isinstance(mine, dict) and isinstance(tiers, dict) else tiers
+        )
+    return out
+
+
 def _load_settings(root: Path, shared: Path | None = None) -> tuple[Settings, tuple[str, ...]]:
     """config/settings.yaml, with the optional local/settings.yaml merged over it, and the
     warnings for keys that were ignored.
@@ -496,19 +598,17 @@ def _load_settings(root: Path, shared: Path | None = None) -> tuple[Settings, tu
     _build_settings(base, root, base_file)
     if local:
         _build_settings(local, root, local_file)
-    merged = dict(base)
-    for key, val in local.items():
-        if isinstance(val, dict) and isinstance(merged.get(key), dict):
-            merged[key] = {**merged[key], **val}
-        elif val is not None or key == "data_dir":
-            merged[key] = val
+    merged = merge_settings(base, local)
     settings = _build_settings(merged, root, local_file if local else base_file)
     return settings, (*base_warn, *local_warn)
 
 
 def _build_settings(data: dict, root: Path, file: Path) -> Settings:
     _check_keys(data, _SETTINGS_KEYS, "settings", file)
-    data_dir = Path(str(data.get("data_dir", "data"))).expanduser()
+    raw_dir = data.get("data_dir")
+    if raw_dir is not None and not isinstance(raw_dir, str):
+        raise ConfigError(f"settings.data_dir must be a path ({file})")
+    data_dir = Path(raw_dir or "data").expanduser()
     if not data_dir.is_absolute():
         data_dir = root / data_dir
     return Settings(

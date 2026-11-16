@@ -105,7 +105,7 @@ def test_illustrator_agent_draws_svg_with_only_the_image_tools():
     assert {t.strip() for t in tools.removeprefix("tools:").split(",")} == {
         "mcp__gittok__get_image_requests", "mcp__gittok__submit_images",
     }
-    assert "model: sonnet" in head
+    assert "model: inherit" in head
     assert "svgs" in text and "card_id" in text
     assert "gittok-illustrator.md" in home.AGENT_FILES
 
@@ -265,3 +265,22 @@ def test_the_mflux_check_never_runs_inside_a_write_transaction(fixture_repo, tmp
         assert result["accepted"], result
         agent_images.pending(conn, cfg, run_id)
     assert seen and not any(seen)
+
+
+@pytest.mark.parametrize("attr,tag,value", [
+    ("numOctaves", "feTurbulence", "1e+2"), ("radius", "feMorphology", "5e+2"),
+    ("stdDeviation", "feGaussianBlur", "1e+3"), ("stdDeviation", "feGaussianBlur", "1.e3"),
+    ("stdDeviation", "feGaussianBlur", "+1E3"), ("stdDeviation", "feGaussianBlur", "5 1e+3"),
+])
+def test_filter_limits_see_every_float_spelling(attr, tag, value):
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><filter id="f">'
+           f'<{tag} {attr}="{value}"/></filter><rect width="5" height="5" filter="url(#f)"/></svg>')
+    with pytest.raises(agent_images.ImageError):
+        agent_images.svg_image(svg, 20, 20)
+
+
+def test_deeply_nested_svg_is_an_image_error():
+    svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">' + "<g>" * 3000
+           + '<rect width="1" height="1"/>' + "</g>" * 3000 + "</svg>")
+    with pytest.raises(agent_images.ImageError):
+        agent_images.svg_image(svg, 20, 20)

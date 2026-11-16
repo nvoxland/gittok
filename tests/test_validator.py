@@ -1098,6 +1098,8 @@ def test_learn_is_capitalised_and_length_checked_after_stripping(fixture_repo, r
         'flowchart LR\n  A --> B\n  click A callback "tip"',
         "flowchart LR\n  A --> B\n  CLICK A call go()",
         'flowchart LR\n  A --> B\n\tclick A href "/x"',
+        'flowchart LR\n  A --> B; click A callback "tip"',
+        "flowchart LR\n  A[x] --> B[VBScript:go]",
         'classDiagram\n  class Shape\n  callback Shape "go"',
         "flowchart LR\n  A[see https://example.com/x] --> B",
         "flowchart LR\n  A[HTTP://example.com] --> B",
@@ -1119,9 +1121,41 @@ def test_diagram_with_directives_callbacks_or_urls_is_rejected(fixture_repo, rep
         "flowchart LR\n  %% a plain comment\n  A[api] -->|click path| B[on click handler]",
         "sequenceDiagram\n  web->>api: POST /events (data: batch)\n  api-->>web: 200",
         "flowchart TD\n  A[metadata: none] --- B[https only]\n  B --> clicker",
+        "flowchart LR\n  A[TypeScript: compile] --> B[Javascript]",
     ],
 )
 def test_plain_diagrams_stay_accepted(fixture_repo, repos, source):
     v = {"kind": "diagram", "title": "Flow", "mermaid": source}
     accepted, rejected = check2([C.diagram_card(fixture_repo, visual=v)], repos)
     assert rejected == [] and len(accepted) == 1
+
+
+@pytest.mark.parametrize("bad", [5, None, "fixture", [1], {"a": 1}])
+def test_malformed_repos_reject_one_card_not_the_call(fixture_repo, repos, bad):
+    good = example_card(fixture_repo)
+    broken = example_card(fixture_repo)
+    broken["repos"] = bad
+    accepted, rejected = validator.validate_cards(
+        [broken, good],
+        repos,
+        ["greybeard", "penny_learns", "archivist", "meme_compiler", "paranoid_sec", "shipit_sam"],
+    )
+    assert [a.index for a in accepted] == [1]
+    assert [r.index for r in rejected] == [0]
+
+
+def test_unexpected_error_in_one_card_rejects_only_that_card(fixture_repo, repos, monkeypatch):
+    def boom(card):
+        if card["hook"].startswith("BOOM"):
+            raise RuntimeError("kaput")
+
+    monkeypatch.setattr(validator, "_check_diagrams", boom)
+    bad = example_card(fixture_repo)
+    bad["hook"] = "BOOM " + bad["hook"]
+    accepted, rejected = validator.validate_cards(
+        [bad, text_card(fixture_repo)],
+        repos,
+        ["greybeard", "penny_learns", "archivist", "meme_compiler", "paranoid_sec", "shipit_sam"],
+    )
+    assert [r.index for r in rejected] == [0]
+    assert "kaput" in rejected[0].detail

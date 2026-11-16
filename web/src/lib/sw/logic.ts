@@ -19,10 +19,29 @@ export function classifyRequest(req: { method: string; pathname: string; mode?: 
 export function cacheKey(pathname: string, search: string): string | null {
 	if (pathname === '/api/feed') {
 		// Only the first page is "the last batch"; later pages would overwrite it.
-		return new URLSearchParams(search).has('cursor') ? null : pathname;
+		const q = new URLSearchParams(search);
+		if (q.has('cursor')) return null;
+		// Each filter (repo, dir, ...) has its own "last batch"; the page size does not matter.
+		q.delete('limit');
+		q.sort();
+		const rest = q.toString();
+		return rest ? `${pathname}?${rest}` : pathname;
 	}
 	if (pathname.startsWith('/api/cards/')) return pathname;
 	return pathname + search;
+}
+
+// A static asset answer that is safe to cache: ok, and not an HTML page (the SPA fallback
+// answers an unknown file with index.html and status 200).
+export function isCacheableAsset(pathname: string, res: { ok: boolean; contentType: string | null }): boolean {
+	if (!res.ok) return false;
+	const html = (res.contentType ?? '').toLowerCase().startsWith('text/html');
+	return !html || pathname.endsWith('.html');
+}
+
+// The keys to delete so that at most `max` stay. `keys` is in insertion order, oldest first.
+export function evictOldest(keys: string[], max: number): string[] {
+	return keys.length > max ? keys.slice(0, keys.length - max) : [];
 }
 
 export function selectPrecache(files: { path: string; size: number }[], maxBytes: number): string[] {

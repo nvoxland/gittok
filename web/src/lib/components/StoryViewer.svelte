@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { relativeTime } from '#lib/relativeTime.ts';
 	import type { Story, StoryCommit } from '#lib/types.ts';
 
@@ -51,10 +52,44 @@
 		const endY = e.changedTouches[0]?.clientY ?? startY;
 		if (endY - startY > 80) onClose();
 	}
+	let dialog: HTMLElement | undefined = $state();
+	let closeBtn: HTMLButtonElement | undefined = $state();
+
+	// Like the Lightbox: focus moves in, the page behind does not scroll, and both are undone on close.
+	onMount(() => {
+		const before = document.activeElement as HTMLElement | null;
+		const overflow = document.body.style.overflow;
+		document.body.style.overflow = 'hidden';
+		closeBtn?.focus();
+		return () => {
+			document.body.style.overflow = overflow;
+			before?.focus?.();
+		};
+	});
+
+	function trapTab(e: KeyboardEvent) {
+		if (!dialog) return;
+		const items = [...dialog.querySelectorAll<HTMLElement>('button, a[href]')].filter(
+			(el) => !el.hasAttribute('disabled')
+		);
+		if (!items.length) return;
+		const first = items[0];
+		const last = items[items.length - 1];
+		const at = document.activeElement;
+		if (e.shiftKey && (at === first || !dialog.contains(at))) {
+			e.preventDefault();
+			last.focus();
+		} else if (!e.shiftKey && (at === last || !dialog.contains(at))) {
+			e.preventDefault();
+			first.focus();
+		}
+	}
+
 	function onKey(e: KeyboardEvent) {
 		if (e.key === 'Escape') onClose();
 		else if (e.key === 'ArrowRight') next();
 		else if (e.key === 'ArrowLeft') prev();
+		else if (e.key === 'Tab') trapTab(e);
 	}
 </script>
 
@@ -66,6 +101,7 @@
 	aria-modal="true"
 	aria-label="{story.repo} story"
 	tabindex="-1"
+	bind:this={dialog}
 	ontouchstart={onTouchStart}
 	ontouchend={onTouchEnd}
 >
@@ -80,7 +116,7 @@
 	</div>
 	<div class="head">
 		<strong>{story.repo}</strong>
-		<button type="button" class="close" aria-label="Close" onclick={onClose}>&#10005;</button>
+		<button type="button" class="close" aria-label="Close" bind:this={closeBtn} onclick={onClose}>&#10005;</button>
 	</div>
 	{#if page && 'digest' in page}
 		<div class="page">
@@ -113,6 +149,7 @@
 		position: fixed;
 		inset: 0;
 		z-index: 100;
+		overscroll-behavior: contain;
 		display: flex;
 		flex-direction: column;
 		background: var(--bg);

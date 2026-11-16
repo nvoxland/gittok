@@ -72,14 +72,14 @@ The feed is made for a phone. The server serves it to the local network by defau
 
 ### A. The user asks what the feed learned, or why they see X
 
-1. Call `get_taste_profile`. For "why so many X", also call `explain_weights(feature)` for the feature X belongs to (`format`, `story_type`, `tone`, `persona`, `repo`, `angle`, `language`, `kind`, `tag`, `file`, `familiarity`). One learner ranks the feed and decides what gets made, so its weights explain both. A 👎 on a card counts as "show less like this"; tell the user that 👎 and 👍 on the cards steer the feed too.
+1. Call `get_taste_profile`. For "why so many X", also call `explain_weights(feature)` for the feature X belongs to (`format`, `story_type`, `tone`, `persona`, `repo`, `angle`, `language`, `kind`, `tag`, `file`, `familiarity`; its history for `familiarity` comes from what was saved at each impression, so old impressions without it show fewer views). One learner ranks the feed and decides what gets made, so its weights explain both. A 👎 on a card counts as "show less like this"; tell the user that 👎 and 👍 on the cards steer the feed too.
 2. Answer in plain English. Use short sentences. Give the evidence numbers: how many views, the mean reward, the trend. Say when evidence is thin (few views) and that the feed still explores.
 3. Call `list_rules`. If a rule explains the pattern, say so with its id and reason.
 4. Offer one concrete change (a rule). Do not add it until the user agrees.
 
 ### B. The user asks for a change
 
-1. Find the feature and value. Names must be real: `format` (meme, quiz, ...), `story_type`, `tone`, `persona`, `repo`, `group`, `dir`. If the name is unclear, call `explain_weights(feature)`, `coverage(repo)`, or `list_repos`. If `add_rule` fails, read the error. It lists the known values. Retry once with the right one.
+1. Find the feature and value. Names must be real, and a rule works only where the brief reads it: `limit` on `format` (meme, quiz, ...), `story_type`, `tone`, `repo`; `boost`, `prefer` and `focus` on those and also `group`, `dir` and `angle` (`focus` takes no `angle`). `add_rule` refuses any other feature (for example `persona`, `language`, `kind`, `file`) with a clear error: use `local/guidance.md` (step D) for those. If the name is unclear, call `explain_weights(feature)`, `coverage(repo)`, or `list_repos`. If `add_rule` fails, read the error. It lists the known values. Retry once with the right one.
 2. Pick a rule type:
    - "less X": `limit` with `max_share` 0.05 to 0.1.
    - "no X", "never X", "stop X": `limit` with `max_share` 0. That works on `format`, `story_type`, `repo` and `tone`. For anything else ("no history cards", "leave the legacy folder alone", "no puns"), write it in `local/guidance.md` (step D) instead of a rule.
@@ -113,7 +113,7 @@ GitTok ships its defaults in `config/`. The user's changes go in `local/` of the
 | "do not count 'yields' as a typed claim", "also treat 'undefined' as nil" | `local/claims.yaml` |
 | "use my meme templates", "drop the X template" | `local/meme_templates.yaml` (a template id must be a memegen template; then run `gittok memes --prefetch` to download it) |
 | "change the reward for a like", "make a 👎 count more", "forget old taste faster" | `local/reward.yaml` (`like_floor`, `like_weight`, `dislike_weight`, `half_life_days`) |
-| "more history cards", "fewer who-wrote-it cards", "more about code I do not know" | a rule on `angle` (`what`, `how`, `why`, `who`, `risk`) or `familiarity` (step B), not a file |
+| "more history cards", "fewer who-wrote-it cards", "more about code I do not know" | a rule on `angle` (`what`, `how`, `why`, `who`, `risk`; step B) for the kind of card. Familiarity cannot be a rule: say it in `local/guidance.md` |
 | "use port 8010", "make 15 cards per run" | `local/settings.yaml` |
 | "keep hooks short", "I'm new to Clojure, explain its syntax", "no pop-culture jokes", "write like a senior engineer" | `local/guidance.md`: free Markdown for the card writers (no merge rule: edit the text, keep what the user wrote before). `get_config(file="guidance")` gives the current text |
 | a persona's voice, a mascot | The tools: `edit_persona`, `set_mascot` |
@@ -181,9 +181,9 @@ Reply: "Approved. The device opens the feed in a few seconds." Then the warning 
 ## In Claude Code
 
 - **The `gittok` server.** Its tools are named `mcp__gittok__<tool>`. Claude Code starts it from `.mcp.json` when the user starts `claude` in the GitTok directory and approves the `gittok` server. If the tools are missing, or after a `server`, `render` or `data_dir` setting changes, ask the user to run `/mcp`, pick gittok, and approve or Reconnect.
-- **Start a worker** with the Agent tool: `subagent_type` is the worker's name (for example `gittok-writer`), `model` is the model that the step names (leave `model` out when it is null), and `prompt` is exactly the identifiers that the step names. Start parallel workers as parallel Agent calls in one message. If the worker's type is not available (the session started before it was installed), use `general-purpose` with the same model and this prompt: `Read .claude/agents/<worker>.md of this directory and follow it.` followed by the identifiers. Never use opus unless the user asked for it in this request.
+- **Start a worker** with the Agent tool: `subagent_type` is the worker's name (for example `gittok-writer`), `model` is the model that the step names, and `prompt` is exactly the identifiers that the step names. Always pass `model` when the step gives one. When it is null, leave `model` out: the worker file says `model: inherit`, so the worker uses the session's model. Start parallel workers as parallel Agent calls in one message. If the worker's type is not available (the session started before it was installed), use `general-purpose` with the same `model` (or none when it is null) and this prompt: `Read .claude/agents/<worker>.md of this directory and follow it.` followed by the identifiers. Never pick opus yourself. Use it only when `agent.models` names it (the step then gives it) or the user asked for it in this request.
 - **Run another GitTok skill** with the Skill tool: `/gittok-profile-repo <repo>`, `/gittok-generate`, `/gittok-steer`.
 - **Run a shell command** with Bash; a long one that should wake you when it ends with `run_in_background`.
 - **Images.** Claude Code has no native image tool: `gittok-illustrator` workers draw agent images as SVG. When you tell the user about image setup and `renderer_setup.illustration.installed` is false, add one line: the images are simple drawings, and on Apple silicon the `images` extra gives real illustrations ("Better images in Claude Code" at https://nvoxland.github.io/gittok/getting-started/install/).
 - **Keep generating** in a session that stays open: `/loop 4h /gittok-generate`. Most ticks end at `nothing_to_do` and cost one tool call.
-- The `model` in this skill's frontmatter is the standard tier of `agent.models.claude`. Change it only if the user asks for a different driver.
+- The `model` in this skill's frontmatter is fixed when the file is generated (`sonnet` for the standard tier). It does not follow `agent.models`. Change it by hand in the skill only if the user asks for a different driver; `gittok update` then keeps your copy as `.bak`.

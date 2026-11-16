@@ -201,12 +201,14 @@ def batch_candidates(conn, cfg: Config, batch_id: str) -> dict:
     out = []
     for it in b["items"]:
         try:
-            lines = redaction.guard(
-                cfg,
-                gitq.show_file(repo.path, b["head_sha"], it["path"]).decode(
-                    "utf-8", errors="replace"
-                ),
-            ).splitlines()
+            lines = gitq.split_lines(
+                redaction.guard(
+                    cfg,
+                    gitq.show_file(repo.path, b["head_sha"], it["path"]).decode(
+                        "utf-8", errors="replace"
+                    ),
+                )
+            )
         except gitq.GitError:
             lines = []
         end = min(it["end"], it["start"] + SHOW_LINES - 1)

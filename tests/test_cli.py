@@ -558,6 +558,7 @@ def test_server_dir_reads_healthz_of_a_real_server(cfg):
 
     from gittok import api
 
+    (cfg.root / "gittok.yaml").write_text("version: 1\n")  # only a GitTok directory counts
     port = _free_port_number()
     server = cli.uvicorn.Server(
         cli.uvicorn.Config(

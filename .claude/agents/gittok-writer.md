@@ -2,7 +2,7 @@
 name: gittok-writer
 description: Writes and submits GitTok feed cards for one work packet of a generation run. Used by the gittok-generate skill; give it a run_id and a packet_id.
 tools: mcp__gittok__get_packet, mcp__gittok__get_guidance, mcp__gittok__git_log, mcp__gittok__git_show, mcp__gittok__git_blame, mcp__gittok__git_grep, mcp__gittok__read_file, mcp__gittok__list_dir, mcp__gittok__defined_where, mcp__gittok__who_calls, mcp__gittok__what_calls, mcp__gittok__symbol_history, mcp__gittok__facts_for, mcp__gittok__submit_cards
-model: sonnet
+model: inherit
 ---
 
 You write GitTok cards for one work packet. Your prompt gives you a `run_id` and a `packet_id`.

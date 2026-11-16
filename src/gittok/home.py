@@ -11,11 +11,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import sys
+from functools import cache
 from pathlib import Path
 
 import yaml
 
-from .config import MARKER, AgentSettings, is_clone
+from .config import MARKER, ConfigError, is_clone, resolve_roots
 
 SKILL_NAMES = ("gittok-generate", "gittok-steer", "gittok-profile-repo")
 WORKER_NAMES = ("gittok-writer", "gittok-scout", "gittok-illustrator")  # the generate skill's
@@ -60,8 +63,21 @@ def server_dir(port: int) -> str | None:
         data = httpx.get(f"http://127.0.0.1:{port}/healthz", timeout=2.0).json()
     except (httpx.HTTPError, ValueError):
         return None
-    found = data.get("dir") if isinstance(data, dict) else None
-    return found if isinstance(found, str) else None
+    return _checked_dir(data.get("dir") if isinstance(data, dict) else None)
+
+
+def _checked_dir(found: object) -> str | None:
+    """`found` when it is the path of a GitTok directory or a clone on this computer, else
+    None. Whatever answers on the port wrote this text, and it goes into text that an agent
+    reads: it must be a short absolute path with no control character."""
+    if not isinstance(found, str) or not 0 < len(found) <= 512:
+        return None
+    if not found.isprintable() or not found.startswith("/"):
+        return None
+    path = Path(found)
+    if not path.is_dir() or not ((path / MARKER).is_file() or is_clone(path)):
+        return None
+    return found
 
 
 def cli_command(clone: bool) -> str:
@@ -82,10 +98,28 @@ def core_files() -> dict[str, bytes]:
     return {"AGENTS.md": (TEMPLATES / "AGENTS.md").read_bytes()}
 
 
+_FRONT = re.compile(r"\A---[ \t]*\n(.*?)^---[ \t]*$\n?", re.DOTALL | re.MULTILINE)
+
+
+def split_frontmatter(text: str) -> tuple[dict, str]:
+    """(frontmatter, body) of a text that starts with a `---` delimited YAML block. The
+    delimiters are whole lines, so a `---` rule or the text `---` in the body is kept."""
+    m = _FRONT.match(text)
+    if m is None:
+        raise ValueError("no frontmatter: the text must start with a --- line")
+    return yaml.safe_load(m.group(1)), text[m.end():].lstrip("\n")
+
+
+@cache
+def _source_cached(kind: str, name: str) -> tuple[str, str]:
+    meta, body = split_frontmatter((WORKFLOWS / kind / f"{name}.md").read_text())
+    return yaml.safe_dump(meta, sort_keys=False, width=100000, allow_unicode=True), body
+
+
 def _source(kind: str, name: str) -> tuple[dict, str]:
-    """The frontmatter and body of one neutral skill or worker source."""
-    _, head, body = (WORKFLOWS / kind / f"{name}.md").read_text().split("---", 2)
-    return yaml.safe_load(head), body.lstrip("\n")
+    """The frontmatter and body of one neutral skill or worker source (read once)."""
+    head, body = _source_cached(kind, name)
+    return yaml.safe_load(head), body
 
 
 def _document(meta: dict, *parts: str) -> bytes:
@@ -97,11 +131,17 @@ def _harness_section(program: str) -> str:
     return (WORKFLOWS / "harness" / f"{program}.md").read_text()
 
 
+# The `model:` of a generated Claude Code skill is fixed when the files are generated: it is
+# not read from `agent.models`, which the user can change later. Workers say `inherit`
+# (the session's model); the driver passes the model of the packet when it starts a worker.
+SKILL_MODELS = {"light": "haiku", "standard": "sonnet"}
+
+
 def _claude_model(tier: str) -> str:
-    return AgentSettings().models["claude"][tier]
+    return SKILL_MODELS[tier]
 
 
-def claude_code_files(shared: Path | None = None) -> dict[str, bytes]:
+def claude_code_files() -> dict[str, bytes]:
     """The owned files that only Claude Code reads: the MCP entry, a `CLAUDE.md` that points
     to `AGENTS.md`, the session settings, and the skills and agents (generated)."""
     out = {
@@ -119,12 +159,12 @@ def claude_code_files(shared: Path | None = None) -> dict[str, bytes]:
         meta, body = _source("workers", name)
         head = {"name": name, "description": meta["description"],
                 "tools": ", ".join(f"mcp__gittok__{t}" for t in meta["tools"]),
-                "model": _claude_model(meta["tier"])}
+                "model": "inherit"}
         out[f".claude/agents/{name}.md"] = _document(head, body)
     return out
 
 
-def codex_files(shared: Path | None = None) -> dict[str, bytes]:
+def codex_files() -> dict[str, bytes]:
     """The owned files that only Codex reads: its MCP entry and hooks, its runtime notes,
     and the skills and workers (generated from the same sources as Claude Code's)."""
     settings = json.loads((TEMPLATES / "settings.json").read_text())
@@ -164,11 +204,11 @@ def write_clone_files(root: Path) -> list[str]:
 HARNESSES = {"Claude Code": claude_code_files, "Codex": codex_files}
 
 
-def owned_files(shared: Path | None = None) -> dict[str, bytes]:
+def owned_files() -> dict[str, bytes]:
     """The files that `init` writes and `update` rewrites: path in the directory -> content."""
     out = core_files()
     for files in HARNESSES.values():
-        out.update(files(shared))
+        out.update(files())
     return out
 
 
@@ -225,11 +265,11 @@ def _check_target(target: Path) -> None:
         )
 
 
-def init(target: Path, version: str, shared: Path | None = None) -> list[str]:
+def init(target: Path, version: str) -> list[str]:
     """Make the GitTok directory `target`. Return the lines to print."""
     target = Path(target).expanduser().resolve()
     _check_target(target)
-    files = owned_files(shared)
+    files = owned_files()
     target.mkdir(parents=True, exist_ok=True)
     for rel, data in files.items():
         _write(target / rel, data)
@@ -251,7 +291,9 @@ def init(target: Path, version: str, shared: Path | None = None) -> list[str]:
         "For Codex:",
         "  .codex/config.toml  starts the same MCP server (stdio)",
         "  .codex/hooks.json   the same session hints (review with /hooks)",
-        "  .agents/skills/     adapters for the shared workflows in .claude/",
+        "  .agents/skills/     " + ", ".join(SKILL_NAMES),
+        "  .agents/workers/    " + ", ".join(WORKER_NAMES),
+        "  .agents/GITTOK.md   notes for Codex sessions (connection, startup hints, feed watch)",
         "Your cards and settings will be in this directory (data/, local/, repos/). "
         "Nothing is written outside it.",
         "",
@@ -268,12 +310,22 @@ def init(target: Path, version: str, shared: Path | None = None) -> list[str]:
     ]
 
 
-def update(home: Path, version: str, shared: Path | None = None) -> list[str]:
+def _free_backup(path: Path) -> Path:
+    """`<name>.bak`, or `<name>.bak.1`, `.bak.2`, ... : the first name that is free."""
+    backup = path.with_name(path.name + ".bak")
+    n = 0
+    while backup.exists():
+        n += 1
+        backup = path.with_name(f"{path.name}.bak.{n}")
+    return backup
+
+
+def update(home: Path, version: str) -> list[str]:
     """Rewrite the files that `init` owns in the GitTok directory `home`. Return the lines.
 
     A file that differs from what the last `init` or `update` wrote was edited by the user:
-    its old content is saved as `<name>.bak` first. `local/`, `data/` and `repos/` are never
-    touched."""
+    its old content is saved as `<name>.bak` first (`.bak.1`, ... when that exists: a backup
+    is never overwritten). `local/`, `data/` and `repos/` are never touched."""
     home = Path(home).expanduser().resolve()
     marker = read_marker(home)
     if marker is None:
@@ -282,7 +334,7 @@ def update(home: Path, version: str, shared: Path | None = None) -> list[str]:
         )
     recorded = marker.get("files") if isinstance(marker.get("files"), dict) else {}
     old_version = str(marker.get("version", "unknown"))
-    files = owned_files(shared)
+    files = owned_files()
     lines: list[str] = []
     for rel, data in files.items():
         path = home / rel
@@ -296,9 +348,10 @@ def update(home: Path, version: str, shared: Path | None = None) -> list[str]:
         if recorded.get(rel) == _sha(current):
             lines.append(f"updated {rel}")
         else:
-            backup = path.with_name(path.name + ".bak")
+            backup = _free_backup(path)
             backup.write_bytes(current)
-            lines.append(f"updated {rel}: you edited it, the old copy is {rel}.bak")
+            old = rel[: len(rel) - len(path.name)] + backup.name
+            lines.append(f"updated {rel}: you edited it, the old copy is {old}")
         path.write_bytes(data)
     for rel in sorted(set(recorded) - set(files)):  # shipped by an older version only
         path = home / rel
@@ -334,6 +387,25 @@ def version_hint(home: Path, installed: str) -> str | None:
     )
 
 
-if __name__ == "__main__":  # in a clone: `uv run python -m gittok.home`
-    for rel in write_clone_files(Path(__file__).parents[2]):
+def _clone_root() -> Path:
+    return resolve_roots()[1]
+
+
+def main() -> int:
+    """Regenerate the committed skills and workers of a clone. 1 when this is not a clone."""
+    try:
+        root = _clone_root()
+    except ConfigError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    if not is_clone(root):
+        print(f"error: {root} is not a source clone (no config/settings.yaml). Run this in "
+              "a clone of gittok.", file=sys.stderr)
+        return 1
+    for rel in write_clone_files(root):
         print("wrote", rel)
+    return 0
+
+
+if __name__ == "__main__":  # in a clone: `uv run python -m gittok.home`
+    sys.exit(main())

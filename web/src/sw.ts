@@ -4,6 +4,8 @@
 import {
 	cacheKey,
 	classifyRequest,
+	evictOldest,
+	isCacheableAsset,
 	markFromCache,
 	replayQueue,
 	singleFlight,
@@ -17,6 +19,9 @@ declare const __VERSION__: string;
 declare const self: ServiceWorkerGlobalScope;
 
 const CACHE = `gittok-${__VERSION__}`;
+// Hashed build files stay in CACHE (precache); /assets/ (card images) is bounded on its own.
+const ASSET_CACHE = 'gittok-assets';
+const MAX_ASSETS = 300;
 const SYNC_TAG = 'replay-events';
 
 // ---- offline event queue (IndexedDB) ----
@@ -73,7 +78,7 @@ self.addEventListener('activate', (event) => {
 	event.waitUntil(
 		caches
 			.keys()
-			.then((keys) => Promise.all(staleCaches(keys, CACHE).map((k) => caches.delete(k))))
+			.then((keys) => Promise.all(staleCaches(keys.filter((k) => k !== ASSET_CACHE), CACHE).map((k) => caches.delete(k))))
 			.then(() => self.clients.claim())
 	);
 });
@@ -88,12 +93,18 @@ self.addEventListener('sync', (event) => {
 
 // ---- fetch ----
 async function cacheFirst(req: Request, key: string): Promise<Response> {
-	const cache = await caches.open(CACHE);
+	const isAsset = new URL(req.url).pathname.startsWith('/assets/');
+	const cache = await caches.open(isAsset ? ASSET_CACHE : CACHE);
 	// Also look in the previous build's cache (kept on activate) for pages that are still open.
 	const hit = (await cache.match(key)) ?? (await caches.match(key));
 	if (hit) return hit;
 	const res = await fetch(req);
-	if (res.ok) await cache.put(key, res.clone());
+	if (isCacheableAsset(new URL(req.url).pathname, { ok: res.ok, contentType: res.headers.get('content-type') })) {
+		await cache.put(key, res.clone());
+		if (isAsset) {
+			for (const k of evictOldest((await cache.keys()).map((r) => r.url), MAX_ASSETS)) await cache.delete(k);
+		}
+	}
 	return res;
 }
 

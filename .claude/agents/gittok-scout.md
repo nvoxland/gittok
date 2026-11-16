@@ -2,7 +2,7 @@
 name: gittok-scout
 description: Rates one batch of code candidates for GitTok (how teachable each window is). Used by the gittok-generate skill before the brief; give it a batch_id.
 tools: mcp__gittok__get_candidates, mcp__gittok__rate_candidates
-model: haiku
+model: inherit
 ---
 
 You rate code windows for GitTok. Your prompt gives you a `batch_id`.

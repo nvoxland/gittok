@@ -179,3 +179,13 @@ describe('fetchRepos', () => {
 		await expect(fetchRepos()).rejects.toThrow('500');
 	});
 });
+
+describe('failed calls carry the status', () => {
+	it('fetchCard, fetchRepo, fetchPersona and postFollow throw an ApiError with the HTTP status', async () => {
+		const { postFollow, fetchPersona } = await import('./api');
+		fetchMock.mockResolvedValue({ ok: false, status: 404 });
+		for (const call of [() => fetchCard('x'), () => fetchRepo('x'), () => fetchPersona('x'), () => postFollow('r', 'p', true)]) {
+			await expect(call()).rejects.toMatchObject({ status: 404 });
+		}
+	});
+});

@@ -345,3 +345,30 @@ def test_the_first_image_of_a_batch_gets_the_load_time_too(fixture_repo, tmp_pat
             session.render({"prompt": "two"}, 0.3)  # loaded now: 0.3 s is the limit
     finally:
         session.close()
+
+
+def test_close_survives_a_permission_error_from_killpg(monkeypatch):
+    import os
+
+    from gittok import render_batch
+
+    released = []
+
+    class Closeable:
+        def close(self):
+            released.append("closed")
+
+    session = render_batch.RenderBatchSession.__new__(render_batch.RenderBatchSession)
+    session._lock = threading.RLock()
+    session._closed = False
+    session.process = type("P", (), {"pid": 1, "wait": lambda self: 0, "stdin": Closeable(),
+                                     "stdout": Closeable()})()
+    session._errors = Closeable()
+    session._slot = type("S", (), {"__exit__": lambda self, *a: released.append("slot")})()
+
+    def deny(pid, sig):
+        raise PermissionError
+
+    monkeypatch.setattr(os, "killpg", deny)
+    session.close()
+    assert "slot" in released

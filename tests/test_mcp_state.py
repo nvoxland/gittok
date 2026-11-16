@@ -124,8 +124,8 @@ async def test_recent_runs_gives_counts_and_reject_reasons(ycfg):
             ),
         )
         conn.execute(
-            "INSERT INTO runs(id, status, requested, started_at) "
-            "VALUES ('new', 'open', 8, '2026-05-02T00:00:00Z')"
+            "INSERT INTO runs(id, status, requested, started_at) VALUES ('new', 'open', 8, ?)",
+            (runs._iso(datetime.now(UTC)),),
         )
         conn.commit()
         assert [r["run_id"] for r in runs.recent(conn, limit=1)] == ["new"]
@@ -204,8 +204,11 @@ async def test_status_renderers_follow_what_can_run(ycfg, monkeypatch):
     def setup(ok):
         return {"available": ok, "installed": True, "reason": None, "command": None}
 
-    monkeypatch.setattr(mcp_server.render, "renderer_setup",
-                        lambda cfg: {"meme": setup(False), "illustration": setup(True)})
+    monkeypatch.setattr(
+        mcp_server.render,
+        "renderer_setup",
+        lambda cfg: {"meme": setup(False), "illustration": setup(True)},
+    )
     async with Client(server(ycfg, server_dir=lambda port: None)) as client:
         s = data(await client.call_tool("status", {}))
         repos = {r["name"]: r for r in data(await client.call_tool("list_repos", {}))}
@@ -225,3 +228,16 @@ async def test_status_renderers_follow_what_can_run(ycfg, monkeypatch):
 def test_get_brief_keeps_mascot_formats_from_a_repo_with_no_mascot(ycfg):
     cfg = config_mod.load_config(ycfg.root)
     assert mcp_server.no_mascot_repos(cfg, ["alpha", "beta"]) == frozenset({"beta"})
+
+
+def test_get_brief_checks_count_and_cap_before_analysis(ycfg, monkeypatch):
+    from gittok import runs
+
+    cfg = config_mod.load_config(ycfg.root)
+
+    def no_analysis(*a, **k):
+        raise AssertionError("analysis ran before the count check")
+
+    monkeypatch.setattr(mcp_server, "_analyze_repos", no_analysis)
+    with pytest.raises(runs.RunError, match="requested"):
+        mcp_server.open_brief(cfg, None, 10_000)

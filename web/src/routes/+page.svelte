@@ -31,7 +31,14 @@
 	let filter = $state<FeedFilter>(readFilter());
 	const filtered = $derived(!!(filter.repo || filter.dir));
 
+	// Counts every reset of the list (a load or a cleared filter). An answer that was asked for
+	// under an older number is stale and is dropped.
+	let generation = 0;
+
 	function clearFilter() {
+		generation += 1;
+		loadingMore = false;
+		checking = false;
 		filter = {};
 		window.history.replaceState({}, '', window.location.pathname);
 		cards = [];
@@ -193,6 +200,7 @@
 	}
 
 	async function load() {
+		const gen = ++generation;
 		loading = true;
 		error = null;
 		unpaired = false;
@@ -202,10 +210,12 @@
 		try {
 			// The speed must be set before beat cards mount; a failed prefs call keeps the default.
 			const [feed, prefs] = await Promise.all([fetchFeed(undefined, 20, filter), fetchPrefs().catch(() => null)]);
+			if (gen !== generation) return;
 			if (prefs) setPlaybackSpeed(prefs.playback_speed);
 			fromCache = !!feed.fromCache;
 			generating = !!feed.generating && !feed.fromCache;
 			const fresh = await resumeOn(feed.cards, feed.resume_card_id);
+			if (gen !== generation) return;
 			// Cards the server serves again are new or due for review: let them be answered again.
 			// The resumed card is the one on screen before the reload: keep its answer.
 			clearAnswers(fresh.map((c) => c.id).filter((id) => id !== feed.resume_card_id && id !== readCurrent()));
@@ -214,15 +224,16 @@
 				fresh.length === 0 && !filtered
 					? await fetchRepos().then((r) => r.length === 0, () => false)
 					: false;
+			if (gen !== generation) return;
 			cards = fresh;
 			void showFirstCard();
 			nextCursor = feed.next_cursor;
 			sentCursor = feed.cursor ?? feed.next_cursor ?? sentCursor;
 			atEnd = nextCursor === null;
 		} catch (e) {
-			failed(e, (msg) => (error = msg));
+			if (gen === generation) failed(e, (msg) => (error = msg));
 		} finally {
-			loading = false;
+			if (gen === generation) loading = false;
 		}
 	}
 
@@ -230,8 +241,10 @@
 	async function loadMore() {
 		if (!nextCursor || loadingMore) return;
 		loadingMore = true;
+		const gen = generation;
 		try {
 			const feed = await fetchFeed(nextCursor, 20, filter);
+			if (gen !== generation) return;
 			const have = new Set(cards.map((c) => c.id));
 			const fresh = feed.cards.filter((c) => !have.has(c.id));
 			clearAnswers(fresh.map((c) => c.id));
@@ -240,12 +253,13 @@
 			sentCursor = feed.cursor ?? feed.next_cursor ?? sentCursor;
 			atEnd = nextCursor === null;
 			generating = !!feed.generating && !feed.fromCache;
+			fromCache = !!feed.fromCache;
 			moreError = null;
 		} catch (e) {
 			// Keep the cursor: the Try again button and the next card near the end both try again.
-			failed(e, (msg) => (moreError = msg));
+			if (gen === generation) failed(e, (msg) => (moreError = msg));
 		} finally {
-			loadingMore = false;
+			if (gen === generation) loadingMore = false;
 		}
 	}
 
@@ -268,12 +282,14 @@
 	// the page makes by itself) shows no "No new cards yet" and no error.
 	async function checkAgain(quiet = false) {
 		checking = true;
+		const gen = generation;
 		if (!quiet) {
 			checkedEmpty = false;
 			checkError = null;
 		}
 		try {
 			const feed = await fetchFeed(sentCursor ?? undefined, 20, filter);
+			if (gen !== generation) return;
 			const have = new Set(cards.map((c) => c.id));
 			const fresh = feed.cards.filter((c) => !have.has(c.id));
 			const endBounds = endPanel?.getBoundingClientRect();
@@ -284,6 +300,7 @@
 			sentCursor = feed.cursor ?? feed.next_cursor ?? sentCursor;
 			atEnd = nextCursor === null;
 			generating = !!feed.generating && !feed.fromCache;
+			fromCache = !!feed.fromCache;
 			if (!quiet) checkedEmpty = fresh.length === 0;
 			if (fresh.length && reveal) {
 				// The end panel moves below the new cards. Scroll anchoring can otherwise keep
@@ -295,9 +312,9 @@
 			}
 		} catch (e) {
 			// Not "no new cards": the check itself failed.
-			if (!quiet) failed(e, (msg) => (checkError = msg));
+			if (!quiet && gen === generation) failed(e, (msg) => (checkError = msg));
 		} finally {
-			checking = false;
+			if (gen === generation) checking = false;
 		}
 	}
 </script>

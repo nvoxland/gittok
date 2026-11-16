@@ -45,7 +45,7 @@ def test_add_rule_rejects_bad_type_feature_and_numbers(conn, cfg):
         (dict(type="nuke", feature="format", value="meme"), "type"),
         (dict(type="limit", feature="colour", value="red", max_share=0), "feature"),
         (dict(type="boost", feature="format", value="meme", factor=0), "factor"),
-        (dict(type="prefer", feature="persona", value="greybeard", factor=-1), "factor"),
+        (dict(type="prefer", feature="tone", value="roast", factor=-1), "factor"),
         (dict(type="focus", feature="repo", value="fixture"), "slots"),
         (dict(type="focus", feature="repo", value="fixture", slots=11), "slots"),
         (dict(type="limit", feature="tone", value="roast"), "max_share"),
@@ -66,7 +66,7 @@ def test_there_is_no_ban_rule_the_answer_says_what_to_use(conn, cfg):
 
 
 def test_add_rule_defaults_per_type(conn, cfg):
-    prefer = steering.add_rule(conn, cfg, type="prefer", feature="persona", value="greybeard")
+    prefer = steering.add_rule(conn, cfg, type="prefer", feature="tone", value="roast")
     assert prefer["factor"] == 1.5
     focus = steering.add_rule(conn, cfg, type="focus", feature="repo", value="fixture", slots=5)
     assert focus["slots"] == 5 and focus["factor"] is None
@@ -92,7 +92,7 @@ def test_add_rule_checks_values_against_known_ones(conn, cfg):
         ("angle", "deep"),
     ]:
         with pytest.raises(steering.SteeringError, match=feature):
-            steering.add_rule(conn, cfg, type="limit", feature=feature, value=value, max_share=0)
+            steering._check_value(cfg, feature, value)  # every feature, also those no rule uses
     ok = [
         ("story_type", "rip"),
         ("format", "meme"),
@@ -106,12 +106,7 @@ def test_add_rule_checks_values_against_known_ones(conn, cfg):
         ("interactive", "quiz"),
     ]
     for feature, value in ok:
-        assert (
-            steering.add_rule(conn, cfg, type="limit", feature=feature, value=value, max_share=0)[
-                "value"
-            ]
-            == value
-        )
+        assert steering._check_value(cfg, feature, value) == value
 
 
 def test_add_rule_dir_accepts_repo_prefix_and_checks_the_ref(conn, cfg):
@@ -126,9 +121,8 @@ def test_add_rule_group_and_has_comments_values(conn, cfg):
     from gittok.config import Group
 
     cfg = replace(cfg, groups={"dev": Group("dev", ("fixture",))})
-    assert steering.add_rule(conn, cfg, type="limit", feature="group", value="dev", max_share=0)
-    r = steering.add_rule(conn, cfg, type="limit", feature="has_comments", value="yes", max_share=0)
-    assert r["value"] == "1"
+    assert steering.add_rule(conn, cfg, type="boost", feature="group", value="dev")
+    assert steering._check_value(cfg, "has_comments", "yes") == "1"
 
 
 def test_add_rule_expiry_forms(conn, cfg):
@@ -997,10 +991,9 @@ def test_coverage_rows_count_current_leads_and_covered_leads(conn, cfg):
 
 
 def test_add_rule_verdict(conn, cfg):
-    r = steering.add_rule(conn, cfg, type="limit", feature="verdict", value="cursed", max_share=0)
-    assert (r["feature"], r["value"]) == ("verdict", "cursed")
+    assert steering._check_value(cfg, "verdict", "cursed") == "cursed"
     with pytest.raises(steering.SteeringError, match="verdict"):
-        steering.add_rule(conn, cfg, type="limit", feature="verdict", value="meh", max_share=0)
+        steering._check_value(cfg, "verdict", "meh")
     steering.explain_weights(conn, cfg, feature="verdict")
 
 

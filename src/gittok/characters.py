@@ -84,9 +84,15 @@ def persona_page(conn, cfg, handle: str) -> dict | None:
     p = cfg.personas.get(handle)
     if p is None:
         return None
-    posts = _recent_rows(conn, "AND c.persona = ?", (handle,), PAGE_CARDS)
+    posts = [
+        r
+        for r in _recent_rows(conn, "AND c.persona = ?", (handle,), PAGE_CARDS)
+        if r["repo_name"] in cfg.repos
+    ]
     comments = []
     for row in _recent_rows(conn):
+        if row["repo_name"] not in cfg.repos:
+            continue
         spec = db.loads(row["spec"])
         for c in spec.get("comments") or []:
             if c["persona"] == handle and len(comments) < PAGE_CARDS:

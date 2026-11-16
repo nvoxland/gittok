@@ -262,3 +262,32 @@ def test_safe_regex_stops_after_its_first_timeout(monkeypatch):
     assert [s["rule"] for s in skipped] == ["rule-1"] and "timed out" in skipped[0]["reason"]
     assert rx.search("xaa") is None  # skipped from now on
     assert len(skipped) == 1
+
+
+def test_nil_check_matches_each_path_once_and_not_each_pair(world):
+    conn, _, _, _ = world
+    rid = conn.execute("SELECT id FROM repos").fetchone()[0]
+    paths = [f"src/p{i % 3}.clj" for i in range(300)]
+    calls = [
+        {
+            "fact_id": f"call-{i}",
+            "path": p,
+            "line": i + 1,
+            "caller_symbol": f"x{i}",
+            "callee_symbol": "svc/find-user" if i % 2 == 0 else "svc/other",
+            "callee_name": "find-user",
+            "resolved": 1,
+        }
+        for i, p in enumerate(paths)
+    ]
+    texts = {p: ["(x)"] * 400 for p in set(paths)}
+    checked = []
+
+    class Fs:
+        def is_test(self, path):
+            checked.append(path)
+            return False
+
+    out = conventions._nil(conn, rid, prof(), [], calls, {}, {}, texts, Fs(), [])
+    assert len(out) == 150  # the calls that reach find-user and are not guarded
+    assert len(checked) <= 3

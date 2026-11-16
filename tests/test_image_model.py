@@ -194,3 +194,29 @@ def test_the_images_command_reports_a_failed_download(cfg, monkeypatch, capsys):
     monkeypatch.setattr(image_model, "download", fail)
     assert cli.main(["images", "--download"]) == 1
     assert "connection reset" in capsys.readouterr().err
+
+
+def test_user_model_path_is_never_downloaded_into_or_deleted(fixture_repo, tmp_path):
+    cfg = make_config(fixture_repo, tmp_path)
+    mine = tmp_path / "my-models"
+    mine.mkdir()
+    (mine / "precious.safetensors").write_bytes(b"x" * 10)
+    cfg = with_render(cfg, mflux_path=str(mine))
+    st = image_model.status(cfg)
+    assert st["state"] == "invalid path" and st["error"]
+    spawned = []
+    assert image_model.maybe_start(cfg, installed=True, spawn=spawned.append) is False
+    assert spawned == []
+    with pytest.raises(image_model.DownloadError):
+        image_model.download(cfg, fetch=lambda repo, rev, dest: write_model(dest), total=1)
+    assert (mine / "precious.safetensors").exists()
+
+
+def test_download_keeps_a_folder_it_did_not_create(fixture_repo, tmp_path):
+    cfg = make_config(fixture_repo, tmp_path)
+    final = image_model.model_dir(cfg)
+    final.mkdir(parents=True)
+    (final / "other.txt").write_text("not ours")
+    with pytest.raises(image_model.DownloadError):
+        image_model.download(cfg, fetch=lambda repo, rev, dest: write_model(dest), total=1)
+    assert (final / "other.txt").exists()

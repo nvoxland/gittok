@@ -57,14 +57,24 @@ def _text(persona: str, hook: str, comment: str, reply: str) -> str:
     )
 
 
-def add(conn, card_id: str, comment_index: int, text: str, now: str | None = None) -> dict:
+def add(
+    conn, card_id: str, comment_index: int, text: str, now: str | None = None, cfg=None
+) -> dict:
     """Store a reply and its lead. Raises ReplyError (UnknownCard for a missing card)."""
     text = (text or "").strip()
     if not text:
         raise ReplyError("reply text is empty")
     if len(text) > MAX_CHARS:
         raise ReplyError(f"reply text is over {MAX_CHARS} characters")
-    row = conn.execute("SELECT spec FROM cards WHERE id = ?", (card_id,)).fetchone()
+    row = conn.execute(
+        "SELECT c.spec, c.status, r.name AS repo_name FROM cards c "
+        "JOIN repos r ON r.id = c.repo_id WHERE c.id = ?",
+        (card_id,),
+    ).fetchone()
+    # With `cfg`: only a card that the feed serves (ready, repo configured) takes replies.
+    if row is not None and cfg is not None:
+        if row["status"] != "ready" or row["repo_name"] not in cfg.repos:
+            row = None
     if row is None:
         raise UnknownCard(f"unknown card {card_id}")
     spec = db.loads(row["spec"])

@@ -185,6 +185,13 @@ def test_new_cards_notification_once_per_finished_run(cfg, conn):
     assert len(texts(conn, "new_cards")) == 1
 
 
+def test_new_cards_are_not_recreated_for_old_runs_after_gc_deleted_them(cfg, conn):
+    finished_run(conn, cfg, 5)
+    later = NOW + timedelta(days=cfg.settings.gc.social_after_days + 1)
+    assert social.generate_notifications(conn, cfg, later)["new_cards"] == 0
+    assert texts(conn, "new_cards") == []
+
+
 def test_new_cards_singular(cfg, conn):
     finished_run(conn, cfg, 1)
     social.generate_notifications(conn, cfg, NOW)

@@ -406,6 +406,7 @@ def open_brief(cfg: Config, repo: str | None, count: int | None) -> dict:
             if health["want"] == 0:
                 return {"run_id": None, "nothing_to_do": True, "health": health}
             count = health["want"]
+        runs.precheck(conn, cfg, count)  # the count and the daily cap, before the slow analysis
         repo_signals, skipped = _analyze_repos(conn, cfg, names)
         b = build_brief(conn, cfg, repo_signals, count)
         packets = [
@@ -627,7 +628,8 @@ def _register_run_tools(
         run_id: the open run from get_brief. cards: a list of card objects (get_card_schema).
 
         Returns ok (indexes that pass) and rejected (index, reason, detail). Fix the
-        rejected cards, then submit_cards. Quota and illustration budget are not checked.
+        rejected cards, then submit_cards. The illustration budget is checked; the run quota
+        and the packet quota are not (submit_cards decides those).
         """
         with _db(cfg) as conn:
             return runs.check(conn, cfg, run_id, cards)
@@ -665,8 +667,11 @@ def _register_run_tools(
 
     @tool
     def submit_images(
-        cfg: Config, card_id: str, paths: list[str] | None = None,
-        data_urls: list[str] | None = None, svgs: list[str] | None = None,
+        cfg: Config,
+        card_id: str,
+        paths: list[str] | None = None,
+        data_urls: list[str] | None = None,
+        svgs: list[str] | None = None,
     ) -> dict:
         """Attach generated images to one agent-rendered card and publish it to the feed.
 
@@ -713,8 +718,7 @@ def _register_scout_tools(tool: ToolDecorator) -> None:
         the repos git could not read, each with the cause.
         """
         with _db(cfg) as conn:
-            return {**scout.status(conn, cfg, repo, limit),
-                    "model": worker_models(cfg)["light"]}
+            return {**scout.status(conn, cfg, repo, limit), "model": worker_models(cfg)["light"]}
 
     @tool
     def get_candidates(cfg: Config, batch_id: str) -> dict:

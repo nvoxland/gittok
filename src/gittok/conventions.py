@@ -45,7 +45,7 @@ def _texts(path, head: str, paths: set[str]) -> dict[str, list[str]]:
     blobs = gitq.ls_tree_blobs(path, head)
     data = gitq.read_blobs(path, list({blobs[p] for p in paths if p in blobs}))
     return {
-        p: data[blobs[p]].decode("utf-8", errors="replace").splitlines()
+        p: gitq.split_lines(data[blobs[p]].decode("utf-8", errors="replace"))
         for p in paths
         if p in blobs and blobs[p] in data
     }
@@ -226,16 +226,23 @@ def _nil(conn, rid, profile, defs, calls, by_symbol, by_name, texts, fs, skipped
         if any(m in (s["type"] or "") for m in profile.nil_markers)
     ]
     out, seen = [], set()
+    is_test: dict[str, bool] = {}
+    by_reached: dict[str, list[dict]] = {}  # symbol -> the calls that reach it, in call order
+    for c in calls:
+        if c["path"] not in is_test:
+            is_test[c["path"]] = fs.is_test(c["path"])
+        if is_test[c["path"]]:
+            continue
+        target = _target(c, by_symbol, by_name)
+        reached = {c["callee_symbol"], target["symbol"] if target is not None else None}
+        for sym in reached - {None}:
+            by_reached.setdefault(sym, []).append(c)
     for s in risky:
-        for c in calls:
-            if fs.is_test(c["path"]) or c["caller_symbol"] == s["symbol"]:
+        for c in by_reached.get(s["symbol"], ()):
+            if c["caller_symbol"] == s["symbol"]:
                 continue
-            target = _target(c, by_symbol, by_name)
-            reaches = c["callee_symbol"] == s["symbol"] or (
-                target is not None and target["symbol"] == s["symbol"]
-            )
             lines = texts.get(c["path"])
-            if not reaches or not lines or (c["path"], c["line"]) in seen:
+            if not lines or (c["path"], c["line"]) in seen:
                 continue
             near = lines[c["line"] - 1 : c["line"] + NIL_GUARD_LINES]
             if any(g.search(ln) for g in guards for ln in near):

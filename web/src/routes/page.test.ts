@@ -290,6 +290,8 @@ describe('feed page', () => {
 			expect(url).toBe('/api/events');
 			const body = JSON.parse(await blob.text());
 			expect(body.events.some((e: { card_id: string; type: string }) => e.card_id === 'c_2' && e.type === 'impression')).toBe(true);
+			// The card on screen is closed before the flush: its dwell is in the same beacon.
+			expect(body.events.some((e: { card_id: string; type: string }) => e.card_id === 'c_2' && e.type === 'dwell')).toBe(true);
 			const posted = fetchMock.mock.calls.filter(([u]) => String(u) === '/api/events');
 			expect(posted).toHaveLength(0);
 		});
@@ -786,6 +788,25 @@ describe('feed page', () => {
 		expect(screen.queryByText(/Offline/)).toBeNull();
 	});
 
+	it('clears the offline banner once a network answer arrives', async () => {
+		let n = 0;
+		fetchMock.mockImplementation(async (url: string) => {
+			const first = String(url).startsWith('/api/feed') && n++ === 0;
+			return {
+				ok: true,
+				headers: { get: (h: string) => (first && h === 'X-From-Cache' ? '1' : null) },
+				json: async () =>
+					String(url).startsWith('/api/feed')
+						? { cards: [fakeCard({ id: 'c_1', hook: 'A hook' })], next_cursor: null }
+						: { notifications: [], unread: 0, stories: [] }
+			};
+		});
+		render(Page);
+		await screen.findByText(/Offline/);
+		await fireEvent.click(await screen.findByRole('button', { name: /check for new cards/i }));
+		await vi.waitFor(() => expect(screen.queryByText(/Offline/)).toBeNull());
+	});
+
 	describe('dir filter', () => {
 		afterEach(() => window.history.replaceState({}, '', '/'));
 		const feedUrls = () =>
@@ -810,6 +831,51 @@ describe('feed page', () => {
 			await vi.waitFor(() => expect(screen.queryByTestId('feed-filter')).toBeNull());
 			await vi.waitFor(() => expect(feedUrls().at(-1)).toBe('/api/feed?limit=20'));
 			expect(window.location.search).toBe('');
+		});
+
+		it('drops a next page that was asked for before the filter was cleared', async () => {
+			window.history.replaceState({}, '', '/?repo=storefront&dir=src');
+			localStorage.clear();
+			let near: (() => void) | undefined;
+			class FakeIO {
+				constructor(public cb: (e: Partial<IntersectionObserverEntry>[]) => void) {}
+				observe(target: Element) {
+					if (target.getAttribute('data-card-id') === 'c_1')
+						near = () => this.cb([{ target, isIntersecting: true, intersectionRatio: 0.9 }]);
+				}
+				unobserve() {}
+				disconnect() {}
+			}
+			vi.stubGlobal('IntersectionObserver', FakeIO);
+			let release: (() => void) | undefined;
+			const stale = new Promise<void>((r) => (release = r));
+			const card = (n: number) => fakeCard({ id: `c_${n}`, hook: `Hook ${n}` });
+			fetchMock.mockImplementation(async (url: string) => {
+				const u = String(url);
+				if (u.includes('cursor=cur1')) await stale;
+				return {
+					ok: true,
+					headers: { get: () => null },
+					json: async () =>
+						u.startsWith('/api/cards/')
+							? card(1)
+							: !u.startsWith('/api/feed')
+							? { notifications: [], unread: 0, stories: [] }
+							: u.includes('cursor=cur1')
+								? { cards: [card(3)], next_cursor: null }
+								: u.includes('repo=')
+									? { cards: [card(1)], next_cursor: 'cur1' }
+									: { cards: [card(9)], next_cursor: null }
+				};
+			});
+			render(Page);
+			await screen.findByText('Hook 1');
+			near!();
+			await fireEvent.click(screen.getByRole('button', { name: 'Clear filter' }));
+			await screen.findByText('Hook 9');
+			release!();
+			await new Promise((r) => setTimeout(r, 20));
+			expect(screen.queryByText('Hook 3')).toBeNull();
 		});
 
 		it('shows no chip without a filter', async () => {

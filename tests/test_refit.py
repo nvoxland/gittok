@@ -135,3 +135,30 @@ def test_a_rewrite_keeps_the_image_backend_of_the_card(conn, cfg, fixture_repo, 
     row = conn.execute("SELECT status, resolved FROM cards WHERE id = ?", (cid,)).fetchone()
     assert row["status"] == "pending_render"
     assert db.loads(row["resolved"])["image_backend"] == "agent"
+
+
+def _rewrite(conn, cfg, card_id, tmp_path, **visual):
+    out = tmp_path / "refit"
+    refit.export(conn, out)
+    data = json.loads((out / f"{card_id}.json").read_text())
+    data["card"]["visual"].update(visual)
+    (out / f"{card_id}.json").write_text(json.dumps(data))
+    return refit.apply(conn, cfg, out)
+
+
+def test_apply_keeps_story_data_in_step_with_the_card(conn, cfg, fixture_repo, tmp_path):
+    bad = put(conn, cfg, long_card(fixture_repo))
+    res = _rewrite(conn, cfg, bad, tmp_path, body="Short now.")
+    assert res["replaced"] == [bad]
+    key = conn.execute("SELECT story_key FROM cards WHERE id = ?", (bad,)).fetchone()[0]
+    assert key != "k0"  # the key of the validated card replaces the stored one
+    story = conn.execute("SELECT formats FROM stories WHERE story_key = ?", (key,)).fetchone()
+    assert story is not None and "text_post" in db.loads(story["formats"])
+
+
+def test_apply_accepts_a_variant_format_the_story_type_lacks(conn, cfg, fixture_repo, tmp_path):
+    card = long_card(fixture_repo)
+    card["format"] = "eli5"  # not in the format list of the rip story type: a variant
+    bad = put(conn, cfg, card)
+    res = _rewrite(conn, cfg, bad, tmp_path, body="Short now.")
+    assert res["rejected"] == [] and res["replaced"] == [bad]

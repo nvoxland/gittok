@@ -260,7 +260,9 @@ def test_analyze_force_recomputes(conn, fixture_repo, git_calls):
     assert forced["cached"] is False
     assert any(c[0] == "log" and "--numstat" in c for c in git_calls)
     assert forced["signals"]["churn"] == first["signals"]["churn"]
-    n = conn.execute("SELECT COUNT(*) FROM git_signals").fetchone()[0]
+    n = conn.execute(
+        "SELECT COUNT(*) FROM git_signals WHERE kind != ?", (signals.MINE_KEY,)
+    ).fetchone()[0]
     assert n == len(signals.SIGNAL_KINDS)  # INSERT OR REPLACE, no duplicates
 
 

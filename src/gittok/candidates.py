@@ -291,7 +291,7 @@ def _read_files(
         if data is None or b"\0" in data[:8000]:
             continue
         text = data.decode("utf-8", errors="replace")
-        lines = text.splitlines()
+        lines = gitq.split_lines(text)
         if fs.has_generated_marker(lines) or any(len(ln) > 2000 for ln in lines):
             continue
         ext = posixpath.splitext(p)[1]
@@ -1162,7 +1162,7 @@ def window_hashes(path, ref: str, items: list[dict]) -> dict[tuple[str, int, int
     for p in wanted:
         raw = data.get(blobs.get(p, ""))
         if raw is not None:
-            texts[p] = raw.decode("utf-8", errors="replace").splitlines()
+            texts[p] = gitq.split_lines(raw.decode("utf-8", errors="replace"))
     return {
         (i["path"], i["start"], i["end"]): window_hash(texts[i["path"]][i["start"] - 1 : i["end"]])
         for i in items

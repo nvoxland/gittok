@@ -187,6 +187,18 @@ def test_caller_count(fixture_repo, repos, conn):
     assert _run(bad, repos, conn)[1] == ["wrong_answer"]
 
 
+def test_caller_count_ignores_the_row_limit_of_callers_of(fixture_repo, repos, conn):
+    rid = conn.execute("SELECT id FROM repos").fetchone()["id"]
+    for i in range(250):  # unresolved calls sort first and fill callers_of's default limit
+        conn.execute(
+            "INSERT INTO fact_calls(fact_id, repo_id, caller_symbol, callee_name, path, line,"
+            " resolved, callee_symbol) VALUES (?, ?, 'x.f', 'main', ?, 1, 0, NULL)",
+            (_id("call"), rid, f"a/{i:04d}.py"),
+        )
+    ok = _card(fixture_repo, "caller_count", "main", ["1 place", "2 places", "5 places"], 1)
+    assert _run(ok, repos, conn)[1] == []
+
+
 def test_introduced_in_matches_commit_prefix(fixture_repo, repos, conn):
     ok = _card(
         fixture_repo, "introduced_in", "main", [f"{SHA_C[:8]} later", f"{SHA_A[:7]} first"], 1

@@ -577,3 +577,86 @@ def test_what_a_removed_repo_taught_survives_a_relearn(ycfg):
         assert (
             conn.execute("SELECT COUNT(*) FROM rewards WHERE card_id = ?", (a,)).fetchone()[0] == 0
         )
+
+
+def _seed_run_text(conn, data, rid_alpha):
+    """A single-repo run of alpha and an all-repo run with packets of alpha and beta."""
+    meta_one = {
+        "packets": [
+            {
+                "id": "p1",
+                "repo": "alpha",
+                "packet_markdown": "ALPHA-SECRET code",
+                "lead_refs": [{"text": "ALPHA-SECRET lead"}],
+            }
+        ],
+        "notes": {"x": "ALPHA-SECRET"},
+    }
+    conn.execute(
+        "INSERT INTO runs(id, repo_id, status, brief, meta, reject_reasons, started_at) "
+        "VALUES ('run-one', ?, 'finished', 'ALPHA-SECRET brief', ?, ?, '2026-05-30T00:00:00Z')",
+        (
+            rid_alpha,
+            db.dumps(meta_one),
+            db.dumps([{"reason": "claim_unverified", "detail": "ALPHA-SECRET", "packet": "p1"}]),
+        ),
+    )
+    meta_all = {
+        "packets": [
+            {"id": "p1", "repo": "alpha", "packet_markdown": "ALPHA-SECRET", "lead_refs": []},
+            {"id": "p2", "repo": "beta", "packet_markdown": "beta text", "lead_refs": []},
+        ]
+    }
+    conn.execute(
+        "INSERT INTO runs(id, repo_id, status, brief, meta, reject_reasons, started_at) "
+        "VALUES ('run-all', NULL, 'finished', 'ALPHA-SECRET and beta brief', ?, ?, "
+        "'2026-05-30T00:00:00Z')",
+        (
+            db.dumps(meta_all),
+            db.dumps(
+                [
+                    {"reason": "bad", "detail": "ALPHA-SECRET", "packet": "p1"},
+                    {"reason": "bad", "detail": "beta detail", "packet": "p2"},
+                ]
+            ),
+        ),
+    )
+    conn.commit()
+    d = data / "runs" / "run-all"
+    d.mkdir(parents=True, exist_ok=True)
+    cards = [{"repos": ["alpha"], "hook": "ALPHA-SECRET"}, {"repos": ["beta"], "hook": "beta ok"}]
+    (d / "submission-1.json").write_text(json.dumps({"cards": cards}))
+    (d / "submission-2.json").write_text(json.dumps(cards[:1]))
+
+
+def test_remove_repo_clears_its_text_from_run_rows_and_submission_files(ycfg):
+    data = ycfg.settings.data_dir
+    with closing(open_db(ycfg)) as conn:
+        fill(conn, ycfg, "alpha")
+        fill(conn, ycfg, "beta")
+        rid = conn.execute("SELECT id FROM repos WHERE name = 'alpha'").fetchone()[0]
+        _seed_run_text(conn, data, rid)
+    cfg = config_mod.load_config(ycfg.root)
+    steering.remove_repo(cfg, "alpha")
+    with closing(open_db(ycfg)) as conn:
+        text_left = " ".join(
+            str(v) for r in conn.execute("SELECT brief, meta, reject_reasons FROM runs") for v in r
+        )
+        assert "ALPHA-SECRET" not in text_left
+        assert "beta text" in text_left and "beta detail" in text_left
+    files = " ".join(p.read_text() for p in (data / "runs" / "run-all").glob("*.json"))
+    assert "ALPHA-SECRET" not in files and "beta ok" in files
+
+
+def test_hot_file_keys_are_matched_by_prefix_not_as_a_pattern(ycfg):
+    with closing(open_db(ycfg)) as conn:
+        for key in ("hot_file:a_c:x", "hot_file:abc:x", "hot_file:a%:x"):
+            conn.execute(
+                "INSERT INTO notifications(kind, text, created_at, dedup_key) "
+                "VALUES ('hot_file', 't', 't', ?)",
+                (key,),
+            )
+        gc._delete_repo_rows(conn, "a_c")
+        gc._delete_repo_rows(conn, "a%")
+        left = [r[0] for r in conn.execute("SELECT dedup_key FROM notifications")]
+    assert left == ["hot_file:abc:x"]

@@ -32,4 +32,15 @@ describe('DiagramVisual', () => {
 		await waitFor(() => expect(container.querySelector('pre')).not.toBeNull());
 		expect(container.querySelector('pre')!.textContent).toContain('A[api] --> B[store]');
 	});
+	it('gives every diagram its own mermaid id, even in the same millisecond', async () => {
+		renderFn.mockResolvedValue({ svg: '<svg></svg>' });
+		const now = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+		const first = render(DiagramVisual, { visual: diagramVisual(), resolved: null });
+		await vi.waitFor(() => expect(renderFn).toHaveBeenCalledTimes(1));
+		first.unmount();
+		render(DiagramVisual, { visual: diagramVisual(), resolved: null });
+		await vi.waitFor(() => expect(renderFn).toHaveBeenCalledTimes(2));
+		now.mockRestore();
+		expect(renderFn.mock.calls[0][0]).not.toBe(renderFn.mock.calls[1][0]);
+	});
 });
