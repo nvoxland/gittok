@@ -19,6 +19,10 @@ Right after you add a repo, your agent **profiles** it: it reads the stack, the 
 
 Your agent profiles a new repo without asking. For a repo that has a profile, it only **offers** a new one: when the repo's manifests changed, or when several rules do badly. Say "profile myapp" to ask for one.
 
+GitTok reads the structure of code (definitions, imports, comments) with grammars, one per language. They are not part of the install. When a repo needs a grammar that you do not have, your agent offers to download it (about 26 MB for all of them, once). Until then, GitTok reads that language with simpler patterns, and posts still work. To get them now:
+
+> Download the GitTok grammars.
+
 ## Mascots
 
 Each repo gets a mascot: a small character that its illustration and comic posts draw. Your agent picks one that fits the repo when you add it.

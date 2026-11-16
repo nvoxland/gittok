@@ -81,14 +81,4 @@ At the start of each session, your agent gives you the address of the feed. You 
 
 A GitTok directory made by an older version gets the files for both agents with `gittok update` (or ask your agent to update it). Start a new session after an update, or after you change an MCP or server setting.
 
-## Optional downloads
-
-Your agent offers these when they are useful. You can also run them yourself:
-
-| What | Command | Size |
-|---|---|---|
-| Additional custom meme templates | `gittok memes --prefetch` | varies; defaults are included |
-| Grammars, so GitTok reads code structure better | `gittok structure --prefetch` | about 26 MB |
-| The illustration model, now (GitTok downloads it by itself otherwise) | `gittok images --download` | about 6 GB |
-
 Next: [your first feed](first-feed.md).

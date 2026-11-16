@@ -51,6 +51,16 @@ Or write it yourself:
 
 Every writer reads it, from the next cards on. GitTok's own rules still win where the two conflict: facts must be true and sourced, and the length limits stay. Keep it under 6000 characters.
 
+## Your own meme templates
+
+GitTok comes with 99 meme templates. To add another one, name a template of [memegen](https://github.com/jacebrowning/memegen):
+
+> Add the "aag" meme template (the Ancient Aliens guy).
+
+> Drop the drake template.
+
+Your agent adds it to `local/meme_templates.yaml` and downloads its image. Only the template image is downloaded; no card text leaves your computer.
+
 ## The default mix
 
 The feed starts from a mix of categories and tones, and moves away from it as it learns. To start from another mix:

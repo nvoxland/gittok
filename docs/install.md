@@ -279,13 +279,13 @@ gittok structure               # status: installed, grammars needed, grammars mi
 gittok structure --prefetch    # download the grammars for the repos in local/repos.yaml
 ```
 
-In a clone, write `uv run gittok structure`. The package holds no grammars. They are a bundle of about 26 MB (12 languages) that the pack downloads from GitHub on first use into `~/Library/Caches/tree-sitter-language-pack/`. `--prefetch` does this once, on purpose, so a mining run never waits on the network. A grammar that is not in the cache is not used; `gittok health --hint` (the SessionStart hook) prints one line naming the missing grammars. Offline, run `--prefetch` on a machine with network and copy the cache dir. Shipped queries: python, typescript/tsx/javascript/svelte, clojure, go, ruby, java, rust. Another stack: let the profile skill write a `queries` entry (docs/learning.md, "The structure layer").
+In a clone, write `uv run gittok structure`. The package holds no grammars. They are a bundle of about 26 MB (12 languages) that only `--prefetch` downloads, from GitHub into `~/Library/Caches/tree-sitter-language-pack/`. GitTok never downloads them during a run, so mining never waits on the network. A grammar that is not in the cache is not used; `gittok health --hint` (the SessionStart hook) prints one line naming the missing grammars. Offline, run `--prefetch` on a machine with network and copy the cache dir. Shipped queries: python, typescript/tsx/javascript/svelte, clojure, go, ruby, java, rust. Another stack: let the profile skill write a `queries` entry (docs/learning.md, "The structure layer").
 
 ## Meme templates
 
 GitTok draws meme posts itself, with Pillow. All 99 default template images, their text layouts, and four free fonts ship with GitTok (about 22 MB). A fresh installation can render memes offline; no renderer installation or asset download is needed. The assets come from [memegen](https://github.com/jacebrowning/memegen); the package includes source hashes and upstream notices.
 
-For additional templates configured in `local/meme_templates.yaml`, download only the missing assets:
+To add a template, ask your agent ("Add the aag meme template"): it adds the id to `local/meme_templates.yaml` and downloads the missing assets. By hand:
 
 ```bash
 gittok memes --prefetch     # in a clone: uv run gittok memes --prefetch
