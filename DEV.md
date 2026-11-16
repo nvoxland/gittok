@@ -136,28 +136,37 @@ The `publish-pypi` job has `id-token: write`, which trusted publishing uses to l
 
 For each release:
 
-1. Set the new version in **both** places: `version` in `pyproject.toml` and `__version__` in `src/gittok/__init__.py`. Run `uv lock` so `uv.lock` has the new version.
-2. Write the blog post for the release in `docs/blog/posts/` (or take `draft: true` off the post you wrote), with the release date.
+1. Choose the version. A release with a new feature or a changed default raises the minor version (1.2.0 → 1.3.0); a release with fixes only raises the patch version (1.3.0 → 1.3.1). Set it in **both** places: `version` in `pyproject.toml` and `__version__` in `src/gittok/__init__.py`. Run `uv lock` so `uv.lock` has the new version.
+2. Write the blog post for the release in `docs/blog/posts/gittok-X-Y.md` (or take `draft: true` off the post you wrote), with the release date. Follow the post of the last release:
+   - frontmatter with `date`, `authors: [nvoxland]` and `categories: [Releases]`;
+   - a title `# GitTok X.Y: <the main change>`, one short paragraph, then `<!-- more -->`;
+   - the upgrade steps first (`uv tool upgrade gittok`, then updating the GitTok directory, and a new session when the release adds skills or agents);
+   - one section per user-visible change, with what to ask Claude and a link to the docs page (relative, from `../../`); then "Smaller fixes" as a list.
+
+   `git log vPREVIOUS..HEAD` lists what the release holds. Write for users, not for developers.
 3. Run the gates (see "Test and lint"). Commit.
-4. Tag and push:
+4. Push `main`, then the tag:
 
    ```bash
-   git tag vX.Y.Z
    git push origin main
+   git tag vX.Y.Z
    git push origin vX.Y.Z
    ```
+
+   The release does not run the macOS tests again: its `ci-passed` job waits for the CI run of the tagged commit and fails when it does not pass. So push `main` first, and do not push another commit to `main` before CI of the tagged commit finishes (a newer push cancels the older CI run).
+5. Watch the release: `gh run watch $(gh run list --workflow release.yml --limit 1 --json databaseId --jq '.[0].databaseId')`. It is done when `create-release` passes; then the version is on PyPI and the GitHub release exists.
 
 What the workflow does:
 
 | Job | What it does |
 |---|---|
 | `validate-version` | Fails when the tag (without the `v`) is not the version in `pyproject.toml` and in `src/gittok/__init__.py`. The error names the file to fix |
-| `test` | On macOS: `uv sync`, `ruff check`, `pytest`, then the web tests on Node 22 |
+| `ci-passed` | On Linux: waits for the CI run (`ci.yml`, on macOS) of the tagged commit and fails when it does not pass. GitHub has few hosted macOS arm64 runners, and a job that gets none in about 15 minutes is cancelled, so the release does not ask for a second one |
 | `build` | On Linux: builds the web app, runs `uv build` (sdist, then the wheel from the sdist), checks that both hold the web build, installs the wheel into a fresh environment, runs `gittok --version`, makes a GitTok directory with `gittok init` and checks its files, and uploads `dist/*` |
 | `publish-pypi` | After the three jobs above pass: publishes `dist/*` to PyPI |
 | `create-release` | After PyPI: makes the GitHub release `Release vX.Y.Z` with generated notes and attaches the sdist and the wheel |
 
-If a job fails before `publish-pypi`, fix the cause, delete the tag (`git tag -d vX.Y.Z`, `git push origin :refs/tags/vX.Y.Z`), and tag again. PyPI does not accept the same version twice: after a publish, a fix needs a new version.
+If CI of the tagged commit was cancelled (no macOS runner, or a newer push), rerun that CI run (`gh run rerun <id> --failed`), then rerun the failed release jobs. If a job fails before `publish-pypi` for another reason, fix the cause, delete the tag (`git tag -d vX.Y.Z`, `git push origin :refs/tags/vX.Y.Z`), and tag again. PyPI does not accept the same version twice: after a publish, a fix needs a new version.
 
 ## Bundled meme assets
 

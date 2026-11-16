@@ -8,6 +8,13 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same branch (or pull request) replaces the older run: GitHub has few
+# hosted macOS runners, so do not keep one busy with a commit that is already outdated.
+# The release workflow needs the CI result of its tagged commit (DEV.md, "Release").
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: macos-latest

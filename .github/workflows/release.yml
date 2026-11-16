@@ -39,43 +39,43 @@ jobs:
           [ "$ok" = 1 ]
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-  test:
-    runs-on: macos-latest
+  ci-passed:
+    # The macOS tests run once per commit, in CI (ci.yml). A second macOS job here would
+    # compete for GitHub's few hosted macOS arm64 runners; one that gets no runner in about
+    # 15 minutes is cancelled. So this job waits for the CI run of the tagged commit.
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v5
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v7
-
-      - name: Install Python dependencies
-        run: uv sync
-
-      - name: Lint
-        run: uv run ruff check
-
-      - name: Download the code grammars
+      - name: CI passed on the tagged commit
         run: |
-          uv run python -c "from gittok import structure; structure.download(sorted(structure.spec()['languages']))" \
-            || echo "::warning::grammar download failed; the tests that need a grammar will skip"
-
-      # -v names each test, and faulthandler prints every stack if one test runs
-      # longer than two minutes, so a hang shows where it is.
-      - name: Python tests
-        timeout-minutes: 15
-        run: uv run pytest -n auto -v -o faulthandler_timeout=120
-
-      - name: Set up Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-
-      - name: Install web dependencies
-        run: npm --prefix web ci
-
-      - name: Web tests
-        run: npm --prefix web test
+          url="repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push"
+          while :; do
+            run="$(gh api "$url" --jq '.workflow_runs[0] // empty')"
+            if [ -z "$run" ]; then
+              if [ "$SECONDS" -gt 300 ]; then
+                echo "::error::No CI run for $GITHUB_SHA. Push main with this commit first, then the tag (DEV.md, Release)."
+                exit 1
+              fi
+            else
+              status="$(jq -r .status <<<"$run")"
+              conclusion="$(jq -r .conclusion <<<"$run")"
+              link="$(jq -r .html_url <<<"$run")"
+              if [ "$status" = completed ]; then
+                if [ "$conclusion" = success ]; then
+                  echo "CI passed: $link"
+                  exit 0
+                fi
+                echo "::error::CI for $GITHUB_SHA ended with '$conclusion': $link. Fix it, or rerun that CI run if it was cancelled, then rerun this job."
+                exit 1
+              fi
+              echo "CI is $status: $link"
+            fi
+            sleep 30
+          done
 
   build:
     # The wheel is pure Python (py3-none-any), so Linux builds it.
@@ -156,7 +156,7 @@ jobs:
 
   publish-pypi:
     runs-on: ubuntu-latest
-    needs: [validate-version, test, build]
+    needs: [validate-version, ci-passed, build]
     environment:
       name: pypi
       url: https://pypi.org/p/gittok
