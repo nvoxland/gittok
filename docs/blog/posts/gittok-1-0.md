@@ -19,7 +19,7 @@ gittok init .
 claude
 ```
 
-Then ask Claude: "Add the repo at ~/src/myapp to GitTok." The [install guide](../../getting-started/install.md) has the details.
+Then ask Claude: "Add the repo at ~/src/myapp to GitTok." The [install guide](../../getting-started/index.md) has the details.
 
 ## What is in 1.0
 

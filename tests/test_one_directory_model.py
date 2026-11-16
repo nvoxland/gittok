@@ -57,7 +57,7 @@ SITE = "https://nvoxland.github.io/gittok/"
 
 def test_the_site_gives_the_steps_and_says_when_gittok_runs():
     """The user docs are the docs site (mkdocs.yml, docs/). Install and upgrade live there."""
-    install = (ROOT / "docs" / "getting-started" / "install.md").read_text()
+    install = (ROOT / "docs" / "getting-started" / "index.md").read_text()
     upgrade = (ROOT / "docs" / "guide" / "upgrade.md").read_text()
     for fact in (
         "uv tool install --python 3.13 'gittok[images]'", "gittok init .\n", "cd ~/gittok"

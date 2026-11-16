@@ -39,7 +39,7 @@ The install command no longer includes the `images` extra:
 uv tool install --python 3.13 gittok
 ```
 
-If you use Claude Code on Apple silicon and want real illustrations instead of SVG drawings, install the extra: `uv tool install --force --python 3.13 'gittok[images]'`. If you installed with the extra before, the upgrade keeps it. In Codex, the extra is only for when you want local images instead of Codex's image tool. See [Install](../../getting-started/install.md).
+If you use Claude Code on Apple silicon and want real illustrations instead of SVG drawings, install the extra: `uv tool install --force --python 3.13 'gittok[images]'`. If you installed with the extra before, the upgrade keeps it. In Codex, the extra is only for when you want local images instead of Codex's image tool. See [Get started](../../getting-started/index.md#install-gittok).
 
 ## Codex keeps the feed full
 

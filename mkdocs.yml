@@ -49,7 +49,7 @@ theme:
 
 nav:
   - Home: index.md
-  - Get started: getting-started/install.md
+  - Get started: getting-started/index.md
   - Guide:
       - Repos: guide/repos.md
       - Cards: guide/cards.md
