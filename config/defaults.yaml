@@ -19,6 +19,6 @@ tones:
 
 visual_mix:
   # Share of a packet's cards that should use an image format (meme, illustration, comic,
-  # chart, diagram). A soft target: it counts only formats that can be drawn, so with no
-  # image renderer it asks for charts and diagrams, which the client draws.
+  # chart, diagram). A soft target: it counts only formats that can be drawn now (no
+  # illustrations while the local model downloads), plus charts and diagrams.
   image_min_share: 0.5

@@ -226,7 +226,7 @@ def test_steer_skill_makes_a_mascot_after_the_profile_and_before_the_first_cards
         < step.index("gittok-generate")
     )
     for word in (
-        "`backend` is `agent` or `installed` is true",
+        "Then give the repo a mascot",
         "`status`",
         "one line",
         "change it by asking",
@@ -274,7 +274,7 @@ def test_directory_agents_md_names_the_mascot_step_and_the_config_tools(tmp_path
         < first_run.index("`set_mascot`")
         < first_run.index("first cards")
     )
-    assert "`renderer_setup.illustration.backend` is `agent` or `installed` is true" in first_run
+    assert "give it a mascot that fits it (`set_mascot`)" in first_run
     for word in ("`config_files`", "`get_config`", "`check_config`", "`local/`"):
         assert word in neutral, word
 

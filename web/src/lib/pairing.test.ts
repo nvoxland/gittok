@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 const script = readFileSync(`${process.cwd()}/../src/gittok/static/pair.js`, 'utf8');
 const replace = vi.fn();
+const reload = vi.fn();
 const fetchMock = vi.fn();
 let page: Document;
 let events: EventTarget;
@@ -12,6 +13,7 @@ beforeEach(() => {
 	page = document.implementation.createHTMLDocument('Pair');
 	events = new EventTarget();
 	replace.mockReset();
+	reload.mockReset();
 	fetchMock.mockReset().mockResolvedValue({ ok: true });
 });
 afterEach(() => vi.useRealTimers());
@@ -20,7 +22,7 @@ function load(body: string) {
 	page.body.innerHTML = body;
 	new Function('document', 'window', 'navigator', 'fetch', 'setTimeout', script)(
 		page,
-		{ location: { replace }, addEventListener: events.addEventListener.bind(events), isSecureContext: false },
+		{ location: { replace, reload }, addEventListener: events.addEventListener.bind(events), isSecureContext: false },
 		navigator, fetchMock, setTimeout
 	);
 }
@@ -41,12 +43,25 @@ it('replaces the wait page while checking approval instead of pushing navigation
 	expect(replace).toHaveBeenCalledExactlyOnceWith('/pair/wait');
 });
 
-it('rechecks pairing when an old page is restored from the Back cache', () => {
+it('rechecks pairing by reloading the same page when it is restored from the Back cache', () => {
 	load('<h1>Pair this device</h1>');
 	const event = new Event('pageshow');
 	Object.defineProperty(event, 'persisted', { value: true });
 	events.dispatchEvent(event);
-	expect(replace).toHaveBeenCalledExactlyOnceWith('/pair/wait');
+	expect(reload).toHaveBeenCalledOnce();
+	expect(replace).not.toHaveBeenCalled();
+});
+
+it('shows the reason the server gives when it refuses a code', async () => {
+	fetchMock.mockResolvedValue({
+		ok: false,
+		json: async () => ({ code: 'too_many_pair_requests', detail: 'too many devices wait for a pairing code; try again later' })
+	});
+	load('<form method="post" action="/pair/code"><button>Pair with a code</button></form>');
+	page.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+	await vi.waitFor(() =>
+		expect(page.querySelector('[role=alert]')?.textContent).toBe('Too many devices wait for a pairing code; try again later.')
+	);
 });
 
 it('leaves the form usable after a failed request without navigating', async () => {

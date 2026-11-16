@@ -12,8 +12,8 @@ The user manages GitTok by asking you, the coding agent. Do not send the user to
 First run, when no repo is configured:
 
 1. Ask the user which repo to add (a local path or a git URL). Call `add_repo`.
-2. Do what its `next` says, without a question: profile the repo (the rules that find the code worth teaching); if `status`
-   shows `renderer_setup.illustration.backend` is `agent` or `installed` is true, give it a mascot that fits it (`set_mascot`); then make the first cards (see below).
+2. Do what its `next` says, without a question: profile the repo (the rules that find the code worth teaching);
+   give it a mascot that fits it (`set_mascot`); then make the first cards (see below).
    Image setup is automatic: memes are bundled; only the local backend downloads a model.
    Missing mflux falls back to agent images. Read `status.renderer_setup.illustration`, say
    its state in one line and never wait for it. With no profile instructions, skip the profile: GitTok uses its default rules.
@@ -57,8 +57,8 @@ One agent can do all steps; batches and packets can run in parallel. `get_brief`
 - `.mcp.json` starts the MCP server. If the `mcp__gittok__*` tools are missing, ask the user to
   run `/mcp`, pick gittok, and approve or Reconnect. A changed setting also needs Reconnect.
 - The skills in `.claude/skills/` have the full steps. Use them: `gittok-steer` (repos, phone,
-  steering), `/gittok-profile-repo <repo>`, `/gittok-generate` (it gives the scout and writer
-  work to the subagents in `.claude/agents/`). Run the profile skill without asking for a repo
+  steering), `/gittok-profile-repo <repo>`, `/gittok-generate` (it gives the scout, writer and
+  illustrator work to the subagents in `.claude/agents/`). Run the profile skill without asking for a repo
   that `list_repos` shows with `profiled` false; for a repo that has a profile, only offer it.
 - Follow the lines that the SessionStart hooks print (`.claude/settings.json`): the feed is
   low, start the feed watch, a repo has no profile, the directory needs `gittok update`.

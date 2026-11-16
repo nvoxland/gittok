@@ -165,12 +165,19 @@
 		if (pairing) return;
 		pairing = true;
 		pairError = null;
+		let shown = 'Could not get a pairing code. Try again.';
 		try {
 			const response = await fetch('/pair/code', { method: 'POST', credentials: 'same-origin' });
-			if (!response.ok) throw new Error('pairing request failed');
+			if (!response.ok) {
+				// The server's reason (too many waiting devices, phone access off) beats "try again".
+				const detail = await response.json().then((b) => b?.detail, () => null);
+				if (typeof detail === 'string' && detail)
+					shown = detail.charAt(0).toUpperCase() + detail.slice(1).replace(/[.!?]?$/, '.');
+				throw new Error('pairing request failed');
+			}
 			window.location.replace('/pair/wait');
 		} catch {
-			pairError = 'Could not get a pairing code. Try again.';
+			pairError = shown;
 		} finally {
 			pairing = false;
 		}

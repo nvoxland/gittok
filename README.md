@@ -24,7 +24,7 @@ gittok init .
 claude
 ```
 
-> **Better images in Claude Code.** Claude Code has no image tool, so without extras Claude draws the illustration and comic posts as simple flat SVG pictures. On Apple silicon, install with the `images` extra for real illustrations: `uv tool install --python 3.13 'gittok[images]'`. It adds [mflux](https://github.com/filipstrand/mflux) (about 1 GB) and a 6 GB model that GitTok downloads by itself. Codex uses its own image tool by default. To use mflux in Codex instead, install with the extra and ask Codex: "Use local image generation." Or set it yourself in `local/settings.yaml` of your GitTok directory:
+> **Better images in Claude Code.** Claude Code has no image tool, so without extras Claude draws the illustration and comic posts as simple flat SVG pictures. On Apple silicon, install with the `images` extra for real illustrations: `uv tool install --python 3.13 'gittok[images]'` (add `--force` if GitTok is already installed, then start a new session). On other Macs the extra adds nothing. It adds [mflux](https://github.com/filipstrand/mflux) (about 1 GB) and a 6 GB model that GitTok downloads by itself. Codex uses its own image tool by default. To use mflux in Codex instead, install with the extra and ask Codex: "Use local image generation." Or set it yourself in `local/settings.yaml` of your GitTok directory:
 >
 > ```yaml
 > render:

@@ -38,14 +38,22 @@ document.addEventListener('submit', async function (e) {
   if (button) button.disabled = true;
   var error = form.querySelector('[role="alert"]');
   if (error) error.remove();
+  var shown = 'Could not get a pairing code. Try again.';
   try {
     var response = await fetch('/pair/code', { method: 'POST', credentials: 'same-origin' });
-    if (!response.ok) throw new Error('pairing request failed');
+    if (!response.ok) {
+      // The server's reason (too many waiting devices, phone access off) beats "try again".
+      try {
+        var detail = (await response.json()).detail;
+        if (detail) shown = detail.charAt(0).toUpperCase() + detail.slice(1).replace(/[.!?]?$/, '.');
+      } catch (ignored) { /* not JSON: keep the general text */ }
+      throw new Error('pairing request failed');
+    }
     window.location.replace('/pair/wait');
   } catch (err) {
     error = document.createElement('p');
     error.setAttribute('role', 'alert');
-    error.textContent = 'Could not get a pairing code. Try again.';
+    error.textContent = shown;
     form.appendChild(error);
   } finally {
     delete form.dataset.submitting;
@@ -57,8 +65,8 @@ if (document.querySelector('[data-pair-wait]')) {
   setTimeout(function () { window.location.replace('/pair/wait'); }, 3000);
 }
 
-// A browser may restore a previous document without asking the server. Recheck the
-// cookie: an already paired device is redirected to the feed rather than shown a code.
+// A browser may restore a previous document without asking the server. Ask again for the
+// same page: the server sends a paired device to the feed and keeps an unpaired one here.
 window.addEventListener('pageshow', function (e) {
-  if (e.persisted) window.location.replace('/pair/wait');
+  if (e.persisted) window.location.reload();
 });

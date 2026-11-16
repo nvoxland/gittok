@@ -12,7 +12,7 @@ All your files are in the GitTok directory that you made with `gittok init`. You
 ├── .claude/
 │   ├── settings.json          session hooks: the feed address, the feed watch
 │   ├── skills/                gittok-generate, gittok-steer, gittok-profile-repo
-│   └── agents/                gittok-writer, gittok-scout
+│   └── agents/                gittok-writer, gittok-scout, gittok-illustrator
 ├── local/                     your settings
 │   ├── repos.yaml             the repo list
 │   ├── profiles/<repo>.yaml   one profile per repo

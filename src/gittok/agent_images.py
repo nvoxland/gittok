@@ -6,10 +6,10 @@ its illustrator subagent draws SVG, and this module rasterizes it (svg_image).""
 import base64
 import binascii
 import re
+import subprocess
+import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
-
-import resvg_py
 
 from gittok import db, private, render
 from gittok import render_jobs as jobs
@@ -18,6 +18,19 @@ MAX_BYTES = jobs.MAX_BYTES
 MAX_SVG_BYTES = 512 * 1024
 # Elements that load other documents, files or code. resvg reads local files for <image>.
 _BLOCKED_TAGS = {"image", "feImage", "script", "style", "foreignObject"}
+# No fonts are loaded (skip_system_fonts), so text would render as nothing.
+_TEXT_TAGS = {"text", "tspan", "textPath"}
+# Filters whose cost grows with a number: a small SVG could hold a CPU core for minutes.
+FILTER_LIMITS = {("feTurbulence", "numOctaves"): 10, ("feMorphology", "radius"): 50,
+                 ("feGaussianBlur", "stdDeviation"): 100, ("feDropShadow", "stdDeviation"): 100}
+MAX_FILTER_ELEMENTS = 50
+RENDER_TIMEOUT_S = 30.0
+# resvg runs in a child process, so a slow render can be stopped (a thread cannot be).
+_RENDER = ("import sys, resvg_py; svg = sys.stdin.buffer.read().decode(); "
+           "sys.stdout.buffer.write(bytes(resvg_py.svg_to_bytes(svg_string=svg, "
+           "skip_system_fonts=True)))")
+_NUMBER = re.compile(r"-?\d+(?:\.\d+)?(?:e-?\d+)?", re.I)
+_FENCE = re.compile(r"\A\s*```[\w-]*\s*\n(.*?)\n\s*```\s*\Z", re.S)
 _URL = re.compile(r"url\(\s*['\"]?\s*([^)'\"\s]*)")
 
 
@@ -25,34 +38,46 @@ ImageError = jobs.JobError
 
 
 def pending(conn, cfg, run_id: str, card_id: str | None = None) -> list[dict]:
+    """The agent cards that wait for images: this run's first, then the ones that earlier runs
+    left pending (a failed illustrator, or a session that ended before the image step).
+
+    The backend decision runs before the write lock: worker_check may start a subprocess."""
     if conn.execute("SELECT 1 FROM runs WHERE id = ?", (run_id,)).fetchone() is None:
         raise ImageError(f"unknown run: {run_id}")
     staging = (cfg.settings.data_dir / "agent-images").resolve()
+    session_is_agent = render.image_backend(cfg) == "agent"
+    local_runs = session_is_agent and (
+        render.worker_check(cfg.settings.render.mflux_model) is None)
     result = []
     with db.immediate(conn):
-        rows = conn.execute(
-            "SELECT id, spec, resolved FROM cards WHERE run_id = ? AND status = 'pending_render' "
-            "ORDER BY created_at, id", (run_id,),
-        ).fetchall()
-        for row in rows:
-            spec = db.loads(row["spec"])
-            if spec["visual"]["kind"] not in {"illustration", "comic"}:
+        sql = ("SELECT id, spec, resolved FROM cards WHERE run_id = ? "
+               "AND status = 'pending_render'")
+        args: list = [run_id]
+        if card_id is not None:
+            sql += " AND id = ?"
+            args.append(card_id)
+        for row in conn.execute(sql, args).fetchall() if session_is_agent else []:
+            visual = (db.loads(row["spec"]) or {}).get("visual") or {}
+            if visual.get("kind") not in {"illustration", "comic"}:
                 continue
             resolved = db.loads(row["resolved"]) or {}
-            if resolved.get("image_backend") != "agent":
-                # Recover older unassigned cards when this session uses agent rendering.
-                if render.image_backend(cfg) != "agent":
-                    continue
-                if ("image_backend" in resolved
-                        and render.worker_check(cfg.settings.render.mflux_model) is None):
-                    continue
-                resolved["image_backend"] = "agent"
-                conn.execute("UPDATE cards SET resolved = ? WHERE id = ?",
-                             (db.dumps(resolved), row["id"]))
-        for cid in jobs.pending_ids(conn, "agent", run_id=run_id):
+            # Recover this run's cards that are unassigned, or assigned to a local renderer
+            # that cannot run, when this session uses agent rendering.
+            if resolved.get("image_backend") == "agent" or (
+                    "image_backend" in resolved and local_runs):
+                continue
+            resolved["image_backend"] = "agent"
+            conn.execute("UPDATE cards SET resolved = ? WHERE id = ?",
+                         (db.dumps(resolved), row["id"]))
+        ids = jobs.pending_ids(conn, "agent", run_id=run_id)
+        ids += [i for i in jobs.pending_ids(conn, "agent") if i not in set(ids)]
+        for cid in ids:
             if card_id is not None and cid != card_id:
                 continue
-            request = jobs.request(conn, cfg, cid, backend="agent")
+            try:
+                request = jobs.request(conn, cfg, cid, backend="agent")
+            except (KeyError, TypeError, AttributeError):
+                continue  # a malformed spec must not hide the other cards
             result.append({
                 "card_id": cid, "staging_dir": str(staging),
                 "images": list(request.images),
@@ -95,6 +120,8 @@ def _local(name: str) -> str:
 
 def svg_image(svg: str, width: int, height: int) -> jobs.RenderedImage:
     """Rasterize one drawn panel to exactly width x height, with no outside resources."""
+    if fenced := _FENCE.match(svg):
+        svg = fenced.group(1)
     if len(svg.encode()) > MAX_SVG_BYTES:
         raise ImageError(f"SVG is too large (over {MAX_SVG_BYTES // 1024} KB); simplify it")
     if "<!DOCTYPE" in svg.upper() or "<!ENTITY" in svg.upper() or "<?xml-stylesheet" in svg:
@@ -105,9 +132,22 @@ def svg_image(svg: str, width: int, height: int) -> jobs.RenderedImage:
         raise ImageError(f"cannot render SVG: {e}") from e
     if _local(root.tag) != "svg":
         raise ImageError("SVG root must be <svg>")
+    filters = 0
     for el in root.iter():
-        if (tag := _local(str(el.tag))) in _BLOCKED_TAGS:
+        tag = _local(str(el.tag))
+        if tag.startswith("fe"):
+            filters += 1
+            if filters > MAX_FILTER_ELEMENTS:
+                raise ImageError(f"SVG uses more than {MAX_FILTER_ELEMENTS} filter elements; "
+                                 "use fewer filters")
+        for (filter_tag, attr), limit in FILTER_LIMITS.items():
+            value = el.get(attr) if tag == filter_tag else None
+            if value and any(abs(float(n)) > limit for n in _NUMBER.findall(value)):
+                raise ImageError(f"SVG filter {tag} {attr} is over {limit}; use a smaller value")
+        if tag in _BLOCKED_TAGS:
             raise ImageError(f"SVG must not use <{tag}>: draw with shapes, paths and gradients")
+        if tag in _TEXT_TAGS:
+            raise ImageError("SVG must not use text: no fonts are loaded; draw shapes instead")
         for name, value in el.attrib.items():
             refs = _URL.findall(value)
             if _local(name) == "href":
@@ -115,14 +155,26 @@ def svg_image(svg: str, width: int, height: int) -> jobs.RenderedImage:
             if any(not ref.startswith("#") for ref in refs):
                 raise ImageError("SVG may only reference its own elements (href=\"#id\", "
                                  "url(#id)); outside files and URLs are not loaded")
+    if root.get("viewBox") is None:
+        # Keep the drawing's own coordinates, scaled to the panel, not drawn at its corner.
+        own = (root.get("width"), root.get("height"))
+        if all(v and re.fullmatch(r"\d+(\.\d+)?(px)?", v.strip()) for v in own):
+            w, h = (v.strip().removesuffix("px") for v in own)
+            root.set("viewBox", f"0 0 {w} {h}")
     root.set("width", str(width))
     root.set("height", str(height))
     try:
-        data = resvg_py.svg_to_bytes(svg_string=ET.tostring(root, encoding="unicode"),
-                                     skip_system_fonts=True)
-    except ValueError as e:
-        raise ImageError(f"cannot render SVG: {e}") from e
-    return jobs.decode_image(bytes(data), meta={"backend": "agent", "drawn": "svg"})
+        done = subprocess.run(
+            [sys.executable, "-I", "-c", _RENDER], capture_output=True,
+            input=ET.tostring(root, encoding="unicode").encode(), timeout=RENDER_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise ImageError(f"SVG took too long to render (over {RENDER_TIMEOUT_S:g} s); "
+                         "simplify it") from e
+    if done.returncode != 0:
+        lines = done.stderr.decode(errors="replace").strip().splitlines() or ["unknown error"]
+        raise ImageError(f"cannot render SVG: {lines[-1].removeprefix('ValueError: ')}")
+    return jobs.decode_image(done.stdout, meta={"backend": "agent", "drawn": "svg"})
 
 
 def submit(conn, cfg, card_id: str, paths: list[str] | None = None,
@@ -134,6 +186,10 @@ def submit(conn, cfg, card_id: str, paths: list[str] | None = None,
         raise ImageError("provide exactly one of paths, data_urls and svgs")
     if paths is not None:
         images = [_read(cfg, path) for path in paths]
+        result = jobs.complete(conn, cfg, jobs.RenderCompletion(request, tuple(images)))
+        for path in paths:  # the asset store has its own copy now
+            Path(path).unlink(missing_ok=True)
+        return result
     elif data_urls is not None:
         images = [_from_data_url(url) for url in data_urls]
     else:

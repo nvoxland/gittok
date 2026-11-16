@@ -110,3 +110,28 @@ def test_a_rewrite_that_keeps_the_picture_keeps_the_drawn_image(conn, cfg, fixtu
     assert row["status"] == "ready"
     assert db.loads(row["resolved"])["visual"] == drawn
     assert db.loads(row["spec"])["comments"][0]["text"] == "Seen it."
+
+
+def test_a_rewrite_keeps_the_image_backend_of_the_card(conn, cfg, fixture_repo, tmp_path):
+    """A redrawn agent card must stay with the agent: the local worker skips only cards that
+    say so."""
+    import dataclasses
+
+    from gittok.config import MemeTemplate
+    from tests.cards import meme_card
+
+    cfg = dataclasses.replace(cfg, meme_templates={"drake": MemeTemplate("drake", 2)})
+    cid = put(conn, cfg, meme_card(fixture_repo))
+    old = db.loads(conn.execute("SELECT resolved FROM cards WHERE id = ?", (cid,)).fetchone()[0])
+    old["image_backend"] = "agent"
+    conn.execute("UPDATE cards SET resolved = ? WHERE id = ?", (db.dumps(old), cid))
+    conn.commit()
+    card = db.loads(conn.execute("SELECT spec FROM cards WHERE id = ?", (cid,)).fetchone()[0])
+    card["visual"]["lines"] = ["a new top", "a new bottom"]
+    out = tmp_path / "refit"
+    out.mkdir()
+    (out / f"{cid}.json").write_text(json.dumps({"card_id": cid, "card": card}))
+    assert refit.apply(conn, cfg, out)["replaced"] == [cid]
+    row = conn.execute("SELECT status, resolved FROM cards WHERE id = ?", (cid,)).fetchone()
+    assert row["status"] == "pending_render"
+    assert db.loads(row["resolved"])["image_backend"] == "agent"

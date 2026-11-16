@@ -175,17 +175,23 @@ def shuffle_choices(card: dict, resolved: dict, seed: str) -> tuple[dict, dict]:
     return card, resolved
 
 
-def insert_card(conn, cfg, run_id: str, acc, now: str | None = None) -> str:
-    """Insert a card and its features without committing (caller owns the transaction)."""
+def insert_card(conn, cfg, run_id: str, acc, now: str | None = None,
+                image_backend: str | None = None) -> str:
+    """Insert a card and its features without committing (caller owns the transaction).
+
+    Pass `image_backend` (render.image_backend) when holding a write lock: deciding it may
+    start a subprocess."""
     card_id = new_card_id()
     card, resolved = (
         shuffle_choices(acc.card, acc.resolved, card_id) if SHUFFLE else (acc.card, acc.resolved)
     )
     status = "pending_render" if card["visual"]["kind"] in RENDERED_KINDS else "ready"
     if card["visual"]["kind"] in {"illustration", "comic"}:
-        from .render import image_backend
+        if image_backend is None:
+            from .render import image_backend as decide
 
-        resolved = {**resolved, "image_backend": image_backend(cfg)}
+            image_backend = decide(cfg)
+        resolved = {**resolved, "image_backend": image_backend}
     repo_id = ensure_repo(conn, cfg.repos[card["repos"][0]])
     conn.execute(
         "INSERT INTO cards(id, run_id, repo_id, story_type, format, persona, tone, "

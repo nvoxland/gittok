@@ -725,7 +725,7 @@ def test_add_repo_next_step_makes_a_mascot_between_the_profile_and_the_cards():
         text.index("gittok-profile-repo") < text.index("set_mascot") < text.index("gittok-generate")
     )
     for word in (
-        "backend is agent or installed is true",
+        "Then give the repo a mascot",
         "status",
         "one line",
         "change it by asking",

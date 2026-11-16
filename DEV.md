@@ -16,7 +16,7 @@ uv sync --group images                                   # Python 3.13, the depe
 npm --prefix web install && npm --prefix web run build   # the web app, into web/build
 ```
 
-The `images` group installs mflux (Apple silicon, a large download). GitTok uses it for illustration and comic cards, and for the persona avatars. Always pass `--group images` to `uv sync`: a plain `uv sync` removes the group again.
+The `images` group installs mflux (Apple silicon, a large download). It is optional. With it, GitTok draws illustration and comic cards and the persona avatars locally; without it, illustrations and comics come from the agent (SVG drawn by Claude in Claude Code, the native image tool in Codex). Always pass `--group images` to `uv sync`: a plain `uv sync` removes the group again.
 
 To work without mflux, use a plain `uv sync` instead:
 
@@ -24,7 +24,7 @@ To work without mflux, use a plain `uv sync` instead:
 uv sync                                                  # Python 3.13 and the dependencies, no mflux
 ```
 
-Without mflux, GitTok makes no illustration or comic cards and no avatars. Everything else works.
+Without mflux, illustrations and comics fall back to agent images, and there are no PNG avatars. Everything else works.
 
 ## Run from the clone
 

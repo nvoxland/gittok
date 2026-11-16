@@ -180,7 +180,7 @@ Rules still win: caps and boosts work as before. With no evidence nothing change
 
 ### Image share target
 
-`config/defaults.yaml` has `visual_mix.image_min_share` (default 0.5). Image formats are the formats whose visual kind is `meme`, `illustration`, `comic`, `chart` or `diagram`. The target is soft. Each packet tells its writer how many of its cards should use an image format: the share times the packet's cards, but never more than the number of its cards whose format list has an image format. No format is forced. A format that cannot be drawn is not in any list: `meme` without the meme server, `mascot_scene` and `comic` when no illustration backend can run (neither mflux nor agent images) or for a repo with no mascot. So with no renderer the target counts only `chart` and `diagram`, which the client draws. Without `visual_mix` the target is 0.
+`config/defaults.yaml` has `visual_mix.image_min_share` (default 0.5). Image formats are the formats whose visual kind is `meme`, `illustration`, `comic`, `chart` or `diagram`. The target is soft. Each packet tells its writer how many of its cards should use an image format: the share times the packet's cards, but never more than the number of its cards whose format list has an image format. No format is forced. A format that cannot be drawn is not in any list: `meme` without the meme server, `mascot_scene` and `comic` while the local model downloads, or for a repo with no mascot. Then the target counts the other image formats, including `chart` and `diagram`, which the client draws. Without `visual_mix` the target is 0.
 
 ## 8. Saved cards
 
@@ -222,6 +222,7 @@ Settings (`gc:` in `config/settings.yaml`):
 | SRS | `srs_keep_days: 60` | never, if it has an `srs` row that is not mastered and due within N days (overdue cards stay too) |
 | events | `events_after_days: 90` | the event is older than N days and was recorded before the card's newest reward was computed |
 | run files | `run_files_after_days: 30` | the run is not open and ended more than N days ago; the folder `data/runs/<id>/` goes, the `runs` row stays |
+| staged images | (1 day) | a file in `data/agent-images/` that an agent staged more than a day ago and never submitted (a submit deletes its own files) |
 | social | `social_after_days: 30` | `story_views` seen, and notifications read, more than N days ago |
 | leads | `leads_after_days: 180` | the lead was last seen at HEAD more than N days ago and no card ever used it (`times_covered = 0`) |
 | log files | `log_max_kb: 1024` | a `data/logs/*.log` file (`api.log`, `rejected-events.log`) is bigger than N KB; it keeps its newest half, cut at a line start |

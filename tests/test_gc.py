@@ -434,3 +434,19 @@ def test_big_logs_keep_their_newest_half(conn, cfg):
     assert len(text) <= cfg.settings.gc.log_max_kb * 1024 // 2 + 20
     assert text.endswith("line 99999\n") and text.startswith("line ")  # whole lines only
     assert small.read_text() == "one\n"
+
+
+def test_old_staged_agent_images_are_deleted(conn, cfg):
+    import os
+
+    staging = cfg.settings.data_dir / "agent-images"
+    staging.mkdir(parents=True)
+    old, new = staging / "old.png", staging / "new.png"
+    for path in (old, new):
+        path.write_bytes(b"x")
+    two_days = (NOW - timedelta(days=2)).timestamp()
+    os.utime(old, (two_days, two_days))
+    assert gc.collect(conn, cfg, NOW, dry_run=True)["staged_images"] == 1
+    assert old.exists()
+    assert gc.collect(conn, cfg, NOW)["staged_images"] == 1
+    assert not old.exists() and new.exists()

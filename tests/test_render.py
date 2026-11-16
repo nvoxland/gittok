@@ -586,3 +586,22 @@ def test_the_render_worker_rebuilds_its_renderers_when_data_dir_changes(fixture_
         assert worker._active["meme"].store == memes.store(moved)
     finally:
         worker.stop()
+
+
+def test_a_card_the_agent_takes_over_during_a_pass_is_not_failed(fixture_repo, tmp_path):
+    first, second = seed_pending(cfg := render_cfg(fixture_repo, tmp_path),
+                                 fixture_repo, {"kind": "illustration", "prompt": "x"}, count=2)
+
+    class TakeOver(FakeRenderer):
+        def render(self, visual, cfg_, spec):
+            # get_image_requests reassigns the next card while this one draws
+            with db.open_db(cfg.settings.data_dir / "gittok.db") as other:
+                other.execute("UPDATE cards SET resolved = ? WHERE id = ?",
+                              (db.dumps({"image_backend": "agent"}), second))
+                other.commit()
+            return super().render(visual, cfg_, spec)
+
+    with db.open_db(cfg.settings.data_dir / "gittok.db") as conn:
+        counts = render.render_pending(conn, cfg, {"illustration": TakeOver()})
+    assert counts["failed"] == 0
+    assert card_row(cfg, second)["status"] == "pending_render"

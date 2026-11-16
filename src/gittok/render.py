@@ -298,6 +298,8 @@ def render_pending(conn, cfg, renderers: dict[str, LocalRenderer], limit: int = 
             claimed = True
             images = renderer.render(visual, cfg, spec)
             jobs.complete(conn, cfg, jobs.RenderCompletion(request, tuple(images)), claimed=True)
+        except jobs.NotAssigned:
+            continue  # the agent took the card over after it was listed: not a failure
         except RendererUnavailable:
             up[key] = False
             counts["waiting"] += 1

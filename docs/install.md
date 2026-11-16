@@ -22,7 +22,7 @@ The wheel is also attached to each GitHub release of the repository: `uv tool in
     uv tool install --python 3.13 'gittok[images]'
     ```
 
-    It adds [mflux](https://github.com/filipstrand/mflux), about 1 GB, plus a 6 GB model that GitTok downloads by itself in the background (see "Illustration renderer" below). On a Mac that is not Apple silicon, the extra adds nothing. Codex uses its own image tool by default. To use mflux in Codex instead, install with the extra and ask Codex: "Use local image generation." Or set it yourself in `local/settings.yaml` of your GitTok directory:
+    It adds [mflux](https://github.com/filipstrand/mflux), about 1 GB, plus a 6 GB model that GitTok downloads by itself in the background (see "Illustration renderer" below). If GitTok is already installed, add `--force`, then start a new session. On a Mac that is not Apple silicon, the extra adds nothing. Codex uses its own image tool by default. To use mflux in Codex instead, install with the extra and ask Codex: "Use local image generation." Or set it yourself in `local/settings.yaml` of your GitTok directory:
 
     ```yaml
     render:
@@ -57,7 +57,7 @@ And these files for Claude Code:
 | `.mcp.json` | The MCP entry. Claude Code starts `gittok mcp --ui` (stdio) when a session starts here |
 | `CLAUDE.md` | One line, `@AGENTS.md`. Claude Code reads `CLAUDE.md`, and this makes it read `AGENTS.md` |
 | `.claude/skills/` | The skills `gittok-generate`, `gittok-steer` and `gittok-profile-repo` |
-| `.claude/agents/` | The agents `gittok-writer` and `gittok-scout` |
+| `.claude/agents/` | The agents `gittok-writer`, `gittok-scout` and `gittok-illustrator` |
 | `.claude/settings.json` | The two session hooks and one permission ("Session hooks" below) |
 
 And these files for Codex:
@@ -230,7 +230,7 @@ Your own settings live in `local/` of the GitTok directory. `docs/config.md` des
 
 - `local/repos.yaml`: the repos and groups to analyze.
 - `local/profiles/<repo>.yaml`: the profile of each repo.
-- `local/mascots.yaml`: the mascot of each repo. GitTok ships none; Claude makes one when you add a repo, if the image renderer is installed.
+- `local/mascots.yaml`: the mascot of each repo. GitTok ships none; Claude makes one when you add a repo.
 - `local/settings.yaml`: merged over `config/settings.yaml`, key by key inside each section.
 - `local/personas.yaml`: merged over the shipped file, per name and field by field. The edit tools write only here.
 - One optional file for each other shipped file (`local/scan_defaults.yaml`, `local/languages.yaml`, `local/queries/`, `local/file_types.yaml`, `local/secrets.yaml`, `local/claims.yaml`, `local/meme_templates.yaml`, `local/defaults.yaml`, `local/reward.yaml`): merged over the shipped one. Maps merge key by key and lists add. Ask Claude for the change, or write the file yourself; `gittok config check` validates it.
@@ -298,8 +298,9 @@ The default assets stay read-only in the installed package. Extra downloads go t
 `render.image_backend` defaults to `auto`: Codex creates illustrations and comic panels
 with its native image tool; Claude uses the Python renderer when it is installed, and
 otherwise draws simple flat SVG images through its `gittok-illustrator` subagent.
-Set `image_backend: agent` or `image_backend: local` under `render` in
-`local/settings.yaml` to choose explicitly. If mflux is unavailable, either harness
+To choose explicitly, ask your agent ("use agent images", "use local image
+generation"), or set `image_backend: agent` or `image_backend: local` under
+`render` in `local/settings.yaml` yourself. If mflux is unavailable, either harness
 falls back to agent images, even with `local` selected. Meme templates and fonts
 are bundled and use the same lightweight renderer in both modes.
 
@@ -309,15 +310,17 @@ makes them with its native image tool. Claude Code has no image tool: the driver
 starts one `gittok-illustrator` subagent (Sonnet) for each card. It draws each
 panel as SVG and submits it with `submit_images(card_id, svgs=...)`, and GitTok
 renders it to PNG at the panel size with resvg. An SVG may only refer to its own
-parts: GitTok rejects `<image>`, `<style>`, `<script>`, and any outside file or
-URL. Both paths use the same mascot appearance and panel order. If image
-generation fails, the driver reports it and leaves those cards pending; it can
-retry them later with `get_image_requests(run_id)`. No local model
+parts: GitTok rejects `<image>`, `<style>`, `<script>`, text, and any outside file
+or URL. It also rejects filters that would take minutes to draw, and stops a
+render after 30 seconds. Both paths use the same mascot appearance and panel order. If image
+generation fails, the driver reports it and leaves those cards pending; the next
+run's `get_image_requests` returns them again. No local model
 is downloaded for agent rendering. The `gittok avatars` CLI remains a local Python
 renderer command; personas have SVG avatars until PNG avatars are generated.
 
-After upgrading an existing GitTok directory, run `gittok update .` and restart
-Codex so its MCP launch identifies the harness and picks the Codex default.
+After upgrading, ask your agent to update the GitTok directory (or run
+`gittok update .`), then start a new Claude Code or Codex session. It loads the
+`gittok-illustrator` agent and, in Codex, the setting that names the harness.
 
 ## Illustration renderer (mflux)
 
@@ -341,7 +344,7 @@ gittok images --download     # in a clone: uv run gittok images --download
 gittok images                # the state: ready, downloading (with progress), failed, missing
 ```
 
-`status` reports it too: `renderer_setup.illustration` has `installed`, `available`, `download` (state and progress) and `reason`. To keep a model of your own, such as a folder from `mflux-save`, set `render.mflux_path` to it; `render.mflux_auto_download: false` turns the automatic download off.
+`status` reports it too: `renderer_setup.illustration` has `backend` (`agent` or `local`), `installed`, `available`, `download` (state and progress), `reason` (null for the agent backend) and `python_reason`. To keep a model of your own, such as a folder from `mflux-save`, set `render.mflux_path` to it; `render.mflux_auto_download: false` turns the automatic download off.
 
 A model folder counts as ready only when it is complete: the `transformer`, `text_encoder` and `vae` parts, each with every shard its index names (none empty), and the tokenizer. A render takes about 10 to 20 s per image at 9 steps, after the model loads once per batch. Then ask Claude to draw the persona avatars, or run:
 

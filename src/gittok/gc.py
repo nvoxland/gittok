@@ -296,6 +296,18 @@ def _run_dirs(conn, cfg, now: datetime) -> list[Path]:
     return [root / r["id"] for r in rows if (root / r["id"]).is_dir()]
 
 
+STAGED_IMAGES_AFTER = timedelta(days=1)
+
+
+def _staged_images(data_dir, now: datetime) -> list[Path]:
+    """Agent image files that were never submitted (a submit deletes its own files)."""
+    staging = data_dir / "agent-images"
+    if not staging.is_dir():
+        return []
+    cutoff = (now - STAGED_IMAGES_AFTER).timestamp()
+    return [p for p in sorted(staging.iterdir()) if p.is_file() and p.stat().st_mtime < cutoff]
+
+
 def _big_logs(data_dir, max_kb: int) -> list:
     logs = data_dir / "logs"
     if not logs.is_dir():
@@ -324,6 +336,7 @@ def collect(
     orphan_dirs = [d for _, dirs in orphan_plans for d in dirs]
     run_dirs = _run_dirs(conn, cfg, now)
     big_logs = _big_logs(data_dir, g.log_max_kb)
+    staged = _staged_images(data_dir, now)
     event_args = (_ms(now - timedelta(days=g.events_after_days)),)
     social_cut = _iso(now - timedelta(days=g.social_after_days))
     lead_cut = _iso(now - timedelta(days=g.leads_after_days))
@@ -331,6 +344,7 @@ def collect(
     counts = {k: len(v) for k, v in victims.items()}
     counts["run_files"] = len(run_dirs)
     counts["log_files"] = len(big_logs)
+    counts["staged_images"] = len(staged)
     counts["asset_files"] = _file_count(asset_dirs)
     # Repos that are no longer configured: all their data goes, whatever its age.
     counts["orphan_repos"] = len(orphans)
@@ -364,6 +378,8 @@ def collect(
         )
     for d in (*asset_dirs, *run_dirs, *orphan_dirs):
         shutil.rmtree(d, ignore_errors=True)
+    for p in staged:
+        p.unlink(missing_ok=True)
     for p in big_logs:
         _trim_log(p, g.log_max_kb * 1024 // 2)
     conn.execute("PRAGMA optimize")

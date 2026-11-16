@@ -43,6 +43,10 @@ class JobError(RenderError):
     """An actionable request or completion error."""
 
 
+class NotAssigned(JobError):
+    """The card is assigned to another backend (it may have changed since it was listed)."""
+
+
 @dataclass(frozen=True)
 class RenderRequest:
     card_id: str
@@ -87,7 +91,7 @@ def request(conn, cfg, card_id: str, *, backend: str) -> RenderRequest:
         raise JobError(f"unknown card: {card_id}")
     assigned = (db.loads(row["resolved"]) or {}).get("image_backend", "local")
     if assigned != backend:
-        raise JobError(f"this card is not assigned to {backend} rendering")
+        raise NotAssigned(f"this card is not assigned to {backend} rendering")
     spec = db.loads(row["spec"])
     kind = spec["visual"]["kind"]
     images = (illustration_requests(spec["visual"], cfg, spec)
@@ -119,6 +123,8 @@ def complete(conn, cfg, completion: RenderCompletion, *, claimed: bool = False) 
                            f"got {len(completion.images)}")
         for image in completion.images:
             validate_image(image)
+        if not claimed and job.backend != "local":
+            reset_stale_rendering(conn)  # a submission that crashed; no worker resets agent cards
         if not claimed and not claim(conn, current):
             raise JobError("card is busy; retry after the current image submission finishes")
         owns_claim = True
@@ -281,7 +287,11 @@ def release(conn, card_id: str) -> None:
 
 
 def _claim_card(conn, card_id: str, backend: str = "local") -> bool:
-    """Atomically move one card from `pending_render` to `rendering`."""
+    """Atomically move one card from `pending_render` to `rendering`.
+
+    An agent submission may also take a card that failed: images that arrive are the fix,
+    and nothing else would ever render an agent card again."""
+    statuses = ("pending_render",) if backend == "local" else ("pending_render", "render_failed")
     since = datetime.now(UTC).isoformat()
     with db.immediate(conn):
         row = conn.execute("SELECT resolved FROM cards WHERE id = ?", (card_id,)).fetchone()
@@ -291,8 +301,8 @@ def _claim_card(conn, card_id: str, backend: str = "local") -> bool:
         resolved[RENDERING_SINCE] = since
         cur = conn.execute(
             "UPDATE cards SET status = 'rendering', resolved = ? "
-            "WHERE id = ? AND status = 'pending_render'",
-            (db.dumps(resolved), card_id),
+            f"WHERE id = ? AND status IN ({', '.join('?' * len(statuses))})",
+            (db.dumps(resolved), card_id, *statuses),
         )
     return cur.rowcount == 1
 

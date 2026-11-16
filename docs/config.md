@@ -244,7 +244,7 @@ The values below are the shipped ones.
 
 | Key | Value | Meaning |
 |---|---|---|
-| `image_backend` | `auto` | `auto`: Codex uses its native image tool; Claude uses Python. `agent` or `local` overrides that default. Missing mflux always falls back to the agent. In Claude, agent mode draws simple flat SVG images; Codex uses its native image tool. Agent mode never downloads a model. |
+| `image_backend` | `auto` | `auto`: Codex uses its native image tool; Claude uses mflux when it is installed, else agent images. `agent` or `local` overrides that default. Missing mflux always falls back to the agent. In Claude, agent images are simple flat SVG drawings; Codex uses its native image tool. Agent mode never downloads a model. |
 | `meme_source` | `https://raw.githubusercontent.com/jacebrowning/memegen/main` | Where `gittok memes --prefetch` downloads meme templates and fonts |
 | `mflux_model` | `z-image-turbo` | The mflux model family |
 | `mflux_repo` | `filipstrand/Z-Image-Turbo-mflux-4bit` | The pre-quantized model that GitTok downloads (about 6 GB) |
@@ -330,7 +330,7 @@ Fields: `style` (required; the text put before every illustration prompt), `seed
 How a repo gets one:
 
 - **When you add a repo**, Claude profiles it and then picks a character and a style that fit it, saves it with `set_mascot`, and tells you in one line. Say "make the mascot a fox" to change it.
-- This happens only when the image renderer is installed (the `status` tool: `renderer_setup.illustration.installed`), also while its model still downloads. Without the renderer nobody can draw the mascot, so none is made.
+- Mflux draws the mascot when it is installed (also while its model still downloads); without it, the coding agent draws it (Codex's image tool, or SVG in Claude Code).
 - **A repo with no mascot** gets no `mascot_scene` and no `comic` cards. All other formats work, and no card is rejected for a missing mascot. For a repo that you added earlier, the SessionStart hint offers a mascot once illustrations can be drawn (mflux, or agent images); Claude makes it when you say yes.
 
 ## Writing guidance

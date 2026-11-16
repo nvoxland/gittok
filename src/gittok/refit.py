@@ -77,6 +77,9 @@ def _replace(conn, cfg, card_id: str, acc, old: dict, status: str, old_resolved=
         # The picture did not change: keep what the renderer drew. The status stays as it
         # was, so nothing would draw it again.
         resolved = {**resolved, "visual": old_resolved.get("visual")}
+    if drawn and isinstance(old_resolved, dict) and "image_backend" in old_resolved:
+        # The card keeps its renderer: the local worker skips only cards assigned elsewhere.
+        resolved = {**resolved, "image_backend": old_resolved["image_backend"]}
     with conn:
         conn.execute(
             "UPDATE cards SET format = ?, persona = ?, tone = ?, spec = ?, resolved = ?, "

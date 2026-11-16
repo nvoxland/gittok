@@ -103,6 +103,7 @@ A card may set `"account": "repo:path"`. The card is then shown as posted by tha
 
 - Cards whose visual is `meme`, `illustration`, or `comic` are stored with status `pending_render`. All others are `ready`.
 - The render worker (in `gittok serve`, plus `gittok render`) claims a pending card by setting the transient status `rendering`, so two passes never render the same card. It then sets `ready`, or `render_failed` with the error text in `cards.resolved.render_error`. If the renderer is unavailable, the card goes back to `pending_render`. A card stuck in `rendering` for more than 30 minutes is reset to `pending_render` at the start of the next pass.
+- Illustration and comic cards assigned to agent rendering (`resolved.image_backend: agent`) are skipped by the worker. The generation driver attaches their images with `get_image_requests` and `submit_images` (Codex's native image tool, or SVG drawn by Claude's `gittok-illustrator`).
 - The feed and `/api/repos/{name}` return only `ready` cards.
 
 ## Teaching contract (`learn` and the explain floor)

@@ -196,6 +196,11 @@ def submit(conn, cfg, run_id: str, cards: list | dict, packet_id: str | None = N
     accepted, rejected = _validate(conn, cfg, run0, cards, lead_refs)
     out_dir = cfg.settings.data_dir / "runs" / run_id
     stored: list[dict] = []
+    backend = None
+    if any(a.card["visual"]["kind"] in {"illustration", "comic"} for a in accepted):
+        from .render import image_backend
+
+        backend = image_backend(cfg)  # its mflux check must not run under the write lock
     with db.immediate(conn):
         run = get_run(conn, run_id)
         _check_open(run, run_id)
@@ -236,7 +241,7 @@ def submit(conn, cfg, run_id: str, cards: list | dict, packet_id: str | None = N
                     continue
                 seen.add(a.story_key)
                 used += cost
-                card_id = store.insert_card(conn, cfg, run_id, a)
+                card_id = store.insert_card(conn, cfg, run_id, a, image_backend=backend)
                 if used_lead:
                     conn.execute(
                         "UPDATE cards SET lead_id = ? WHERE id = ?", (used_lead["id"], card_id)

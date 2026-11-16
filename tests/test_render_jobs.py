@@ -83,3 +83,21 @@ def test_claim_prevents_wrong_backend_and_completion_without_ownership(fixture_r
             jobs.complete(conn, cfg, completion)
         assert card_row(cfg, cid)["status"] == "rendering"
         assert jobs.complete(conn, cfg, completion, claimed=True)["status"] == "ready"
+
+
+def test_palette_png_keeps_its_transparency():
+    from io import BytesIO
+
+    from PIL import Image
+
+    from gittok import render_jobs as jobs
+
+    image = Image.new("P", (2, 1))
+    image.putpalette([255, 0, 0, 0, 0, 255])
+    image.putpixel((1, 0), 1)
+    out = BytesIO()
+    image.save(out, format="PNG", transparency=0)
+    decoded = jobs.decode_image(out.getvalue())
+    with Image.open(BytesIO(decoded.data)) as im:
+        assert im.convert("RGBA").getpixel((0, 0))[3] == 0
+        assert im.convert("RGBA").getpixel((1, 0)) == (0, 0, 255, 255)

@@ -633,6 +633,16 @@ describe('feed page', () => {
 			expect(button).not.toBeDisabled();
 		});
 
+		it('the feed pairing form shows the reason the server gives when it refuses a code', async () => {
+			serve(() => ({ status: 401 }), {
+				'/pair/code': { status: 429, body: { code: 'too_many_pair_requests', detail: 'too many devices wait for a pairing code; try again later' } }
+			});
+			render(Page);
+			const button = await screen.findByRole('button', { name: 'Pair with a code' });
+			button.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+			expect(await screen.findByText('Too many devices wait for a pairing code; try again later.')).toBeInTheDocument();
+		});
+
 		it('rechecks authentication when Back restores an unpaired feed after pairing', async () => {
 			let paired = false;
 			serve(() => paired ? { body: { cards: [card(1)], next_cursor: null } } : { status: 401 });
