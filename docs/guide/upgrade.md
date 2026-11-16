@@ -8,7 +8,7 @@ uv tool upgrade gittok
 
 uv remembers the `images` extra if you installed with it.
 
-Then start Claude Code in your GitTok directory and say:
+Then start your agent in your GitTok directory and say:
 
 > Update this GitTok directory.
 

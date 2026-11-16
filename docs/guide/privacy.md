@@ -15,7 +15,7 @@ GitTok runs on your own machine. It reads the git history of the repos you add, 
 GitTok is made for a phone, so while a session is open the feed server serves the feed to your local network. Know what that means:
 
 - The feed goes over **plain HTTP**, not HTTPS.
-- Any device on the same network can reach the port, but it gets nothing until it pairs: you tap **Pair with a code** on it and tell Claude the code that it shows. A code lasts 10 minutes and works once, and only you can approve it, in your Claude Code session.
+- Any device on the same network can reach the port, but it gets nothing until it pairs: you tap **Pair with a code** on it and tell your agent the code that it shows. A code lasts 10 minutes and works once, and only you can approve it, in your agent session.
 - Someone who can watch traffic on that network could read the pairing cookie and the cards. Cards hold excerpts of your code.
 - So use it on a network you trust, such as your home network. Take care on shared or public Wi-Fi.
 

@@ -33,7 +33,7 @@ All your files are in the GitTok directory that you made with `gittok init`. You
 ## Who writes what
 
 - **`gittok init` and `gittok update`** own the top-level files and `.claude/`. An update rewrites them, and keeps a file that you edited as `<name>.bak`.
-- **`local/` is yours.** Claude edits it only when you ask (or GitTok's own tools do: the repo list, profiles, mascots). An update never touches it. The [Configuration](../config.md) reference lists every file.
+- **`local/` is yours.** Your agent edits it only when you ask (or GitTok's own tools do: the repo list, profiles, mascots). An update never touches it. The [Configuration](../config.md) reference lists every file.
 - **`data/` and `repos/`** are GitTok's. Garbage collection keeps them small: old cards you read go, saved and liked cards stay longer.
 
 The shipped defaults, the web app and the skill sources are inside the installed `gittok` package, not in this directory.

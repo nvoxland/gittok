@@ -31,7 +31,7 @@ claude
 >   image_backend: local
 > ```
 
-Approve the `gittok` MCP server, then ask Claude: "Add the repo at ~/src/myapp to GitTok." When the first posts are made, open the feed address that Claude gives you on your phone (or ask "what is the feed address?"), tap "Pair with a code", tell Claude the code, and start scrolling.
+Approve the `gittok` MCP server, then ask your agent: "Add the repo at ~/src/myapp to GitTok." When the first posts are made, open the feed address that your agent gives you on your phone (or ask "what is the feed address?"), tap "Pair with a code", tell your agent the code, and start scrolling.
 
 For Codex, run `codex` in the same directory, trust the project configuration and review `/hooks`. Ask Codex to add a repo, or use `$gittok-generate` to make cards. Both agents share the same workflows and MCP server.
 

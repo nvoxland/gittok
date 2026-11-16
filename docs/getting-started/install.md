@@ -7,7 +7,7 @@ GitTok is a Python tool that you install once. It then works in a **GitTok direc
 - **macOS.** Other platforms are not supported yet.
 - **[uv](https://docs.astral.sh/uv/).** GitTok needs Python 3.13. With `--python 3.13`, uv downloads it for you if you do not have it.
 - **git.**
-- **A coding agent.** Use [Claude Code](https://claude.com/claude-code) or [Codex](https://developers.openai.com/codex/). These docs use Claude in examples; the same requests work in Codex. The agent writes the posts, and you manage GitTok by asking it. GitTok does not call a model API itself.
+- **A coding agent.** Use [Claude Code](https://claude.com/claude-code) or [Codex](https://developers.openai.com/codex/). These docs say "your agent" for either one; the same requests work in both. The agent writes the posts, and you manage GitTok by asking it. GitTok does not call a model API itself.
 
 ## Install GitTok
 
@@ -48,40 +48,42 @@ gittok init .
 
 [Your GitTok directory](../guide/files.md) shows everything that goes in it later.
 
-## Start Claude Code in it
+## Start your agent
 
-```bash
-claude
-```
+Start your coding agent in the GitTok directory.
 
-The first time, Claude Code asks you to approve the MCP server `gittok`. Approve it.
+=== "Claude Code"
+
+    ```bash
+    claude
+    ```
+
+    The first time, Claude Code asks you to approve the MCP server `gittok`. Approve it. If the GitTok tools are missing later, check `/mcp`.
+
+=== "Codex"
+
+    ```bash
+    codex
+    ```
+
+    Trust the project configuration, so that Codex loads `.codex/config.toml`. Then review and trust the startup hooks with `/hooks`. If the GitTok tools are missing, check `/mcp`.
+
+    The skills are `$gittok-steer`, `$gittok-profile-repo <repo>` and `$gittok-generate`. Generation gives scouts and writers to Codex subagents, so use a client that supports subagents. They use your Codex model; the Claude model names in the shared guidance do not choose Codex models.
+
+    Without hooks, the startup hints come from the instructions instead. Background feed watching uses the process tools of the Codex client; a client that does not wake when a process ends checks the feed on your next message.
+
+Both agents use the same MCP server and the same workflows. Ask yours to add a repo; it profiles the repo and makes the first posts. You can always ask for more posts.
 
 !!! info "GitTok runs only while a session is open"
-    The Claude Code session starts the GitTok server, and the server serves the feed. When the session ends, the feed stops. Nothing is installed outside the directory, and nothing starts by itself.
+    The agent session starts the GitTok server, and the server serves the feed. When the session ends, the feed stops. Nothing is installed outside the directory, and nothing starts by itself.
 
-At the start of each session, Claude gives you the address of the feed. You will read it on your phone: [your first feed](first-feed.md) shows how to pair it.
+At the start of each session, your agent gives you the address of the feed. You will read it on your phone: [your first feed](first-feed.md) shows how to pair it.
 
-## Use Codex instead
-
-Run `codex` in your GitTok directory. Trust the project configuration so Codex
-loads `.codex/config.toml`, then review and trust the startup hooks with `/hooks`.
-If the tools are missing, check `/mcp`. Ask Codex to add your repo; it profiles it
-and makes the first cards using the same workflows as Claude Code.
-
-The explicit skills are `$gittok-steer`, `$gittok-profile-repo <repo>` and
-`$gittok-generate`. Generation delegates scouts and writers to Codex subagents,
-so use a client with subagent support. It inherits your Codex model; Claude model
-names in the shared guidance do not select Codex models.
-
-Existing GitTok directories get Codex support with `gittok update`. Restart the
-session after updating or changing MCP/server settings. Startup hints also have
-an instruction fallback when hooks are unavailable. Background feed watching
-uses the Codex client's process tools; clients that do not wake on completion
-check the feed on the next user turn. You can always ask for more cards.
+A GitTok directory made by an older version gets the files for both agents with `gittok update` (or ask your agent to update it). Start a new session after an update, or after you change an MCP or server setting.
 
 ## Optional downloads
 
-Claude offers these when they are useful. You can also run them yourself:
+Your agent offers these when they are useful. You can also run them yourself:
 
 | What | Command | Size |
 |---|---|---|

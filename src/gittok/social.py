@@ -543,18 +543,18 @@ def ensure_lan_token(data_dir) -> str:
 LAN_NOTICE = (
     "GitTok serves the feed to your local network over plain HTTP, not HTTPS. Any device on "
     "the network can reach the port, but it gets nothing until it pairs: on the device, tap "
-    "'Pair with a code' and tell Claude the code that it shows. Someone who can watch "
+    "'Pair with a code' and tell your coding agent the code that it shows. Someone who can watch "
     "traffic on that network could read the pairing cookie and the cards, and cards hold "
     "excerpts of your code. Use it on a network you trust, such as your home network, and "
-    "take care on shared or public Wi-Fi. To turn it off, ask Claude to turn off phone access "
+    "take care on shared or public Wi-Fi. To turn it off, ask your agent to turn off phone access "
     "(`server.lan: false` in local/settings.yaml). "
     "https://nvoxland.github.io/gittok/install/ has an optional HTTPS recipe."
 )
 LAN_RESTART = (
-    "The server reads this setting when it starts, so it must start again. The Claude Code "
-    "session owns the server: ask the user to run /mcp, pick gittok, and Reconnect, or to "
-    "start a new session in the GitTok directory. A server started by hand: the user stops "
-    "it and starts `gittok serve` again."
+    "The server reads this setting when it starts, so it must start again. The agent "
+    "session owns the server: ask the user to run /mcp, pick gittok, and Reconnect (Claude "
+    "Code), to restart Codex, or to start a new session in the GitTok directory. A server "
+    "started by hand: the user stops it and starts `gittok serve` again."
 )
 ALL_INTERFACES = ("0.0.0.0", "::")
 
@@ -600,8 +600,9 @@ def feed_address(cfg: Config) -> dict:
     out: dict = {"lan": False, "computer": None, "phone": []}
     if not _accepts(local, port):
         out["message"] = (
-            f"The feed server does not answer on {local}:{port}. The Claude Code session "
-            "starts it: ask the user to run /mcp, pick gittok, and Reconnect. Then call "
+            f"The feed server does not answer on {local}:{port}. The agent session "
+            "starts it: ask the user to run /mcp, pick gittok, and Reconnect (Claude Code), or "
+            "to restart Codex. Then call "
             "feed_address again. If the port is in use by another program, the user sets "
             "another `server.port` in local/settings.yaml."
         )

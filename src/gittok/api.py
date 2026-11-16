@@ -149,7 +149,8 @@ def _pair_page(body: str, head: str = "") -> str:
 PAIR_HTML = _pair_page(
     "<h1>Pair this device</h1>"
     '<p class="muted">This feed runs on your computer. Pair once to open it here.</p>'
-    "<p>Get a short code, then tell Claude on the computer: “pair code” and the code.</p>"
+    "<p>Get a short code, then tell your coding agent on the computer: “pair code” "
+    "and the code.</p>"
     f"{_CODE_FORM}"
     '<p class="muted">Pair each browser and each app on the home screen once.</p>'
 )
@@ -162,7 +163,7 @@ PAIR_JS = files("gittok").joinpath("static", "pair.js").read_text(encoding="utf-
 
 def pair_wait_html(code: str | None) -> str:
     """The page a device sees while its code waits for approval. It loads again every few
-    seconds; a button copies what to tell Claude (`/pair.js`)."""
+    seconds; a button copies what to tell the agent (`/pair.js`)."""
     if code is None:
         return _pair_page(
             "<h1>Pair this device</h1>"
@@ -172,12 +173,12 @@ def pair_wait_html(code: str | None) -> str:
     shown = html.escape(code)
     return _pair_page(
         "<h1>Pair this device</h1>"
-        "<p>Tell Claude on the computer that runs GitTok:</p>"
+        "<p>Tell your coding agent on the computer that runs GitTok:</p>"
         f'<div class="well"><span class="label">pair code</span>'
         f'<span class="code">{shown}</span></div>'
         f'<button type="button" class="copy" data-copy="pair code {shown}">Copy</button>'
         '<div class="status" data-pair-wait><span class="dot"></span>'
-        "<span>Waiting for Claude to approve. This page opens the feed by itself.</span></div>"
+        "<span>Waiting for your agent to approve. This page opens the feed by itself.</span></div>"
         '<p class="muted">The code lasts 10 minutes.</p>',
         head='<noscript><meta http-equiv="refresh" content="3"></noscript>',
     )

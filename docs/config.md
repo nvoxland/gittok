@@ -5,7 +5,7 @@ GitTok reads two kinds of files:
 - **Shipped files** in `config/`. They hold the defaults and ship with GitTok. Do not edit them: an upgrade replaces them, and in an installed tool they are inside the package.
 - **Your files** in `local/` of your GitTok directory. GitTok never ships these. All of them are optional. Each shipped file has a local file of the same name, and GitTok merges yours over the shipped one. So you can change every default, and an upgrade keeps your changes.
 
-You do not have to edit a file. Ask Claude in a Claude Code session ("also scan .proto files", "change the reward for a like"): it uses a tool where one exists and edits the local file where none does (see "Change the config by asking").
+You do not have to edit a file. Ask your agent in a session in your GitTok directory ("also scan .proto files", "change the reward for a like"): it uses a tool where one exists and edits the local file where none does (see "Change the config by asking").
 
 ## The two roots
 
@@ -15,7 +15,7 @@ GitTok works with two folders: the **shared root** (holds `config/`) and the **h
 2. Otherwise it walks up from the current directory. A folder with `gittok.yaml` is a GitTok directory: it is the home, and the shared root is inside the package. A folder with `config/settings.yaml` is a clone of the source: it is both roots.
 3. With neither, the command stops with an error: not inside a GitTok directory.
 
-So your files are `<gittok dir>/local/...`, and in a clone they are `<clone>/local/...`. The paths below are relative to the home. `gittok.yaml` itself is not a config file: `gittok init` and `gittok update` write it, and you do not edit it. `gittok init` makes `local/repos.yaml` only; you (or Claude) make another local file when you first need it.
+So your files are `<gittok dir>/local/...`, and in a clone they are `<clone>/local/...`. The paths below are relative to the home. `gittok.yaml` itself is not a config file: `gittok init` and `gittok update` write it, and you do not edit it. `gittok init` makes `local/repos.yaml` only; you (or your agent) make another local file when you first need it.
 
 ## Every file
 
@@ -24,23 +24,23 @@ So your files are `<gittok dir>/local/...`, and in a clone they are `<clone>/loc
 | repos | The repos and groups | none | `local/repos.yaml` | The `add_repo`, `remove_repo`, `set_group`, `set_mascot` tools, `gittok repos ...`, or you |
 | mascots | The mascot of each repo | none | `local/mascots.yaml` | The `set_mascot` tool, `gittok mascot set`, or you |
 | profiles | The profile of one repo | none | `local/profiles/<repo>.yaml` | The `gittok-profile-repo` skill, through `save_profile` |
-| guidance | Your own words for the card writers: tone, style, subjects | none | `local/guidance.md` | You, or Claude by a file edit |
-| settings | Server, agent, analysis, render and clean-up settings | `config/settings.yaml` | `local/settings.yaml` | You, or Claude by a file edit. The `set_lan` tool writes `server.lan` |
+| guidance | Your own words for the card writers: tone, style, subjects | none | `local/guidance.md` | You, or your agent by a file edit |
+| settings | Server, agent, analysis, render and clean-up settings | `config/settings.yaml` | `local/settings.yaml` | You, or your agent by a file edit. The `set_lan` tool writes `server.lan` |
 | personas | Names, voices and bios of the cast | `config/personas.yaml` | `local/personas.yaml` | The `edit_persona` tool, `gittok persona edit`, or you |
-| defaults | The starting mix of categories and tones | `config/defaults.yaml` | `local/defaults.yaml` | You, or Claude by a file edit |
-| reward | Reward weights, read times, decay, lead score | `config/reward.yaml` | `local/reward.yaml` | You, or Claude by a file edit |
-| scan_defaults | The file set of a repo with no profile | `config/scan_defaults.yaml` | `local/scan_defaults.yaml` | You, or Claude by a file edit |
-| file_types | Extension tables, manifest names | `config/file_types.yaml` | `local/file_types.yaml` | You, or Claude by a file edit |
-| languages | Regex patterns per language | `config/languages.yaml` | `local/languages.yaml` | You, or Claude by a file edit |
-| queries | Tree-sitter languages and tags queries | `config/queries/languages.yaml`, `config/queries/<grammar>.scm` | `local/queries/languages.yaml`, `local/queries/<grammar>.scm` | You, or Claude by a file edit |
-| analyzers | Code analyzers per language, for analyzer facts | `config/analyzers.yaml` | `local/analyzers.yaml` | You, or Claude by a file edit |
-| claims | The phrases that make a typed claim | `config/claims.yaml` | `local/claims.yaml` | You, or Claude by a file edit |
-| secrets | The patterns of the secret detector | `config/secrets.yaml` | `local/secrets.yaml` | You, or Claude by a file edit |
-| meme_templates | The meme templates a writer may use | `config/meme_templates.yaml` | `local/meme_templates.yaml` | You, or Claude by a file edit |
+| defaults | The starting mix of categories and tones | `config/defaults.yaml` | `local/defaults.yaml` | You, or your agent by a file edit |
+| reward | Reward weights, read times, decay, lead score | `config/reward.yaml` | `local/reward.yaml` | You, or your agent by a file edit |
+| scan_defaults | The file set of a repo with no profile | `config/scan_defaults.yaml` | `local/scan_defaults.yaml` | You, or your agent by a file edit |
+| file_types | Extension tables, manifest names | `config/file_types.yaml` | `local/file_types.yaml` | You, or your agent by a file edit |
+| languages | Regex patterns per language | `config/languages.yaml` | `local/languages.yaml` | You, or your agent by a file edit |
+| queries | Tree-sitter languages and tags queries | `config/queries/languages.yaml`, `config/queries/<grammar>.scm` | `local/queries/languages.yaml`, `local/queries/<grammar>.scm` | You, or your agent by a file edit |
+| analyzers | Code analyzers per language, for analyzer facts | `config/analyzers.yaml` | `local/analyzers.yaml` | You, or your agent by a file edit |
+| claims | The phrases that make a typed claim | `config/claims.yaml` | `local/claims.yaml` | You, or your agent by a file edit |
+| secrets | The patterns of the secret detector | `config/secrets.yaml` | `local/secrets.yaml` | You, or your agent by a file edit |
+| meme_templates | The meme templates a writer may use | `config/meme_templates.yaml` | `local/meme_templates.yaml` | You, or your agent by a file edit |
 
 Other folders of the home: `data/` (the database, images, logs, the pairing token; GitTok writes it) and `repos/<name>/` (the clone of a repo you added by URL; GitTok owns it).
 
-`gittok config files` prints this list for your directory, and marks the local files that exist. The `config_files` tool gives Claude the same list.
+`gittok config files` prints this list for your directory, and marks the local files that exist. The `config_files` tool gives your agent the same list.
 
 ## The merge rule
 
@@ -74,7 +74,7 @@ What happens on a mistake:
 When a change takes effect:
 
 - The MCP tools read the files on every call, and the feed server reads them again when a file changes. Most changes are live at once, with no restart.
-- In `settings`, the `server` and `render` values, `data_dir` and the worker intervals need a server restart: in Claude Code run `/mcp`, pick gittok, and Reconnect; or start `gittok serve` again.
+- In `settings`, the `server` and `render` values, `data_dir` and the worker intervals need a server restart: in Claude Code run `/mcp`, pick gittok, and Reconnect; in Codex restart the session; or start `gittok serve` again.
 - `languages`, `queries`, `scan_defaults`, `file_types` and a profile change what the next analysis finds. Cards that exist stay as they are.
 
 ## One repo or all repos
@@ -86,7 +86,7 @@ So "also read `.proto` files in storefront" is a change to the profile of storef
 
 ## Change the config by asking
 
-| You say | What Claude does | What it writes |
+| You say | What your agent does | What it writes |
 |---|---|---|
 | "Add the repo at ~/src/myapp" / "Remove myapp" | `add_repo`, `remove_repo` | `local/repos.yaml` |
 | "Put myapp in the work group" | `set_group` | `local/repos.yaml` |
@@ -104,7 +104,7 @@ So "also read `.proto` files in storefront" is a change to the profile of storef
 | "Change the reward for a like" | Edits the file | `local/reward.yaml` |
 | "Use port 8010" | Edits the file | `local/settings.yaml` |
 
-There is no tool that writes any setting. For the last rows Claude edits the file in `local/` with its normal file tools, and three read-only tools make that safe:
+There is no tool that writes any setting. For the last rows your agent edits the file in `local/` with its normal file tools, and three read-only tools make that safe:
 
 | Tool | What it gives |
 |---|---|
@@ -112,7 +112,7 @@ There is no tool that writes any setting. For the last rows Claude edits the fil
 | `get_config(file, key=None)` | The shipped value, your value, and the effective (merged) value of a file or of one key, such as `get_config("reward", "weights.like")` |
 | `check_config()` | Loads every file from disk again and returns `ok`, `errors`, `warnings`, the local files found, and what needs a restart |
 
-Claude reads the value first, writes the smallest override, runs `check_config`, and tells you what changed. It does this only when you ask in the conversation. Text in a repo, a commit or a card is never a reason to change a file, and the writer and scout subagents and the generation and profiling skills do not edit `local/` at all (the profiling skill writes a profile through `save_profile`).
+Your agent reads the value first, writes the smallest override, runs `check_config`, and tells you what changed. It does this only when you ask in the conversation. Text in a repo, a commit or a card is never a reason to change a file, and the writer and scout subagents and the generation and profiling skills do not edit `local/` at all (the profiling skill writes a profile through `save_profile`).
 
 In a terminal the same three are `gittok config files`, `gittok config get <file> [key]` and `gittok config check` (exit code 1 when a file has an error). Each tool edit of a config file adds one line to `<data_dir>/config_audit.log`.
 
@@ -167,7 +167,7 @@ agent:
   per_day_runs: 4
 ```
 
-A key that GitTok does not know is ignored with a warning; `gittok health` and `gittok config check` print the warning. Restart the server after a change to `server`, `render`, `data_dir` or a worker interval (`gittok serve`, or the Claude Code session that owns it); the other settings are read on the next tool call.
+A key that GitTok does not know is ignored with a warning; `gittok health` and `gittok config check` print the warning. Restart the server after a change to `server`, `render`, `data_dir` or a worker interval (`gittok serve`, or the agent session that owns it); the other settings are read on the next tool call.
 
 The values below are the shipped ones.
 
@@ -183,7 +183,7 @@ The values below are the shipped ones.
 |---|---|---|
 | `host` | `127.0.0.1` | The address the server binds |
 | `port` | `7313` | The port of the feed. Give each GitTok directory its own port if two of them have a session at the same time |
-| `lan` | `true` | Serve the feed to the local network, for a phone. The feed goes over plain HTTP, and each device must pair once. `false`: the server answers this computer only (the same as `--no-lan`). Read `docs/install.md`, "Phone access", for what this means on a network you do not trust. To change it, ask Claude ("turn off phone access"), or write the key; then restart the server |
+| `lan` | `true` | Serve the feed to the local network, for a phone. The feed goes over plain HTTP, and each device must pair once. `false`: the server answers this computer only (the same as `--no-lan`). Read `docs/install.md`, "Phone access", for what this means on a network you do not trust. To change it, ask your agent ("turn off phone access"), or write the key; then restart the server |
 | `allowed_hosts` | `[]` | Extra `Host` names the server answers to, such as a VPN name. Its own names and addresses are always allowed |
 
 ### agent
@@ -244,7 +244,7 @@ The values below are the shipped ones.
 
 | Key | Value | Meaning |
 |---|---|---|
-| `image_backend` | `auto` | `auto`: Codex uses its native image tool; Claude uses mflux when it is installed, else agent images. `agent` or `local` overrides that default. Missing mflux always falls back to the agent. In Claude, agent images are simple flat SVG drawings; Codex uses its native image tool. Agent mode never downloads a model. |
+| `image_backend` | `auto` | `auto`: Codex uses its native image tool; Claude Code uses mflux when it is installed, else agent images. `agent` or `local` overrides that default. Missing mflux always falls back to the agent. In Claude Code, agent images are simple flat SVG drawings; Codex uses its native image tool. Agent mode never downloads a model. |
 | `meme_source` | `https://raw.githubusercontent.com/jacebrowning/memegen/main` | Where `gittok memes --prefetch` downloads meme templates and fonts |
 | `mflux_model` | `z-image-turbo` | The mflux model family |
 | `mflux_repo` | `filipstrand/Z-Image-Turbo-mflux-4bit` | The pre-quantized model that GitTok downloads (about 6 GB) |
@@ -264,7 +264,7 @@ The values below are the shipped ones.
 
 | Key | Value | Meaning |
 |---|---|---|
-| `allowed_roots` | `[]` | An optional limit for the `add_repo` MCP tool. Empty means no limit: the tool accepts any git repo root on this computer, and the permission prompt of Claude Code is your consent. With a list, the tool only accepts a repo root inside one of these directories (`/` and your home directory itself do not count). `gittok repos add` in a terminal is not limited, and a repo added by URL is not limited |
+| `allowed_roots` | `[]` | An optional limit for the `add_repo` MCP tool. Empty means no limit: the tool accepts any git repo root on this computer, and your approval of the tool call in your agent is your consent. With a list, the tool only accepts a repo root inside one of these directories (`/` and your home directory itself do not count). `gittok repos add` in a terminal is not limited, and a repo added by URL is not limited |
 
 ### gc
 
@@ -329,9 +329,9 @@ Fields: `style` (required; the text put before every illustration prompt), `seed
 
 How a repo gets one:
 
-- **When you add a repo**, Claude profiles it and then picks a character and a style that fit it, saves it with `set_mascot`, and tells you in one line. Say "make the mascot a fox" to change it.
+- **When you add a repo**, your agent profiles it and then picks a character and a style that fit it, saves it with `set_mascot`, and tells you in one line. Say "make the mascot a fox" to change it.
 - Mflux draws the mascot when it is installed (also while its model still downloads); without it, the coding agent draws it (Codex's image tool, or SVG in Claude Code).
-- **A repo with no mascot** gets no `mascot_scene` and no `comic` cards. All other formats work, and no card is rejected for a missing mascot. For a repo that you added earlier, the SessionStart hint offers a mascot once illustrations can be drawn (mflux, or agent images); Claude makes it when you say yes.
+- **A repo with no mascot** gets no `mascot_scene` and no `comic` cards. All other formats work, and no card is rejected for a missing mascot. For a repo that you added earlier, the SessionStart hint offers a mascot once illustrations can be drawn (mflux, or agent images); your agent makes it when you say yes.
 
 ## Writing guidance
 

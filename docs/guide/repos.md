@@ -11,17 +11,17 @@ GitTok makes posts about the repos you add. You can add as many as you like, and
 - **A directory** is read in place. GitTok never writes to it: no checkout, no commit, no change to its config.
 - **A URL** is cloned into `repos/<name>/` of your GitTok directory. GitTok owns that clone, and fetches it before each analysis so the posts stay current.
 
-Claude Code asks your permission before it adds a repo. That prompt is your consent.
+Claude Code asks your permission before it adds a repo. That prompt is your consent. In Codex, the request you type is your consent.
 
 ## Profiles
 
-Right after you add a repo, Claude **profiles** it: it reads the stack, the main directories and a few key files, and writes rules that find the code worth teaching. The rules are data, in `local/profiles/<repo>.yaml`, and GitTok runs and scores them itself. A rule that leads to posts you skip loses weight.
+Right after you add a repo, your agent **profiles** it: it reads the stack, the main directories and a few key files, and writes rules that find the code worth teaching. The rules are data, in `local/profiles/<repo>.yaml`, and GitTok runs and scores them itself. A rule that leads to posts you skip loses weight.
 
-Claude profiles a new repo without asking. For a repo that has a profile, it only **offers** a new one: when the repo's manifests changed, or when several rules do badly. Say "profile myapp" to ask for one.
+Your agent profiles a new repo without asking. For a repo that has a profile, it only **offers** a new one: when the repo's manifests changed, or when several rules do badly. Say "profile myapp" to ask for one.
 
 ## Mascots
 
-Each repo gets a mascot: a small character that its illustration and comic posts draw. Claude picks one that fits the repo when you add it.
+Each repo gets a mascot: a small character that its illustration and comic posts draw. Your agent picks one that fits the repo when you add it.
 
 > Give myapp an owl mascot.
 

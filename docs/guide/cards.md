@@ -38,7 +38,7 @@ Each card has comments from a fixed cast:
 
 > Make Greybeard sound more tired.
 
-Claude changes a voice for you (`local/personas.yaml`).
+Your agent changes a voice for you (`local/personas.yaml`).
 
 ## Checked against git
 

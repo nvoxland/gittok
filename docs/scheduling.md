@@ -1,12 +1,12 @@
 # Keeping the feed full
 
-Cards are written by a Claude Code or Codex session. GitTok does not start a model by itself, and it does not run `claude -p`. So generation needs a session that is open. All other work (analysis, rendering, learning, notifications, garbage collection) is local Python and needs no session.
+Cards are written by an agent session: Claude Code or Codex. GitTok does not start a model by itself, and it does not run `claude -p`. So generation needs a session that is open. All other work (analysis, rendering, learning, notifications, garbage collection) is local Python and needs no session.
 
-## What runs without Claude
+## What runs without an agent
 
 | Job | How |
 |---|---|
-| The feed server: the feed, and the render, learning, profile, notification and garbage-collection workers | A Claude Code session in the GitTok directory starts it (`.mcp.json`) and it stops with the session. `gittok serve` starts it by hand. Nothing keeps it running when no session is open |
+| The feed server: the feed, and the render, learning, profile, notification and garbage-collection workers | An agent session in the GitTok directory starts it (`.mcp.json` in Claude Code, `.codex/config.toml` in Codex) and it stops with the session. `gittok serve` starts it by hand. Nothing keeps it running when no session is open |
 | Analysis of the repos | `gittok analyze` (cached by head commit). `get_brief` also runs it |
 | Notifications | `gittok notify`. The server also runs this pass |
 
@@ -14,13 +14,13 @@ Cards are written by a Claude Code or Codex session. GitTok does not start a mod
 
 | Way | Notes |
 |---|---|
-| On demand: "make more cards", or `/gittok-generate` | Always works. The run makes as many cards as the feed needs |
-| After a repo is added | Claude profiles the new repo and then runs `/gittok-generate` for the first cards. It does not ask first. The run ends at `nothing_to_do` when the feed has enough cards |
+| On demand: "make more cards", or `/gittok-generate` (`$gittok-generate` in Codex) | Always works. The run makes as many cards as the feed needs |
+| After a repo is added | Your agent profiles the new repo and then runs `/gittok-generate` for the first cards. It does not ask first. The run ends at `nothing_to_do` when the feed has enough cards |
 | The SessionStart hint | `gittok health --hint` prints one line at the start of a session when the unseen cards will not last `agent.target_runway_days`. The line says to run `/gittok-generate` |
-| The feed watch | `gittok feed-watch` blocks until the server says the feed wants cards, then exits. A session that runs it in the background is woken at that moment and runs `/gittok-generate`, then starts the watch again |
-| `/loop 4h /gittok-generate` in a session you leave open | Most ticks end at `nothing_to_do` and cost one MCP call |
+| The feed watch | `gittok feed-watch` blocks until the server says the feed wants cards, then exits. A session that runs it in the background is woken at that moment and runs `/gittok-generate`, then starts the watch again. Codex uses its own variant ("Codex sessions" below) |
+| Claude Code only: `/loop 4h /gittok-generate` in a session you leave open | Most ticks end at `nothing_to_do` and cost one MCP call |
 
-`gittok init` writes both hooks to `.claude/settings.json` of the GitTok directory (`docs/install.md`, "Session hooks"). A clone has them in its own project file.
+`gittok init` writes the hooks to `.claude/settings.json` of the GitTok directory for Claude Code, and to `.codex/hooks.json` for Codex (`docs/install.md`, "Session hooks"). A clone has them in its own project files.
 
 ## Codex sessions
 
@@ -46,7 +46,7 @@ a reachable daemon. A successful queue can still print a resume warning; the
 agent preserves that warning rather than claiming it woke. A failed queue leaves
 the feed request pending. Clients without this capability use the plain watch
 and check health on the next user turn; automatic idle refill is unavailable there.
-Claude's watch is unchanged and does not invoke Codex. The limits below still apply
+The Claude Code watch is unchanged and does not invoke Codex. The limits below still apply
 to both clients.
 
 ## How the feed watch works
@@ -63,7 +63,7 @@ to both clients.
 
 All of these must be true:
 
-1. A Claude Code session is open in the GitTok directory, and it started the feed watch. The SessionStart hook tells it to. Claude Code starts a turn for the session when the watch exits, also when the session is idle. If the session is in the middle of other work, the run starts after that work.
+1. An agent session is open in the GitTok directory, and it started the feed watch. The SessionStart hook tells it to. In Claude Code, a turn starts for the session when the watch exits, also when the session is idle. If the session is in the middle of other work, the run starts after that work. In Codex, the watch queues a refill prompt for the thread ("Codex sessions" above); without that, Codex checks the feed on your next message.
 2. The feed server runs (the session starts it) and at least one repo is configured.
 3. The feed wants cards: the unseen cards last under `agent.target_runway_days` (3).
 4. No run is open, and fewer than `agent.per_day_runs` (10) runs started in the last 24 hours.
@@ -75,6 +75,6 @@ The web app says this at the end of the feed. `GET /api/feed` has `generating`, 
 
 ## Limits
 
-The server enforces the limits, whatever starts the run: `agent.max_count` cards per run and `agent.per_day_runs` runs per day (`docs/config.md`). The skill pins its own model (sonnet for the driver, haiku or sonnet for each packet).
+The server enforces the limits, whatever starts the run: `agent.max_count` cards per run and `agent.per_day_runs` runs per day (`docs/config.md`). In Claude Code, the skill pins its own model (sonnet for the driver, haiku or sonnet for each packet). Codex uses your session model.
 
 A cloud agent cannot generate cards: it cannot reach `127.0.0.1` on your Mac, and it cannot read your local repos.

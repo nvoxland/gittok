@@ -1,5 +1,5 @@
-"""Pairing by code. A device that is not paired asks for a short code; the user tells Claude
-the code, and Claude approves it with the `pair_device` tool (or `gittok pair <code>`). The
+"""Pairing by code. A device that is not paired asks for a short code; the user tells the agent
+the code, and the agent approves it with the `pair_device` tool (or `gittok pair <code>`). The
 device polls with its secret request id and, once approved, gets the pairing cookie.
 
 The feed server and the MCP process are separate processes, so the requests live in the

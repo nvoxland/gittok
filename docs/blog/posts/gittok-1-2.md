@@ -24,7 +24,7 @@ Run `codex` in your GitTok directory instead of `claude`. Trust the project conf
 
 In Codex, the few tools that change who can see your feed or what it holds (`pair_device`, `remove_repo`, `set_lan`) always ask you first. Text in a repo that GitTok analyzes can never pair a device or remove a repo on its own.
 
-See [Install: use Codex instead](../../getting-started/install.md#use-codex-instead).
+See [Install: start your agent](../../getting-started/install.md#start-your-agent).
 
 ## Illustrations that set themselves up
 

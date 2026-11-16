@@ -29,7 +29,7 @@ The wheel is also attached to each GitHub release of the repository: `uv tool in
       image_backend: local
     ```
 
-Without the extra, illustrations and comics use the coding agent (see "Agent images"): Codex uses its native image tool, and in Claude a subagent draws each image as SVG that GitTok renders. That art is simpler than a model's, but it needs no download. With the extra, Claude uses mflux, which also draws the persona avatars. GitTok never switches to a separate paid API automatically. The tree-sitter structure layer and ast-grep rules come with every install.
+Without the extra, illustrations and comics use the coding agent (see "Agent images"): Codex uses its native image tool, and in Claude Code a subagent draws each image as SVG that GitTok renders. That art is simpler than a model's, but it needs no download. With the extra, Claude Code uses mflux, which also draws the persona avatars. GitTok never switches to a separate paid API automatically. The tree-sitter structure layer and ast-grep rules come with every install.
 
 The tool alone does nothing. GitTok works in a **GitTok directory**, and only while a Claude Code or Codex session is open in it. Nothing is installed outside the directory: no user-wide MCP entry, no files in your home folder, and no background service.
 
@@ -86,7 +86,7 @@ Codex uses [project configuration](https://developers.openai.com/codex/config-re
 Startup instructions provide a fallback when hooks do not run. The Codex feed watch
 uses `codex queue --resume` to request an idle refill in the same local thread.
 This needs a compatible Codex CLI and reachable daemon; clients without them check
-health on the next user turn. Claude's watch is unchanged.
+health on the next user turn. The Claude Code watch is unchanged.
 See [Keeping the feed full](scheduling.md).
 
 GitTok makes the rest when it needs it:
@@ -99,14 +99,14 @@ The package carries its own shared files: `config/`, the web app, and the origin
 
 ### The session owns the server
 
-When you start `claude` in the directory, Claude Code starts `gittok mcp --ui`. That process is the MCP server: Claude talks to it over stdio. It also starts the feed server (`gittok serve`) as a child process on port 7313. The feed server serves the feed and the web app, and does the background work (rendering, learning, notifications, clean-up). It has no MCP endpoint. When the session ends, the child stops. So the feed, on this computer and on a phone, works only while a session is open.
+When you start your agent in the directory (`claude` or `codex`), it starts `gittok mcp --ui` (from `.mcp.json` in Claude Code, from `.codex/config.toml` in Codex). That process is the MCP server: your agent talks to it over stdio. It also starts the feed server (`gittok serve`) as a child process on port 7313. The feed server serves the feed and the web app, and does the background work (rendering, learning, notifications, clean-up). It has no MCP endpoint. When the session ends, the child stops. So the feed, on this computer and on a phone, works only while a session is open.
 
 A `gittok` command (`gittok repos`, `gittok health`, ...) finds the GitTok directory by walking up from the current directory to `gittok.yaml`. Outside a GitTok directory, every command but `gittok init`, `gittok --version` and `gittok --help` stops with one line that says so. To use a directory from another place, set `GITTOK_ROOT=<dir>` for that command.
 
 ### More than one session, more than one directory
 
-- **Two sessions in the same directory.** The first session owns the feed server. The second finds port 7313 in use and runs the MCP server only. Both sessions work, and both see the same cards. The feed stops when the first session ends; then run `/mcp`, gittok, Reconnect in the other session to start it again. Claude is told this when the session starts.
-- **Two directories.** You can make as many GitTok directories as you like (for example `gittok init ~/gittok-work`). Each has its own repos, cards and settings. Two of them cannot serve the same port at the same time: the second session gets the MCP tools for its own directory, but the feed on port 7313 still shows the first directory. Claude is told which directory has the port. To use both at once, set another port in one of them, in `local/settings.yaml`:
+- **Two sessions in the same directory.** The first session owns the feed server. The second finds port 7313 in use and runs the MCP server only. Both sessions work, and both see the same cards. The feed stops when the first session ends. To start it again from the other session: in Claude Code, run `/mcp`, pick gittok, and Reconnect; in Codex, restart the session. Your agent is told this when the session starts.
+- **Two directories.** You can make as many GitTok directories as you like (for example `gittok init ~/gittok-work`). Each has its own repos, cards and settings. Two of them cannot serve the same port at the same time: the second session gets the MCP tools for its own directory, but the feed on port 7313 still shows the first directory. Your agent is told which directory has the port. To use both at once, set another port in one of them, in `local/settings.yaml`:
 
   ```yaml
   server:
@@ -115,22 +115,22 @@ A `gittok` command (`gittok repos`, `gittok health`, ...) finds the GitTok direc
 
 ### Move or copy the directory
 
-The directory has no absolute path of its own inside it. To move it, end the session, move the directory, and start `claude` in the new place. Claude Code asks again to approve the MCP server, because the approval is per directory. A copy works the same way, and is a full backup: repo list, profiles, cards and what the feed learned. Paired devices stay paired, because the pairing token is in `data/`. A repo that you added by path is stored as an absolute path in `local/repos.yaml`, so it still points to the same place.
+The directory has no absolute path of its own inside it. To move it, end the session, move the directory, and start your agent in the new place. Claude Code asks again to approve the MCP server, because the approval is per directory. In Codex, trust the project configuration in the new place. A copy works the same way, and is a full backup: repo list, profiles, cards and what the feed learned. Paired devices stay paired, because the pairing token is in `data/`. A repo that you added by path is stored as an absolute path in `local/repos.yaml`, so it still points to the same place.
 
-After the setup, you manage GitTok by asking Claude. The sections below say what to ask, and give the command for each step for people who prefer a terminal. Run the commands inside the GitTok directory.
+After the setup, you manage GitTok by asking your agent. The sections below say what to ask, and give the command for each step for people who prefer a terminal. Run the commands inside the GitTok directory.
 
 ## Add and remove repos
 
-Ask Claude:
+Ask your agent:
 
 - "Add the repo at ~/src/myapp to GitTok."
 - "Add https://example.com/acme/storefront.git to GitTok."
 - "Which repos does GitTok have?"
 - "Remove storefront from GitTok."
 
-Claude calls the `add_repo`, `list_repos` and `remove_repo` MCP tools. Claude Code asks for your permission before each call.
+Your agent calls the `add_repo`, `list_repos` and `remove_repo` MCP tools. Claude Code asks for your permission before each call; Codex follows the approval settings of your session.
 
-Removing a repo removes all that GitTok made for it: its cards (also the saved ones) with their images, its analysis, its profile (`local/profiles/<name>.yaml`), the rules on the repo, and a mascot of the repo that you defined yourself and no other repo uses. A clone that GitTok made from a URL is deleted. A directory of your own is never touched, and what the feed learned about your taste stays. Claude tells you the counts. To keep the cards, the profile and the mascot, say so ("remove storefront but keep its cards"; the command is `gittok repos remove storefront --keep-data`): the feed does not show them until you add a repo with the same name again.
+Removing a repo removes all that GitTok made for it: its cards (also the saved ones) with their images, its analysis, its profile (`local/profiles/<name>.yaml`), the rules on the repo, and a mascot of the repo that you defined yourself and no other repo uses. A clone that GitTok made from a URL is deleted. A directory of your own is never touched, and what the feed learned about your taste stays. Your agent tells you the counts. To keep the cards, the profile and the mascot, say so ("remove storefront but keep its cards"; the command is `gittok repos remove storefront --keep-data`): the feed does not show them until you add a repo with the same name again.
 
 - A local path must be the root of a git repo that has a commit, and not a directory inside a repo that is already added. It may be anywhere on this computer. GitTok reads it and never changes it.
 - A remote URL (`https://`, `ssh://`, `git://` or `git@host:org/repo.git`) is cloned into the GitTok directory, at `repos/<name>`. GitTok fetches this clone before each analysis.
@@ -138,7 +138,7 @@ Removing a repo removes all that GitTok made for it: its cards (also the saved o
 - To limit where the `add_repo` tool may add a local repo, set `repos.allowed_roots` in `local/settings.yaml` (`docs/config.md`). The list is empty by default, which means no limit.
 - Removing a repo takes it out of `local/repos.yaml`. GitTok deletes the directory only when it is a clone that GitTok made itself (a repo added by URL, at `repos/<name>`). It never touches a directory that you gave. Cards already made from the repo stay.
 
-After a repo is added, Claude profiles it (`/gittok-profile-repo <name>`) and then makes the first cards (`/gittok-generate`). It does not ask first; it says in one line what it does. The profile holds the rules that find the code worth teaching. It takes a few minutes and some model quota, and Claude may ask permission to run a code analyzer or to download grammars. A repo added with the command below gets its profile the next time cards are made. Later, Claude only offers a new profile: when the manifests of the repo changed, or when several rules of the profile do badly.
+After a repo is added, your agent profiles it (`/gittok-profile-repo <name>`, or `$gittok-profile-repo <name>` in Codex) and then makes the first cards (`/gittok-generate`, or `$gittok-generate`). It does not ask first; it says in one line what it does. The profile holds the rules that find the code worth teaching. It takes a few minutes and some model quota, and your agent may ask permission to run a code analyzer or to download grammars. A repo added with the command below gets its profile the next time cards are made. Later, your agent only offers a new profile: when the manifests of the repo changed, or when several rules of the profile do badly.
 
 The same steps as commands:
 
@@ -163,21 +163,21 @@ GitTok is made for a phone, so LAN serving is on by default (`server.lan: true`)
 
 A device pairs by code:
 
-1. Get the feed address. Claude gives it at the start of each session (the SessionStart line `gittok url --hint`), and you can ask at any time: "What is the feed address?" Claude calls the `feed_address` tool. In a terminal, `gittok url` prints it.
+1. Get the feed address. Your agent gives it at the start of each session (the SessionStart line `gittok url --hint`), and you can ask at any time: "What is the feed address?" Your agent calls the `feed_address` tool. In a terminal, `gittok url` prints it.
 2. On the device, open the address (both devices on the same network) and tap "Pair with a code". The device shows a code such as `K7QM-2D`.
-3. Tell Claude: "pair code K7QM-2D" (or run `gittok pair K7QM-2D`). The device opens the feed a few seconds later. A code lasts 10 minutes and works once.
+3. Tell your agent: "pair code K7QM-2D" (or run `gittok pair K7QM-2D`). The device opens the feed a few seconds later. A code lasts 10 minutes and works once.
 
 An app on the phone's home screen keeps its own cookies, apart from the browser: pair it inside the app the same way. A server that you start by hand with `gittok serve` prints the addresses (lines that begin with `lan:`).
 
 What this means for your network:
 
 - The feed goes over plain HTTP, not HTTPS.
-- Any device on the same network can reach the port. It gets nothing until you tell Claude the code that it shows. A device can ask for codes, but only you can approve one, in your Claude Code session. The MCP server speaks stdio only; the feed server has no MCP endpoint.
+- Any device on the same network can reach the port. It gets nothing until you tell your agent the code that it shows. A device can ask for codes, but only you can approve one, in your agent session. The MCP server speaks stdio only; the feed server has no MCP endpoint.
 - Someone who can watch traffic on that network could read the pairing cookie and the cards. Cards hold excerpts of your code.
 - So use it on a network you trust, such as your home network. Take care on shared or public Wi-Fi.
 - "HTTPS on a LAN" below has an optional recipe.
 
-To turn it off, ask Claude: "Turn off phone access." Claude calls `set_lan(enabled=false)`, which writes `server.lan: false` to `local/settings.yaml`. You can also write that yourself, or start the server with `--no-lan`. The server then answers this computer only. The setting is read when the server starts, so restart it: run `/mcp`, pick gittok, and Reconnect, or start a new session. "Turn on phone access" does the reverse.
+To turn it off, ask your agent: "Turn off phone access." Your agent calls `set_lan(enabled=false)`, which writes `server.lan: false` to `local/settings.yaml`. You can also write that yourself, or start the server with `--no-lan`. The server then answers this computer only. The setting is read when the server starts, so restart it. In Claude Code, run `/mcp`, pick gittok, and Reconnect, or start a new session. In Codex, restart the session. "Turn on phone access" does the reverse.
 
 A paired device holds a cookie with the secret token from `<data_dir>/lan_token`. To make a new token (for example after you lost a phone), delete that file and restart the server; every device must then pair again.
 
@@ -189,7 +189,7 @@ uv tool upgrade gittok
 
 uv records the extras that a tool was installed with (in the tool's `uv-receipt.toml`), and the upgrade uses that record. So a tool installed as `gittok[images]` keeps mflux.
 
-The tool is new now, but the skills, agents, settings and `AGENTS.md` in your GitTok directory are still the old copies. The next session in the directory prints one line about this, and Claude offers to update. Say yes, or run it yourself in the directory:
+The tool is new now, but the skills, agents, settings and `AGENTS.md` in your GitTok directory are still the old copies. The next session in the directory prints one line about this, and your agent offers to update. Say yes, or run it yourself in the directory:
 
 ```bash
 gittok update              # or: gittok update ~/gittok
@@ -201,11 +201,11 @@ gittok update              # or: gittok update ~/gittok
 - A file that you edited is replaced too, but your copy is saved next to it first as `<name>.bak` (for example `.claude/settings.json.bak`). The output names it. Copy your changes back by hand if you still want them.
 - A file that you deleted is written again.
 
-Start a new session after the update, so Claude Code loads the new files. Do the same in each GitTok directory you have.
+Start a new session after the update, so your agent loads the new files. Do the same in each GitTok directory you have.
 
 ## Uninstall
 
-1. End the Claude Code session in the GitTok directory. The feed server stops with it.
+1. End the agent session in the GitTok directory. The feed server stops with it.
 2. Delete the GitTok directory. This deletes your repo list, profiles, cards, and the clones that GitTok made in `repos/`. It never touches a repo directory that you gave by path.
 3. `uv tool uninstall gittok`.
 
@@ -230,15 +230,15 @@ Your own settings live in `local/` of the GitTok directory. `docs/config.md` des
 
 - `local/repos.yaml`: the repos and groups to analyze.
 - `local/profiles/<repo>.yaml`: the profile of each repo.
-- `local/mascots.yaml`: the mascot of each repo. GitTok ships none; Claude makes one when you add a repo.
+- `local/mascots.yaml`: the mascot of each repo. GitTok ships none; your agent makes one when you add a repo.
 - `local/settings.yaml`: merged over `config/settings.yaml`, key by key inside each section.
 - `local/personas.yaml`: merged over the shipped file, per name and field by field. The edit tools write only here.
-- One optional file for each other shipped file (`local/scan_defaults.yaml`, `local/languages.yaml`, `local/queries/`, `local/file_types.yaml`, `local/secrets.yaml`, `local/claims.yaml`, `local/meme_templates.yaml`, `local/defaults.yaml`, `local/reward.yaml`): merged over the shipped one. Maps merge key by key and lists add. Ask Claude for the change, or write the file yourself; `gittok config check` validates it.
+- One optional file for each other shipped file (`local/scan_defaults.yaml`, `local/languages.yaml`, `local/queries/`, `local/file_types.yaml`, `local/secrets.yaml`, `local/claims.yaml`, `local/meme_templates.yaml`, `local/defaults.yaml`, `local/reward.yaml`): merged over the shipped one. Maps merge key by key and lists add. Ask your agent for the change, or write the file yourself; `gittok config check` validates it.
 - `local/.edit.lock`: the lock file of the edit tools.
 
 ## Session hooks
 
-Three SessionStart hints tell a Claude Code session when the feed wants cards (`docs/scheduling.md`). `gittok init` writes them to `.claude/settings.json` of the GitTok directory, so they run only for sessions in that directory:
+Three SessionStart hints tell an agent session when the feed wants cards (`docs/scheduling.md`). For Claude Code, `gittok init` writes them to `.claude/settings.json` of the GitTok directory, so they run only for sessions in that directory. For Codex, it writes the same hints to `.codex/hooks.json` (review and trust them with `/hooks`). The Claude Code file:
 
 ```json
 {
@@ -261,9 +261,9 @@ Three SessionStart hints tell a Claude Code session when the feed wants cards (`
 ```
 
 - `gittok url --hint` gives only phone/LAN addresses, from `server.port`. The agent gives the phone address in its first reply. When no phone address is available, the hint says so; agents never offer a loopback/computer address. It prints nothing when another GitTok directory has the port. `gittok url` prints the addresses alone.
-- `gittok health --hint` prints nothing when nothing is needed. It prints one line when the feed is low, when a repo has no profile (Claude then profiles it), when its manifests changed or several of its rules do badly (Claude then offers a new profile), when a grammar is missing, when analyzer facts are stale, when the directory has the files of another GitTok version, or when another GitTok directory has the port.
-- `gittok feed-watch --hint` always prints one line. It tells the session to start `gittok feed-watch` in the background. The permission line lets that exact command run without a prompt.
-- If you do not want sessions to start card generation by themselves, remove the `feed-watch` hook and the permission. Put such a change in `.claude/settings.local.json`, or expect `gittok update` to write the shipped file again (it keeps your copy as `settings.json.bak`).
+- `gittok health --hint` prints nothing when nothing is needed. It prints one line when the feed is low, when a repo has no profile (your agent then profiles it), when its manifests changed or several of its rules do badly (your agent then offers a new profile), when a grammar is missing, when analyzer facts are stale, when the directory has the files of another GitTok version, or when another GitTok directory has the port.
+- `gittok feed-watch --hint` always prints one line. It tells the session to start `gittok feed-watch` in the background. In Claude Code, the permission line lets that exact command run without a prompt.
+- If you do not want sessions to start card generation by themselves, remove the `feed-watch` hook (and, in Claude Code, the permission). In Claude Code, you can put such a change in `.claude/settings.local.json`. A change to a shipped file is not kept: `gittok update` writes the file again, and keeps your copy as `<name>.bak` (for example `settings.json.bak`).
 
 A clone of the source has the same hooks with `uv run --quiet gittok ...` commands, and its hint names `uv run --quiet gittok feed-watch`.
 
@@ -271,7 +271,7 @@ A clone of the source has the same hooks with `uv run --quiet gittok ...` comman
 
 GitTok reads code structure (definitions, imports, comments) with tree-sitter. It is a normal dependency. A language whose grammar is not downloaded yet works on the regex patterns in `config/languages.yaml` and, for other file types, on plain text rules.
 
-To get the grammars, ask Claude: "Download the GitTok grammars." Claude runs the second command below. Claude offers this itself when a grammar is missing.
+To get the grammars, ask your agent: "Download the GitTok grammars." Your agent runs the second command below. It offers this itself when a grammar is missing.
 
 ```bash
 gittok structure               # status: installed, grammars needed, grammars missing (JSON)
@@ -296,7 +296,7 @@ The default assets stay read-only in the installed package. Extra downloads go t
 ## Agent images
 
 `render.image_backend` defaults to `auto`: Codex creates illustrations and comic panels
-with its native image tool; Claude uses the Python renderer when it is installed, and
+with its native image tool; Claude Code uses the Python renderer when it is installed, and
 otherwise draws simple flat SVG images through its `gittok-illustrator` subagent.
 To choose explicitly, ask your agent ("use agent images", "use local image
 generation"), or set `image_backend: agent` or `image_backend: local` under
@@ -324,7 +324,7 @@ After upgrading, ask your agent to update the GitTok directory (or run
 
 ## Illustration renderer (mflux)
 
-This renderer is optional. Without it, illustrations come from the coding agent (see "Agent images"); in Claude Code they are simple SVG drawings. Claude gives each new repo a mascot either way (`docs/config.md`, "Mascots").
+This renderer is optional. Without it, illustrations come from the coding agent (see "Agent images"); in Claude Code they are simple SVG drawings. Your agent gives each new repo a mascot either way (`docs/config.md`, "Mascots").
 
 With the Python backend, illustration and comic cards, and the persona avatars, are drawn by [mflux](https://github.com/filipstrand/mflux) on Apple Silicon. Install it with the `images` extra:
 
@@ -346,7 +346,7 @@ gittok images                # the state: ready, downloading (with progress), fa
 
 `status` reports it too: `renderer_setup.illustration` has `backend` (`agent` or `local`), `installed`, `available`, `download` (state and progress), `reason` (null for the agent backend) and `python_reason`. To keep a model of your own, such as a folder from `mflux-save`, set `render.mflux_path` to it; `render.mflux_auto_download: false` turns the automatic download off.
 
-A model folder counts as ready only when it is complete: the `transformer`, `text_encoder` and `vae` parts, each with every shard its index names (none empty), and the tokenizer. A render takes about 10 to 20 s per image at 9 steps, after the model loads once per batch. Then ask Claude to draw the persona avatars, or run:
+A model folder counts as ready only when it is complete: the `transformer`, `text_encoder` and `vae` parts, each with every shard its index names (none empty), and the tokenizer. A render takes about 10 to 20 s per image at 9 steps, after the model loads once per batch. Then ask your agent to draw the persona avatars, or run:
 
 ```bash
 uv run gittok avatars      # draws the persona avatars; the first image also warms the Metal cache
@@ -395,7 +395,7 @@ GitTok keeps the existing image size and step count by default.
 
 ## The feed server by hand
 
-`gittok serve`, run inside a GitTok directory, starts the feed server without a Claude Code session. It prints the feed addresses and how a device pairs, and it runs until you stop it. It is for a look at the feed when no session is open, and for development. It does not make cards: only a Claude Code session does. A session that starts while it runs finds the port in use and does not start a second server.
+`gittok serve`, run inside a GitTok directory, starts the feed server without an agent session. It prints the feed addresses and how a device pairs, and it runs until you stop it. It is for a look at the feed when no session is open, and for development. It does not make cards: only an agent session does. A session that starts while it runs finds the port in use and does not start a second server.
 
 ## Other MCP clients
 
@@ -429,7 +429,7 @@ You do not need this to use the feed. Plain HTTP on the LAN works in a browser t
 
 - The server has a pairing token when LAN serving is on (the default) or when `--host` is not a loopback address. If you turned LAN serving off (`server.lan: false`, or `--no-lan`) there is no token, so nothing can pair: GitTok refuses every request that has one of these headers with HTTP 403 (`proxy_needs_pairing`). Set `server.lan: true` again and restart before you use a proxy.
 - A proxy that sends none of these headers still looks local, so it skips pairing. Tailscale Serve and Caddy send the headers by default. nginx sends them only when its config has `proxy_set_header X-Forwarded-For ...`. Do not remove these headers in the proxy config.
-- Pair each device on the address that it uses: open `https://<the proxy's name>` on the device, tap "Pair with a code", and tell Claude the code. A cookie from the plain `http://<LAN address>:7313` address does not count for the proxy's name.
+- Pair each device on the address that it uses: open `https://<the proxy's name>` on the device, tap "Pair with a code", and tell your agent the code. A cookie from the plain `http://<LAN address>:7313` address does not count for the proxy's name.
 
 Also limit who can reach the proxy.
 
@@ -478,6 +478,6 @@ Open `https://mymac.local:8443` on the phone. If the name is this computer's own
 
 - HTTP 421 `unknown Host`: the name in the address bar is not in `server.allowed_hosts`.
 - HTTP 403 `proxy_needs_pairing`: LAN serving was turned off, so there is no pairing token. Set `server.lan: true`, restart, and pair the device.
-- HTTP 401 `pair this device`: tap "Pair with a code" on the device and tell Claude the code.
+- HTTP 401 `pair this device`: tap "Pair with a code" on the device and tell your agent the code.
 - HTTP 403 `cross-origin request` on taps (like, save, answer): the same cause; the check uses the same list.
 - The page loads but there is no install prompt or offline mode: the certificate is not trusted on that device. A page with a certificate warning does not register a service worker.

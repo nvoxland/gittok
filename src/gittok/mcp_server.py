@@ -1014,7 +1014,7 @@ def _register_config_tools(tool: ToolDecorator) -> None:
 
         It writes only `server.lan` in local/settings.yaml. The running server does not
         change until it starts again: the result's `restart` says how. You cannot restart a
-        server that the Claude Code session owns; the user does that.
+        server that the agent session owns; the user does that.
         Example: set_lan(enabled=false) when the user says "turn off phone access".
         """
         return steering.set_lan(cfg, enabled)
